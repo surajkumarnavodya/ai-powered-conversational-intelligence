@@ -140,7 +140,8 @@
     "followingUpOn": "Continuando con",
     "sourcesLabel": "Fuentes",
     "words": "palabras",
-    "noRecordedAnswer": "Este mensaje no tiene una respuesta registrada."
+    "noRecordedAnswer": "Este mensaje no tiene una respuesta registrada.",
+    "scrollToLatest": "Desplazarse al último mensaje"
   },
   "sql": {
     "title": "SQL generado",

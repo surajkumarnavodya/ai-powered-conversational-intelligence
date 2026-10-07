@@ -140,7 +140,8 @@
     "followingUpOn": "याचा पाठपुरावा",
     "sourcesLabel": "स्रोत",
     "words": "शब्द",
-    "noRecordedAnswer": "या संदेशाचे कोणतेही जतन केलेले उत्तर नाही."
+    "noRecordedAnswer": "या संदेशाचे कोणतेही जतन केलेले उत्तर नाही.",
+    "scrollToLatest": "नवीनतम संदेशावर जा"
   },
   "sql": {
     "title": "तयार केलेले SQL",

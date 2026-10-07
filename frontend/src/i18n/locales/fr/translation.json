@@ -140,7 +140,8 @@
     "followingUpOn": "Suite à",
     "sourcesLabel": "Sources",
     "words": "mots",
-    "noRecordedAnswer": "Ce message n'a pas de réponse enregistrée."
+    "noRecordedAnswer": "Ce message n'a pas de réponse enregistrée.",
+    "scrollToLatest": "Faire défiler jusqu'au dernier message"
   },
   "sql": {
     "title": "SQL généré",

@@ -140,7 +140,8 @@
     "followingUpOn": "इसका अनुवर्ती",
     "sourcesLabel": "स्रोत",
     "words": "शब्द",
-    "noRecordedAnswer": "इस संदेश का कोई सहेजा हुआ उत्तर नहीं है।"
+    "noRecordedAnswer": "इस संदेश का कोई सहेजा हुआ उत्तर नहीं है।",
+    "scrollToLatest": "नवीनतम संदेश पर जाएं"
   },
   "sql": {
     "title": "जनरेट किया गया SQL",

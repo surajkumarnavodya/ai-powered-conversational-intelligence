@@ -2,9 +2,11 @@ import { ChatInput } from '@/components/chat/ChatInput'
 import { ChatLiveRegion } from '@/components/chat/ChatLiveRegion'
 import { PendingTurn } from '@/components/chat/PendingTurn'
 import { QuestionNavigator } from '@/components/chat/QuestionNavigator'
+import { ScrollToBottomButton } from '@/components/chat/ScrollToBottomButton'
 import { TurnCard } from '@/components/chat/TurnCard'
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useHealth } from '@/hooks/queries'
+import { useScrollToBottom } from '@/hooks/useScrollToBottom'
 import { useChatStore } from '@/store/chatStore'
 
 export function Chat() {
@@ -12,19 +14,54 @@ export function Chat() {
 
   const queryHistory = useChatStore((state) => state.queryHistory)
   const pendingQuestion = useChatStore((state) => state.pendingQuestion)
+  const activeConversationId = useChatStore((state) => state.activeConversationId)
 
   const isMultiDb = (health.data?.databases.length ?? 0) > 1
 
-  // Keep the newest turn in view, like the history list reaching its bottom:
-  // when a question is added or an answer lands, scroll the message region to
-  // its end. Motion is skipped for reduced-motion users.
   const scrollRef = useRef<HTMLDivElement>(null)
+  // Single scroll-state source of truth, shared by the auto-follow effect
+  // below and the floating "Jump to Bottom" button -- never a second,
+  // independent scroll system (see useScrollToBottom.ts's own docstring).
+  const { isAtBottom, isAtBottomRef, scrollToBottom } = useScrollToBottom(scrollRef)
+
+  // Keep the newest turn in view -- but only when the user was already at
+  // (or very near) the bottom before this turn arrived: scrolling up to
+  // reread an earlier answer must never get yanked back down just because
+  // a new question/answer lands elsewhere in the session. The floating
+  // button below is how the user gets back to the latest content once
+  // they've scrolled away from it. Switching to a *different* conversation
+  // is a fresh view, not new content arriving while reading the current
+  // one, so that case always jumps to the latest turn instantly,
+  // unconditionally -- the same behavior this effect used to have for
+  // every case before the "don't yank the user down" fix above.
+  const prevConversationIdRef = useRef(activeConversationId)
   useEffect(() => {
-    const el = scrollRef.current
+    const switchedConversation = prevConversationIdRef.current !== activeConversationId
+    prevConversationIdRef.current = activeConversationId
+    if (switchedConversation) {
+      isAtBottomRef.current = true
+      scrollToBottom('auto')
+      return
+    }
+    if (!isAtBottomRef.current) return
+    scrollToBottom()
+  }, [activeConversationId, queryHistory.length, pendingQuestion, isAtBottomRef, scrollToBottom])
+
+  // Live-measured composer height -- so the floating button (below) sits
+  // just above it regardless of how tall the composer currently is (a
+  // grown multi-line textarea, an attachment preview row, a narrow mobile
+  // viewport), never covering the input box.
+  const composerRef = useRef<HTMLDivElement>(null)
+  const [composerHeight, setComposerHeight] = useState(0)
+  useLayoutEffect(() => {
+    const el = composerRef.current
     if (!el) return
-    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    el.scrollTo({ top: el.scrollHeight, behavior: reduceMotion ? 'auto' : 'smooth' })
-  }, [queryHistory.length, pendingQuestion])
+    const measure = () => setComposerHeight(el.offsetHeight)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
 
   return (
     // Full-width, single-scrollbar layout (matches ChatGPT): this outer
@@ -48,6 +85,11 @@ export function Chat() {
         latestEntryId={queryHistory.at(-1)?.entryId ?? null}
       />
       <QuestionNavigator entries={queryHistory} scrollContainerRef={scrollRef} />
+      <ScrollToBottomButton
+        visible={!isAtBottom}
+        onClick={() => scrollToBottom()}
+        bottomOffsetPx={composerHeight + 16}
+      />
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex min-h-full max-w-4xl flex-col px-4 pb-4 pt-6">
           <div className="flex flex-col gap-8">
@@ -69,7 +111,7 @@ export function Chat() {
               sits below actually starts -- the two columns would not share
               the same left edge even though both already share the same
               max-w-4xl/px-4 container and therefore the same right edge. */}
-          <div className="sticky bottom-0 mt-auto bg-[var(--background)] pb-4 pt-2 pl-10">
+          <div ref={composerRef} className="sticky bottom-0 mt-auto bg-[var(--background)] pb-4 pt-2 pl-10">
             <ChatInput />
           </div>
         </div>
