@@ -146,7 +146,8 @@
     "system": "System"
   },
   "questionNavigator": {
-    "label": "Questions"
+    "label": "Questions",
+    "toggleLabel": "Toggle question list"
   },
   "chat": {
     "placeholder": "Ask a question about your data...",

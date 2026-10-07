@@ -129,7 +129,8 @@
     "system": "प्रणाली"
   },
   "questionNavigator": {
-    "label": "प्रश्न"
+    "label": "प्रश्न",
+    "toggleLabel": "प्रश्न सूची टॉगल करा"
   },
   "chat": {
     "placeholder": "तुमच्या डेटाबद्दल प्रश्न विचारा...",

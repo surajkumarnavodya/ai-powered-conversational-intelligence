@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ToastProvider } from '@/components/ui/toast'
 import { newHistoryEntry } from '@/lib/history'
@@ -37,22 +37,26 @@ afterEach(() => {
 })
 
 describe('Chat page', () => {
-  it('does not render the Question Navigator for zero or one question', () => {
+  it('does not render the Question Navigator toggle for zero or one question', () => {
     useChatStore.setState({ queryHistory: [] } as never)
     renderChat()
-    expect(screen.queryByRole('navigation', { name: 'Questions' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Toggle question list' })).toBeNull()
   })
 
-  it('renders the Question Navigator once there are two or more questions', () => {
+  it('renders the collapsed Question Navigator toggle once there are two or more questions, with the list hidden until expanded', () => {
     useChatStore.setState({ queryHistory: [makeEntry('First'), makeEntry('Second')] } as never)
     renderChat()
+    expect(screen.getByRole('button', { name: 'Toggle question list' })).toBeInTheDocument()
+    expect(screen.queryByRole('navigation', { name: 'Questions' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle question list' }))
     expect(screen.getByRole('navigation', { name: 'Questions' })).toBeInTheDocument()
   })
 
-  it('removes the Question Navigator again after switching to a conversation with only one question', () => {
+  it('removes the Question Navigator toggle again after switching to a conversation with only one question', () => {
     useChatStore.setState({ queryHistory: [makeEntry('First'), makeEntry('Second')] } as never)
     const { rerender } = renderChat()
-    expect(screen.getByRole('navigation', { name: 'Questions' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Toggle question list' })).toBeInTheDocument()
 
     useChatStore.setState({ queryHistory: [makeEntry('Only one now')] } as never)
     rerender(
@@ -63,7 +67,7 @@ describe('Chat page', () => {
       </QueryClientProvider>,
     )
 
-    expect(screen.queryByRole('navigation', { name: 'Questions' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Toggle question list' })).toBeNull()
   })
 
   it('gives the composer the same left inset TurnCard applies to its answer content', () => {

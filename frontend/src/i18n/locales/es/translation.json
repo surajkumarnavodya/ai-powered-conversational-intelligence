@@ -129,7 +129,8 @@
     "system": "Sistema"
   },
   "questionNavigator": {
-    "label": "Preguntas"
+    "label": "Preguntas",
+    "toggleLabel": "Alternar lista de preguntas"
   },
   "chat": {
     "placeholder": "Haz una pregunta sobre tus datos...",
