@@ -128,6 +128,9 @@
     "dark": "Sombre",
     "system": "Système"
   },
+  "questionNavigator": {
+    "label": "Questions"
+  },
   "chat": {
     "placeholder": "Posez une question sur vos données...",
     "view": "Afficher",

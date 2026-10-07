@@ -145,6 +145,9 @@
     "dark": "Dark",
     "system": "System"
   },
+  "questionNavigator": {
+    "label": "Questions"
+  },
   "chat": {
     "placeholder": "Ask a question about your data...",
     "send": "Send message",

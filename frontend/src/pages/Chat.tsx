@@ -1,6 +1,7 @@
 import { ChatInput } from '@/components/chat/ChatInput'
 import { ChatLiveRegion } from '@/components/chat/ChatLiveRegion'
 import { PendingTurn } from '@/components/chat/PendingTurn'
+import { QuestionNavigator } from '@/components/chat/QuestionNavigator'
 import { TurnCard } from '@/components/chat/TurnCard'
 import { useEffect, useRef } from 'react'
 import { useHealth } from '@/hooks/queries'
@@ -37,11 +38,16 @@ export function Chat() {
     // the latest one -- so scrolling up always reveals the full prior
     // conversation, and each turn keeps its own editable SQL/confirmed
     // result independently (see TurnCard).
-    <div className="flex h-full min-h-0 flex-col">
+    // `relative` makes this the positioning context for QuestionNavigator
+    // (an absolutely-positioned overlay, below) -- self-contained, rather
+    // than relying on AppShell's own <main> happening to be `position:
+    // relative` for an ancestor this component doesn't own.
+    <div className="relative flex h-full min-h-0 flex-col">
       <ChatLiveRegion
         pendingQuestion={pendingQuestion}
         latestEntryId={queryHistory.at(-1)?.entryId ?? null}
       />
+      <QuestionNavigator entries={queryHistory} scrollContainerRef={scrollRef} />
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex min-h-full max-w-4xl flex-col px-4 pb-4 pt-6">
           <div className="flex flex-col gap-8">
@@ -53,8 +59,17 @@ export function Chat() {
 
           {/* Sticky at the bottom of the scroll region: the composer stays in view
               while the messages scroll beneath it, and the scrollbar itself runs
-              all the way to the bottom edge of the page. */}
-          <div className="sticky bottom-0 mt-auto bg-[var(--background)] pb-4 pt-2">
+              all the way to the bottom edge of the page.
+
+              pl-10 matches the exact left inset TurnCard/PendingTurn already
+              apply to an answer's own content (see TurnCard.tsx: it reserves
+              the width of the question bubble's avatar + gap so the answer
+              reads as indented beneath it). Without this, the composer's
+              left edge sits 40px to the left of where the answer content it
+              sits below actually starts -- the two columns would not share
+              the same left edge even though both already share the same
+              max-w-4xl/px-4 container and therefore the same right edge. */}
+          <div className="sticky bottom-0 mt-auto bg-[var(--background)] pb-4 pt-2 pl-10">
             <ChatInput />
           </div>
         </div>

@@ -113,6 +113,48 @@ if (typeof HTMLCanvasElement !== 'undefined') {
   }
 }
 
+// IntersectionObserver is used by useActiveElementId (QuestionNavigator's
+// scrollspy) -- jsdom doesn't implement it, so any test that renders a
+// component using it would otherwise throw on construction. A minimal stub,
+// same category/reasoning as the ResizeObserver one above: it only needs to
+// exist so the real component code runs; individual tests that need to
+// exercise actual intersection behavior construct and drive their own fake
+// via a local override instead of relying on this one to do anything.
+if (typeof window.IntersectionObserver === 'undefined') {
+  window.IntersectionObserver = class IntersectionObserverStub implements IntersectionObserver {
+    readonly root: Element | Document | null = null
+    readonly rootMargin: string = ''
+    readonly scrollMargin: string = ''
+    readonly thresholds: ReadonlyArray<number> = []
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords(): IntersectionObserverEntry[] {
+      return []
+    }
+  }
+}
+
+// jsdom does not implement Element.scrollIntoView at all (confirmed:
+// `typeof HTMLElement.prototype.scrollIntoView` is `undefined`, not even a
+// no-op) -- real browsers have always had it, so application code
+// (QuestionNavigator's "jump to this question"/"keep this nav item
+// visible" behavior) is written against the real API. A no-op stub, same
+// category as ResizeObserver/IntersectionObserver above: it only needs to
+// exist so calling code doesn't throw. A test asserting *how* it was
+// called wraps this stub with `vi.spyOn`, which works the same either way.
+if (typeof HTMLElement !== 'undefined' && !HTMLElement.prototype.scrollIntoView) {
+  HTMLElement.prototype.scrollIntoView = function scrollIntoViewStub() {}
+}
+
+// Same gap, same reasoning, for Element.scrollTo -- Chat.tsx's own
+// "keep the newest turn in view" effect calls it on the chat scroll
+// container; this is the first test to actually mount Chat.tsx and
+// exercise that effect.
+if (typeof Element !== 'undefined' && !Element.prototype.scrollTo) {
+  Element.prototype.scrollTo = function scrollToStub() {}
+}
+
 // matchMedia is used by useTheme/usePwaInstall-style hooks that check
 // `prefers-color-scheme`/`prefers-reduced-motion` -- jsdom doesn't implement
 // it, so components that call it would otherwise throw in every test.
