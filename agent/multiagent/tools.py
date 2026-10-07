@@ -24,6 +24,8 @@ from analytics.forecasting import generate_forecast
 from analytics.models import ScenarioParameter
 from analytics.root_cause import investigate_root_cause
 from analytics.scenario import run_scenario
+from optimization.engine import solve_optimization_problem
+from optimization.models import OptimizationProblem
 from retrieval.retriever import extract_governing_metrics, retrieve_business_context
 
 from agent.analyst.planner import plan_subquestions
@@ -49,6 +51,10 @@ TOOL_ROOT_CAUSE_ADVANCED = "root_cause_engine_advanced"
 #: Prompt 38 (38_WHATIF_SCENARIO_ENGINE_CONTRACT.md) -- the governed
 #: What-If engine, run over one data task's own already-governed rows.
 TOOL_SCENARIO = "scenario_engine"
+#: Prompt 39 (39_OPTIMIZATION_ENGINE_CONTRACT.md) -- the governed
+#: decision-optimization engine. Self-contained (no data_task needed):
+#: an OptimizationProblem is already fully specified by its own caller.
+TOOL_OPTIMIZATION = "optimization_engine"
 
 
 def build_supervisor_registry(
@@ -131,6 +137,12 @@ def build_supervisor_registry(
             settings,
         ).model_dump()
 
+    def _optimization(payload: dict[str, Any]) -> Any:
+        problem = OptimizationProblem(**payload["problem"])
+        return solve_optimization_problem(
+            problem, tuple(payload["caller_roles"]), settings
+        ).model_dump()
+
     specs = [
         (
             TOOL_GOVERNED_SQL,
@@ -196,6 +208,26 @@ def build_supervisor_registry(
             "(modeled estimate, never observed fact).",
             ToolCategory.READ,
             _scenario,
+            Permission.ASK,
+            RetryPolicy(max_attempts=1),
+        ),
+        (
+            TOOL_OPTIMIZATION,
+            "Deterministic decision-optimization solve over a fully-specified "
+            "problem (modeled recommendation, never observed fact).",
+            ToolCategory.READ,
+            _optimization,
+            # Permission.ASK, not RUN_OPTIMIZATION, deliberately -- the identical
+            # convention TOOL_SCENARIO/TOOL_ROOT_CAUSE already establish: the
+            # registry-level gate is a pure formality every caller who can reach
+            # the supervisor at all already clears, so a denial here would be a
+            # bare, generic "tool not permitted" with no explanation (see
+            # agent.multiagent.supervisor's own ToolPermissionError handling).
+            # The *real*, specific Permission.RUN_OPTIMIZATION check happens
+            # inside optimization.validator.validate_problem itself, which
+            # optimization_handler surfaces as a properly disclosed, explained
+            # open item (OptimizationStatus.UNAUTHORIZED) -- never a silent or
+            # unexplained denial.
             Permission.ASK,
             RetryPolicy(max_attempts=1),
         ),

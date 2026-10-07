@@ -3720,6 +3720,101 @@ deepest wiring" deferral this series has used repeatedly.
 for the full inspection findings, every new module's design, the testing
 summary, and the security/tenant-isolation/performance review.
 
+### Governed Optimization Engine (Prompt 39)
+
+`optimization/` (new top-level package, a peer of `analytics/`/
+`recommendation/`, not a submodule of either) is this platform's first
+decision-optimization capability — pricing, resource allocation,
+inventory, workforce, capacity. `optimization.models.OptimizationProblem`
+is the mission's own "decision variables, objective, constraints, rules,
+source data and version" requirement as one typed, immutable value:
+`DecisionVariable` (`CONTINUOUS`/`INTEGER`/`BINARY`, bounds, unit),
+`Objective` (`MINIMIZE`/`MAXIMIZE`, linear terms, a constant),
+`Constraint` (`<=`/`>=`/`==`, linear terms, an RHS), plus descriptive
+`business_rules`/`source_data_description`/`source_columns` fields.
+**"Never let an LLM invent constraints or objectives" is structural, not
+a runtime filter**: `ObjectiveTerm`/`ConstraintTerm` (at both the engine
+and REST layer) are `(variable, coefficient)` numeric pairs referencing
+an already-declared variable by name — there is no field anywhere in
+this contract a formula/expression string could occupy.
+
+`optimization.engine.solve_optimization_problem` uses
+`scipy.optimize.linprog` (HiGHS method) — already a genuine, pinned
+direct dependency as of this prompt (was transitive via scikit-learn/
+sentence-transformers; no new dependency was added) — as the single
+solver entry point for both continuous LP and mixed-integer problems
+(via `linprog`'s own `integrality` parameter). **Sensitivity
+information (shadow prices/reduced costs) is exposed only when every
+decision variable is `CONTINUOUS`** — a mixed-integer problem's duals
+are not theoretically valid sensitivity information (a standard result
+in optimization theory), so this engine never reports one regardless of
+what the solver happens to return for the final LP relaxation. The
+sign conventions converting scipy's own internal dual values back into
+each constraint's own original shadow price were empirically verified
+against six hand-computed textbook/worked examples, not merely derived
+on paper (see `optimization.engine._shadow_price_sign`'s own docstring).
+
+**Reject invalid or unauthorized assumptions, never partially trust
+one**: `optimization.validator.validate_problem` reports every
+violation found (undeclared variable references, malformed bounds, too
+many variables/constraints, a restricted-column authorization failure)
+— one violation rejects the *entire* problem, the identical "no partial
+trust" convention `analytics.scenario.validate_scenario_parameters`
+already establishes. `OptimizationStatus.UNAUTHORIZED` (a property of
+who is asking) is kept structurally distinct from `.INFEASIBLE` (a
+property of the math) and `.INVALID` (a property of the problem's own
+structure) — never conflated.
+
+**Require authorization and audit**: a new, dedicated
+`agent.authz.Permission.RUN_OPTIMIZATION` (analyst tier+) — deliberately
+not folded into `Permission.ASK`, since a solved optimization is a
+suggested real-world decision, more consequential than a read-only
+question. Every authorization denial is audit-logged
+(`security.audit_log.log_security_event`, metadata only — never the
+problem's own coefficients/values).
+
+**Wired into the multi-agent supervisor the same way `scenario` already
+is**: a new `AgentName.OPTIMIZATION` specialist, gated on an explicit
+`OptimizationRequest` — the planner never creates one. Unlike
+`ScenarioRequest`, it carries no `data_task`: a problem is always fully
+caller-specified. **A real bug this prompt's own test suite found and
+fixed**: the new tool was first registered at the `RUN_OPTIMIZATION`
+permission tier *inside the multi-agent tool registry itself*, which
+made an unauthorized caller get a bare, unexplained "tool not permitted"
+denial instead of the engine's own richer, disclosed `UNAUTHORIZED`
+status. Fixed by registering the tool at `Permission.ASK` (a pure
+formality every caller already clears) and letting `validate_problem`'s
+own internal check be the only place `RUN_OPTIMIZATION` is actually
+enforced for this path — restoring the identical two-tier pattern
+`scenario`/`root_cause` already use.
+
+**New, standalone REST surface, `api/optimization.py`**: `POST
+/optimization/validate` and `POST /optimization/solve`. **Neither route
+ever queries a database or calls an LLM** — both take a fully-specified
+problem directly in the request body. Gated by `Settings
+.enable_optimization_engine` (404 when off), `Permission.RUN_OPTIMIZATION`,
+rate limiting, and payload bounds (`optimization_max_variables`/
+`optimization_max_constraints`).
+
+**Invariant that must not regress:** `OptimizationSolution.truth_level`
+is always `DataTruthLevel.AI_INFERENCE`, across every outcome (optimal,
+infeasible, invalid, unauthorized) — never promoted to `DATABASE_FACT`/
+`CONFIRMED_BUSINESS_TRUTH`. Locked in by
+`tests/security/test_optimization_never_presents_recommendation_as_fact.py`.
+
+**Known, disclosed limitations:** `business_rules` is descriptive
+provenance only in this pass, not a separately enforced or reusable
+constraint-template registry; no automatic integration pulls real
+baseline data into a problem's own coefficients (unlike `ScenarioRequest`,
+which does read a `data_task`'s rows); no IIS computation for infeasible
+problems; no nonlinear/quadratic objective support (LP/MILP only,
+matching `scipy.optimize.linprog`'s own scope); no persistence/
+governance/dashboard for a solved optimization.
+
+**Read [`39_OPTIMIZATION_ENGINE_CONTRACT.md`](39_OPTIMIZATION_ENGINE_CONTRACT.md)**
+for the full inspection findings, every new module's design, the testing
+summary, and the security/tenant-isolation/performance review.
+
 ## How to run
 
 See `README.md` for full setup. Short version:

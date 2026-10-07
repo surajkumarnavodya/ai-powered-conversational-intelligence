@@ -59,6 +59,8 @@ const BACKEND_ROUTES = [
   // front rather than found the hard way, the same recurring dev-proxy gap
   // every new backend prefix since Prompt 26 has needed fixed.
   '/scenarios',
+  // Optimization Engine (api/optimization.py, Prompt 39) -- same reason.
+  '/optimization',
 ]
 
 export default defineConfig({

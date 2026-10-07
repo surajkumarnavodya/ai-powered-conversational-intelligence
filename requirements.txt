@@ -72,6 +72,19 @@ pymupdf==1.28.2
 # Python 3.14 wheels.
 pandas==2.3.3
 
+# Deterministic LP/MILP solving for the What-If/Optimization engines
+# (analytics/scenario.py's own forecast path is unrelated; this is
+# optimization/engine.py, Prompt 39 -- scipy.optimize.linprog, HiGHS
+# method). Already present transitively (via scikit-learn/
+# sentence-transformers' own ML dependencies, used by embeddings/media
+# search) but pinned explicitly now that it's a genuine direct import --
+# the same "was transitive, now direct, so pin it" pattern pymupdf/
+# defusedxml/pydantic below already establish. 1.18.1 is simply the
+# version already resolved and verified working in this environment;
+# no specific CVE/compatibility reason drove picking it like pandas'
+# own pin above.
+scipy==1.18.1
+
 # Pydantic itself was already present transitively (via fastapi/langgraph/
 # chromadb) but unpinned; pinned explicitly now that config/settings.py
 # (pydantic_settings.BaseSettings), api/schemas.py, and every boundary

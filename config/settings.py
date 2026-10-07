@@ -2097,6 +2097,21 @@ class Settings(BaseSettings):
     # sends" philosophy for a different resource.
     scenario_max_parameters: int = Field(default=20, gt=0)
 
+    # --- Prompt 39 (39_OPTIMIZATION_ENGINE_CONTRACT.md): optimization/'s own
+    # tunables -- the governed decision-optimization engine (pricing/resource/
+    # inventory/workforce/capacity). Pure, deterministic, zero-I/O
+    # scipy.optimize.linprog (HiGHS) over a caller-supplied, fully-specified
+    # problem -- never a database read, never an LLM call. Gates both
+    # api/optimization.py's two routes (404 when off) and the multi-agent
+    # supervisor's own optimization specialist.
+    enable_optimization_engine: bool = True
+    # Hard caps on one problem's own size -- bound this pure-compute
+    # endpoint's worst-case cost regardless of payload size, mirroring
+    # scenario_max_parameters/max_result_rows' identical "cap regardless of
+    # what a caller sends" philosophy for a different resource.
+    optimization_max_variables: int = Field(default=50, gt=0)
+    optimization_max_constraints: int = Field(default=100, gt=0)
+
     # Prompt 19 (19_QUERY_STORE_PERFORMANCE_CONTRACT.md): db.query_store's
     # own tunables -- a no-op for every DB_TYPE other than "mssql"
     # regardless of these values (see that module's own docstring).

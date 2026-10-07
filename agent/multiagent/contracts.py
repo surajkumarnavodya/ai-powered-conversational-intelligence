@@ -31,6 +31,7 @@ class AgentName(str, Enum):
     FORECAST = "forecast"
     ROOT_CAUSE = "root_cause"
     SCENARIO = "scenario"
+    OPTIMIZATION = "optimization"
     RECOMMENDATION = "recommendation"
 
 

@@ -46,6 +46,17 @@ anywhere else at the time it was written:
   swapped via pydantic) and at the text level (every claim string,
   including through the one live multi-agent handler), that a
   hypothetical scenario value is never labeled as an observed fact.
+- `test_optimization_never_presents_recommendation_as_fact.py` — Prompt
+  39 (`39_OPTIMIZATION_ENGINE_CONTRACT.md`): spans `optimization/models.py`,
+  `optimization/engine.py`, `api/optimization_schemas.py`, and
+  `agent/multiagent/agents.py`'s `optimization_handler` together. Proves
+  structurally (every objective/constraint term, at both the engine and
+  REST layer, has exactly two fields -- `variable`/`coefficient`, never a
+  formula string an LLM could author), behaviorally (every outcome --
+  optimal, infeasible, invalid, unauthorized -- stays `AI_INFERENCE`,
+  never promoted), and at the text level through the one live multi-agent
+  handler, that a solved optimization is never presented as an observed
+  fact.
 
 Before adding a new file here, check whether the scenario already has
 coverage under its own module's `tests/test_<module>.py` first — this

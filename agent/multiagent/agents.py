@@ -40,6 +40,7 @@ from agent.multiagent.tools import (
     TOOL_FORECAST,
     TOOL_GOVERNED_SQL,
     TOOL_LLM_PLAN,
+    TOOL_OPTIMIZATION,
     TOOL_ROOT_CAUSE,
     TOOL_ROOT_CAUSE_ADVANCED,
     TOOL_SCENARIO,
@@ -106,6 +107,13 @@ SPECS: dict[AgentName, AgentSpec] = {
         name=AgentName.SCENARIO,
         kind="engine",
         allowed_tools=frozenset({TOOL_SCENARIO}),
+        max_truth_level=DataTruthLevel.AI_INFERENCE,
+        cost_units=1,
+    ),
+    AgentName.OPTIMIZATION: AgentSpec(
+        name=AgentName.OPTIMIZATION,
+        kind="engine",
+        allowed_tools=frozenset({TOOL_OPTIMIZATION}),
         max_truth_level=DataTruthLevel.AI_INFERENCE,
         cost_units=1,
     ),
@@ -621,6 +629,64 @@ def scenario_handler(ctx: AgentContext, task: AgentTask) -> AgentOutput:
     return AgentOutput(agent=task.agent, task_id=task.id, status="ok", claims=claims)
 
 
+def optimization_handler(ctx: AgentContext, task: AgentTask) -> AgentOutput:
+    """Prompt 39 (39_OPTIMIZATION_ENGINE_CONTRACT.md): solves a governed
+    decision-optimization problem. Gated, like `scenario`/`root_cause`,
+    on an explicit caller-supplied request
+    (`agent.multiagent.supervisor.OptimizationRequest`) -- the planner
+    never creates one, a model proposing constraints/an objective is not
+    authority to solve them. Self-contained (no `data_task` needed): the
+    problem is already fully specified by its own caller, not derived
+    from a `sql_data` task's rows.
+
+    `caller_roles` is never included in the dict passed to `ctx.call` --
+    the registry injects the real, already-authorized roles
+    automatically (see `scenario_handler`'s own docstring for the full
+    reasoning, identical here).
+    """
+    result = ctx.call(TOOL_OPTIMIZATION, {"problem": task.params["problem"]})
+    if not result.success:
+        return _failed(task, "optimization tool failed")
+    output = result.output
+    status = output["status"]
+    if status != "optimal":
+        reasons = "; ".join(output["infeasibility_reasons"]) or "no solution was found"
+        return AgentOutput(
+            agent=task.agent,
+            task_id=task.id,
+            status="ok",
+            open_items=(f"Optimization not solved ({status}): {reasons}.",),
+        )
+    claims = [
+        Claim(
+            agent=task.agent,
+            task_id=task.id,
+            text=(
+                f"Optimal solution for {output['name']}: objective value "
+                f"{output['objective_value']:.2f} (modeled recommendation, not an observed fact)."
+            ),
+            truth_level=DataTruthLevel.AI_INFERENCE,
+            key=f"optimization_objective:{output['problem_id']}",
+            value=output["objective_value"],
+        )
+    ]
+    claims.extend(
+        Claim(
+            agent=task.agent,
+            task_id=task.id,
+            text=(
+                f"Recommended {variable['variable']} = {variable['value']:.2f} "
+                "(modeled recommendation, not an observed fact)."
+            ),
+            truth_level=DataTruthLevel.AI_INFERENCE,
+            key=f"optimization_variable:{output['problem_id']}:{variable['variable']}",
+            value=variable["value"],
+        )
+        for variable in output["variables"]
+    )
+    return AgentOutput(agent=task.agent, task_id=task.id, status="ok", claims=tuple(claims))
+
+
 def recommendation_handler(ctx: AgentContext, task: AgentTask) -> AgentOutput:
     """Reuses the analyst's own recommend node, unchanged, over this turn's
     evidence and candidates. Nothing is recomputed here."""
@@ -663,6 +729,7 @@ HANDLERS: dict[AgentName, Handler] = {
     AgentName.FORECAST: forecast_handler,
     AgentName.ROOT_CAUSE: root_cause_handler,
     AgentName.SCENARIO: scenario_handler,
+    AgentName.OPTIMIZATION: optimization_handler,
     AgentName.RECOMMENDATION: recommendation_handler,
 }
 

@@ -59,6 +59,8 @@ never fail open on an unrecognized/misspelled role.
   `api/media_search.py`, orchestrator nodes).
 - Schema refresh and the golden-example feedback write
   (`api/main.py`).
+- Decision-optimization solving (`api/optimization.py`,
+  `agent/multiagent/agents.py`'s `optimization_handler`).
 """
 
 from __future__ import annotations
@@ -93,6 +95,15 @@ class Permission(str, Enum):
     GOLDEN_EXAMPLE_WRITE = "golden_example_write"
     VOICE_USE = "voice_use"
     ADMIN_CONFIG = "admin_config"
+    #: Prompt 39 (39_OPTIMIZATION_ENGINE_CONTRACT.md) -- solving a
+    #: decision-optimization problem (pricing/resource/inventory/
+    #: workforce/capacity). Deliberately its own permission, not folded
+    #: into ASK/EXECUTE_SQL: unlike a read-only question or a SQL SELECT,
+    #: an optimization result is a suggested real-world decision (a
+    #: price, a shift schedule, an allocation) -- a more consequential
+    #: capability than plain viewing/asking, granted starting at the
+    #: analyst tier, same reasoning VIEW_RESTRICTED_COLUMNS already uses.
+    RUN_OPTIMIZATION = "run_optimization"
 
 
 _VIEWER: frozenset[Permission] = frozenset(
@@ -108,6 +119,7 @@ _ANALYST: frozenset[Permission] = _USER | {
     Permission.DOCUMENTS_READ_SENSITIVE,
     Permission.POLICY_RAG_QUERY,
     Permission.MEDIA_GENERATE,
+    Permission.RUN_OPTIMIZATION,
 }
 _ADMIN: frozenset[Permission] = _ANALYST | {
     Permission.DOCUMENTS_WRITE,

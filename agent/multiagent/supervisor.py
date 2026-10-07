@@ -8,6 +8,7 @@ the supervisor, which decides what runs next.
         -> for each sql_data task:  sql_data -> governance(rows) -> analytics -> forecast*
         -> root_cause* (explicit comparison pairs only)
         -> scenario* (explicit what-if requests only)
+        -> optimization* (explicit problems only)
         -> recommendation
         -> validate -> resolve conflicts -> report
 
@@ -66,6 +67,7 @@ from agent.provenance import DataTruthLevel
 from agent.state import ConversationExchange
 from agent.tools.types import ToolPermissionError
 from config.settings import Settings, get_settings
+from optimization.models import OptimizationProblem
 from security.audit_log import log_security_event
 
 logger = logging.getLogger(__name__)
@@ -126,6 +128,26 @@ class ScenarioRequest:
     dimension_columns: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class OptimizationRequest:
+    """An explicit decision-optimization problem the caller asks to be
+    solved -- Prompt 39 (`39_OPTIMIZATION_ENGINE_CONTRACT.md`). The
+    identical "explicit, caller-supplied, the planner never creates one"
+    gate `RootCausePair`/`ScenarioRequest` already establish: a model
+    proposing a constraint or an objective is not authority to solve it
+    -- see `optimization/models.py`'s own module docstring for why that
+    is structurally true of the problem's own typed shape, not just
+    this gate.
+
+    Unlike `RootCausePair`/`ScenarioRequest`, this carries no `data_task`
+    -- an `OptimizationProblem` is already fully specified by its own
+    caller; this specialist never derives it from a `sql_data` task's
+    rows.
+    """
+
+    problem: OptimizationProblem
+
+
 @dataclass
 class SupervisedResult:
     status: str
@@ -158,6 +180,7 @@ def run_supervised_analysis(
     conversation_history: list[ConversationExchange] | None = None,
     root_cause_pairs: Sequence[RootCausePair] = (),
     scenario_requests: Sequence[ScenarioRequest] = (),
+    optimization_requests: Sequence[OptimizationRequest] = (),
     handlers: dict[AgentName, Handler] | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> SupervisedResult:
@@ -417,7 +440,18 @@ def run_supervised_analysis(
             )
         )
 
-    # 7. Recommendations, over whatever the data tasks produced.
+    # 7. Decision optimizations, only for explicit problems the caller asked
+    #    to be solved -- self-contained, no data_task needed.
+    for index, opt_request in enumerate(optimization_requests, start=1):
+        dispatch(
+            AgentTask(
+                id=f"O{index}",
+                agent=AgentName.OPTIMIZATION,
+                params={"problem": opt_request.problem.model_dump()},
+            )
+        )
+
+    # 8. Recommendations, over whatever the data tasks produced.
     if workspace.slots:
         dispatch(AgentTask(id="REC", agent=AgentName.RECOMMENDATION))
 
