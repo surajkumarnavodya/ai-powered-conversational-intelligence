@@ -9,7 +9,13 @@ guard, the tool registry, the budgets and the conflict rules all run for real.
 from __future__ import annotations
 
 import pytest
-from analytics.models import ScenarioChangeType, ScenarioParameter
+from analytics.models import (
+    PredictiveDomain,
+    PredictiveModelType,
+    PredictiveTaskType,
+    ScenarioChangeType,
+    ScenarioParameter,
+)
 
 import agent.analyst.graph as analyst_graph
 import agent.multiagent.supervisor as supervisor
@@ -26,6 +32,7 @@ from agent.multiagent.policy import (
 from agent.multiagent.resolution import resolve_conflicts, validate_outputs
 from agent.multiagent.supervisor import (
     OptimizationRequest,
+    PredictiveRequest,
     RootCausePair,
     ScenarioRequest,
     run_supervised_analysis,
@@ -1010,6 +1017,124 @@ class TestOptimizationAndWorkspace:
         opt_claims = [c for c in result.claims if c.agent == AgentName.OPTIMIZATION]
         assert opt_claims == []
         assert any("unauthorized" in item.lower() for item in result.open_items)
+
+
+def _demand_rows() -> list[tuple]:
+    """The same hand-verified clean regression dataset
+    `tests/test_predictive_analytics.py::TestRegression` already pins:
+    y = 2*x1 + 3*x2 + 5, non-collinear features -- known coefficients
+    [2.0, 3.0], intercept 5.0, R2 = 1.0."""
+    rows = []
+    for i in range(1, 41):
+        x1 = float(i)
+        x2 = float((i * 7) % 13)
+        rows.append((x1, x2, 2 * x1 + 3 * x2 + 5.0))
+    return rows
+
+
+class TestPredictiveAndWorkspace:
+    """Prompt 40 (`40_PREDICTIVE_ANALYTICS_CONTRACT.md`): the governed
+    predictive-analytics specialist, gated on an explicit caller-
+    supplied `PredictiveRequest` -- the planner never creates one."""
+
+    def test_predictive_runs_only_for_an_explicit_request(self, monkeypatch, sql):
+        by_q = {"Revenue by region?": _sql_final(("x1", "x2", "y"), _demand_rows())}
+        monkeypatch.setattr(tools, "run_agent", FakeSql(by_question=by_q))
+
+        result = _turn(
+            predictive_requests=[
+                PredictiveRequest(
+                    data_task="Q1",
+                    model_id="pm1",
+                    name="Demand model",
+                    domain=PredictiveDomain.DEMAND,
+                    task_type=PredictiveTaskType.REGRESSION,
+                    model_type=PredictiveModelType.LINEAR_REGRESSION,
+                    feature_columns=("x1", "x2"),
+                    target_column="y",
+                    predict_rows=((50.0, 2.0),),
+                )
+            ]
+        )
+
+        pred_claims = [c for c in result.claims if c.agent == AgentName.PREDICTIVE]
+        assert pred_claims
+        assert all(c.truth_level == DataTruthLevel.AI_INFERENCE for c in pred_claims)
+        for claim in pred_claims:
+            assert "modeled estimate" in claim.text
+            assert "not an observed fact" in claim.text
+        prediction_claim = next(c for c in pred_claims if "predictive_prediction" in c.key)
+        assert "111.0" in prediction_claim.text
+
+    def test_predictive_is_never_attempted_without_an_explicit_request(self, sql):
+        result = _turn()
+
+        assert [t for t in result.trace if t["agent"] == "predictive"] == []
+
+    def test_insufficient_data_is_disclosed_as_an_open_item_not_a_claim(self, sql):
+        # The default FakeSql fixture returns only 3 rows -- far below the
+        # data-sufficiency floor.
+        result = _turn(
+            predictive_requests=[
+                PredictiveRequest(
+                    data_task="Q1",
+                    model_id="pm2",
+                    name="Too little data",
+                    domain=PredictiveDomain.OTHER,
+                    task_type=PredictiveTaskType.REGRESSION,
+                    model_type=PredictiveModelType.LINEAR_REGRESSION,
+                    feature_columns=("total",),
+                    target_column="total",
+                )
+            ]
+        )
+
+        pred_claims = [c for c in result.claims if c.agent == AgentName.PREDICTIVE]
+        assert pred_claims == []
+        assert any("Predictive model not trained" in item for item in result.open_items)
+
+    def test_a_predictive_request_cannot_smuggle_identity_through_its_own_tool_call(
+        self, monkeypatch, sql
+    ):
+        """The identical guarantee `TestScenarioAndWorkspace`/
+        `TestMaliciousToolRequests` already prove for other tools --
+        `caller_roles` is injected by the registry itself, never
+        settable by the handler's own payload."""
+        by_q = {"Revenue by region?": _sql_final(("x1", "x2", "y"), _demand_rows())}
+        monkeypatch.setattr(tools, "run_agent", FakeSql(by_question=by_q))
+        captured: dict = {}
+        real_call = tools.build_supervisor_registry
+
+        def spying_registry(**kwargs):
+            registry = real_call(**kwargs)
+            original_execute = registry.execute
+
+            def spying_execute(name, input_data, **exec_kwargs):
+                if name == "predictive_engine":
+                    captured["input_data_keys"] = set(input_data)
+                return original_execute(name, input_data, **exec_kwargs)
+
+            registry.execute = spying_execute  # type: ignore[method-assign]
+            return registry
+
+        monkeypatch.setattr(supervisor, "build_supervisor_registry", spying_registry)
+
+        _turn(
+            predictive_requests=[
+                PredictiveRequest(
+                    data_task="Q1",
+                    model_id="pm3",
+                    name="Demand model",
+                    domain=PredictiveDomain.DEMAND,
+                    task_type=PredictiveTaskType.REGRESSION,
+                    model_type=PredictiveModelType.LINEAR_REGRESSION,
+                    feature_columns=("x1", "x2"),
+                    target_column="y",
+                )
+            ]
+        )
+
+        assert "caller_roles" not in captured.get("input_data_keys", {"caller_roles"})
 
 
 class TestWorkspaceIsolation:

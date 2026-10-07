@@ -9,6 +9,7 @@ the supervisor, which decides what runs next.
         -> root_cause* (explicit comparison pairs only)
         -> scenario* (explicit what-if requests only)
         -> optimization* (explicit problems only)
+        -> predictive* (explicit training requests only)
         -> recommendation
         -> validate -> resolve conflicts -> report
 
@@ -43,7 +44,12 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from analytics.models import ScenarioParameter
+from analytics.models import (
+    PredictiveDomain,
+    PredictiveModelType,
+    PredictiveTaskType,
+    ScenarioParameter,
+)
 
 from agent.input_guard import check_input, rejection_message
 from agent.multiagent.agents import (
@@ -148,6 +154,52 @@ class OptimizationRequest:
     problem: OptimizationProblem
 
 
+@dataclass(frozen=True)
+class PredictiveRequest:
+    """An explicit predictive-model training (and, optionally, scoring)
+    request the caller asks for -- Prompt 40
+    (`40_PREDICTIVE_ANALYTICS_CONTRACT.md`). The identical "explicit,
+    caller-supplied, the planner never creates one" gate `ScenarioRequest`
+    already establishes: a model proposing which columns to train a
+    predictor on is not authority to do so.
+
+    Like `ScenarioRequest` (and unlike `OptimizationRequest`), this
+    carries a `data_task` -- the training data comes from one
+    `sql_data` subquestion's own already-governed rows, never a second
+    query or caller-side raw data.
+
+    Attributes:
+        data_task: Which `sql_data` subquestion's own already-governed
+            rows to train on.
+        model_id: Caller-supplied identifier for this training run.
+        name: A short, human-readable model name.
+        domain: `analytics.models.PredictiveDomain`.
+        task_type: `analytics.models.PredictiveTaskType`.
+        model_type: `analytics.models.PredictiveModelType` -- must match
+            `task_type`.
+        feature_columns: Which columns to train on.
+        target_column: What to predict.
+        predict_rows: Optional new, unlabeled rows (same column layout
+            as the training data) to score with the freshly-trained
+            model.
+        test_fraction: Fraction of the training data held out for
+            evaluation.
+        random_seed: The deterministic train/test split seed.
+    """
+
+    data_task: str
+    model_id: str
+    name: str
+    domain: PredictiveDomain
+    task_type: PredictiveTaskType
+    model_type: PredictiveModelType
+    feature_columns: tuple[str, ...]
+    target_column: str
+    predict_rows: tuple[tuple, ...] = ()
+    test_fraction: float = 0.2
+    random_seed: int = 0
+
+
 @dataclass
 class SupervisedResult:
     status: str
@@ -181,6 +233,7 @@ def run_supervised_analysis(
     root_cause_pairs: Sequence[RootCausePair] = (),
     scenario_requests: Sequence[ScenarioRequest] = (),
     optimization_requests: Sequence[OptimizationRequest] = (),
+    predictive_requests: Sequence[PredictiveRequest] = (),
     handlers: dict[AgentName, Handler] | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> SupervisedResult:
@@ -451,7 +504,30 @@ def run_supervised_analysis(
             )
         )
 
-    # 8. Recommendations, over whatever the data tasks produced.
+    # 8. Predictive models, only for explicit requests the caller asked for --
+    #    trained over one data task's own already-governed rows.
+    for index, pred_request in enumerate(predictive_requests, start=1):
+        dispatch(
+            AgentTask(
+                id=f"P{index}",
+                agent=AgentName.PREDICTIVE,
+                params={
+                    "data_task": pred_request.data_task,
+                    "model_id": pred_request.model_id,
+                    "name": pred_request.name,
+                    "domain": pred_request.domain.value,
+                    "task_type": pred_request.task_type.value,
+                    "model_type": pred_request.model_type.value,
+                    "feature_columns": list(pred_request.feature_columns),
+                    "target_column": pred_request.target_column,
+                    "predict_rows": [list(row) for row in pred_request.predict_rows],
+                    "test_fraction": pred_request.test_fraction,
+                    "random_seed": pred_request.random_seed,
+                },
+            )
+        )
+
+    # 9. Recommendations, over whatever the data tasks produced.
     if workspace.slots:
         dispatch(AgentTask(id="REC", agent=AgentName.RECOMMENDATION))
 

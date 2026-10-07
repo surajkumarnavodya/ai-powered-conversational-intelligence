@@ -3815,6 +3815,95 @@ governance/dashboard for a solved optimization.
 for the full inspection findings, every new module's design, the testing
 summary, and the security/tenant-isolation/performance review.
 
+### Governed Predictive Analytics engine (Prompt 40)
+
+`analytics/predictive.py` expands `analytics.forecasting` (time-series
+projection) into general-purpose, governed regression and
+classification — demand, churn, risk. A sibling module within the
+existing `analytics/` package (not a new top-level package, unlike
+`optimization/`), since this is explicitly "expand forecasting," not a
+structurally new problem domain. `train_predictive_model` fits one of a
+small, closed, reviewed model catalog
+(`analytics.models.PredictiveModelType.LINEAR_REGRESSION`/
+`LOGISTIC_REGRESSION`) — never an arbitrary class name a caller (or an
+LLM) could inject — over a caller-supplied dataset, never touching a
+database or calling an LLM itself.
+
+**Every governance control the mission names, each independently
+tested**: data sufficiency (`Settings.predictive_min_training_rows`/
+`predictive_min_rows_per_feature`/`predictive_min_rows_per_class`);
+leakage checks (`_detect_leakage` — an identical or highly-correlated
+feature is rejected by default, `Settings
+.predictive_reject_on_leakage`, always disclosed either way);
+train/test separation (every metric computed only on a held-out split);
+feature validation (numeric-only in this engine version, a disclosed
+scope boundary); versioning (`PredictiveModelMetadata`, including a
+`data_fingerprint`/`model_fingerprint` pair, `sha256`-hashed the
+identical way `db.schema_introspection.get_schema_fingerprint` already
+hashes a schema); and authorization (a restricted feature/target column
+is rejected unless the caller holds `Permission
+.VIEW_RESTRICTED_COLUMNS`, the same independently re-derived pattern
+`analytics.scenario`/`optimization.validator` already establish).
+
+**"Test reproducibility" is structural, not incidental**: the train/test
+split is a deterministic, hash-based ordering
+(`sha256(f"{seed}:{index}")`), never Python's or numpy's own global
+random state — the same data and seed always produce byte-identical
+fingerprints, coefficients, and metrics, verified directly.
+
+**Uncertainty is exposed per task type**: a regression prediction
+carries a residual-based prediction interval (the same z-based
+convention `analytics.forecasting.ForecastPoint` already establishes); a
+classification prediction carries the full per-class probability
+distribution.
+
+**"Store model/data fingerprints, features and metrics" is satisfied via
+the typed result object plus an audit-log entry
+(`security.audit_log.log_security_event`, `"predictive_model_trained"`,
+metadata/fingerprints only, never raw data or coefficients) — a
+deliberate, disclosed choice, not a new database table.** This engine
+(like every other one in this series) has no persisted model registry in
+this pass; every call is self-contained (train and, optionally, predict
+happen together, in one deterministic, stateless invocation).
+
+**`analytics.predictive.detect_feature_drift`** — a standalone,
+two-dataset comparison (two-sample Kolmogorov-Smirnov test,
+`scipy.stats.ks_2samp`, already a direct dependency as of Prompt 39) per
+feature, flagged at `Settings.predictive_drift_p_value_threshold`.
+
+**Wired into the multi-agent supervisor the same way `scenario` already
+is**: a new `AgentName.PREDICTIVE` specialist, gated on an explicit
+`PredictiveRequest` (carries a `data_task`, like `ScenarioRequest`,
+unlike the self-contained `OptimizationRequest`) — the planner never
+creates one. Registered at `Permission.ASK` at the registry level (the
+real, specific authorization check happens inside the engine itself) --
+this prompt reused Prompt 39's own found-and-fixed two-tier pattern from
+the start, rather than rediscovering the same bug.
+
+**New, standalone REST surface, `api/predictive.py`**: `POST
+/predictive/train` and `POST /predictive/drift`. **Neither route ever
+queries a database or calls an LLM.** Gated by `Settings
+.enable_predictive_analytics` (404 when off), `Permission.ASK`, rate
+limiting, and payload bounds.
+
+**Invariant that must not regress:** `PredictiveModelResult.truth_level`
+is always `DataTruthLevel.AI_INFERENCE`, across every outcome (trained
+regression/classification, insufficient data, invalid, unauthorized,
+leakage detected) — never promoted to `DATABASE_FACT`/
+`CONFIRMED_BUSINESS_TRUTH`. Locked in by
+`tests/security/test_predictive_never_presents_prediction_as_fact.py`.
+
+**Known, disclosed limitations:** no persisted model registry (every
+call trains fresh); no categorical feature encoding (numeric features
+only); no automatic integration feeding a predictive model's own
+coefficients into `analytics.scenario`/`optimization.engine`;
+multi-class classification discloses only the first class's coefficient
+vector; no nonlinear model support.
+
+**Read [`40_PREDICTIVE_ANALYTICS_CONTRACT.md`](40_PREDICTIVE_ANALYTICS_CONTRACT.md)**
+for the full inspection findings, every new module's design, the testing
+summary, and the security/tenant-isolation/performance review.
+
 ## How to run
 
 See `README.md` for full setup. Short version:

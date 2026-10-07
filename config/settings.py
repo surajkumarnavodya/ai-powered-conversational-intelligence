@@ -2112,6 +2112,44 @@ class Settings(BaseSettings):
     optimization_max_variables: int = Field(default=50, gt=0)
     optimization_max_constraints: int = Field(default=100, gt=0)
 
+    # --- Prompt 40 (40_PREDICTIVE_ANALYTICS_CONTRACT.md): analytics.predictive's
+    # own tunables -- the governed Predictive Analytics engine (demand/churn/
+    # risk regression and classification), expanding analytics.forecasting.
+    # Pure, deterministic-given-a-seed, zero-I/O scikit-learn (LinearRegression/
+    # LogisticRegression) over caller-supplied (never database-fetched by this
+    # module itself) rows. Gates both api/predictive.py's two routes (404 when
+    # off) and the multi-agent supervisor's own predictive specialist.
+    enable_predictive_analytics: bool = True
+    # Data-sufficiency floor: the larger of this absolute minimum and
+    # predictive_min_rows_per_feature * len(feature_columns) must be met
+    # before any split or fit is attempted.
+    predictive_min_training_rows: int = Field(default=20, gt=0)
+    predictive_min_rows_per_feature: int = Field(default=10, gt=0)
+    # Classification only: every distinct class must have at least this many
+    # rows in the *whole* dataset (before the train/test split) -- otherwise
+    # a stratified split and/or a held-out evaluation of that class would be
+    # meaningless.
+    predictive_min_rows_per_class: int = Field(default=5, gt=0)
+    # A feature whose correlation with the target is at or above this is
+    # flagged as likely leakage (analytics.predictive._detect_leakage).
+    predictive_leakage_correlation_threshold: float = Field(default=0.98, gt=0.0, le=1.0)
+    # True (the default): a detected leakage candidate is a hard rejection
+    # (PredictiveModelStatus.LEAKAGE_DETECTED). False: training still runs,
+    # with every finding disclosed in PredictiveModelResult.leakage_findings
+    # regardless either way -- an operator-chosen strictness level, the
+    # identical shape Settings.scenario_reject_unrealistic already uses.
+    predictive_reject_on_leakage: bool = True
+    # analytics.predictive.detect_feature_drift's own significance level --
+    # a feature is flagged drifted when its two-sample KS-test p-value is
+    # below this.
+    predictive_drift_p_value_threshold: float = Field(default=0.05, gt=0.0, lt=1.0)
+    # Hard caps on one training request's own size -- bound this pure-compute
+    # endpoint's worst-case cost regardless of payload size, mirroring
+    # optimization_max_variables' identical "cap regardless of what a caller
+    # sends" philosophy for a different resource.
+    predictive_max_features: int = Field(default=20, gt=0)
+    predictive_max_predict_rows: int = Field(default=200, gt=0)
+
     # Prompt 19 (19_QUERY_STORE_PERFORMANCE_CONTRACT.md): db.query_store's
     # own tunables -- a no-op for every DB_TYPE other than "mssql"
     # regardless of these values (see that module's own docstring).

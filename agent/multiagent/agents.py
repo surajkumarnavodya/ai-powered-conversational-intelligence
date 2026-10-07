@@ -41,6 +41,7 @@ from agent.multiagent.tools import (
     TOOL_GOVERNED_SQL,
     TOOL_LLM_PLAN,
     TOOL_OPTIMIZATION,
+    TOOL_PREDICTIVE,
     TOOL_ROOT_CAUSE,
     TOOL_ROOT_CAUSE_ADVANCED,
     TOOL_SCENARIO,
@@ -114,6 +115,13 @@ SPECS: dict[AgentName, AgentSpec] = {
         name=AgentName.OPTIMIZATION,
         kind="engine",
         allowed_tools=frozenset({TOOL_OPTIMIZATION}),
+        max_truth_level=DataTruthLevel.AI_INFERENCE,
+        cost_units=1,
+    ),
+    AgentName.PREDICTIVE: AgentSpec(
+        name=AgentName.PREDICTIVE,
+        kind="engine",
+        allowed_tools=frozenset({TOOL_PREDICTIVE}),
         max_truth_level=DataTruthLevel.AI_INFERENCE,
         cost_units=1,
     ),
@@ -687,6 +695,95 @@ def optimization_handler(ctx: AgentContext, task: AgentTask) -> AgentOutput:
     return AgentOutput(agent=task.agent, task_id=task.id, status="ok", claims=tuple(claims))
 
 
+def predictive_handler(ctx: AgentContext, task: AgentTask) -> AgentOutput:
+    """Prompt 40 (40_PREDICTIVE_ANALYTICS_CONTRACT.md): trains (and,
+    when requested, scores new rows with) a governed predictive model
+    over one `sql_data` task's own already-governed rows -- never a
+    second query, never caller-side raw data. Gated, like `scenario`
+    (which also reads a `data_task`'s rows), on an explicit caller-
+    supplied request (`agent.multiagent.supervisor.PredictiveRequest`)
+    -- the planner never creates one, a model proposing which columns to
+    train on is not authority to do so.
+
+    `caller_roles` is never included in the dict passed to `ctx.call` --
+    the registry injects the real, already-authorized roles
+    automatically (see `scenario_handler`'s own docstring for the full
+    reasoning, identical here).
+    """
+    slot = ctx.workspace.slots[task.params["data_task"]]
+    if slot.governed_rows is None or not slot.columns:
+        return _skipped(task, "no governed rows to train a predictive model against")
+    result = ctx.call(
+        TOOL_PREDICTIVE,
+        {
+            "model_id": task.params["model_id"],
+            "name": task.params["name"],
+            "domain": task.params["domain"],
+            "task_type": task.params["task_type"],
+            "model_type": task.params["model_type"],
+            "columns": slot.columns,
+            "rows": slot.governed_rows,
+            "feature_columns": task.params["feature_columns"],
+            "target_column": task.params["target_column"],
+            "predict_rows": task.params.get("predict_rows"),
+            "test_fraction": task.params.get("test_fraction", 0.2),
+            "random_seed": task.params.get("random_seed", 0),
+        },
+    )
+    if not result.success:
+        return _failed(task, "predictive tool failed")
+    output = result.output
+    if output["status"] != "trained":
+        reasons = "; ".join(output["rejection_reasons"]) or "no model was trained"
+        return AgentOutput(
+            agent=task.agent,
+            task_id=task.id,
+            status="ok",
+            open_items=(f"Predictive model not trained ({output['status']}): {reasons}.",),
+        )
+
+    if output["regression_metrics"]:
+        metrics = output["regression_metrics"]
+        metrics_text = (
+            f"MAE={metrics['mae']:.3f}, RMSE={metrics['rmse']:.3f}, R2={metrics['r2']:.3f}"
+        )
+    else:
+        metrics = output["classification_metrics"]
+        metrics_text = f"accuracy={metrics['accuracy']:.3f}, F1={metrics['f1']:.3f}"
+
+    grounded = (slot.row_evidence_id,) if slot.row_evidence_id else ()
+    claims = [
+        Claim(
+            agent=task.agent,
+            task_id=task.id,
+            text=(
+                f"Trained {output['name']} ({metrics_text}, evaluated on a held-out test "
+                "split) -- a modeled estimate from historical data, not an observed fact."
+            ),
+            truth_level=DataTruthLevel.AI_INFERENCE,
+            key=f"predictive_model:{output['model_id']}",
+            value=output["metadata"]["model_fingerprint"],
+            grounded_in=grounded,
+        )
+    ]
+    claims.extend(
+        Claim(
+            agent=task.agent,
+            task_id=task.id,
+            text=(
+                f"Predicted {prediction['value']} for the requested row -- a modeled "
+                "estimate, not an observed fact."
+            ),
+            truth_level=DataTruthLevel.AI_INFERENCE,
+            key=f"predictive_prediction:{output['model_id']}:{prediction['index']}",
+            value=prediction["value"],
+            grounded_in=grounded,
+        )
+        for prediction in output["predictions"]
+    )
+    return AgentOutput(agent=task.agent, task_id=task.id, status="ok", claims=tuple(claims))
+
+
 def recommendation_handler(ctx: AgentContext, task: AgentTask) -> AgentOutput:
     """Reuses the analyst's own recommend node, unchanged, over this turn's
     evidence and candidates. Nothing is recomputed here."""
@@ -730,6 +827,7 @@ HANDLERS: dict[AgentName, Handler] = {
     AgentName.ROOT_CAUSE: root_cause_handler,
     AgentName.SCENARIO: scenario_handler,
     AgentName.OPTIMIZATION: optimization_handler,
+    AgentName.PREDICTIVE: predictive_handler,
     AgentName.RECOMMENDATION: recommendation_handler,
 }
 

@@ -57,6 +57,19 @@ anywhere else at the time it was written:
   never promoted), and at the text level through the one live multi-agent
   handler, that a solved optimization is never presented as an observed
   fact.
+- `test_predictive_never_presents_prediction_as_fact.py` — Prompt 40
+  (`40_PREDICTIVE_ANALYTICS_CONTRACT.md`): the identical
+  cross-cutting-invariant pattern this directory's two prior engine
+  prompts already established, applied to the Predictive Analytics
+  engine -- spans `analytics/models.py`, `analytics/predictive.py`, and
+  `agent/multiagent/agents.py`'s `predictive_handler` together. Proves
+  structurally (`PredictiveModelType` is a closed, reviewed, two-member
+  enum -- never an arbitrary or LLM-authored model class), behaviorally
+  (every outcome -- trained regression/classification, insufficient
+  data, invalid, unauthorized, leakage detected -- stays `AI_INFERENCE`,
+  never promoted), and at the text level through the one live
+  multi-agent handler, that a prediction is never presented as an
+  observed fact.
 
 Before adding a new file here, check whether the scenario already has
 coverage under its own module's `tests/test_<module>.py` first — this

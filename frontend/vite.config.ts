@@ -61,6 +61,8 @@ const BACKEND_ROUTES = [
   '/scenarios',
   // Optimization Engine (api/optimization.py, Prompt 39) -- same reason.
   '/optimization',
+  // Predictive Analytics engine (api/predictive.py, Prompt 40) -- same reason.
+  '/predictive',
 ]
 
 export default defineConfig({

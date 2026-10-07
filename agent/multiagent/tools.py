@@ -21,11 +21,15 @@ from typing import Any
 from analytics.causal import investigate_root_cause_advanced
 from analytics.engine import compute_analytics_result
 from analytics.forecasting import generate_forecast
-from analytics.models import ScenarioParameter
+from analytics.models import (
+    PredictiveDomain,
+    PredictiveModelType,
+    PredictiveTaskType,
+    ScenarioParameter,
+)
+from analytics.predictive import train_predictive_model
 from analytics.root_cause import investigate_root_cause
 from analytics.scenario import run_scenario
-from optimization.engine import solve_optimization_problem
-from optimization.models import OptimizationProblem
 from retrieval.retriever import extract_governing_metrics, retrieve_business_context
 
 from agent.analyst.planner import plan_subquestions
@@ -35,6 +39,8 @@ from agent.state import ConversationExchange
 from agent.tools.registry import ToolRegistry
 from agent.tools.types import RetryPolicy, Tool, ToolCategory
 from config.settings import Settings
+from optimization.engine import solve_optimization_problem
+from optimization.models import OptimizationProblem
 
 TOOL_LLM_PLAN = "llm_plan"
 TOOL_GOVERNED_SQL = "governed_sql"
@@ -55,6 +61,10 @@ TOOL_SCENARIO = "scenario_engine"
 #: decision-optimization engine. Self-contained (no data_task needed):
 #: an OptimizationProblem is already fully specified by its own caller.
 TOOL_OPTIMIZATION = "optimization_engine"
+#: Prompt 40 (40_PREDICTIVE_ANALYTICS_CONTRACT.md) -- the governed
+#: predictive analytics engine (regression/classification), run over one
+#: data task's own already-governed rows (the training dataset).
+TOOL_PREDICTIVE = "predictive_engine"
 
 
 def build_supervisor_registry(
@@ -143,6 +153,24 @@ def build_supervisor_registry(
             problem, tuple(payload["caller_roles"]), settings
         ).model_dump()
 
+    def _predictive(payload: dict[str, Any]) -> Any:
+        return train_predictive_model(
+            payload["model_id"],
+            payload["name"],
+            PredictiveDomain(payload["domain"]),
+            PredictiveTaskType(payload["task_type"]),
+            PredictiveModelType(payload["model_type"]),
+            payload["columns"],
+            payload["rows"],
+            payload["feature_columns"],
+            payload["target_column"],
+            payload.get("predict_rows") or None,
+            payload.get("test_fraction", 0.2),
+            payload.get("random_seed", 0),
+            tuple(payload["caller_roles"]),
+            settings,
+        ).model_dump()
+
     specs = [
         (
             TOOL_GOVERNED_SQL,
@@ -228,6 +256,21 @@ def build_supervisor_registry(
             # optimization_handler surfaces as a properly disclosed, explained
             # open item (OptimizationStatus.UNAUTHORIZED) -- never a silent or
             # unexplained denial.
+            Permission.ASK,
+            RetryPolicy(max_attempts=1),
+        ),
+        (
+            TOOL_PREDICTIVE,
+            "Deterministic regression/classification training and scoring over "
+            "one already-executed result (modeled prediction, never observed fact).",
+            ToolCategory.READ,
+            _predictive,
+            # Permission.ASK, the identical reasoning TOOL_OPTIMIZATION's own
+            # comment above gives: the real, specific restricted-column
+            # authorization check happens inside
+            # analytics.predictive.train_predictive_model itself, surfaced as a
+            # disclosed PredictiveModelStatus.UNAUTHORIZED, never a bare,
+            # unexplained registry-level denial.
             Permission.ASK,
             RetryPolicy(max_attempts=1),
         ),

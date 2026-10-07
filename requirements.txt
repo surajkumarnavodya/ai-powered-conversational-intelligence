@@ -85,6 +85,17 @@ pandas==2.3.3
 # own pin above.
 scipy==1.18.1
 
+# Deterministic regression/classification models and evaluation metrics
+# for the governed Predictive Analytics engine (analytics/predictive.py,
+# Prompt 40 -- sklearn.linear_model.LinearRegression/LogisticRegression,
+# sklearn.metrics). Already present transitively (via
+# sentence-transformers' own ML dependencies, used by embeddings/media
+# search) but pinned explicitly now that it's a genuine direct import --
+# the same "was transitive, now direct, so pin it" pattern scipy above
+# already establishes for the identical reason. 1.9.1 is simply the
+# version already resolved and verified working in this environment.
+scikit-learn==1.9.1
+
 # Pydantic itself was already present transitively (via fastapi/langgraph/
 # chromadb) but unpinned; pinned explicitly now that config/settings.py
 # (pydantic_settings.BaseSettings), api/schemas.py, and every boundary

@@ -86,6 +86,7 @@ from api.navigation import router as navigation_router
 from api.onboarding import router as onboarding_router
 from api.optimization import router as optimization_router
 from api.platform_admin import router as platform_admin_router
+from api.predictive import router as predictive_router
 from api.rate_limit import enforce_api_action_rate_limit
 from api.recommendation_governance import router as recommendation_governance_router
 from api.recommendation_persistence import persist_ask_recommendations
@@ -399,6 +400,7 @@ app.include_router(semantic_intelligence_router)
 app.include_router(recommendation_governance_router)
 app.include_router(scenarios_router)
 app.include_router(optimization_router)
+app.include_router(predictive_router)
 app.include_router(platform_admin_router)
 app.include_router(tenant_admin_router)
 app.include_router(navigation_router)

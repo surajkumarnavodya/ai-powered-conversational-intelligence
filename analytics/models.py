@@ -1270,3 +1270,324 @@ class ScenarioForecastResult(BaseModel):
     truth_level: DataTruthLevel = DataTruthLevel.AI_INFERENCE
     limitations: tuple[str, ...] = ()
     engine_version: str = SCENARIO_ENGINE_VERSION
+
+
+#: The typed-contract schema version for everything `analytics.predictive`
+#: produces -- Prompt 40 (`40_PREDICTIVE_ANALYTICS_CONTRACT.md`), expanding
+#: `analytics.forecasting` into general-purpose governed regression/
+#: classification. Kept separate from every other engine's own version
+#: constant, the identical precedent each prior engine module already set.
+PREDICTIVE_ENGINE_VERSION = "1.0.0"
+
+
+class PredictiveDomain(str, Enum):
+    """The mission's own named problem domains, plus an honest escape
+    hatch -- the identical closed-set pattern `OptimizationDomain`
+    already establishes for a different engine. `DEMAND` and most
+    continuous business metrics map onto `PredictiveTaskType.REGRESSION`;
+    `CHURN`/`RISK` typically map onto `PredictiveTaskType.CLASSIFICATION`
+    (a risk *score* instead would be `RISK` + `REGRESSION`) -- this
+    engine does not hardcode that mapping, a caller states both the
+    domain (for disclosure/grouping) and the task type (for the actual
+    math) independently.
+    """
+
+    DEMAND = "demand"
+    CHURN = "churn"
+    RISK = "risk"
+    OTHER = "other"
+
+
+class PredictiveTaskType(str, Enum):
+    """Which kind of prediction problem this is -- a closed set, not a
+    free-form string."""
+
+    REGRESSION = "regression"
+    CLASSIFICATION = "classification"
+
+
+class PredictiveModelType(str, Enum):
+    """The closed catalog of models this engine may fit -- deliberately
+    small and reviewed, never an arbitrary class name a caller (or an
+    LLM) could inject. Both are deterministic: ordinary least squares
+    has a unique closed-form solution for a non-degenerate design
+    matrix, and `LogisticRegression`'s convex optimization converges to
+    the same optimum every time given the same data and a fixed
+    `random_state` -- the literal mechanism behind "test reproducibility."
+    """
+
+    LINEAR_REGRESSION = "linear_regression"
+    LOGISTIC_REGRESSION = "logistic_regression"
+
+
+class PredictiveModelStatus(str, Enum):
+    """The closed set of outcomes `analytics.predictive
+    .train_predictive_model` can report.
+
+    Attributes:
+        TRAINED: A model was successfully fit and evaluated.
+        INSUFFICIENT_DATA: Fewer rows (or, for classification, fewer
+            examples of some class) than `Settings
+            .predictive_min_training_rows`/`predictive_min_rows_per_class`
+            require.
+        LEAKAGE_DETECTED: A feature is identical to, or suspiciously
+            correlated with, the target -- rejected by default (see
+            `Settings.predictive_reject_on_leakage`).
+        UNAUTHORIZED: The caller lacks `Permission
+            .VIEW_RESTRICTED_COLUMNS` for a feature/target column
+            `config.sensitive_columns` classifies restricted --
+            deliberately distinct from `INVALID`/`INSUFFICIENT_DATA`
+            (a property of *who is asking*, never conflated with a
+            property of the data or the request's own structure).
+        INVALID: The request itself failed structural validation (an
+            unknown column, a non-numeric feature, a mismatched
+            model_type/task_type pairing, ...) before any fit was
+            attempted.
+        ERROR: The underlying solver raised or returned something this
+            engine does not recognize -- never silently swallowed.
+    """
+
+    TRAINED = "trained"
+    INSUFFICIENT_DATA = "insufficient_data"
+    LEAKAGE_DETECTED = "leakage_detected"
+    UNAUTHORIZED = "unauthorized"
+    INVALID = "invalid"
+    ERROR = "error"
+
+
+class LeakageFinding(BaseModel):
+    """One feature flagged as a likely target-leakage source -- "no
+    partial trust": `analytics.predictive.train_predictive_model` never
+    fits a model while any finding is present and `Settings
+    .predictive_reject_on_leakage` is on (the default)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    feature: str
+    reason: str
+    correlation: float | None = None
+
+
+class RegressionMetrics(BaseModel):
+    """Evaluation metrics for a `PredictiveTaskType.REGRESSION` model,
+    computed **only** on the held-out test split -- never the training
+    rows the model itself was fit on, which would be an overfitting-
+    optimistic (and dishonest) estimate of real-world accuracy."""
+
+    model_config = ConfigDict(frozen=True)
+
+    mae: float
+    rmse: float
+    r2: float
+    formula: str = (
+        "MAE = mean(|actual - predicted|); RMSE = sqrt(mean((actual - predicted)^2)); "
+        "R2 = 1 - SS_res/SS_tot -- all computed on the held-out test split only"
+    )
+
+
+class ClassificationMetrics(BaseModel):
+    """Evaluation metrics for a `PredictiveTaskType.CLASSIFICATION`
+    model, computed **only** on the held-out test split. `precision`/
+    `recall`/`f1` use macro-averaging across classes (never just the
+    positive class) so a caller isn't misled by an imbalanced minority
+    class's own, possibly-much-worse, score.
+
+    `test_class_counts` is included specifically so a caller can judge
+    how much a small test-set class count should discount confidence in
+    these numbers -- the identical "disclose, never hide a limitation"
+    posture every other engine in this package already follows.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    accuracy: float
+    precision: float
+    recall: float
+    f1: float
+    test_class_counts: dict[str, int]
+    formula: str = (
+        "accuracy = correct / total; precision/recall/f1 = macro-averaged across classes "
+        "(sklearn.metrics, average='macro') -- all computed on the held-out test split only"
+    )
+
+
+class PredictiveModelMetadata(BaseModel):
+    """Master-contract rule 11's "record ... version metadata" applied
+    to a trained predictive model -- the mission's own "store model/data
+    fingerprints, features and metrics" requirement.
+
+    Attributes:
+        model_type: See `PredictiveModelType`.
+        version: `PREDICTIVE_ENGINE_VERSION` at training time.
+        feature_columns: Exactly the columns the model was fit on, in
+            the order used to build its own design matrix.
+        target_column: What the model predicts.
+        training_row_count: Rows in the training split.
+        test_row_count: Rows in the held-out test split.
+        test_fraction: The configured train/test split fraction.
+        random_seed: The deterministic split seed -- see
+            `analytics.predictive._deterministic_order`'s own docstring
+            for why this makes the split (and therefore the whole
+            result) exactly reproducible without depending on Python's
+            or numpy's own global random state.
+        data_fingerprint: `sha256` of a deterministic serialization of
+            the training+test rows actually used (feature values, the
+            target, and the row count) -- changes if and only if the
+            underlying data changes, the literal "detect drift / confirm
+            reproducibility" mechanism the mission names.
+        model_fingerprint: `sha256` of `model_type` + `feature_columns` +
+            `target_column` + `data_fingerprint` -- identifies this
+            exact trained model; two training runs with byte-identical
+            inputs always produce the same `model_fingerprint`.
+        coefficients: `feature name -> fitted coefficient` -- the model
+            is always fully transparent, never a black box; for
+            `LOGISTIC_REGRESSION` with more than two classes this is the
+            coefficient vector for the first class scikit-learn reports
+            (a disclosed, bounded scope -- see this module's own
+            docstring in `analytics/predictive.py` for multi-class
+            detail).
+        intercept: The fitted intercept term.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    model_type: PredictiveModelType
+    version: str = PREDICTIVE_ENGINE_VERSION
+    feature_columns: tuple[str, ...]
+    target_column: str
+    training_row_count: int
+    test_row_count: int
+    test_fraction: float
+    random_seed: int
+    data_fingerprint: str
+    model_fingerprint: str
+    coefficients: dict[str, float]
+    intercept: float
+
+
+class PredictionWithUncertainty(BaseModel):
+    """One scored row's prediction -- "expose uncertainty where
+    supported," the mission's own requirement, made concrete per task
+    type.
+
+    Attributes:
+        index: Which `predict_rows` entry (0-based, in the order given)
+            this is about -- predictions are always returned in the
+            same order they were requested, never resorted.
+        value: The predicted value -- a `float` for `REGRESSION`, the
+            predicted class label (rendered as `str`, whatever the
+            original label type) for `CLASSIFICATION`.
+        lower_bound: `REGRESSION` only -- a residual-based prediction
+            interval lower bound (same z-based convention
+            `analytics.forecasting.ForecastPoint` already establishes),
+            `None` for `CLASSIFICATION`.
+        upper_bound: The corresponding upper bound.
+        class_probabilities: `CLASSIFICATION` only -- `class label ->
+            predicted probability`, always summing to `1.0`; `None` for
+            `REGRESSION` (a prediction interval is this task type's own
+            uncertainty exposure instead).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    index: int
+    value: float | str
+    lower_bound: float | None = None
+    upper_bound: float | None = None
+    class_probabilities: dict[str, float] | None = None
+
+
+class PredictiveModelResult(BaseModel):
+    """`analytics.predictive.train_predictive_model`'s full result --
+    Prompt 40 (`40_PREDICTIVE_ANALYTICS_CONTRACT.md`).
+
+    Attributes:
+        model_id: Caller-supplied identifier for this training run.
+        name: A short, human-readable name.
+        domain: See `PredictiveDomain`.
+        task_type: See `PredictiveTaskType`.
+        status: See `PredictiveModelStatus`.
+        metadata: `None` unless `status == TRAINED`.
+        regression_metrics: Set only when `status == TRAINED` and
+            `task_type == REGRESSION`.
+        classification_metrics: Set only when `status == TRAINED` and
+            `task_type == CLASSIFICATION`.
+        predictions: One `PredictionWithUncertainty` per `predict_rows`
+            entry supplied -- empty when none were supplied, or when
+            `status != TRAINED`.
+        leakage_findings: Every leakage candidate found -- populated
+            whenever any exist, regardless of whether
+            `Settings.predictive_reject_on_leakage` actually rejected
+            training because of them (so a caller who turned that flag
+            off still sees what was found).
+        rejection_reasons: Every reason training did not produce a model
+            -- always non-empty when `status != TRAINED`.
+        truth_level: Always `DataTruthLevel.AI_INFERENCE` -- a trained
+            model's prediction is an inference over historical data,
+            never an observed fact, the identical framing every other
+            engine in this package already establishes.
+        limitations: Disclosed caveats -- always non-empty for a
+            `TRAINED` result (e.g. "numeric features only," "no
+            categorical encoding," a small-test-set-size caveat when
+            relevant).
+        engine_version: `PREDICTIVE_ENGINE_VERSION` at computation time.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    model_id: str
+    name: str
+    domain: PredictiveDomain
+    task_type: PredictiveTaskType
+    status: PredictiveModelStatus
+    metadata: PredictiveModelMetadata | None = None
+    regression_metrics: RegressionMetrics | None = None
+    classification_metrics: ClassificationMetrics | None = None
+    predictions: tuple[PredictionWithUncertainty, ...] = ()
+    leakage_findings: tuple[LeakageFinding, ...] = ()
+    rejection_reasons: tuple[str, ...] = ()
+    truth_level: DataTruthLevel = DataTruthLevel.AI_INFERENCE
+    limitations: tuple[str, ...] = ()
+    engine_version: str = PREDICTIVE_ENGINE_VERSION
+
+
+class FeatureDriftFinding(BaseModel):
+    """One feature's own two-sample distribution-difference test --
+    `analytics.predictive.detect_feature_drift`'s per-feature result."""
+
+    model_config = ConfigDict(frozen=True)
+
+    feature: str
+    reference_count: int
+    new_count: int
+    ks_statistic: float
+    p_value: float
+    is_drifted: bool
+    formula: str = (
+        "two-sample Kolmogorov-Smirnov test (scipy.stats.ks_2samp); drifted when "
+        "p_value < Settings.predictive_drift_p_value_threshold"
+    )
+
+
+class FeatureDriftReport(BaseModel):
+    """`analytics.predictive.detect_feature_drift`'s full result --
+    compares a reference (e.g. training) dataset against a new one,
+    feature by feature. Deliberately **not** folded into
+    `PredictiveModelResult`: drift detection is a standalone comparison
+    between two datasets (mirroring `RootCauseResult`'s own "standalone,
+    not one more finding about a single dataset" reasoning), callable on
+    its own against any two same-shaped datasets, not only before/after
+    training one specific model.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    threshold: float
+    findings: tuple[FeatureDriftFinding, ...]
+    any_drifted: bool
+    #: Every feature named but not actually compared, and why (missing
+    #: from one side, non-numeric, or too few points for the test) --
+    #: disclosed, never a silent omission.
+    notes: tuple[str, ...] = ()
+    truth_level: DataTruthLevel = DataTruthLevel.AI_INFERENCE
+    engine_version: str = PREDICTIVE_ENGINE_VERSION
