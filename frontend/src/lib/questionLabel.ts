@@ -10,14 +10,20 @@
  * a fragment. */
 export const QUESTION_LABEL_MAX_CHARS = 42
 
+/** Collapses a question into one line of plain text, with no truncation --
+ * a pasted multi-line question becomes one readable line instead of
+ * stacking its line breaks. Shared by `shortenQuestion` below and by
+ * `ScrollingText`'s own full-text hover reveal (QuestionNavigator), which
+ * needs the complete question, just never with a mid-word line break. */
+export function collapseQuestionWhitespace(question: string): string {
+  return question.replace(/\s+/g, ' ').trim()
+}
+
 /** Collapses a question to one line of plain text and shortens it to a
  * single short label, breaking at a word boundary (never mid-word) and
- * appending "…". Returns the question unchanged if it already fits.
- *
- * Collapsing whitespace first means a pasted multi-line question becomes
- * one readable line instead of stacking its line breaks into the label. */
+ * appending "…". Returns the question unchanged if it already fits. */
 export function shortenQuestion(question: string, maxChars: number = QUESTION_LABEL_MAX_CHARS): string {
-  const collapsed = question.replace(/\s+/g, ' ').trim()
+  const collapsed = collapseQuestionWhitespace(question)
   if (collapsed.length <= maxChars) return collapsed
 
   const slice = collapsed.slice(0, maxChars)

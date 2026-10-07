@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FocusEvent, KeyboardEvent, RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ScrollingText } from '@/components/ui/scrolling-text'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useActiveElementId } from '@/hooks/useActiveElementId'
 import type { QueryHistoryEntry } from '@/lib/history'
-import { shortenQuestion } from '@/lib/questionLabel'
+import { collapseQuestionWhitespace } from '@/lib/questionLabel'
 import { cn } from '@/lib/utils'
 
 /** Compact "jump to question" control for the current conversation --
@@ -45,6 +46,15 @@ import { cn } from '@/lib/utils'
  * never array position. Two entries with byte-identical question text
  * still get two independent entryIds and therefore navigate to two
  * independent elements.
+ *
+ * Each item's label is the *full* question (whitespace-collapsed, never
+ * pre-shortened), rendered through `ScrollingText` -- clipped to one line
+ * at rest, scrolling left on hover/focus to reveal the rest once it's
+ * actually long enough to overflow (Perplexity's own treatment for a
+ * long history-list title). The accessible tooltip below is independent
+ * of this and unchanged: a screen reader or a sighted keyboard user who
+ * never triggers the hover animation still gets the complete question
+ * through it.
  */
 export function QuestionNavigator({
   entries,
@@ -189,7 +199,10 @@ export function QuestionNavigator({
                           <span className="shrink-0 tabular-nums text-[10px] text-[var(--muted-foreground)]">
                             {index + 1}
                           </span>
-                          <span className="truncate">{shortenQuestion(entry.question)}</span>
+                          <ScrollingText
+                            text={collapseQuestionWhitespace(entry.question)}
+                            className="flex-1"
+                          />
                         </button>
                       </TooltipTrigger>
                       <TooltipContent side="left">{entry.question}</TooltipContent>

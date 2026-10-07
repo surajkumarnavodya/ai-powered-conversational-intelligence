@@ -133,7 +133,12 @@ describe('QuestionNavigator', () => {
     expect(screen.queryByRole('navigation', { name: 'Questions' })).not.toBeInTheDocument()
   })
 
-  it('shows a truncated single-line label, never the full question text, as the visible label', () => {
+  it('renders the full question text as the item label -- never pre-shortened -- so it can be revealed on hover', () => {
+    // ScrollingText (the hover-to-reveal-the-rest treatment) needs the
+    // complete text actually present in the DOM; what keeps the resting
+    // label compact is CSS clipping (see the next test), not a
+    // programmatically shortened string the way `shortenQuestion` used to
+    // produce for this same label.
     const full =
       'Can you show me the top five companies by annual revenue in India and compare them with last year?'
     renderNavigator([makeEntry(full), makeEntry('Second question')])
@@ -141,8 +146,19 @@ describe('QuestionNavigator', () => {
 
     const nav = screen.getByRole('navigation', { name: 'Questions' })
     const firstButton = within(nav).getAllByRole('button')[0]
-    expect(firstButton.textContent).not.toBe(full)
-    expect(firstButton.textContent?.length).toBeLessThan(full.length)
+    expect(firstButton.textContent).toContain(full)
+  })
+
+  it('clips each item label at rest via overflow-hidden, rather than relying on a shortened string', () => {
+    renderNavigator([makeEntry('word '.repeat(60).trim()), makeEntry('Second question')])
+    openNavigator()
+
+    const nav = screen.getByRole('navigation', { name: 'Questions' })
+    const firstButton = within(nav).getAllByRole('button')[0]
+    // Document order: [0] the index-number span, [1] ScrollingText's own
+    // clipping container, [2] its inner (unclipped) text span.
+    const scrollingTextContainer = firstButton.querySelectorAll('span')[1] as HTMLElement
+    expect(scrollingTextContainer.className).toMatch(/overflow-hidden/)
   })
 
   it('exposes the full original question through an accessible tooltip (hover and focus)', async () => {
@@ -155,7 +171,11 @@ describe('QuestionNavigator', () => {
 
     firstButton.focus()
     await waitFor(() => {
-      expect(screen.getByText(full)).toBeInTheDocument()
+      // Scoped to the tooltip's own role, not a bare text match -- the
+      // item's own visible label now also contains this exact full text
+      // (see the ScrollingText tests above), so a plain `getByText` would
+      // ambiguously match both.
+      expect(screen.getByRole('tooltip')).toHaveTextContent(full)
     })
   })
 
@@ -168,14 +188,31 @@ describe('QuestionNavigator', () => {
     expect(entries[0].question).toBe(full)
   })
 
-  it('does not display the entire question paragraph in the navigator', () => {
+  it('scrolls a long item label left on hover to reveal the rest, via the shared ScrollingText treatment', () => {
     const full = 'word '.repeat(60).trim()
     renderNavigator([makeEntry(full), makeEntry('Second question')])
     openNavigator()
 
     const nav = screen.getByRole('navigation', { name: 'Questions' })
     const firstButton = within(nav).getAllByRole('button')[0]
-    expect(firstButton.textContent?.length ?? 0).toBeLessThan(full.length / 2)
+    const scrollingTextContainer = firstButton.querySelectorAll('span')[1] as HTMLElement
+    const textSpan = scrollingTextContainer.querySelector('span') as HTMLElement
+
+    Object.defineProperty(textSpan, 'scrollWidth', { configurable: true, value: 600 })
+    Object.defineProperty(scrollingTextContainer, 'clientWidth', { configurable: true, value: 200 })
+    fireEvent(window, new Event('resize'))
+
+    // Only re-confirms the wiring (the real entry text reaches ScrollingText
+    // and responds to overflow) in this real component tree -- the full
+    // forward-and-reset mouse/focus behavior is already exhaustively
+    // covered in isolation by scrolling-text.test.tsx. (Firing a raw
+    // mouseleave directly on a node nested this deeply in jsdom has no
+    // real relatedTarget/position context, so it can also -- spuriously,
+    // only in this test environment -- read as leaving the ancestor hover
+    // rail that keeps the whole flyout mounted; re-testing the reset here
+    // would be testing that jsdom quirk, not this component.)
+    fireEvent.mouseEnter(scrollingTextContainer)
+    expect(textSpan.style.transform).toBe('translateX(-400px)')
   })
 
   it('navigates duplicate questions to their own distinct message by stable id, not by text', () => {
