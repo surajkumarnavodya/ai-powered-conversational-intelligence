@@ -208,7 +208,10 @@
     "showMore": "और देखें",
     "showLess": "कम देखें",
     "of": "में से",
-    "confirm": "पुष्टि करें"
+    "confirm": "पुष्टि करें",
+    "readAloud": "ज़ोर से पढ़ें",
+    "stopReading": "पढ़ना बंद करें",
+    "readAloudFailed": "इसे ज़ोर से नहीं पढ़ा जा सका"
   },
   "share": {
     "menuItem": "साझा करें",

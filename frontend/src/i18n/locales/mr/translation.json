@@ -208,7 +208,10 @@
     "showMore": "अधिक पाहा",
     "showLess": "कमी पाहा",
     "of": "पैकी",
-    "confirm": "पुष्टी करा"
+    "confirm": "पुष्टी करा",
+    "readAloud": "मोठ्याने वाचा",
+    "stopReading": "वाचणे थांबवा",
+    "readAloudFailed": "हे मोठ्याने वाचता आले नाही"
   },
   "share": {
     "menuItem": "शेअर करा",

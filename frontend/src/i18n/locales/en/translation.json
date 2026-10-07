@@ -415,7 +415,10 @@
     "closeDialog": "Close dialog",
     "stop": "Stop",
     "copy": "Copy",
-    "confirm": "Confirm"
+    "confirm": "Confirm",
+    "readAloud": "Read aloud",
+    "stopReading": "Stop reading",
+    "readAloudFailed": "Couldn't read this aloud"
   },
   "share": {
     "menuItem": "Share",

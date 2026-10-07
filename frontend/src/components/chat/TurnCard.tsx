@@ -8,12 +8,15 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Expander } from '@/components/ui/expander'
 import { Markdown } from '@/components/ui/markdown'
-import { buildAnswerMarkdown, isSqlResult, type QueryHistoryEntry } from '@/lib/history'
+import { useHealth } from '@/hooks/queries'
+import { buildAnswerMarkdown, buildSpokenAnswerText, isSqlResult, type QueryHistoryEntry } from '@/lib/history'
 import { useChatStore } from '@/store/chatStore'
+import { useSettingsStore } from '@/store/settingsStore'
 import { ChatMessage } from './ChatMessage'
 import { CopyAnswerButton } from './CopyAnswerButton'
 import { DownloadAnswerButton } from './DownloadAnswerButton'
 import { QueryPlanPanel } from './QueryPlanPanel'
+import { ReadAloudButton } from './ReadAloudButton'
 import { ResponseFeedbackWidget } from './ResponseFeedbackWidget'
 import { RetryTimeline } from './RetryTimeline'
 import { SchemaContextPanel } from './SchemaContextPanel'
@@ -74,6 +77,17 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
   const confirmingEntryId = useChatStore((state) => state.confirmingEntryId)
   const setChartOptions = useChatStore((state) => state.setChartOptions)
   const askQuestion = useChatStore((state) => state.askQuestion)
+  // Same two-flag gate ChatInput.tsx's own mic button already uses --
+  // the server's infra flag (GET /health) and the user's own per-device
+  // opt-in. Read Aloud is a manual, on-demand TTS call (never automatic),
+  // so it needs nothing voice-input-specific -- it works identically for
+  // a typed question, a voice question, or a turn reloaded from a past
+  // conversation, since all it ever needs is the answer text already on
+  // screen. See ReadAloudButton.tsx's own docstring for why this is not
+  // the same thing as `entry.spokenAudioUrl`'s auto-replay element below.
+  const health = useHealth()
+  const voiceModeEnabled = useSettingsStore((state) => state.voiceModeEnabled)
+  const showReadAloud = Boolean(health.data?.voice_enabled) && voiceModeEnabled
 
   const state = entry.finalState
   const showSqlPanel = isSqlResult(state.sources_used) && !BLOCKED_STATUSES.has(entry.agentStatus)
@@ -108,6 +122,7 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
               <CopyAnswerButton answer={answerMarkdown} />
               <DownloadAnswerButton question={entry.question} answer={answerMarkdown} />
               <ResponseFeedbackWidget entryId={entry.entryId} />
+              {showReadAloud && <ReadAloudButton text={buildSpokenAnswerText(entry)} />}
             </>
           )}
           {entry.spokenAudioUrl && (

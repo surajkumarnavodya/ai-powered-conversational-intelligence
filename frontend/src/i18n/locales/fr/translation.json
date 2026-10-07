@@ -208,7 +208,10 @@
     "showMore": "Afficher plus",
     "showLess": "Afficher moins",
     "of": "sur",
-    "confirm": "Confirmer"
+    "confirm": "Confirmer",
+    "readAloud": "Lire à voix haute",
+    "stopReading": "Arrêter la lecture",
+    "readAloudFailed": "Impossible de lire ce texte à voix haute"
   },
   "share": {
     "menuItem": "Partager",

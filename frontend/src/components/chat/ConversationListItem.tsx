@@ -7,6 +7,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { ScrollingText } from '@/components/ui/scrolling-text'
 import type { ConversationSummary } from '@/lib/history'
 import { cn } from '@/lib/utils'
 
@@ -79,7 +80,14 @@ export function ConversationListItem({
             aria-current={isActive ? 'true' : undefined}
             className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
           >
-            <span className="min-w-0 flex-1 truncate font-medium">{conversation.title}</span>
+            {/* Clipped at rest, scrolls left on hover/focus to reveal the
+                rest once the title is actually long enough to overflow --
+                the same Perplexity-style treatment QuestionNavigator.tsx
+                already gives a long question label, applied here so a long
+                conversation title in the history list isn't just a dead
+                ellipsis with no way to read the rest short of renaming or
+                opening it. */}
+            <ScrollingText text={conversation.title} className="flex-1 font-medium" />
             {isActive && isLoading && (
               <>
                 <Loader2 className="h-3 w-3 shrink-0 animate-spin" aria-hidden="true" />

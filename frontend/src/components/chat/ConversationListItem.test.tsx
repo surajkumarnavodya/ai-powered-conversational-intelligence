@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { newHistoryEntry, type ConversationSummary } from '@/lib/history'
@@ -148,5 +148,38 @@ describe('ConversationListItem', () => {
     )
     await userEvent.type(screen.getByDisplayValue('New title'), '{Escape}')
     expect(onCancelRename).toHaveBeenCalledTimes(1)
+  })
+
+  it('scrolls a long title left on hover to reveal the rest, via the shared ScrollingText treatment', () => {
+    const full = 'word '.repeat(60).trim()
+    render(
+      <ConversationListItem
+        conversation={makeConversation({ title: full })}
+        isActive={false}
+        isLoading={false}
+        isRenaming={false}
+        renameValue=""
+        onRenameValueChange={noop}
+        onSelect={noop}
+        onStartRename={noop}
+        onCommitRename={noop}
+        onCancelRename={noop}
+        onDelete={noop}
+        onShare={noop}
+      />,
+    )
+
+    const selectButton = screen.getByText(full).closest('button') as HTMLElement
+    // Document order inside the select button: [0] ScrollingText's own
+    // clipping container, [1] its inner (unclipped) text span.
+    const scrollingTextContainer = selectButton.querySelectorAll('span')[0] as HTMLElement
+    const textSpan = scrollingTextContainer.querySelector('span') as HTMLElement
+
+    Object.defineProperty(textSpan, 'scrollWidth', { configurable: true, value: 600 })
+    Object.defineProperty(scrollingTextContainer, 'clientWidth', { configurable: true, value: 200 })
+    fireEvent(window, new Event('resize'))
+
+    fireEvent.mouseEnter(scrollingTextContainer)
+    expect(textSpan.style.transform).toBe('translateX(-400px)')
   })
 })
