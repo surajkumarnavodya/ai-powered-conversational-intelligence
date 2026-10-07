@@ -142,7 +142,7 @@ export function QuestionNavigator({
         aria-expanded={isOpen}
         aria-haspopup="true"
         onClick={() => setIsOpen((prev) => !prev)}
-        className="relative z-10 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--card)] text-[var(--muted-foreground)] shadow-md transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+        className="relative z-10 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--popover-surface)] text-[var(--muted-foreground)] shadow-md transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
       >
         {/* Hamburger/sandwich icon -- three short horizontal bars */}
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -157,7 +157,7 @@ export function QuestionNavigator({
       {isOpen && (
         <nav
           aria-label={t('questionNavigator.label')}
-          className="absolute right-full top-1/2 mr-2 flex w-64 max-w-[calc(100vw-5rem)] -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] shadow-lg"
+          className="absolute right-full top-1/2 mr-2 flex w-64 max-w-[calc(100vw-5rem)] -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--popover-surface)] shadow-lg"
         >
           <p className="border-b border-[var(--border)] px-3 py-2 text-xs font-semibold text-[var(--muted-foreground)]">
             {t('questionNavigator.label')}
