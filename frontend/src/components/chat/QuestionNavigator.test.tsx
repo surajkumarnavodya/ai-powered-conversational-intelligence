@@ -97,6 +97,23 @@ describe('QuestionNavigator', () => {
     expect(screen.queryByRole('navigation', { name: 'Questions' })).not.toBeInTheDocument()
   })
 
+  it('gives the hover/focus target a tall rail, not just the icon\'s own small circle -- so a slight up/down mouse move stays inside it', () => {
+    renderNavigator([makeEntry('First question'), makeEntry('Second question')])
+    const toggle = screen.getByRole('button', { name: 'Toggle question list' })
+    const wrapper = toggle.parentElement as HTMLElement
+
+    // The icon itself stays visually small (h-9, 36px)...
+    expect(toggle.className).toMatch(/h-9/)
+    // ...but the shared hover/focus target it sits inside is much taller,
+    // so the whole rail -- well above and below the icon -- keeps the
+    // flyout open on a small vertical mouse move, not just the icon's own
+    // tiny bounding box.
+    expect(wrapper.className).toMatch(/h-44/)
+
+    fireEvent.mouseEnter(wrapper)
+    expect(screen.getByRole('navigation', { name: 'Questions' })).toBeInTheDocument()
+  })
+
   it('marks the toggle control as expanded/collapsed via aria-expanded', () => {
     renderNavigator([makeEntry('First question'), makeEntry('Second question')])
     const toggle = screen.getByRole('button', { name: 'Toggle question list' })

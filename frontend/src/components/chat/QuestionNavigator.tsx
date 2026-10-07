@@ -17,8 +17,8 @@ import { cn } from '@/lib/utils'
  * centered on the right edge of the chat column (`top-1/2
  * -translate-y-1/2`, relative to Chat.tsx's full-height `relative`
  * wrapper) -- it never pushes or resizes the answer area, and in its
- * default state it occupies only the icon's own small footprint, not a
- * fixed-width column. Hovering or focusing the control expands a flyout
+ * default state it occupies only a narrow column's width, not a
+ * fixed-width panel. Hovering or focusing the control expands a flyout
  * panel with the full question list, positioned to the *left* of the
  * icon as an absolutely-positioned overlay (so expanding it still never
  * shifts or resizes the chat/answer area underneath) -- it collapses
@@ -27,6 +27,17 @@ import { cn } from '@/lib/utils'
  * ever mounted in the DOM while open (not merely visually hidden), which
  * is what keeps it genuinely absent from the accessibility tree (and
  * from this component's own tests) until it's actually open.
+ *
+ * The hover target is a tall vertical rail (`h-44`, the icon vertically
+ * centered inside it via flex), not just the icon's own 36px circle --
+ * a real, found usability problem: with the hit area equal to the
+ * icon's own tiny bounding box, a mouse arriving slightly above or
+ * below center (easy to do, since the icon sits mid-screen with no
+ * visual cue of exactly where) read as "left the control" and closed
+ * the flyout immediately. The rail's hairline + end-cap dots (purely
+ * decorative, `aria-hidden`) make that enlarged target visible rather
+ * than inferred, mirroring a drag-handle affordance -- the whole rail,
+ * not just the icon, is the single `onMouseEnter`/`onMouseLeave` target.
  *
  * Reuses `entry.entryId` (already the conversation's own stable identity
  * -- `TurnCard` renders each turn at DOM id `turn-${entryId}`) as the one
@@ -99,20 +110,29 @@ export function QuestionNavigator({
   return (
     <div
       ref={wrapperRef}
-      className="absolute right-4 top-1/2 z-20 -translate-y-1/2"
+      className="absolute right-4 top-1/2 z-20 flex h-44 w-9 -translate-y-1/2 flex-col items-center"
       onMouseEnter={() => setIsOpen(true)}
       onMouseLeave={() => setIsOpen(false)}
       onFocus={() => setIsOpen(true)}
       onBlur={handleBlur}
       onKeyDown={handleKeyDown}
     >
+      {/* Decorative rail -- a hairline with end-cap dots showing the real,
+          enlarged hover/focus extent of this control (the whole `h-44`
+          column above, not just the icon). `aria-hidden` since it carries
+          no information a screen reader user needs; the two flex-1 line
+          segments stretch to fill whatever space is left once the dots and
+          icon take their fixed size, so the icon stays exactly centered
+          regardless of the rail's own height. */}
+      <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--border)]" />
+      <span aria-hidden="true" className="w-px flex-1 bg-[var(--border)]" />
       <button
         type="button"
         aria-label={t('questionNavigator.toggleLabel')}
         aria-expanded={isOpen}
         aria-haspopup="true"
         onClick={() => setIsOpen((prev) => !prev)}
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--card)] text-[var(--muted-foreground)] shadow-md transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+        className="relative z-10 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--card)] text-[var(--muted-foreground)] shadow-md transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
       >
         {/* Hamburger/sandwich icon -- three short horizontal bars */}
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -121,6 +141,8 @@ export function QuestionNavigator({
           <path d="M2 12H14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
         </svg>
       </button>
+      <span aria-hidden="true" className="w-px flex-1 bg-[var(--border)]" />
+      <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--border)]" />
 
       {isOpen && (
         <nav
