@@ -43,7 +43,7 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict
 
-from analytics.models import AnalyticsResult, ForecastResult
+from analytics.models import AnalyticsResult, ForecastResult, ScenarioResult
 from config.settings import Settings, get_settings
 
 #: Bumped when this module's chart-type-selection rules, title/format/
@@ -576,5 +576,73 @@ def build_forecast_chart_spec(
         notices=tuple(notices),
         accessibility=accessibility,
         reason="A forecast extends a historical trend line with an estimated continuation.",
+        engine_version=VISUALIZATION_ENGINE_VERSION,
+    )
+
+
+def build_scenario_chart_spec(
+    scenario_result: ScenarioResult, settings: Settings | None = None
+) -> ChartSpec | None:
+    """Builds a deterministic chart specification for an already-computed
+    `analytics.scenario.ScenarioResult` -- Prompt 38's own "support
+    baseline/scenario comparison and visualization" requirement.
+
+    Reuses the exact same `ChartSpec`/`ChartField`/`FieldRole`/
+    `AccessibilityMetadata` typed contracts `build_chart_spec`/
+    `build_forecast_chart_spec` above already establish -- no new
+    chart-data shape. Returns `None` when `scenario_result.status !=
+    "ok"` or there are no comparisons to chart, mirroring both of those
+    functions' own "nothing to chart -> None" contract.
+
+    Always a grouped `BAR_STACKED` chart with one `X` category per
+    affected metric and two distinct `Y`/`SERIES` fields ("Baseline" and
+    "Scenario") -- never one blended bar, so a viewer never has to guess
+    which bar is the real, observed number and which is the hypothetical
+    one. The scenario nature is disclosed in both `notices` (every one of
+    `scenario_result.limitations`) and `accessibility` (names every
+    metric's own baseline/scenario/delta explicitly, never phrased as if
+    the scenario value were observed). Not consumed by
+    `frontend/src/lib/chartEngine.ts` in this pass -- the identical
+    "computed + tested + exposed via the API, not yet wired into the
+    frontend" deferral `build_forecast_chart_spec` already established.
+    """
+    settings = settings or get_settings()
+    if scenario_result.status != "ok" or not scenario_result.comparisons:
+        return None
+
+    x_field = ChartField(column="metric", role=FieldRole.X, aggregation=None, format="plain")
+    baseline_field = ChartField(
+        column="baseline_value", role=FieldRole.Y, aggregation=None, format="plain"
+    )
+    scenario_field = ChartField(
+        column="scenario_value", role=FieldRole.SERIES, aggregation=None, format="plain"
+    )
+
+    title = f"{scenario_result.name}: Baseline vs. Scenario"
+
+    notices = [
+        "'Scenario' values are modeled estimates from caller-supplied assumptions, never "
+        "observed facts."
+    ]
+    notices.extend(scenario_result.limitations)
+
+    summary_parts = [
+        f"{c.metric}: baseline {c.baseline_value:g}, scenario {c.scenario_value:g}"
+        + (f" ({c.delta_percent:+.1f}%)" if c.delta_percent is not None else "")
+        for c in scenario_result.comparisons
+    ]
+    summary = "; ".join(summary_parts) + "."
+    accessibility = AccessibilityMetadata(alt_text=f"{title}. {summary}", summary=summary)
+
+    return ChartSpec(
+        chart_type=ChartType.BAR_STACKED,
+        title=title,
+        fields=(x_field, baseline_field, scenario_field),
+        sort=None,
+        limit=None,
+        is_downsampled=False,
+        notices=tuple(notices),
+        accessibility=accessibility,
+        reason="A baseline/scenario comparison is a grouped bar per affected metric.",
         engine_version=VISUALIZATION_ENGINE_VERSION,
     )

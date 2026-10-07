@@ -88,6 +88,7 @@ from api.platform_admin import router as platform_admin_router
 from api.rate_limit import enforce_api_action_rate_limit
 from api.recommendation_governance import router as recommendation_governance_router
 from api.recommendation_persistence import persist_ask_recommendations
+from api.scenarios import router as scenarios_router
 from api.schemas import (
     AccessibilityMetadataOut,
     AnalyticalIntentOut,
@@ -395,6 +396,7 @@ app.include_router(onboarding_router)
 app.include_router(semantic_catalog_router)
 app.include_router(semantic_intelligence_router)
 app.include_router(recommendation_governance_router)
+app.include_router(scenarios_router)
 app.include_router(platform_admin_router)
 app.include_router(tenant_admin_router)
 app.include_router(navigation_router)

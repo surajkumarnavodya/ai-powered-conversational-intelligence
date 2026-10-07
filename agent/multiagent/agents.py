@@ -42,6 +42,7 @@ from agent.multiagent.tools import (
     TOOL_LLM_PLAN,
     TOOL_ROOT_CAUSE,
     TOOL_ROOT_CAUSE_ADVANCED,
+    TOOL_SCENARIO,
 )
 from agent.provenance import DataTruthLevel
 from agent.tools.types import ToolResult
@@ -98,6 +99,13 @@ SPECS: dict[AgentName, AgentSpec] = {
         # below only ever reaches for it when a caller's RootCausePair
         # names a dimension_hierarchy; TOOL_ROOT_CAUSE stays the default.
         allowed_tools=frozenset({TOOL_ROOT_CAUSE, TOOL_ROOT_CAUSE_ADVANCED}),
+        max_truth_level=DataTruthLevel.AI_INFERENCE,
+        cost_units=1,
+    ),
+    AgentName.SCENARIO: AgentSpec(
+        name=AgentName.SCENARIO,
+        kind="engine",
+        allowed_tools=frozenset({TOOL_SCENARIO}),
         max_truth_level=DataTruthLevel.AI_INFERENCE,
         cost_units=1,
     ),
@@ -547,6 +555,72 @@ def root_cause_handler(ctx: AgentContext, task: AgentTask) -> AgentOutput:
     return _root_cause_basic(ctx, task, current, baseline)
 
 
+def scenario_handler(ctx: AgentContext, task: AgentTask) -> AgentOutput:
+    """Prompt 38 (38_WHATIF_SCENARIO_ENGINE_CONTRACT.md): runs a governed
+    what-if scenario over one `sql_data` task's own already-governed
+    rows -- never a second query, never caller-side raw data. Gated,
+    like `root_cause`, on an explicit caller-supplied request
+    (`agent.multiagent.supervisor.ScenarioRequest`) -- the planner never
+    creates one, a model proposing a hypothetical is not authority to
+    run it.
+
+    `caller_roles` is intentionally **not** included in the dict passed
+    to `ctx.call` -- `ToolGateway` refuses any tool input that tries to
+    set an identity field; `agent.tools.registry.ToolRegistry.execute`
+    injects the real, already-authorized roles into the tool's own
+    payload automatically (see that module's own docstring).
+    """
+    slot = ctx.workspace.slots[task.params["data_task"]]
+    if slot.governed_rows is None or not slot.columns:
+        return _skipped(task, "no governed rows to run a scenario against")
+    result = ctx.call(
+        TOOL_SCENARIO,
+        {
+            "scenario_id": task.params["scenario_id"],
+            "name": task.params["name"],
+            "columns": slot.columns,
+            "rows": slot.governed_rows,
+            "dimension_columns": task.params.get("dimension_columns") or [],
+            "parameters": task.params["parameters"],
+        },
+    )
+    if not result.success:
+        return _failed(task, "scenario tool failed")
+    output = result.output
+    if output["status"] == "rejected":
+        reasons = "; ".join(output["rejection_reasons"]) or "parameter validation failed"
+        return AgentOutput(
+            agent=task.agent,
+            task_id=task.id,
+            status="ok",
+            open_items=(f"Scenario not run: {reasons}.",),
+        )
+    grounded = (slot.row_evidence_id,) if slot.row_evidence_id else ()
+    claims = tuple(
+        Claim(
+            agent=task.agent,
+            task_id=task.id,
+            text=(
+                f"Under this scenario, {comparison['metric']} would move from "
+                f"{comparison['baseline_value']:.2f} (observed) to "
+                f"{comparison['scenario_value']:.2f} (modeled estimate)"
+                + (
+                    f", a {comparison['delta_percent']:+.1f}% change"
+                    if comparison["delta_percent"] is not None
+                    else ""
+                )
+                + "."
+            ),
+            truth_level=DataTruthLevel.AI_INFERENCE,
+            key=f"scenario_metric:{comparison['metric']}",
+            value=comparison["scenario_value"],
+            grounded_in=grounded,
+        )
+        for comparison in output["comparisons"]
+    )
+    return AgentOutput(agent=task.agent, task_id=task.id, status="ok", claims=claims)
+
+
 def recommendation_handler(ctx: AgentContext, task: AgentTask) -> AgentOutput:
     """Reuses the analyst's own recommend node, unchanged, over this turn's
     evidence and candidates. Nothing is recomputed here."""
@@ -588,6 +662,7 @@ HANDLERS: dict[AgentName, Handler] = {
     AgentName.ANALYTICS: analytics_handler,
     AgentName.FORECAST: forecast_handler,
     AgentName.ROOT_CAUSE: root_cause_handler,
+    AgentName.SCENARIO: scenario_handler,
     AgentName.RECOMMENDATION: recommendation_handler,
 }
 

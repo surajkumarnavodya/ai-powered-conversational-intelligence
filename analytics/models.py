@@ -951,3 +951,322 @@ class AdvancedRootCauseResult(BaseModel):
 
 
 HierarchicalRootCauseNode.model_rebuild()
+
+
+#: The typed-contract schema version for everything `analytics.scenario`
+#: produces -- Prompt 38 (`38_WHATIF_SCENARIO_ENGINE_CONTRACT.md`). Kept
+#: separate from every other engine's own version constant, the identical
+#: precedent each prior engine module already set for itself.
+SCENARIO_ENGINE_VERSION = "1.0.0"
+
+
+class ScenarioChangeType(str, Enum):
+    """The closed vocabulary for how a `ScenarioParameter.scenario_value`
+    relates to the real, observed baseline value it perturbs -- the
+    literal "deterministic model" behind "modeled estimates," recorded so
+    a result is reproducible (master rule 11).
+
+    Attributes:
+        PERCENT_CHANGE: `scenario_value` is a percentage point delta
+            applied multiplicatively (e.g. `20` means "+20%": `baseline *
+            1.20`; `-15` means "-15%": `baseline * 0.85`).
+        ABSOLUTE_DELTA: `scenario_value` is added directly to the
+            baseline (same unit as the metric itself).
+        ABSOLUTE_VALUE: `scenario_value` *replaces* the baseline value
+            outright -- the baseline is read and shown for comparison,
+            but the computation ignores it.
+        MULTIPLIER: `scenario_value` multiplies the baseline directly
+            (e.g. `1.2` means "+20%", `0.5` means "half") -- the same
+            effect as `PERCENT_CHANGE` expressed as a ratio instead of a
+            percentage; kept as a separate type because a caller's own
+            assumption is sometimes naturally phrased one way or the
+            other (e.g. "1.5x growth" vs. "+50% growth"), and forcing a
+            caller to convert is an avoidable source of a silent
+            off-by-a-factor-of-100 mistake.
+    """
+
+    PERCENT_CHANGE = "percent_change"
+    ABSOLUTE_DELTA = "absolute_delta"
+    ABSOLUTE_VALUE = "absolute_value"
+    MULTIPLIER = "multiplier"
+
+
+class ScenarioValueKind(str, Enum):
+    """What *kind* of number one value in a scenario result is -- the
+    literal "clearly separate observed facts, assumptions and modeled
+    estimates" requirement, made explicit and typed rather than left to
+    prose or client-side convention.
+
+    Deliberately **not** `agent.provenance.DataTruthLevel` -- that
+    vocabulary answers "how sure are we this is true" (fact / inference /
+    confirmed-business-truth) and stays exactly as it was (every
+    `ScenarioResult`/`ScenarioForecastResult` is still, correctly,
+    `DataTruthLevel.AI_INFERENCE` overall -- the interpretation of a
+    hypothetical is always an inference). This enum answers a different,
+    orthogonal question specific to a what-if scenario's own anatomy:
+    *which part* of the number is a fact, which part is the caller's own
+    input, and which part is this engine's arithmetic on top of both.
+
+    Attributes:
+        OBSERVED: Read straight from the real, already-executed baseline
+            data -- a `DataTruthLevel.DATABASE_FACT` by origin.
+        ASSUMPTION: The caller's own hypothetical input (a
+            `ScenarioParameter.scenario_value`) -- never computed by this
+            engine, never verified against reality, just recorded as
+            exactly what was asked.
+        MODELED_ESTIMATE: This engine's own deterministic transform of
+            an `OBSERVED` value through an `ASSUMPTION`, per
+            `ScenarioChangeType` -- the "what if" answer itself.
+    """
+
+    OBSERVED = "observed"
+    ASSUMPTION = "assumption"
+    MODELED_ESTIMATE = "modeled_estimate"
+
+
+class ScenarioParameter(BaseModel):
+    """One typed what-if assumption -- the mission's own named
+    requirement: "assumptions as typed parameters with units, bounds,
+    affected metrics and model versions."
+
+    Attributes:
+        name: A short, human-readable label (e.g. "Marketing spend
+            growth").
+        affected_metric: Which column of the baseline dataset this
+            parameter perturbs -- validated against the real baseline's
+            own columns before anything runs (see
+            `analytics.scenario.validate_scenario_parameters`); never
+            silently ignored if it doesn't exist.
+        unit: A short, free-form unit label for display (e.g.
+            `"percent"`, `"USD"`, `"count"`, `"ratio"`) -- descriptive
+            only, the same "informational, not re-derived" posture
+            `analytics.visualization.ChartField.format` already
+            establishes; the actual arithmetic is driven entirely by
+            `change_type`, never inferred from this string.
+        change_type: How `scenario_value` relates to the real baseline
+            value -- see `ScenarioChangeType`.
+        scenario_value: The hypothetical input itself. Must be finite
+            (never `NaN`/`inf` -- rejected, see
+            `validate_scenario_parameters`).
+        target_label: Restricts this parameter's effect to the rows whose
+            dimension-column composite label (the identical `" / "`-
+            joined convention `analytics.engine.group_and_sum_by_label`
+            already establishes) equals this value exactly -- e.g. only
+            the `"North"` region's rows. `None` (the default) applies the
+            parameter to every row.
+        min_value: An explicit, caller-supplied lower bound on
+            `scenario_value` -- when set, a value below it is a hard
+            rejection, never silently clamped. `None` means "no explicit
+            bound" (still subject to the engine's own, separate,
+            disclosed "unrealistic magnitude" soft check -- see
+            `Settings.scenario_unrealistic_change_percent_threshold`).
+        max_value: The corresponding upper bound.
+        model_version: `SCENARIO_ENGINE_VERSION` at the time this
+            parameter was constructed -- master rule 11's "record ...
+            version metadata" requirement, applied per-parameter since a
+            parameter is the unit a caller actually authors and might
+            persist/replay later.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    affected_metric: str
+    unit: str
+    change_type: ScenarioChangeType
+    scenario_value: float
+    target_label: str | None = None
+    min_value: float | None = None
+    max_value: float | None = None
+    model_version: str = SCENARIO_ENGINE_VERSION
+
+
+class ParameterValidation(BaseModel):
+    """`analytics.scenario.validate_scenario_parameters`'s own per-
+    parameter verdict -- always produced, even for a parameter that turns
+    out invalid, so a caller sees *every* problem at once (mirroring
+    `analytics.plan_validator`/`RootCauseResult`'s own "report everything
+    found, never just the first" convention).
+
+    Attributes:
+        parameter_name: Which `ScenarioParameter.name` this is about.
+        is_valid: `False` if `violations` is non-empty -- derived, never
+            set independently of it (the identical structural guarantee
+            `RootCauseResult.has_sufficient_evidence` already establishes
+            for its own `contributors` field).
+        is_unrealistic: A *soft* signal (never on its own a reason
+            `is_valid` is `False`, unless `Settings
+            .scenario_reject_unrealistic` is on) -- the implied percent
+            change from baseline exceeds `Settings
+            .scenario_unrealistic_change_percent_threshold`. Disclosed in
+            `violations` either way (as a warning when soft, as a hard
+            reason when the reject flag is on), never silently ignored.
+        violations: Every reason `is_valid` is `False` -- a hard
+            rejection reason only. An "unrealistic" finding lands here
+            **only** when `Settings.scenario_reject_unrealistic` is on;
+            otherwise it is disclosed in `warnings` instead, which never
+            affects `is_valid` -- keeping the two lists separate is what
+            makes "unrealistic, but still runs" and "unrealistic, and
+            therefore rejected" two genuinely different, independently
+            testable outcomes rather than one list a caller has to guess
+            the meaning of entry-by-entry.
+        warnings: Soft, disclosed-but-non-blocking notes -- today, only
+            ever the "unrealistic magnitude" note when `Settings
+            .scenario_reject_unrealistic` is off. Always empty when
+            `is_unrealistic` is `False`.
+        baseline_value: The real, observed value this parameter's
+            `affected_metric` (and `target_label`, if set) resolved to in
+            the baseline data -- `None` when it could not be resolved at
+            all (missing column, empty baseline, or no row matching
+            `target_label`), which is itself always reflected in
+            `violations`.
+        implied_scenario_value: What `scenario_value` actually becomes
+            once `change_type` is applied to `baseline_value` -- `None`
+            under the same conditions `baseline_value` is `None`.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    parameter_name: str
+    is_valid: bool
+    is_unrealistic: bool = False
+    violations: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+    baseline_value: float | None = None
+    implied_scenario_value: float | None = None
+
+
+class ScenarioMetricComparison(BaseModel):
+    """One affected metric's baseline-vs-scenario comparison -- the
+    mission's own "support baseline/scenario comparison" requirement,
+    typed. `baseline_kind`/`scenario_kind` are fixed `Literal`s (not just
+    conventionally-set defaults) -- a `ScenarioMetricComparison` is
+    structurally incapable of labeling its own baseline as anything but
+    `OBSERVED` or its own scenario value as anything but
+    `MODELED_ESTIMATE`, the type-level half of "clearly separate observed
+    facts ... and modeled estimates" (the same pattern
+    `AdvancedRootCauseResult.causation_confirmed: Literal[False]` already
+    established for a different invariant).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    metric: str
+    baseline_value: float
+    scenario_value: float
+    delta: float
+    #: `None` only when `baseline_value == 0` (a percent change from zero
+    #: is undefined -- the identical zero-denominator guard
+    #: `agent.insight._compute_trend` already establishes elsewhere).
+    delta_percent: float | None = None
+    baseline_kind: Literal[ScenarioValueKind.OBSERVED] = ScenarioValueKind.OBSERVED
+    scenario_kind: Literal[ScenarioValueKind.MODELED_ESTIMATE] = ScenarioValueKind.MODELED_ESTIMATE
+
+
+class ScenarioResult(BaseModel):
+    """`analytics.scenario.run_scenario`'s full result -- Prompt 38
+    (`38_WHATIF_SCENARIO_ENGINE_CONTRACT.md`).
+
+    Attributes:
+        scenario_id: The caller-supplied (or engine-generated) identifier
+            for this scenario run.
+        name: A short, human-readable scenario name (e.g. "20% marketing
+            spend increase").
+        status: `"ok"` once every parameter validated; `"rejected"` if
+            any parameter failed hard validation -- **never** a partial
+            run with some parameters silently dropped (mirrors
+            `agent.analytical_plan`'s own "an invalid plan is never
+            partially trusted" precedent).
+        parameter_validations: Every parameter's own verdict, always
+            populated regardless of `status`.
+        rejection_reasons: Every parameter-level violation, flattened,
+            when `status == "rejected"` -- empty when `status == "ok"`.
+        comparisons: One `ScenarioMetricComparison` per distinct
+            `affected_metric` named by a validated parameter -- empty
+            when `status == "rejected"`.
+        baseline_analytics: The real baseline dataset's own
+            `analytics.engine.compute_analytics_result` output (reused,
+            never recomputed by this module) -- `None` when rejected.
+        scenario_analytics: The identical computation over the
+            scenario-adjusted (synthetic, in-memory only) rows -- `None`
+            when rejected. Never derived from or written back to any real
+            database -- see this module's own docstring for "run
+            scenarios without changing source data."
+        truth_level: Always `DataTruthLevel.AI_INFERENCE` -- the overall
+            interpretation of a hypothetical, exactly like
+            `ForecastResult.truth_level`/`AdvancedRootCauseResult
+            .truth_level`.
+        limitations: Disclosed caveats -- e.g. multiple parameters
+            touching the same cell are composed in the order given, not
+            jointly solved; a target label absent from the baseline; a
+            soft "unrealistic" warning.
+        engine_version: `SCENARIO_ENGINE_VERSION` at computation time.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    scenario_id: str
+    name: str
+    status: Literal["ok", "rejected"]
+    parameter_validations: tuple[ParameterValidation, ...] = ()
+    rejection_reasons: tuple[str, ...] = ()
+    comparisons: tuple[ScenarioMetricComparison, ...] = ()
+    baseline_analytics: AnalyticsResult | None = None
+    scenario_analytics: AnalyticsResult | None = None
+    truth_level: DataTruthLevel = DataTruthLevel.AI_INFERENCE
+    limitations: tuple[str, ...] = ()
+    engine_version: str = SCENARIO_ENGINE_VERSION
+
+
+class ScenarioForecastPoint(BaseModel):
+    """One future period's baseline-vs-scenario forecast pair --
+    `analytics.scenario.apply_scenario_to_forecast`'s own per-point shape.
+    Both values are estimates (the real forecast is itself
+    `DataTruthLevel.AI_INFERENCE`); `scenario_forecast` is this engine's
+    further, explicitly hypothetical adjustment on top of it -- never
+    confused with the baseline forecast itself, which is why this is a
+    separate field rather than overwriting `ForecastPoint.forecast`.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    period: str
+    baseline_forecast: float
+    scenario_forecast: float
+
+
+class ScenarioForecastResult(BaseModel):
+    """`analytics.scenario.apply_scenario_to_forecast`'s full result --
+    applies exactly one `ScenarioParameter` uniformly to every point of an
+    already-computed `ForecastResult`. Deliberately **not** folded into
+    `ScenarioResult` (the same reasoning `RootCauseResult`/`ForecastResult`
+    already give for staying standalone): this is a projection on top of
+    another projection, not a baseline/scenario row comparison.
+
+    Attributes:
+        status: `"rejected"` when the source `ForecastResult.status !=
+            "ok"` (nothing to adjust), or the parameter itself is invalid
+            -- never silently applied to a rejected forecast.
+        rejection_reasons: Every reason, when rejected.
+        points: One `ScenarioForecastPoint` per forecasted period -- empty
+            when rejected.
+        parameter: The parameter actually applied -- `None` when
+            rejected.
+        truth_level: Always `DataTruthLevel.AI_INFERENCE`.
+        limitations: Always non-empty for an `"ok"` result -- carries
+            forward the source forecast's own `limitations` plus this
+            function's own disclosed caveat that the adjustment is a
+            uniform, simplistic perturbation (it does not refit the
+            model).
+        engine_version: `SCENARIO_ENGINE_VERSION` at computation time.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    status: Literal["ok", "rejected"]
+    rejection_reasons: tuple[str, ...] = ()
+    points: tuple[ScenarioForecastPoint, ...] = ()
+    parameter: ScenarioParameter | None = None
+    truth_level: DataTruthLevel = DataTruthLevel.AI_INFERENCE
+    limitations: tuple[str, ...] = ()
+    engine_version: str = SCENARIO_ENGINE_VERSION

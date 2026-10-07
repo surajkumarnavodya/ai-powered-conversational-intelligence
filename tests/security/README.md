@@ -35,6 +35,17 @@ anywhere else at the time it was written:
   string across known-cause/distractor/interaction/no-cause scenarios,
   including through the one live multi-agent handler), that nothing this
   engine produces ever asserts a confirmed cause -- correlation only.
+- `test_scenario_never_presents_estimate_as_fact.py` — Prompt 38
+  (`38_WHATIF_SCENARIO_ENGINE_CONTRACT.md`): the identical
+  cross-cutting-invariant pattern `test_causal_never_asserts_causation.py`
+  already established, applied to the What-If Scenario Engine's own
+  observed/modeled-estimate distinction -- spans `analytics/models.py`,
+  `analytics/scenario.py`, and `agent/multiagent/agents.py`'s
+  `scenario_handler` together. Proves, both at the type level
+  (`ScenarioMetricComparison.baseline_kind`/`.scenario_kind` reject being
+  swapped via pydantic) and at the text level (every claim string,
+  including through the one live multi-agent handler), that a
+  hypothetical scenario value is never labeled as an observed fact.
 
 Before adding a new file here, check whether the scenario already has
 coverage under its own module's `tests/test_<module>.py` first — this

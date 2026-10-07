@@ -3649,6 +3649,77 @@ cross-cutting regression proving (at both the type and text level) that
 nothing this engine produces, at any layer, ever asserts a confirmed
 cause.
 
+### Governed What-If Scenario Engine (Prompt 38)
+
+`analytics/scenario.py` is this platform's first what-if/scenario
+capability — typed assumptions (`analytics.models.ScenarioParameter`:
+`affected_metric`, `unit`, `change_type`
+(`PERCENT_CHANGE`/`ABSOLUTE_DELTA`/`ABSOLUTE_VALUE`/`MULTIPLIER`),
+`scenario_value`, optional `target_label`/`min_value`/`max_value`,
+`model_version`) run against a real, already-fetched baseline
+(`columns`/`rows`) without ever touching a database. `run_scenario`
+reuses `analytics.engine.compute_analytics_result` on both the real
+baseline and a brand-new, in-memory, proportionally-scaled copy of the
+rows (the original `rows` argument is never mutated) — producing one
+`ScenarioMetricComparison` per affected metric. `validate_scenario_parameters`
+reports every parameter's own violations (unknown column, malformed/
+out-of-bounds value, non-finite value, an unrealistic implied magnitude,
+a restricted-column authorization failure, or missing baseline/
+target-label data) — **one invalid parameter rejects the entire
+scenario**, never a partial run with the bad one silently dropped.
+Multiple parameters touching the same metric compose **sequentially, in
+the order given** (a disclosed, bounded simplification, not a jointly-
+solved system).
+
+**Clearly separates observed facts, assumptions, and modeled estimates —
+structurally, not conventionally.** A new, orthogonal
+`analytics.models.ScenarioValueKind` enum (`OBSERVED`/`ASSUMPTION`/
+`MODELED_ESTIMATE`) is distinct from `agent.provenance.DataTruthLevel`
+(which still answers "how sure are we," unchanged); `ScenarioMetricComparison
+.baseline_kind`/`.scenario_kind` are fixed `Literal`s pydantic itself
+refuses to construct swapped — the identical `Literal[False]`-style
+type-level guarantee Prompt 37's `causation_confirmed` already
+established, applied to this engine's own observed-vs-estimate axis.
+
+**Wired into the multi-agent supervisor the same way `root_cause` already
+is**: a new `AgentName.SCENARIO` specialist, gated on an explicit,
+caller-supplied `ScenarioRequest` (`agent/multiagent/supervisor.py`) —
+the planner never creates one. Runs over one `sql_data` task's own
+already-governed rows, never a second query. `caller_roles` is never
+included in the handler's own tool-call payload; the registry injects
+the real, authorized roles automatically.
+
+**New, standalone REST surface, `api/scenarios.py`**: `POST
+/scenarios/validate` and `POST /scenarios/run`. **Neither route ever
+queries a database** — both take the baseline `columns`/`rows` directly
+in the request body (the caller's own already-fetched, already-governed
+result, e.g. from a prior `POST /execute`), which is the literal,
+structural mechanism behind "run scenarios without changing source
+data" at the API layer. Gated by `Settings.enable_what_if_scenarios`
+(404 when off), `Permission.ASK`, rate limiting, and payload bounds
+(`max_result_rows`/`scenario_max_parameters`).
+
+**Invariant that must not regress:** a scenario's `baseline_value` is
+always labeled `"observed"` and its `scenario_value` always
+`"modeled_estimate"`, enforced by the pydantic type system itself, not a
+runtime check a future edit could skip — locked in by
+`tests/security/test_scenario_never_presents_estimate_as_fact.py`.
+
+**Known, disclosed limitations:** no live, automatic trigger proposes a
+scenario from a natural-language "what if" question yet — both the REST
+routes and the multi-agent specialist require an explicit, already-
+structured request. No persistence/governance/dashboard exists for a
+scenario (unlike Prompt 18's recommendation governance) — a scenario is
+a single, stateless computation per call. `analytics.scenario
+.recommendations_for_scenario`/`analytics.visualization
+.build_scenario_chart_spec` are built and tested but not wired into any
+live recommendation/frontend path — the same "compute + test, defer the
+deepest wiring" deferral this series has used repeatedly.
+
+**Read [`38_WHATIF_SCENARIO_ENGINE_CONTRACT.md`](38_WHATIF_SCENARIO_ENGINE_CONTRACT.md)**
+for the full inspection findings, every new module's design, the testing
+summary, and the security/tenant-isolation/performance review.
+
 ## How to run
 
 See `README.md` for full setup. Short version:

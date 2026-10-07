@@ -7,6 +7,7 @@ the supervisor, which decides what runs next.
     governance(request) -> planner -> semantic
         -> for each sql_data task:  sql_data -> governance(rows) -> analytics -> forecast*
         -> root_cause* (explicit comparison pairs only)
+        -> scenario* (explicit what-if requests only)
         -> recommendation
         -> validate -> resolve conflicts -> report
 
@@ -40,6 +41,8 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
+
+from analytics.models import ScenarioParameter
 
 from agent.input_guard import check_input, rejection_message
 from agent.multiagent.agents import (
@@ -97,6 +100,32 @@ class RootCausePair:
     dimension_hierarchy: tuple[tuple[str, ...], ...] | None = None
 
 
+@dataclass(frozen=True)
+class ScenarioRequest:
+    """An explicit what-if scenario the caller asks for -- Prompt 38
+    (`38_WHATIF_SCENARIO_ENGINE_CONTRACT.md`). The identical "explicit,
+    caller-supplied, the planner never creates one" gate `RootCausePair`
+    already establishes: a model proposing a hypothetical assumption is
+    not authority to run it against real data.
+
+    Attributes:
+        data_task: Which `sql_data` subquestion's own already-governed
+            rows this scenario runs against.
+        scenario_id: Caller-supplied identifier for this run.
+        name: A short, human-readable scenario name.
+        parameters: The scenario's own typed assumptions
+            (`analytics.models.ScenarioParameter`).
+        dimension_columns: Which columns identify a row's label -- needed
+            only when a parameter sets `target_label`.
+    """
+
+    data_task: str
+    scenario_id: str
+    name: str
+    parameters: tuple[ScenarioParameter, ...] = ()
+    dimension_columns: tuple[str, ...] = ()
+
+
 @dataclass
 class SupervisedResult:
     status: str
@@ -128,6 +157,7 @@ def run_supervised_analysis(
     model: str | None = None,
     conversation_history: list[ConversationExchange] | None = None,
     root_cause_pairs: Sequence[RootCausePair] = (),
+    scenario_requests: Sequence[ScenarioRequest] = (),
     handlers: dict[AgentName, Handler] | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> SupervisedResult:
@@ -371,7 +401,23 @@ def run_supervised_analysis(
             params["dimension_hierarchy"] = [list(level) for level in pair.dimension_hierarchy]
         dispatch(AgentTask(id=f"R{index}", agent=AgentName.ROOT_CAUSE, params=params))
 
-    # 6. Recommendations, over whatever the data tasks produced.
+    # 6. What-if scenarios, only for explicit requests the caller asked for.
+    for index, request in enumerate(scenario_requests, start=1):
+        dispatch(
+            AgentTask(
+                id=f"S{index}",
+                agent=AgentName.SCENARIO,
+                params={
+                    "data_task": request.data_task,
+                    "scenario_id": request.scenario_id,
+                    "name": request.name,
+                    "parameters": [p.model_dump() for p in request.parameters],
+                    "dimension_columns": list(request.dimension_columns),
+                },
+            )
+        )
+
+    # 7. Recommendations, over whatever the data tasks produced.
     if workspace.slots:
         dispatch(AgentTask(id="REC", agent=AgentName.RECOMMENDATION))
 

@@ -2075,6 +2075,28 @@ class Settings(BaseSettings):
     # interaction rather than an additive combination of two main effects.
     root_cause_interaction_min_percent: float = Field(default=5.0, gt=0.0)
 
+    # --- Prompt 38 (38_WHATIF_SCENARIO_ENGINE_CONTRACT.md): analytics.scenario's
+    # own tunables -- the governed What-If engine. Pure, deterministic, zero-I/O
+    # over caller-supplied (never database-fetched by this module itself) rows,
+    # same "operator escape hatch" posture as enable_analytics_engine/
+    # enable_anomaly_detection above. Gates both api/scenarios.py's two routes
+    # (404 when off) and the multi-agent supervisor's own scenario specialist.
+    enable_what_if_scenarios: bool = True
+    # A parameter's implied percent change from its real baseline beyond this
+    # is flagged is_unrealistic=True -- a soft, disclosed warning by default
+    # (see scenario_reject_unrealistic below), never silently hidden either way.
+    scenario_unrealistic_change_percent_threshold: float = Field(default=500.0, gt=0.0)
+    # False (the default): an unrealistic parameter still runs, disclosed via
+    # ParameterValidation.warnings. True: it is a hard rejection instead
+    # (ParameterValidation.violations), same shape as every other hard
+    # violation -- an operator-chosen strictness level, not a fixed behavior.
+    scenario_reject_unrealistic: bool = False
+    # Hard cap on how many ScenarioParameters one call may validate/run --
+    # bounds this pure-compute endpoint's own cost regardless of payload size,
+    # mirroring max_result_rows' identical "cap regardless of what a caller
+    # sends" philosophy for a different resource.
+    scenario_max_parameters: int = Field(default=20, gt=0)
+
     # Prompt 19 (19_QUERY_STORE_PERFORMANCE_CONTRACT.md): db.query_store's
     # own tunables -- a no-op for every DB_TYPE other than "mssql"
     # regardless of these values (see that module's own docstring).

@@ -55,6 +55,10 @@ const BACKEND_ROUTES = [
   '/recommendations',
   // Role-based navigation (api/navigation.py, Prompt 32).
   '/navigation',
+  // What-If Scenario Engine (api/scenarios.py, Prompt 38) -- added here up
+  // front rather than found the hard way, the same recurring dev-proxy gap
+  // every new backend prefix since Prompt 26 has needed fixed.
+  '/scenarios',
 ]
 
 export default defineConfig({

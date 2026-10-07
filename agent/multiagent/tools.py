@@ -21,7 +21,9 @@ from typing import Any
 from analytics.causal import investigate_root_cause_advanced
 from analytics.engine import compute_analytics_result
 from analytics.forecasting import generate_forecast
+from analytics.models import ScenarioParameter
 from analytics.root_cause import investigate_root_cause
+from analytics.scenario import run_scenario
 from retrieval.retriever import extract_governing_metrics, retrieve_business_context
 
 from agent.analyst.planner import plan_subquestions
@@ -44,6 +46,9 @@ TOOL_ROOT_CAUSE = "root_cause_engine"
 #: can carry its own `AgentSpec.allowed_tools` entry and its own
 #: independent circuit breaker/retry policy.
 TOOL_ROOT_CAUSE_ADVANCED = "root_cause_engine_advanced"
+#: Prompt 38 (38_WHATIF_SCENARIO_ENGINE_CONTRACT.md) -- the governed
+#: What-If engine, run over one data task's own already-governed rows.
+TOOL_SCENARIO = "scenario_engine"
 
 
 def build_supervisor_registry(
@@ -113,6 +118,19 @@ def build_supervisor_registry(
             settings,
         ).model_dump()
 
+    def _scenario(payload: dict[str, Any]) -> Any:
+        parameters = [ScenarioParameter(**p) for p in payload["parameters"]]
+        return run_scenario(
+            payload["scenario_id"],
+            payload["name"],
+            payload["columns"],
+            payload["rows"],
+            payload.get("dimension_columns") or [],
+            parameters,
+            tuple(payload["caller_roles"]),
+            settings,
+        ).model_dump()
+
     specs = [
         (
             TOOL_GOVERNED_SQL,
@@ -169,6 +187,15 @@ def build_supervisor_registry(
             "never confirmed causation).",
             ToolCategory.READ,
             _root_cause_advanced,
+            Permission.ASK,
+            RetryPolicy(max_attempts=1),
+        ),
+        (
+            TOOL_SCENARIO,
+            "Governed what-if scenario over one already-executed result "
+            "(modeled estimate, never observed fact).",
+            ToolCategory.READ,
+            _scenario,
             Permission.ASK,
             RetryPolicy(max_attempts=1),
         ),

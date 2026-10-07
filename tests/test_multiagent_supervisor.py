@@ -9,6 +9,7 @@ guard, the tool registry, the budgets and the conflict rules all run for real.
 from __future__ import annotations
 
 import pytest
+from analytics.models import ScenarioChangeType, ScenarioParameter
 
 import agent.analyst.graph as analyst_graph
 import agent.multiagent.supervisor as supervisor
@@ -23,7 +24,7 @@ from agent.multiagent.policy import (
     reset_breakers,
 )
 from agent.multiagent.resolution import resolve_conflicts, validate_outputs
-from agent.multiagent.supervisor import RootCausePair, run_supervised_analysis
+from agent.multiagent.supervisor import RootCausePair, ScenarioRequest, run_supervised_analysis
 from agent.multiagent.tools import TOOL_ANALYTICS, TOOL_GOVERNED_SQL
 from agent.provenance import DataTruthLevel
 from agent.tools.registry import ToolRegistry
@@ -782,6 +783,109 @@ class TestRootCauseAndWorkspace:
         _turn()
 
         assert seen["rows"] == marker
+
+
+class TestScenarioAndWorkspace:
+    """Prompt 38 (`38_WHATIF_SCENARIO_ENGINE_CONTRACT.md`): the governed
+    what-if scenario specialist, gated on an explicit caller-supplied
+    `ScenarioRequest` -- the planner never creates one."""
+
+    def test_scenario_runs_only_for_an_explicit_request(self, sql):
+        result = _turn(
+            scenario_requests=[
+                ScenarioRequest(
+                    data_task="Q1",
+                    scenario_id="sc1",
+                    name="North +20%",
+                    parameters=(
+                        ScenarioParameter(
+                            name="North +20%",
+                            affected_metric="total",
+                            unit="percent",
+                            change_type=ScenarioChangeType.PERCENT_CHANGE,
+                            scenario_value=20.0,
+                        ),
+                    ),
+                )
+            ]
+        )
+
+        scenario_claims = [c for c in result.claims if c.agent == AgentName.SCENARIO]
+        assert scenario_claims
+        assert all(c.truth_level == DataTruthLevel.AI_INFERENCE for c in scenario_claims)
+        for claim in scenario_claims:
+            assert "observed" in claim.text and "modeled estimate" in claim.text
+
+    def test_scenario_is_never_attempted_without_an_explicit_request(self, sql):
+        result = _turn()
+
+        assert [t for t in result.trace if t["agent"] == "scenario"] == []
+
+    def test_an_invalid_scenario_parameter_is_disclosed_as_an_open_item_not_a_claim(self, sql):
+        result = _turn(
+            scenario_requests=[
+                ScenarioRequest(
+                    data_task="Q1",
+                    scenario_id="sc1",
+                    name="Bad",
+                    parameters=(
+                        ScenarioParameter(
+                            name="Bad",
+                            affected_metric="not_a_real_column",
+                            unit="percent",
+                            change_type=ScenarioChangeType.PERCENT_CHANGE,
+                            scenario_value=20.0,
+                        ),
+                    ),
+                )
+            ]
+        )
+
+        scenario_claims = [c for c in result.claims if c.agent == AgentName.SCENARIO]
+        assert scenario_claims == []
+        assert any("Scenario not run" in item for item in result.open_items)
+
+    def test_a_scenario_cannot_smuggle_identity_through_its_own_tool_call(self, monkeypatch, sql):
+        """The identical guarantee `TestMaliciousToolRequests` already
+        proves for other tools -- `caller_roles` is injected by the
+        registry itself, never settable by the handler's own payload."""
+        captured: dict = {}
+        real_call = tools.build_supervisor_registry
+
+        def spying_registry(**kwargs):
+            registry = real_call(**kwargs)
+            original_execute = registry.execute
+
+            def spying_execute(name, input_data, **exec_kwargs):
+                if name == "scenario_engine":
+                    captured["input_data_keys"] = set(input_data)
+                return original_execute(name, input_data, **exec_kwargs)
+
+            registry.execute = spying_execute  # type: ignore[method-assign]
+            return registry
+
+        monkeypatch.setattr(supervisor, "build_supervisor_registry", spying_registry)
+
+        _turn(
+            scenario_requests=[
+                ScenarioRequest(
+                    data_task="Q1",
+                    scenario_id="sc1",
+                    name="North +20%",
+                    parameters=(
+                        ScenarioParameter(
+                            name="North +20%",
+                            affected_metric="total",
+                            unit="percent",
+                            change_type=ScenarioChangeType.PERCENT_CHANGE,
+                            scenario_value=20.0,
+                        ),
+                    ),
+                )
+            ]
+        )
+
+        assert "caller_roles" not in captured.get("input_data_keys", {"caller_roles"})
 
 
 class TestWorkspaceIsolation:
