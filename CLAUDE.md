@@ -3579,6 +3579,76 @@ Shared invariant for all three: the LLM and any agent may propose, never decide.
 goes through the governed pipeline, every tool call through its permission check, and every
 result carries its truth level.
 
+### Advanced hierarchical root-cause engine (Prompt 37)
+
+`analytics/causal.py` upgrades Prompt 14's flat, single-level
+`analytics.root_cause.investigate_root_cause` into a hierarchical,
+evidence-driven investigation — `investigate_root_cause_advanced`
+**reuses** that function verbatim as its per-level computation (never
+reimplemented) and layers four capabilities on top: (1) per-contributor
+statistical significance testing (a stdlib-only Welch-style two-sample
+z-test over the raw underlying row values, gated by
+`Settings.root_cause_min_sample_size`/`root_cause_significance_alpha`) —
+a contributor whose raw dollar move looks large but whose sample is too
+small or too noisy is reported as a **distractor**
+(`ContributorEvidence.is_distractor`), never promoted to a claim; (2)
+hierarchical drill-down (`HierarchicalRootCauseNode.children`) — only a
+statistically supported contributor is drilled into at the next
+dimension level, over the real subset of rows matching its own label,
+bounded by `Settings.root_cause_max_hierarchy_depth`; (3) pairwise
+interaction testing (`InteractionEffect`) for exactly two single-column
+hierarchy levels, using the textbook two-way, unweighted-means
+fixed-effects decomposition (`interaction = cell_contribution -
+(row_mean(a) + col_mean(b) - grand_mean)`) over the full observed grid —
+exactly `0` for a perfectly additive dataset, non-zero only for a genuine
+synergy, gated by `Settings.root_cause_interaction_min_percent`; (4) a
+structural correlation-never-causation guarantee —
+`AdvancedRootCauseResult.causation_confirmed` is declared
+`Literal[False]` (pydantic *and* mypy both reject `True`), `evidence_type`
+is the deliberately singleton `CausalEvidenceStrength.CORRELATION_ONLY`,
+and a fixed, non-LLM-authored `causation_disclaimer` is always present.
+
+**Wired into the one existing live caller, nowhere new.** Prompt 34's
+multi-agent supervisor's `root_cause_handler` gained one new branch: when
+a caller's `RootCausePair` names an optional `dimension_hierarchy` (a
+new, additive field defaulting to `None`) **and**
+`Settings.enable_advanced_root_cause` is on, the handler calls the new
+`root_cause_engine_advanced` tool instead of the pre-existing
+`root_cause_engine` one; every other `RootCausePair` — including every
+one already in this codebase's own tests — takes **exactly** the
+pre-Prompt-37 code path, unchanged. Every claim the advanced path builds
+carries its own inline correlation-not-causation caveat; a justified
+interaction becomes its own claim; a distractor becomes a disclosed open
+item, never a claim.
+
+**Invariant that must not regress — still no live, automatic trigger**,
+identical to Prompt 14's own disclosed gap: this application's pipeline
+generates one SQL query per question, and nothing decides "this question
+needs a second, baseline-comparison query" and issues one.
+`investigate_root_cause_advanced` (like `investigate_root_cause` before
+it) is reachable only through an explicit, caller-supplied
+`RootCausePair` — `/analyst` still never populates `root_cause_pairs` at
+all. New `retrieval.retriever.extract_governing_dimensions` (Prompt 10's
+`extract_governing_metrics`, mirrored for `concept_type == "dimension"`)
+is built and tested for a future caller to resolve a `dimension_hierarchy`
+from governed catalog dimensions, but likewise has no live caller yet.
+
+**Known, disclosed limitations:** interaction testing is pairwise-only
+(a 3+-way interaction is out of scope, matching `RankingStat`'s own
+flattened-composite-label precedent) and assumes a reasonably complete
+observed `(label_a, label_b)` grid — a sparse/unbalanced grid makes the
+unweighted row/column means a cruder approximation of each dimension's
+"true" main effect. The significance test is a large-sample z-test
+approximation, not an exact Student's t-test.
+
+**Read [`37_ADVANCED_ROOT_CAUSE_ENGINE_CONTRACT.md`](37_ADVANCED_ROOT_CAUSE_ENGINE_CONTRACT.md)**
+for the full inspection findings, every new module's design, the testing
+summary, and the security/tenant-isolation/performance review — including
+`tests/security/test_causal_never_asserts_causation.py`, a dedicated
+cross-cutting regression proving (at both the type and text level) that
+nothing this engine produces, at any layer, ever asserts a confirmed
+cause.
+
 ## How to run
 
 See `README.md` for full setup. Short version:

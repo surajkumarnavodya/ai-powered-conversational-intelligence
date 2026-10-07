@@ -25,6 +25,16 @@ anywhere else at the time it was written:
   `X-Forwarded-For`/`X-Real-IP` header (it already doesn't; this is a
   regression test against a future change accidentally introducing that
   trust without a proxy-allowlist check).
+- `test_causal_never_asserts_causation.py` — Prompt 37
+  (`37_ADVANCED_ROOT_CAUSE_ENGINE_CONTRACT.md`): a cross-cutting
+  invariant spanning `analytics/causal.py` and `agent/multiagent/agents
+  .py`'s `root_cause_handler` together, so it doesn't belong to either
+  module's own test file alone. Proves, both at the type level
+  (`AdvancedRootCauseResult.causation_confirmed` rejects `True` via
+  pydantic) and at the text level (every claim/rationale/disclaimer
+  string across known-cause/distractor/interaction/no-cause scenarios,
+  including through the one live multi-agent handler), that nothing this
+  engine produces ever asserts a confirmed cause -- correlation only.
 
 Before adding a new file here, check whether the scenario already has
 coverage under its own module's `tests/test_<module>.py` first — this

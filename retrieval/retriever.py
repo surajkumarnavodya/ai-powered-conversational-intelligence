@@ -126,6 +126,53 @@ def extract_governing_metrics(items: list[ScoredChunk]) -> list[dict[str, Any]]:
     return governing
 
 
+def extract_governing_dimensions(items: list[ScoredChunk]) -> list[dict[str, Any]]:
+    """Filters already-retrieved chunks down to **governed dimensions** --
+    Prompt 37 (`37_ADVANCED_ROOT_CAUSE_ENGINE_CONTRACT.md`)'s "compare
+    baselines across time and governed dimensions" requirement.
+
+    The identical pattern `extract_governing_metrics` above already
+    establishes for `concept_type == "metric"`, applied to
+    `concept_type == "dimension"` instead -- zero new vector query, zero
+    new matching pass. Every dict this returns is already `PUBLISHED`
+    (the same guarantee `extract_governing_metrics`'s own docstring
+    explains), so a caller (e.g. a future planner deciding which column
+    names to offer `analytics.causal.investigate_root_cause_advanced` as
+    a `dimension_hierarchy`) can prefer an officially governed dimension
+    name over an arbitrary schema column name with confidence it is
+    `CONFIRMED_BUSINESS_TRUTH`, not an unreviewed draft.
+
+    Returns:
+        One plain dict per governed dimension (`business_name`, `column`
+        -- the underlying schema column this dimension maps to, read from
+        `Chunk.table_name` (which `retrieval.chunking
+        .business_concept_chunk_from_catalog_entry` populates from the
+        catalog entry's own `technical_name` -- "a short label, e.g. a
+        column/table name for non-metric concepts", see
+        `semantic.catalog.CatalogEntrySnapshot`'s own docstring); `None`
+        when the entry never recorded one -- and `text`, the chunk's own
+        self-contained rendering). Empty for a question with no retrieved
+        governed dimension, the common case today (no live caller
+        resolves a `dimension_hierarchy` from this yet -- see
+        `37_ADVANCED_ROOT_CAUSE_ENGINE_CONTRACT.md`'s own disclosed scope).
+    """
+    governing: list[dict[str, Any]] = []
+    for item in items:
+        chunk = item.chunk
+        if chunk.chunk_type != ChunkType.BUSINESS_CONCEPT:
+            continue
+        if chunk.extra.get("concept_type") != "dimension":
+            continue
+        governing.append(
+            {
+                "business_name": chunk.extra.get("business_name") or chunk.source_id,
+                "column": chunk.table_name,
+                "text": chunk.text,
+            }
+        )
+    return governing
+
+
 def _per_type_top_k(settings: Settings) -> dict[ChunkType, int]:
     return {
         ChunkType.TABLE: settings.retrieval_top_k_tables,

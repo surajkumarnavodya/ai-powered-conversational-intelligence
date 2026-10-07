@@ -15,6 +15,7 @@ from analytics.engine import (
     classify_period_column,
     classify_result_shape,
     compute_analytics_result,
+    group_values_by_label,
 )
 from analytics.models import ANALYTICS_ENGINE_VERSION, ResultShape
 
@@ -503,3 +504,33 @@ class TestFormulaAndVersionMetadata:
         result = compute_analytics_result(["Category", "Value"], rows)
         for finding in result.findings:
             assert finding.claim.level.value == "database_fact"
+
+
+class TestGroupValuesByLabel:
+    """Prompt 37 (`37_ADVANCED_ROOT_CAUSE_ENGINE_CONTRACT.md`)'s new,
+    additive grouping helper -- `analytics.causal
+    .investigate_root_cause_advanced`'s own sample-size/significance
+    testing reuses this directly rather than re-grouping rows itself.
+    Does not touch `group_and_sum_by_label`'s own existing behavior at
+    all -- a parallel, independent pass over the same rows."""
+
+    _COLUMNS = ["Region", "Revenue"]
+
+    def test_returns_every_raw_value_per_label_not_just_the_sum(self):
+        rows = [("West", 10.0), ("West", 20.0), ("East", 5.0)]
+        grouped = group_values_by_label(self._COLUMNS, rows, 1, [0])
+        assert grouped == {"West": [10.0, 20.0], "East": [5.0]}
+
+    def test_a_row_with_a_null_value_or_null_label_is_skipped(self):
+        rows = [("West", None), (None, 10.0), ("East", 5.0)]
+        grouped = group_values_by_label(self._COLUMNS, rows, 1, [0])
+        assert grouped == {"East": [5.0]}
+
+    def test_a_composite_multi_column_label_matches_group_and_sum_by_labels_own_join(self):
+        columns = ["Region", "Category", "Revenue"]
+        rows = [("West", "Bikes", 10.0), ("West", "Bikes", 20.0)]
+        grouped = group_values_by_label(columns, rows, 2, [0, 1])
+        assert grouped == {"West / Bikes": [10.0, 20.0]}
+
+    def test_empty_rows_produce_an_empty_dict(self):
+        assert group_values_by_label(self._COLUMNS, [], 1, [0]) == {}

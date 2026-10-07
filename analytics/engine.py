@@ -303,6 +303,32 @@ def group_and_sum_by_label(
     return totals, value_column, label_column
 
 
+def group_values_by_label(
+    columns: list[str], rows: list[tuple], value_idx: int, label_indices: list[int]
+) -> dict[str, list[float]]:
+    """Groups `rows` by their (possibly composite) label -- identical
+    null-skipping/composite-label rules to `group_and_sum_by_label` above
+    -- but returns every underlying non-null value per label instead of
+    just the sum.
+
+    Public (Prompt 37, `37_ADVANCED_ROOT_CAUSE_ENGINE_CONTRACT.md`) --
+    `analytics.causal.investigate_root_cause_advanced` reuses this to run
+    its per-contributor significance test against the real underlying
+    values (sample size, mean, variance), rather than against the single
+    pre-summed total `group_and_sum_by_label` returns. Does not replace or
+    modify that function (a second, parallel grouping pass over the same
+    rows, kept independent on purpose so neither function's own contract
+    changes for its existing callers).
+    """
+    grouped: dict[str, list[float]] = {}
+    for row in rows:
+        if row[value_idx] is None or any(row[i] is None for i in label_indices):
+            continue
+        label = " / ".join(str(row[i]) for i in label_indices)
+        grouped.setdefault(label, []).append(float(row[value_idx]))
+    return grouped
+
+
 def _column_summary_finding(
     name: str, count: int, null_count: int, is_numeric: bool, minimum, maximum, mean
 ) -> AnalyticsFinding:

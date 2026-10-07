@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from analytics.causal import investigate_root_cause_advanced
 from analytics.engine import compute_analytics_result
 from analytics.forecasting import generate_forecast
 from analytics.root_cause import investigate_root_cause
@@ -37,6 +38,12 @@ TOOL_BUSINESS_CONTEXT = "business_context"
 TOOL_ANALYTICS = "analytics_engine"
 TOOL_FORECAST = "forecast_engine"
 TOOL_ROOT_CAUSE = "root_cause_engine"
+#: Prompt 37 (37_ADVANCED_ROOT_CAUSE_ENGINE_CONTRACT.md) -- the
+#: hierarchical/significance/interaction upgrade over TOOL_ROOT_CAUSE
+#: above. A separate tool name, not a parameter on the same one, so each
+#: can carry its own `AgentSpec.allowed_tools` entry and its own
+#: independent circuit breaker/retry policy.
+TOOL_ROOT_CAUSE_ADVANCED = "root_cause_engine_advanced"
 
 
 def build_supervisor_registry(
@@ -96,6 +103,16 @@ def build_supervisor_registry(
             settings,
         ).model_dump()
 
+    def _root_cause_advanced(payload: dict[str, Any]) -> Any:
+        return investigate_root_cause_advanced(
+            payload["current_rows"],
+            payload["baseline_rows"],
+            payload["columns"],
+            payload["dimension_hierarchy"],
+            payload["value_column"],
+            settings,
+        ).model_dump()
+
     specs = [
         (
             TOOL_GOVERNED_SQL,
@@ -142,6 +159,16 @@ def build_supervisor_registry(
             "Deterministic contribution breakdown between two result sets.",
             ToolCategory.READ,
             _root_cause,
+            Permission.ASK,
+            RetryPolicy(max_attempts=1),
+        ),
+        (
+            TOOL_ROOT_CAUSE_ADVANCED,
+            "Hierarchical contribution breakdown with significance testing and "
+            "interaction detection between two result sets (correlation only, "
+            "never confirmed causation).",
+            ToolCategory.READ,
+            _root_cause_advanced,
             Permission.ASK,
             RetryPolicy(max_attempts=1),
         ),

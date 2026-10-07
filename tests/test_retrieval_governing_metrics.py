@@ -10,7 +10,7 @@ from typing import Any
 
 from retrieval.chunking import business_concept_chunk_from_catalog_entry
 from retrieval.models import ScoredChunk
-from retrieval.retriever import extract_governing_metrics
+from retrieval.retriever import extract_governing_dimensions, extract_governing_metrics
 from semantic.catalog import CatalogConceptType, CatalogEntrySnapshot, CatalogStatus
 
 
@@ -122,3 +122,57 @@ class TestExtractGoverningMetrics:
         assert governing[0]["approved_expression"] is None
         assert governing[0]["business_name"] == "Average Order Value"
         assert governing[0]["text"]
+
+
+class TestExtractGoverningDimensions:
+    """Prompt 37 (`37_ADVANCED_ROOT_CAUSE_ENGINE_CONTRACT.md`)'s "governed
+    dimensions" counterpart to `TestExtractGoverningMetrics` above -- the
+    identical pattern, `concept_type == "dimension"` instead of
+    `"metric"`."""
+
+    def _dimension_snapshot(self, **overrides: Any) -> CatalogEntrySnapshot:
+        defaults: dict[str, Any] = dict(
+            id="d1",
+            tenant_id="t1",
+            database_id="db1",
+            concept_type=CatalogConceptType.DIMENSION,
+            concept_key="region",
+            business_name="Sales Region",
+            technical_name="Region",
+            status=CatalogStatus.PUBLISHED,
+            version=1,
+        )
+        defaults.update(overrides)
+        return CatalogEntrySnapshot(**defaults)
+
+    def test_a_dimension_type_business_concept_chunk_is_extracted(self):
+        items = [_scored_chunk(self._dimension_snapshot())]
+        governing = extract_governing_dimensions(items)
+        assert len(governing) == 1
+        assert governing[0]["business_name"] == "Sales Region"
+        assert governing[0]["column"] == "Region"
+        assert "Sales Region" in governing[0]["text"]
+
+    def test_a_dimension_with_no_technical_name_still_has_a_business_name(self):
+        items = [_scored_chunk(self._dimension_snapshot(technical_name=None))]
+        governing = extract_governing_dimensions(items)
+        assert governing[0]["column"] is None
+        assert governing[0]["business_name"] == "Sales Region"
+
+    def test_a_metric_chunk_is_excluded_from_governing_dimensions(self):
+        items = [_scored_chunk(_snapshot())]
+        assert extract_governing_dimensions(items) == []
+
+    def test_a_dimension_chunk_is_excluded_from_governing_metrics(self):
+        items = [_scored_chunk(self._dimension_snapshot())]
+        assert extract_governing_metrics(items) == []
+
+    def test_mixed_results_only_dimension_entries_survive(self):
+        metric = _scored_chunk(_snapshot())
+        dimension = _scored_chunk(self._dimension_snapshot())
+        governing = extract_governing_dimensions([metric, dimension])
+        assert len(governing) == 1
+        assert governing[0]["business_name"] == "Sales Region"
+
+    def test_empty_input_produces_empty_output(self):
+        assert extract_governing_dimensions([]) == []

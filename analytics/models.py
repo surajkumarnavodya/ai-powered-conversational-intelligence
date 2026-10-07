@@ -691,3 +691,263 @@ class ForecastResult(BaseModel):
     truth_level: DataTruthLevel = DataTruthLevel.AI_INFERENCE
     summary: str = ""
     engine_version: str = FORECASTING_ENGINE_VERSION
+
+
+#: The typed-contract schema version for everything `analytics.causal`
+#: produces -- Prompt 37 (`37_ADVANCED_ROOT_CAUSE_ENGINE_CONTRACT.md`). Kept
+#: separate from `ANALYTICS_ENGINE_VERSION`/`FORECASTING_ENGINE_VERSION`
+#: (own module, own versioning axis), the identical precedent each prior
+#: engine module already set for itself.
+CAUSAL_ENGINE_VERSION = "1.0.0"
+
+
+class CausalEvidenceStrength(str, Enum):
+    """How strong a causal claim `analytics.causal` is permitted to make.
+
+    Deliberately a **singleton** enum today -- `CORRELATION_ONLY` is the
+    only value any code path in this module can ever produce. This is the
+    structural half of "distinguish correlation from confirmed causation":
+    nothing in this codebase runs a controlled experiment, a randomized
+    trial, or a counterfactual/instrumental-variable analysis, so nothing
+    here is entitled to assert causation. A future module that *did* have
+    one of those (e.g. a proper A/B-test reader) would add a second,
+    genuinely distinct member (`CONFIRMED_CAUSATION` or similar) rather
+    than this module quietly starting to set one -- see
+    `AdvancedRootCauseResult.causation_confirmed`, which is hardcoded
+    `Literal[False]` for the same reason.
+    """
+
+    CORRELATION_ONLY = "correlation_only"
+
+
+#: Fixed, deterministic text every `AdvancedRootCauseResult` carries --
+#: master-contract rule 10 ("never present inference, simulation or
+#: prediction as observed fact") applied specifically to causal language.
+#: Not an LLM-authored disclaimer (which could be prompt-injected or
+#: inconsistently worded) -- a constant, so it is byte-identical on every
+#: result and trivially greppable.
+CAUSATION_DISCLAIMER = (
+    "This is a statistical correlation/contribution analysis, not a controlled "
+    "experiment. It identifies which dimension values moved together with the "
+    "observed change and by how much, using only historical data already "
+    "retrieved -- it does not rule out confounding variables, reverse "
+    "causality, or coincidence. Treat every contributor below as 'associated "
+    "with' the change, never as its confirmed cause."
+)
+
+
+class SignificanceVerdict(str, Enum):
+    """`analytics.causal`'s own classification of one contributor's
+    statistical support -- a closed set, like every other enum in this
+    package.
+
+    Attributes:
+        SIGNIFICANT: The sample size on both sides cleared
+            `Settings.root_cause_min_sample_size` and the two-sample test's
+            p-value is below `Settings.root_cause_significance_alpha`.
+        NOT_SIGNIFICANT: Enough sample to run the test, but the observed
+            difference is not distinguishable from random variation at the
+            configured significance level -- a genuine "we looked and found
+            no statistical support," not a skip.
+        INSUFFICIENT_SAMPLE: Fewer than `Settings.root_cause_min_sample_size`
+            underlying rows on at least one side -- the test was not run at
+            all (never a misleadingly confident p-value computed from too
+            little data).
+    """
+
+    SIGNIFICANT = "significant"
+    NOT_SIGNIFICANT = "not_significant"
+    INSUFFICIENT_SAMPLE = "insufficient_sample"
+
+
+class StatisticalSignificance(BaseModel):
+    """One contributor's two-sample significance test -- a Welch-style
+    z-test over the *raw* per-row values underlying each period's total
+    (never just the two sums), using only Python's stdlib (`statistics`
+    for variance, `math.erf` for the normal CDF -- no numpy/scipy, matching
+    `analytics/`'s own established "stdlib only" posture).
+
+    `verdict` is the literal mechanism behind "enforce sample-size/
+    confidence thresholds and return insufficient evidence when
+    necessary": a contributor whose raw dollar/row difference looks large
+    but whose underlying sample is small or highly variable gets
+    `INSUFFICIENT_SAMPLE`/`NOT_SIGNIFICANT`, not a false "significant."
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    verdict: SignificanceVerdict
+    current_n: int
+    baseline_n: int
+    current_mean: float | None = None
+    baseline_mean: float | None = None
+    #: `None` whenever `verdict == INSUFFICIENT_SAMPLE` (no test was run).
+    z_score: float | None = None
+    #: Two-sided p-value from the standard normal CDF -- `None` whenever
+    #: `verdict == INSUFFICIENT_SAMPLE`.
+    p_value: float | None = None
+    alpha: float
+    min_sample_size: int
+    formula: str = (
+        "z = (current_mean - baseline_mean) / sqrt(current_var/current_n + "
+        "baseline_var/baseline_n) [Welch]; p = 2*(1 - Phi(|z|)) via math.erf; "
+        "significant when current_n>=min_sample_size and baseline_n>=min_sample_size "
+        "and p < alpha"
+    )
+
+
+class ContributorEvidence(BaseModel):
+    """One dimension value's contribution, re-checked for statistical
+    support -- `analytics.causal`'s own, stricter companion to
+    `ContributorStat` (Prompt 14's own, unchanged, contribution-percent-only
+    shape). Every `ContributorEvidence` wraps exactly one `ContributorStat`
+    that already cleared `investigate_root_cause`'s own validation bar;
+    `significance` is the *additional* sample-size/confidence check Prompt
+    14 never ran.
+
+    `is_distractor` is the literal "known causes, distractors, no-cause"
+    distinction the engine is required to make: a contributor whose
+    `contribution_percent` alone looks compelling but whose `significance
+    .verdict` is not `SIGNIFICANT` is a distractor -- numerically large,
+    statistically unsupported -- and is reported, never silently promoted
+    to a claim.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    contributor: ContributorStat
+    significance: StatisticalSignificance
+    is_distractor: bool
+
+    @property
+    def label(self) -> str:
+        return self.contributor.label
+
+
+class InteractionEffect(BaseModel):
+    """A pairwise interaction test between exactly two single-column
+    dimensions -- "test relevant interactions where statistically
+    justified." Computed only when a hierarchy names exactly two
+    single-column levels (see `analytics.causal`'s own module docstring
+    for the exact precondition); never attempted for a 3+-way combination
+    (a disclosed, bounded scope, matching `RankingStat`'s own flattened-
+    composite-label precedent rather than true N-way decomposition).
+
+    `interaction_residual_percent` is the standard two-way, unweighted-
+    means fixed-effects interaction term (the textbook ANOVA interaction,
+    not a bespoke heuristic) -- `analytics.causal._detect_interactions`'s
+    own docstring has the full formula and why it is exactly `0` for a
+    perfectly additive dataset. `is_statistically_justified` requires both
+    a sample size clearing the configured significance bar *and* a
+    residual whose magnitude clears `Settings
+    .root_cause_interaction_min_percent`, so a joint cell that is large
+    only because its two main effects are each already large on their own
+    (no genuine synergy) is correctly reported as not justified.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    dimension_a: str
+    dimension_b: str
+    label_a: str
+    label_b: str
+    joint_label: str
+    joint_contribution_percent: float
+    #: Informational only -- `0.0` when that single value showed no
+    #: detectable main-effect contribution on its own (it never cleared
+    #: the base contribution threshold alone in the single-dimension
+    #: breakdown). Not an input to `interaction_residual_percent` below
+    #: (that uses the full, unfiltered per-cell grid instead).
+    main_effect_a_percent: float
+    main_effect_b_percent: float
+    interaction_residual_percent: float
+    sample_size: int
+    is_statistically_justified: bool
+    rationale: str
+    formula: str = (
+        "interaction = cell_contribution - (row_mean(label_a) + col_mean(label_b) - grand_mean) "
+        "[two-way, unweighted-means fixed-effects decomposition over the full observed grid]; "
+        "reported as a percent of the overall magnitude; justified when the two-sample "
+        "significance test is SIGNIFICANT and |residual_percent| >= interaction_min_percent"
+    )
+
+
+class HierarchicalRootCauseNode(BaseModel):
+    """One level of a hierarchical root-cause investigation.
+
+    `base_result` is `analytics.root_cause.investigate_root_cause`'s own,
+    completely unmodified output for this level's dimension breakdown
+    (Prompt 14 code, reused verbatim -- master-contract rule 2/3, never
+    reimplemented). `contributor_evidence`/`distractors` partition that
+    result's own `base_result.contributors` by statistical support (see
+    `ContributorEvidence.is_distractor`). `children` holds one node per
+    *statistically supported* (non-distractor) contributor that was drilled
+    into at the next hierarchy level -- a distractor is never drilled into,
+    which is what bounds the recursion to "only where there's already
+    evidence" rather than a combinatorial expansion of every contributor at
+    every level.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    depth: int
+    dimension_columns: tuple[str, ...]
+    base_result: RootCauseResult
+    contributor_evidence: tuple[ContributorEvidence, ...] = ()
+    distractors: tuple[ContributorEvidence, ...] = ()
+    children: tuple[HierarchicalRootCauseNode, ...] = ()
+
+
+class AdvancedRootCauseResult(BaseModel):
+    """`analytics.causal.investigate_root_cause_advanced`'s full result --
+    Prompt 37 (`37_ADVANCED_ROOT_CAUSE_ENGINE_CONTRACT.md`). Deliberately
+    **not** a replacement for `RootCauseResult` (Prompt 14's own flat,
+    single-level shape stays exactly as it was, still the one type the
+    live multi-agent `root_cause_engine` tool returns by default) -- this
+    is the richer, opt-in result for a caller that asks for the hierarchy/
+    interaction/significance upgrade specifically.
+
+    Attributes:
+        root: The top-of-hierarchy node (depth 0).
+        interactions: Every pairwise interaction test run at the top level
+            -- empty unless the hierarchy named exactly two single-column
+            levels (see `InteractionEffect`'s own docstring).
+        has_sufficient_evidence: `True` only when `root.contributor_evidence`
+            is non-empty -- i.e. at least one top-level contributor is both
+            large enough (Prompt 14's own bar) *and* statistically
+            supported (this prompt's own, additional bar). Stricter than
+            `RootCauseResult.has_sufficient_evidence`, which this result
+            does not reuse the name of, specifically so the two can never
+            be confused for one another.
+        causation_confirmed: Hardcoded `False` -- see
+            `CausalEvidenceStrength`'s own docstring for why no code path
+            in this module can ever set this `True`.
+        evidence_type: Hardcoded `CORRELATION_ONLY` -- the same guarantee,
+            typed.
+        causation_disclaimer: `CAUSATION_DISCLAIMER` verbatim.
+        truth_level: Always `DataTruthLevel.AI_INFERENCE` -- the
+            *interpretation* (which contributors to trust, how the
+            hierarchy/interactions are framed) is an inference over
+            `DATABASE_FACT`-equivalent arithmetic, the identical framing
+            `ForecastResult.truth_level` already establishes for a
+            deterministic-but-still-inferential result.
+        limitations: Every disclosed caveat -- distractors excluded,
+            hierarchy depth capped, interaction preconditions not met,
+            etc. -- never a silent omission.
+        engine_version: `CAUSAL_ENGINE_VERSION` at computation time.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    root: HierarchicalRootCauseNode
+    interactions: tuple[InteractionEffect, ...] = ()
+    has_sufficient_evidence: bool
+    causation_confirmed: Literal[False] = False
+    evidence_type: CausalEvidenceStrength = CausalEvidenceStrength.CORRELATION_ONLY
+    causation_disclaimer: str = CAUSATION_DISCLAIMER
+    truth_level: DataTruthLevel = DataTruthLevel.AI_INFERENCE
+    limitations: tuple[str, ...] = ()
+    engine_version: str = CAUSAL_ENGINE_VERSION
+
+
+HierarchicalRootCauseNode.model_rebuild()

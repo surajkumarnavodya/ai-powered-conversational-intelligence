@@ -79,12 +79,22 @@ _REFUSED_DECISIONS = frozenset({"refuse", "require_authorization"})
 @dataclass(frozen=True)
 class RootCausePair:
     """An explicit comparison the caller asks for. The planner never creates
-    one: a model proposing a comparison is not authority to run it."""
+    one: a model proposing a comparison is not authority to run it.
+
+    `dimension_hierarchy` is Prompt 37's additive upgrade (
+    `37_ADVANCED_ROOT_CAUSE_ENGINE_CONTRACT.md`): an ordered list of
+    hierarchy levels, each a tuple of one or more dimension column names,
+    for `agent.multiagent.agents.root_cause_handler` to drill through with
+    `analytics.causal.investigate_root_cause_advanced`. `None` (the
+    default) reproduces this type's pre-Prompt-37 shape exactly -- the
+    handler falls back to `dimension_columns` alone, through the plain,
+    unmodified `investigate_root_cause` path, byte-for-byte unchanged."""
 
     current_task: str
     baseline_task: str
     dimension_columns: tuple[str, ...]
     value_column: str
+    dimension_hierarchy: tuple[tuple[str, ...], ...] | None = None
 
 
 @dataclass
@@ -351,18 +361,15 @@ def run_supervised_analysis(
 
     # 5. Root cause, only for explicit comparison pairs the caller asked for.
     for index, pair in enumerate(root_cause_pairs, start=1):
-        dispatch(
-            AgentTask(
-                id=f"R{index}",
-                agent=AgentName.ROOT_CAUSE,
-                params={
-                    "current_task": pair.current_task,
-                    "baseline_task": pair.baseline_task,
-                    "dimension_columns": list(pair.dimension_columns),
-                    "value_column": pair.value_column,
-                },
-            )
-        )
+        params: dict[str, Any] = {
+            "current_task": pair.current_task,
+            "baseline_task": pair.baseline_task,
+            "dimension_columns": list(pair.dimension_columns),
+            "value_column": pair.value_column,
+        }
+        if pair.dimension_hierarchy:
+            params["dimension_hierarchy"] = [list(level) for level in pair.dimension_hierarchy]
+        dispatch(AgentTask(id=f"R{index}", agent=AgentName.ROOT_CAUSE, params=params))
 
     # 6. Recommendations, over whatever the data tasks produced.
     if workspace.slots:

@@ -41,6 +41,7 @@ from agent.multiagent.tools import (
     TOOL_GOVERNED_SQL,
     TOOL_LLM_PLAN,
     TOOL_ROOT_CAUSE,
+    TOOL_ROOT_CAUSE_ADVANCED,
 )
 from agent.provenance import DataTruthLevel
 from agent.tools.types import ToolResult
@@ -93,7 +94,10 @@ SPECS: dict[AgentName, AgentSpec] = {
     AgentName.ROOT_CAUSE: AgentSpec(
         name=AgentName.ROOT_CAUSE,
         kind="engine",
-        allowed_tools=frozenset({TOOL_ROOT_CAUSE}),
+        # Prompt 37: TOOL_ROOT_CAUSE_ADVANCED is additive -- the handler
+        # below only ever reaches for it when a caller's RootCausePair
+        # names a dimension_hierarchy; TOOL_ROOT_CAUSE stays the default.
+        allowed_tools=frozenset({TOOL_ROOT_CAUSE, TOOL_ROOT_CAUSE_ADVANCED}),
         max_truth_level=DataTruthLevel.AI_INFERENCE,
         cost_units=1,
     ),
@@ -371,17 +375,13 @@ def forecast_handler(ctx: AgentContext, task: AgentTask) -> AgentOutput:
     return AgentOutput(agent=task.agent, task_id=subject, status="ok", claims=claims)
 
 
-def root_cause_handler(ctx: AgentContext, task: AgentTask) -> AgentOutput:
-    current = ctx.workspace.slots[task.params["current_task"]]
-    baseline = ctx.workspace.slots[task.params["baseline_task"]]
-    if current.governed_rows is None or baseline.governed_rows is None:
-        return _skipped(task, "a comparison input is missing")
-    if current.columns != baseline.columns:
-        return _skipped(
-            task,
-            "comparison result shapes differ",
-            "Root cause not attempted: result shapes differ.",
-        )
+def _root_cause_basic(
+    ctx: AgentContext, task: AgentTask, current: Any, baseline: Any
+) -> AgentOutput:
+    """Prompt 14's own, flat, contribution-percent-only shape -- byte-for-
+    byte the pre-Prompt-37 behavior. Reached whenever `task.params` names
+    no `dimension_hierarchy` (the common case; every pre-existing caller
+    stays on this path, unchanged)."""
     result = ctx.call(
         TOOL_ROOT_CAUSE,
         {
@@ -419,6 +419,132 @@ def root_cause_handler(ctx: AgentContext, task: AgentTask) -> AgentOutput:
         for contributor in output["contributors"]
     )
     return AgentOutput(agent=task.agent, task_id=task.id, status="ok", claims=claims)
+
+
+def _flatten_contributor_evidence(node: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every `ContributorEvidence` dict across a `HierarchicalRootCauseNode`
+    tree (depth-first, root first) -- a plain list is all a claim-building
+    loop needs; the tree shape itself stays available in `AgentOutput.data`
+    (never sent to the caller, see that field's own docstring) for a future
+    UI that wants to render the hierarchy."""
+    flattened = list(node.get("contributor_evidence") or [])
+    for child in node.get("children") or []:
+        flattened.extend(_flatten_contributor_evidence(child))
+    return flattened
+
+
+def _root_cause_advanced(
+    ctx: AgentContext, task: AgentTask, current: Any, baseline: Any
+) -> AgentOutput:
+    """Prompt 37's hierarchical/significance/interaction upgrade -- reached
+    only when `task.params["dimension_hierarchy"]` is set and
+    `Settings.enable_advanced_root_cause` is on. Every claim text carries
+    its own correlation-not-causation caveat; a distractor (a large raw
+    contribution that failed the significance check) is disclosed as an
+    open item, never asserted as a claim."""
+    result = ctx.call(
+        TOOL_ROOT_CAUSE_ADVANCED,
+        {
+            "current_rows": current.governed_rows,
+            "baseline_rows": baseline.governed_rows,
+            "columns": current.columns,
+            "dimension_hierarchy": [list(level) for level in task.params["dimension_hierarchy"]],
+            "value_column": task.params["value_column"],
+        },
+    )
+    if not result.success:
+        return _failed(task, "advanced root cause tool failed")
+    output = result.output
+    grounded = tuple(e for e in (current.row_evidence_id, baseline.row_evidence_id) if e)
+    open_items: list[str] = []
+
+    if not output["has_sufficient_evidence"]:
+        open_items.append(
+            "No root cause stated: no contributor was both large enough and statistically "
+            "significant. " + output["causation_disclaimer"]
+        )
+        return AgentOutput(
+            agent=task.agent, task_id=task.id, status="ok", open_items=tuple(open_items)
+        )
+
+    claims: list[Claim] = []
+    for evidence in _flatten_contributor_evidence(output["root"]):
+        contributor = evidence["contributor"]
+        significance = evidence["significance"]
+        claims.append(
+            Claim(
+                agent=task.agent,
+                task_id=task.id,
+                text=(
+                    f"{contributor['label']} is associated with about "
+                    f"{contributor['contribution_percent']:.1f}% of the change "
+                    f"(p={significance['p_value']:.3f}, n={significance['current_n']}+"
+                    f"{significance['baseline_n']}; correlation, not confirmed causation)"
+                ),
+                truth_level=DataTruthLevel.AI_INFERENCE,
+                key=f"contributor:{contributor['label']}",
+                value=contributor["contribution_percent"],
+                grounded_in=grounded,
+            )
+        )
+    for distractor in _flatten_contributor_evidence_distractors(output["root"]):
+        contributor = distractor["contributor"]
+        open_items.append(
+            f"{contributor['label']} showed a {contributor['contribution_percent']:.1f}% "
+            "raw contribution but was not statistically distinguishable from random "
+            "variation -- not claimed as evidence."
+        )
+    for interaction in output["interactions"]:
+        if not interaction["is_statistically_justified"]:
+            continue
+        claims.append(
+            Claim(
+                agent=task.agent,
+                task_id=task.id,
+                text=(
+                    f"{interaction['label_a']} x {interaction['label_b']} shows a statistically "
+                    f"justified interaction effect ({interaction['interaction_residual_percent']:+.1f}"
+                    " pts beyond their independent contributions; correlation, not confirmed "
+                    "causation)"
+                ),
+                truth_level=DataTruthLevel.AI_INFERENCE,
+                key=f"interaction:{interaction['label_a']}|{interaction['label_b']}",
+                value=interaction["interaction_residual_percent"],
+                grounded_in=grounded,
+            )
+        )
+    if not open_items:
+        open_items.append(output["causation_disclaimer"])
+    return AgentOutput(
+        agent=task.agent,
+        task_id=task.id,
+        status="ok",
+        claims=tuple(claims),
+        open_items=tuple(open_items),
+    )
+
+
+def _flatten_contributor_evidence_distractors(node: dict[str, Any]) -> list[dict[str, Any]]:
+    flattened = list(node.get("distractors") or [])
+    for child in node.get("children") or []:
+        flattened.extend(_flatten_contributor_evidence_distractors(child))
+    return flattened
+
+
+def root_cause_handler(ctx: AgentContext, task: AgentTask) -> AgentOutput:
+    current = ctx.workspace.slots[task.params["current_task"]]
+    baseline = ctx.workspace.slots[task.params["baseline_task"]]
+    if current.governed_rows is None or baseline.governed_rows is None:
+        return _skipped(task, "a comparison input is missing")
+    if current.columns != baseline.columns:
+        return _skipped(
+            task,
+            "comparison result shapes differ",
+            "Root cause not attempted: result shapes differ.",
+        )
+    if task.params.get("dimension_hierarchy") and ctx.settings.enable_advanced_root_cause:
+        return _root_cause_advanced(ctx, task, current, baseline)
+    return _root_cause_basic(ctx, task, current, baseline)
 
 
 def recommendation_handler(ctx: AgentContext, task: AgentTask) -> AgentOutput:

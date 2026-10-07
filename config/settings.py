@@ -983,6 +983,37 @@ class Settings(BaseSettings):
             the total change to be returned as a contributor, the
             configurable half of "no root cause is stated without
             supporting evidence."
+        enable_advanced_root_cause: Whether `agent.multiagent.agents
+            .root_cause_handler` may use `analytics.causal
+            .investigate_root_cause_advanced` at all, when a caller's
+            `RootCausePair` names a `dimension_hierarchy`. True by
+            default -- a pure, deterministic, zero-I/O computation, same
+            posture as `enable_analytics_engine`/`enable_anomaly_detection`
+            above. False falls back to Prompt 14's plain
+            `investigate_root_cause` even when a hierarchy was requested.
+        root_cause_min_sample_size: `analytics.causal`'s own, additional
+            bar on top of `root_cause_min_contribution_percent` -- a
+            contributor's significance test is only run when *both* the
+            current and baseline period have at least this many
+            underlying rows for that dimension value; fewer than this on
+            either side is `SignificanceVerdict.INSUFFICIENT_SAMPLE`, never
+            a confidently-computed p-value from too little data.
+        root_cause_significance_alpha: The two-sample z-test's p-value
+            threshold -- a contributor is `SIGNIFICANT` only when its
+            p-value is strictly below this.
+        root_cause_max_hierarchy_depth: How many hierarchy levels
+            `analytics.causal.investigate_root_cause_advanced` will ever
+            drill into, counting the top level as depth 0 -- bounds the
+            recursion regardless of how many levels a caller's
+            `dimension_hierarchy` names.
+        root_cause_interaction_min_percent: `analytics.causal
+            ._detect_interactions`'s own validation bar -- a pairwise
+            interaction's residual (the joint contribution not already
+            explained by the two dimensions' own independent
+            contributions) must be at least this many percentage points,
+            *and* statistically significant, to be reported as a genuine
+            interaction rather than noise or an additive combination of
+            two main effects.
         visualization_default_top_n: `analytics.visualization
             .build_chart_spec`'s deterministic row cap for a bar/line/map
             spec -- mirrors `frontend/src/lib/chartEngine.ts`'s own
@@ -2019,6 +2050,30 @@ class Settings(BaseSettings):
     # .recommendations into the governed recommendation store -- a no-op
     # regardless unless local_auth_enabled is also on.
     enable_recommendation_persistence: bool = True
+
+    # --- Prompt 37 (37_ADVANCED_ROOT_CAUSE_ENGINE_CONTRACT.md):
+    # analytics.causal's own tunables -- hierarchical drill-down,
+    # per-contributor statistical-significance testing, and pairwise
+    # interaction detection on top of (never instead of) Prompt 14's
+    # investigate_root_cause. Same "pure, deterministic, zero-I/O,
+    # operator escape hatch" posture as enable_analytics_engine/
+    # enable_anomaly_detection above.
+    enable_advanced_root_cause: bool = True
+    # A contributor's two-sample significance test only runs when both
+    # periods have at least this many underlying rows for that dimension
+    # value -- below it, the verdict is INSUFFICIENT_SAMPLE, never a
+    # confidently-computed p-value from too little data.
+    root_cause_min_sample_size: int = Field(default=5, ge=1)
+    root_cause_significance_alpha: float = Field(default=0.05, gt=0.0, lt=1.0)
+    # Counting the top level as depth 0 -- bounds
+    # analytics.causal.investigate_root_cause_advanced's recursion
+    # regardless of how many levels a caller's dimension_hierarchy names.
+    root_cause_max_hierarchy_depth: int = Field(default=3, ge=1, le=6)
+    # A pairwise interaction's residual (joint contribution minus the sum
+    # of its two main effects) must clear this many percentage points,
+    # and be statistically significant, to be reported as a genuine
+    # interaction rather than an additive combination of two main effects.
+    root_cause_interaction_min_percent: float = Field(default=5.0, gt=0.0)
 
     # Prompt 19 (19_QUERY_STORE_PERFORMANCE_CONTRACT.md): db.query_store's
     # own tunables -- a no-op for every DB_TYPE other than "mssql"
