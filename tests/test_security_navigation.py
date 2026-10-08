@@ -85,6 +85,7 @@ class TestPersonas:
             "recommendations",
             "db_onboarding",
             "semantic_review",
+            "ai_governance",
         }
 
     def test_business_user_sees_the_ai_workspace_only(self):

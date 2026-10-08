@@ -4269,6 +4269,140 @@ pairing, never a cross-table or cross-type fuzzy match.
 for the full inspection findings, every new module's design, the testing
 summary, and the security/tenant-isolation/performance review.
 
+### AI Governance Center (Prompt 44)
+
+`governance_center/` (new top-level package, a peer of `analytics/`/
+`optimization/`/`data_quality/`/`lineage/`/`schema_drift/` --
+**deliberately not the same package as the pre-existing `governance/`**,
+which is a different concern: a runtime request/result policy gate
+consumed by `agent/multiagent/agents.py`'s own `governance_handler`,
+never touched by this prompt) is a governed Draft -> Test -> Evaluate ->
+Approve -> Deploy -> Rollback lifecycle, applied uniformly across every
+kind of asset the mission names (models, providers, prompts, agents,
+tools, retrieval sources, policies) rather than seven separate,
+drifting subsystems. `governance_center/models.py`'s `GovernanceStage`
+is the mission's own named chain plus two real terminal outcomes this
+codebase's own approval-workflow precedent already needs (`REJECTED`,
+`RETIRED`); `VALID_STAGE_TRANSITIONS` deliberately excludes `retired`/
+`rolled_back` -> `deployed` -- that move is `rollback`'s own, separately
+validated action (see below), never an ordinary forward transition.
+`stage_to_truth_level` maps `approved`/`deployed` to
+`CONFIRMED_BUSINESS_TRUTH` (a human has reviewed and approved this
+specific version for production use) and every other stage to
+`AI_INFERENCE` -- a governance-approval signal only, making **no claim
+whatsoever** about what a deployed model/prompt/tool/retrieval source
+actually produces at runtime (that stays each engine's own, already-
+established provenance, completely unaffected by this module).
+
+**Owners, versions, approvals, usage/cost/latency, and policy events --
+the mission's own named tracking dimensions** -- live on
+`identity.models.GovernanceAssetVersion` (one row per **version**, the
+identical append-only-past-draft discipline `SemanticCatalogEntry`
+already establishes: `owner`, `version`, every `*_by_user_id`/`*_at`
+approval/deployment/retirement timestamp pair) and
+`identity.models.GovernanceEvent` (an append-only audit trail --
+`stage_change`/`rollback`/`usage_recorded`/`note` events).
+**Usage/cost/latency is deliberately caller/operator-reported, never
+auto-instrumented** -- no per-model/per-prompt/per-tool token-cost
+capture exists anywhere in this codebase today (a disclosed, pre-
+existing gap -- see `observability/metrics.py`'s own "no per-call
+token/cost metadata is captured" note); `POST .../usage` stores
+whatever sample an operator reports, and `usage_summary` is a plain,
+deterministic sum/mean aggregation over those samples (`DATABASE_FACT`
+-- a real measurement of real recorded numbers, never an inference).
+
+**"Deploy" (the mission's own "release") atomically retires whichever
+version of the same asset was deployed before it; "rollback" is a
+distinct, explicitly-audited action, not a plain transition-table
+entry** -- `identity.repositories.governance.rollback` independently
+validates every condition (same asset, target in `retired`/
+`rolled_back`, current actually `deployed`) and, in one atomic unit,
+flips the current version to `rolled_back` while promoting the named
+target back to `deployed` -- the identical "mutate the second row
+before the first row's own atomic, conditional commit" pattern `deploy`
+itself uses, so a lost race on the primary row rolls the second row's
+change back too. Every transition (including `deploy`/`rollback`) goes
+through the identical atomic `UPDATE ... WHERE stage = expected_current`
+guard `identity/repositories/semantic_catalog.py::_apply_transition`'s
+own docstring documents finding and fixing for a real concurrency bug
+(Prompt 27) -- applied here from the start, proven with two independent
+`Session`s (not real threads, for the identical, already-documented
+reason a shared in-memory SQLite connection isn't a safe stand-in for
+genuine concurrency).
+
+**RBAC**: new `identity.rbac.Permission.GOVERNANCE_MANAGE` (admin tier
+-- create/edit a draft, submit for testing/evaluation, record results,
+deploy, roll back, retire, record usage: operational release actions,
+not domain judgment) and `GOVERNANCE_REVIEW` (analyst tier -- approve/
+reject: the identical domain-judgment tier `ONBOARDING_REVIEW`/
+`CATALOG_REVIEW`/`RECOMMENDATION_REVIEW` already sit at). **No
+`Settings.enable_*` feature flag** -- this is an administrative/
+compliance surface gated purely by RBAC, the identical posture
+`api/onboarding.py`/`api/semantic_catalog.py`/`api/platform_admin.py`
+already establish (none of them has a feature flag either).
+
+**New, standalone REST surface, `api/governance.py`** (15 routes under
+`/governance`, all requiring a local account): create/list/get a
+version, get the currently-deployed version for `(asset_type,
+asset_key)`, get its audit trail/usage summary, edit a draft, and one
+route per lifecycle action (`submit-for-testing`/`test-results`/
+`submit-for-evaluation`/`evaluation-results`/`approve`/`reject`/
+`deploy`/`rollback`/`retire`/`usage`). Cross-tenant access is denied
+with the same 404 a genuinely nonexistent version would get -- the
+identical anti-enumeration convention `api/semantic_catalog.py`/
+`api/onboarding.py` already establish.
+
+**Frontend**: `frontend/src/pages/AIGovernance.tsx` -- a list + detail
++ capability-gated action-button surface mirroring `SemanticReview.tsx`'s
+own shape, wired through `security/navigation.py` (a new `ai_governance`
+`NavItem`, `identity_any={GOVERNANCE_MANAGE, GOVERNANCE_REVIEW}`),
+`App.tsx`, `AppShell.tsx`'s screen-presentation map, and all 5 locale
+files' nav label. Button visibility mirrors the lifecycle for UX only;
+the server re-checks every request regardless.
+
+**Two real bugs found while writing this prompt's own required
+"unauthorized changes and rollback" tests, both fixed before any test
+was left to merely document the wrong behavior:**
+- `governance_center.policy.authorize_governance_action` conflated "no
+  specific resource to check a tenant against yet" (true for `LIST`/
+  `GET .../current`, which are scoped by the caller's own tenant filter,
+  not by comparing to one resolved resource) with "the resource wasn't
+  found" (true for `CREATE_DRAFT` only) -- every list/current-lookup
+  call was wrongly denied with a 403. Fixed by giving `LIST` its own,
+  distinct action, authorized by permission alone like `CREATE_DRAFT`,
+  never comparing against a tenant that doesn't apply.
+- `approve`/`retire`'s own request bodies have every field optional,
+  but FastAPI still required *some* JSON body content for the bodied-
+  model parameter -- a caller omitting the body entirely (every field
+  being optional implies this should be allowed) got a 422. Fixed by
+  giving each route's own `payload` parameter a module-level singleton
+  default instance.
+
+**Invariant that must not regress:** every stage transition -- including
+`deploy`/`rollback` -- is race-safe (proven with two independent
+`Session`s, not merely an in-memory pre-check); a cross-tenant action
+gets the same 404 a genuinely nonexistent version would; `GOVERNANCE_REVIEW`
+alone can never deploy/roll back/retire. Locked in by
+`tests/security/test_governance_unauthorized_rollback_and_tenant_isolation.py`.
+
+**Known, disclosed limitations:** usage/cost/latency is entirely
+operator-reported (no live instrumentation); this center tracks and
+governs the *lifecycle/approval record* of an asset version -- it does
+not itself rewire which model/prompt/tool/retrieval-source configuration
+the live `/ask`/multi-agent pipeline actually uses at runtime (the
+identical "stubbed today, wired later" scope boundary this codebase's
+own `recommendation.governance` already disclosed for a structurally
+similar reason: "nothing here ever gates whether \[something] is shown
+... this lifecycle exists purely to measure and record"); no multi-agent
+specialist wiring exists for this prompt (an administrative/compliance
+surface, the identical "never wired into `agent/multiagent/`" posture
+`api/onboarding.py`/`api/semantic_catalog.py`/`api/platform_admin.py`
+already establish).
+
+**Read [`44_AI_GOVERNANCE_CENTER_CONTRACT.md`](44_AI_GOVERNANCE_CENTER_CONTRACT.md)**
+for the full inspection findings, every new module's design, the testing
+summary, and the security/tenant-isolation/performance review.
+
 ## How to run
 
 See `README.md` for full setup. Short version:

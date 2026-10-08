@@ -70,6 +70,19 @@ class Permission(str, Enum):
     CATALOG_REVIEW = "catalog.review"
     RECOMMENDATION_REVIEW = "recommendation.review"
     RECOMMENDATION_MANAGE = "recommendation.manage"
+    # Prompt 44 (44_AI_GOVERNANCE_CENTER_CONTRACT.md): the AI Governance
+    # Center's own Draft -> Test -> Evaluate -> Approve -> Deploy ->
+    # Rollback lifecycle for models/providers/prompts/agents/tools/
+    # retrieval sources/policies. GOVERNANCE_REVIEW (approve/reject,
+    # domain judgment) sits at the analyst tier, the identical reasoning
+    # ONBOARDING_REVIEW/CATALOG_REVIEW/RECOMMENDATION_REVIEW already
+    # establish; GOVERNANCE_MANAGE (create/edit a draft, submit for
+    # testing/evaluation, deploy, roll back, retire -- operational
+    # actions, not domain judgment) sits at the admin tier, the identical
+    # reasoning ONBOARDING_MANAGE/CATALOG_MANAGE/RECOMMENDATION_MANAGE
+    # already establish.
+    GOVERNANCE_REVIEW = "governance.review"
+    GOVERNANCE_MANAGE = "governance.manage"
     # Prompt 28 (28_GLOBAL_PLATFORM_ADMIN_DASHBOARD_CONTRACT.md): the one
     # permission that crosses tenant boundaries deliberately -- every
     # other permission in this file is exercised through an ABAC check
@@ -146,6 +159,16 @@ SEED_PERMISSIONS: tuple[tuple[Permission, str], ...] = (
         "Force-expire a persisted recommendation (administrative override).",
     ),
     (
+        Permission.GOVERNANCE_REVIEW,
+        "Approve or reject a governed AI-asset version (model/provider/prompt/agent/tool/"
+        "retrieval source/policy).",
+    ),
+    (
+        Permission.GOVERNANCE_MANAGE,
+        "Create/edit a draft AI-asset version, submit it for testing/evaluation, deploy it, "
+        "roll it back, or retire it.",
+    ),
+    (
         Permission.PLATFORM_ADMIN,
         "Operate the platform-wide admin dashboard: view and administer every "
         "tenant, not only the actor's own.",
@@ -206,6 +229,11 @@ _ANALYST: frozenset[Permission] = _USER | {
     # domain-judgment call ONBOARDING_REVIEW/CATALOG_REVIEW already sit
     # at this tier for -- Prompt 18 (18_RECOMMENDATION_GOVERNANCE_CONTRACT.md).
     Permission.RECOMMENDATION_REVIEW,
+    # GOVERNANCE_REVIEW (approving/rejecting a governed AI-asset version
+    # after reviewing its test/evaluation evidence) is the identical
+    # domain-judgment call every other *_REVIEW permission above already
+    # sits at this tier for -- Prompt 44 (44_AI_GOVERNANCE_CENTER_CONTRACT.md).
+    Permission.GOVERNANCE_REVIEW,
 }
 _ADMIN: frozenset[Permission] = _ANALYST | {
     Permission.USERS_READ,
@@ -231,6 +259,12 @@ _ADMIN: frozenset[Permission] = _ANALYST | {
     # administrative override, not a domain-judgment call) is admin-tier
     # for the identical reason ONBOARDING_MANAGE/CATALOG_MANAGE are.
     Permission.RECOMMENDATION_MANAGE,
+    # GOVERNANCE_MANAGE (create/edit a draft AI-asset version, submit it
+    # for testing/evaluation, deploy, roll back, retire -- operational
+    # release actions, not domain judgment) is admin-tier for the
+    # identical reason ONBOARDING_MANAGE/CATALOG_MANAGE/
+    # RECOMMENDATION_MANAGE are.
+    Permission.GOVERNANCE_MANAGE,
 }
 # A read-focused compliance/oversight role -- can review any user's audit
 # trail and the admin dashboard, but cannot create/edit/deactivate users or

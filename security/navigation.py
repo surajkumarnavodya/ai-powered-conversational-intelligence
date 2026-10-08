@@ -116,6 +116,14 @@ NAV_ITEMS: tuple[NavItem, ...] = (
         ),
     ),
     NavItem(
+        id="ai_governance",
+        path="/ai-governance",
+        group="review",
+        identity_any=_identity(
+            IdentityPermission.GOVERNANCE_MANAGE, IdentityPermission.GOVERNANCE_REVIEW
+        ),
+    ),
+    NavItem(
         id="tenant_admin",
         path="/tenant-admin",
         group="administration",
@@ -178,6 +186,8 @@ CAPABILITY_RULES: tuple[CapabilityRule, ...] = (
     CapabilityRule("review_catalog", identity=IdentityPermission.CATALOG_REVIEW),
     CapabilityRule("review_recommendations", identity=IdentityPermission.RECOMMENDATION_REVIEW),
     CapabilityRule("manage_recommendations", identity=IdentityPermission.RECOMMENDATION_MANAGE),
+    CapabilityRule("manage_governance", identity=IdentityPermission.GOVERNANCE_MANAGE),
+    CapabilityRule("review_governance", identity=IdentityPermission.GOVERNANCE_REVIEW),
     CapabilityRule("view_tenant_dashboard", identity=IdentityPermission.ADMIN_DASHBOARD_READ),
     CapabilityRule("manage_tenant_users", identity=IdentityPermission.USERS_ASSIGN_ROLES),
     CapabilityRule("platform_admin", identity=IdentityPermission.PLATFORM_ADMIN),

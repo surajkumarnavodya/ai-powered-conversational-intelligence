@@ -98,6 +98,26 @@ anywhere else at the time it was written:
   appears in another tenant's lineage graph for the same shared database
   connection; a database outside a tenant's own configured set is a 404,
   never a leak of whether it exists).
+- `test_governance_unauthorized_rollback_and_tenant_isolation.py` —
+  Prompt 44 (`44_AI_GOVERNANCE_CENTER_CONTRACT.md`): spans
+  `governance_center/policy.py`, `identity/repositories/governance.py`,
+  and `api/governance.py` together -- the mission's own two explicitly
+  named test requirements ("test unauthorized changes and rollback"),
+  proven against the real HTTP API with a real identity database (real
+  tenants, real users, real RBAC roles). Proves every mutating action
+  (create/submit/record-results/deploy/rollback/retire/record-usage) is
+  refused server-side for a caller lacking the right permission tier
+  (`GOVERNANCE_REVIEW` may approve/reject but not deploy/roll back/
+  retire; `GOVERNANCE_MANAGE` may do everything), that a rollback
+  genuinely restores an earlier deployed version and correctly retires/
+  rolls-back the superseded one with a full audit trail, and that
+  cross-tenant authorization holds throughout (a cross-tenant action
+  gets the same 404 a genuinely nonexistent version would, never a 403
+  that would confirm it exists). Also the origin of two real bugs found
+  while writing it: `LIST`/`GET .../current` were wrongly denied
+  (`governance_center.policy` conflated "no specific resource" with
+  "resource not found"), and `approve`/`retire` required a request body
+  even though every field on each is optional.
 
 Before adding a new file here, check whether the scenario already has
 coverage under its own module's `tests/test_<module>.py` first — this

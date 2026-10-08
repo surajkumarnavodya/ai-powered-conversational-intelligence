@@ -1,6 +1,7 @@
 import {
   BookOpen,
   Building2,
+  ClipboardCheck,
   ImageIcon,
   Lightbulb,
   MessageSquare,
@@ -35,6 +36,7 @@ const SCREEN_PRESENTATION: Record<string, { icon: typeof MessageSquare; labelKey
   recommendations: { icon: Lightbulb, labelKey: 'nav.recommendations' },
   db_onboarding: { icon: Plug, labelKey: 'nav.dbOnboarding' },
   semantic_review: { icon: ShieldCheck, labelKey: 'nav.semanticReview' },
+  ai_governance: { icon: ClipboardCheck, labelKey: 'nav.aiGovernance' },
   tenant_admin: { icon: Building2, labelKey: 'nav.tenantAdmin' },
   platform_admin: { icon: ShieldAlert, labelKey: 'nav.platformAdmin' },
 }

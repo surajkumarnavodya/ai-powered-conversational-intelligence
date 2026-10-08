@@ -70,6 +70,8 @@ const BACKEND_ROUTES = [
   // Schema Drift Impact Analysis (api/schema_drift.py, Prompt 43) -- same
   // reason, added here up front rather than found the hard way.
   '/schema-drift',
+  // AI Governance Center (api/governance.py, Prompt 44) -- same reason.
+  '/governance',
 ]
 
 export default defineConfig({

@@ -45,7 +45,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from analytics.engine import compute_analytics_result
 from analytics.visualization import build_chart_spec
-from governance.result_policy import govern_rows_for_caller
 
 from agent.authz import Permission
 from agent.exceptions import AgentError
@@ -79,6 +78,7 @@ from api.chat_persistence import persist_ask_turn, persist_execute_result
 from api.data_quality import router as data_quality_router
 from api.documents import router as documents_router
 from api.generation import router as generation_router
+from api.governance import router as governance_router
 from api.identity_auth import router as identity_auth_router
 from api.lineage import router as lineage_router
 from api.media import router as media_router
@@ -158,6 +158,7 @@ from embeddings.schema_indexer import (
     refresh_all_schema_indexes,
 )
 from feedback.store import save_response_feedback
+from governance.result_policy import govern_rows_for_caller
 from observability.metrics import get_default_metrics
 from security.audit_log import (
     get_correlation_id,
@@ -407,6 +408,7 @@ app.include_router(predictive_router)
 app.include_router(data_quality_router)
 app.include_router(lineage_router)
 app.include_router(schema_drift_router)
+app.include_router(governance_router)
 app.include_router(platform_admin_router)
 app.include_router(tenant_admin_router)
 app.include_router(navigation_router)

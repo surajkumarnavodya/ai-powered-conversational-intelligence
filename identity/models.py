@@ -1524,3 +1524,179 @@ class SemanticFinding(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()
+
+
+class GovernanceAssetVersion(Base):
+    """One **version** of one governed AI-platform asset -- Prompt 44
+    (`44_AI_GOVERNANCE_CENTER_CONTRACT.md`): a model, provider, prompt,
+    agent, tool, retrieval source, or policy, moving through a real
+    draft -> testing -> evaluating -> approved -> deployed -> rolled_back
+    lifecycle (see `governance_center.models.GovernanceStage`).
+
+    **One row per version, never mutated in place once it leaves
+    `draft`** -- the identical "append-only version history" discipline
+    `SemanticCatalogEntry` already establishes, for the identical reason:
+    a production approval/deployment record must stay inspectable
+    forever, never silently overwritten. `asset_key` is the stable
+    identifier grouping every version of "the same" asset (e.g.
+    `"llama3.1:8b"` for a model, `"sql_generation_system_prompt"` for a
+    prompt) -- unique only together with `(tenant_id, asset_type,
+    version)`, not on its own.
+
+    **At most one version of a given `(tenant_id, asset_type,
+    asset_key)` may hold `stage == "deployed"` at a time** -- enforced by
+    `identity.repositories.governance.deploy`/`rollback` (both flip the
+    previously-deployed version to `retired`/`rolled_back` in the same
+    atomic operation that promotes the new one), never by a database
+    constraint alone (a `UNIQUE` partial index would need per-dialect
+    support this app's four supported engines don't share identically).
+
+    `tenant_id` follows the exact scoped, forward-compatible pattern
+    `OnboardingJob.tenant_id`/`SemanticCatalogEntry.tenant_id` already
+    established -- only this table's own rows carry a real `tenant_id`
+    with a real ABAC tenant-match check (`governance_center.policy
+    .authorize_governance_action`).
+    """
+
+    __tablename__ = "governance_asset_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "asset_type",
+            "asset_key",
+            "version",
+            name="uq_governance_asset_versions_scope_version",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    asset_type: Mapped[str] = mapped_column(
+        Enum(
+            "model",
+            "provider",
+            "prompt",
+            "agent",
+            "tool",
+            "retrieval_source",
+            "policy",
+            name="governance_asset_type",
+            native_enum=False,
+            validate_strings=True,
+        ),
+        nullable=False,
+        index=True,
+    )
+    asset_key: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    display_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    owner: Mapped[str] = mapped_column(String(200), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    stage: Mapped[str] = mapped_column(
+        Enum(
+            "draft",
+            "testing",
+            "evaluating",
+            "approved",
+            "deployed",
+            "rolled_back",
+            "rejected",
+            "retired",
+            name="governance_stage",
+            native_enum=False,
+            validate_strings=True,
+        ),
+        nullable=False,
+        default="draft",
+        index=True,
+    )
+    # A free-form, human-authored config payload (see
+    # `governance_center.models`'s own module docstring for why this is
+    # never parsed/executed by this application) -- e.g. a model's own
+    # provider+model-id pair, a prompt's own template text, a tool's own
+    # allowlist.
+    config: Mapped[dict] = mapped_column(_METADATA_JSON, nullable=False, default=dict)
+    test_results: Mapped[dict] = mapped_column(_METADATA_JSON, nullable=True)
+    evaluation_results: Mapped[dict] = mapped_column(_METADATA_JSON, nullable=True)
+    approval_notes: Mapped[str] = mapped_column(Text, nullable=True)
+    rejection_reason: Mapped[str] = mapped_column(Text, nullable=True)
+    supersedes_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("governance_asset_versions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_by_user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    tested_by_user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    tested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    evaluated_by_user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    approved_by_user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    approved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    deployed_by_user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    deployed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    retired_by_user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    retired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _updated_at()
+
+
+class GovernanceEvent(Base):
+    """One append-only audit entry for one `GovernanceAssetVersion` --
+    Prompt 44. Mirrors `RecommendationFeedbackEvent`'s own identical
+    "immutable row per event, parent row only ever gains a mutable
+    `stage` column" split.
+
+    `event_type == "usage_recorded"` rows are this center's own
+    "usage/cost/latency" tracking -- deliberately **caller/operator-
+    reported**, not auto-instrumented: no per-model/per-prompt/per-tool
+    token-cost capture exists anywhere in this codebase today (a
+    disclosed, pre-existing gap -- see `observability/metrics.py`'s own
+    "no per-call token/cost metadata is captured" note), so this table
+    stores whatever sample an operator (or a future instrumentation pass)
+    reports, in `payload`, rather than silently fabricating numbers this
+    application cannot actually measure yet.
+    """
+
+    __tablename__ = "governance_events"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    asset_version_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("governance_asset_versions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(
+        Enum(
+            "stage_change",
+            "rollback",
+            "usage_recorded",
+            "note",
+            name="governance_event_type",
+            native_enum=False,
+            validate_strings=True,
+        ),
+        nullable=False,
+    )
+    from_stage: Mapped[str] = mapped_column(String(16), nullable=True)
+    to_stage: Mapped[str] = mapped_column(String(16), nullable=True)
+    actor_user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    actor_label: Mapped[str] = mapped_column(String(200), nullable=True)
+    reason: Mapped[str] = mapped_column(Text, nullable=True)
+    payload: Mapped[dict] = mapped_column(_METADATA_JSON, nullable=True)
+    created_at: Mapped[datetime] = _created_at()

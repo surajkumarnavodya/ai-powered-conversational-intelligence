@@ -8,6 +8,7 @@ import { PwaUpdateBanner } from '@/components/layout/PwaUpdateBanner'
 import { ToastProvider } from '@/components/ui/toast'
 import { watchSystemTheme, applyThemeMode } from '@/lib/theme'
 import { AcceptInvitation } from '@/pages/AcceptInvitation'
+import { AIGovernance } from '@/pages/AIGovernance'
 import { AuthCallback } from '@/pages/AuthCallback'
 import { Chat } from '@/pages/Chat'
 import { DataLineage } from '@/pages/DataLineage'
@@ -119,6 +120,14 @@ export function App() {
             element={
               <RequireNavItem screen="semantic_review">
                 <SemanticReview />
+              </RequireNavItem>
+            }
+          />
+          <Route
+            path="/ai-governance"
+            element={
+              <RequireNavItem screen="ai_governance">
+                <AIGovernance />
               </RequireNavItem>
             }
           />
