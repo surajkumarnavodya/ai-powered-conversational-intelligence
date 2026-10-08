@@ -40,6 +40,7 @@ from agent.multiagent.tools import (
     TOOL_DATA_QUALITY,
     TOOL_FORECAST,
     TOOL_GOVERNED_SQL,
+    TOOL_LINEAGE,
     TOOL_LLM_PLAN,
     TOOL_OPTIMIZATION,
     TOOL_PREDICTIVE,
@@ -135,6 +136,17 @@ SPECS: dict[AgentName, AgentSpec] = {
         # own docstring and data_quality/models.py's module docstring for
         # why a data-quality finding is a genuine observed fact, not an
         # inference/prediction/simulation.
+        max_truth_level=DataTruthLevel.DATABASE_FACT,
+        cost_units=1,
+    ),
+    AgentName.LINEAGE: AgentSpec(
+        name=AgentName.LINEAGE,
+        kind="engine",
+        allowed_tools=frozenset({TOOL_LINEAGE}),
+        # DATABASE_FACT, the identical reasoning DATA_QUALITY's own spec
+        # above gives: a deterministic sqlglot parse of a SQL statement's
+        # own text is an observed fact about that text's structure, never
+        # an inference/prediction/simulation.
         max_truth_level=DataTruthLevel.DATABASE_FACT,
         cost_units=1,
     ),
@@ -863,6 +875,73 @@ def data_quality_handler(ctx: AgentContext, task: AgentTask) -> AgentOutput:
     return AgentOutput(agent=task.agent, task_id=task.id, status="ok", claims=claims)
 
 
+def lineage_handler(ctx: AgentContext, task: AgentTask) -> AgentOutput:
+    """Prompt 42 (42_DATA_LINEAGE_PLATFORM_CONTRACT.md): deterministically
+    parses one caller-supplied SQL statement's own text into which real
+    tables/columns it reads and how each output column derives -- never a
+    second query, never an LLM call.
+
+    Self-contained, like `OptimizationRequest` (no `data_task`): lineage
+    describes the text of a SQL statement the caller already has, not a
+    result this turn's own `sql_data` task produced -- `DataSlot` does
+    not carry the SQL text that produced its rows (see this module's own
+    `DataSlot` class), so there is no governed-rows slot to read from
+    here, unlike `data_quality_handler`/`predictive_handler` above.
+
+    Every claim is `DataTruthLevel.DATABASE_FACT` -- a parse of the SQL
+    text's own structure, the identical reasoning `data_quality_handler`'s
+    own docstring gives for its findings.
+    """
+    result = ctx.call(
+        TOOL_LINEAGE, {"sql": task.params["sql"], "dialect": task.params.get("dialect")}
+    )
+    if not result.success:
+        return _failed(task, "lineage tool failed")
+    output = result.output
+    if not output["is_parseable"]:
+        return AgentOutput(
+            agent=task.agent,
+            task_id=task.id,
+            status="ok",
+            open_items=("The supplied SQL could not be parsed for lineage.",),
+        )
+    if not output["column_lineage"]:
+        return AgentOutput(
+            agent=task.agent,
+            task_id=task.id,
+            status="ok",
+            open_items=("No output columns were found to trace lineage for.",),
+        )
+
+    tables_key = ":".join(output["tables_read"])
+    claims = tuple(
+        Claim(
+            agent=task.agent,
+            task_id=task.id,
+            text=(
+                f"Output column '{entry['output_column']}' derives from "
+                + ", ".join(f"{t}.{c}" if t else c for t, c in entry["source_columns"])
+                + (f" via {entry['transform']}" if entry["transform"] else "")
+                + " (deterministically parsed from the query's own SQL text)."
+            ),
+            truth_level=DataTruthLevel.DATABASE_FACT,
+            key=f"lineage:{tables_key}:{entry['output_column']}",
+        )
+        for entry in output["column_lineage"]
+        if entry["source_columns"]
+    )
+    if not claims:
+        return AgentOutput(
+            agent=task.agent,
+            task_id=task.id,
+            status="ok",
+            open_items=(
+                "Every output column's own source was ambiguous or had no column references.",
+            ),
+        )
+    return AgentOutput(agent=task.agent, task_id=task.id, status="ok", claims=claims)
+
+
 def recommendation_handler(ctx: AgentContext, task: AgentTask) -> AgentOutput:
     """Reuses the analyst's own recommend node, unchanged, over this turn's
     evidence and candidates. Nothing is recomputed here."""
@@ -908,6 +987,7 @@ HANDLERS: dict[AgentName, Handler] = {
     AgentName.OPTIMIZATION: optimization_handler,
     AgentName.PREDICTIVE: predictive_handler,
     AgentName.DATA_QUALITY: data_quality_handler,
+    AgentName.LINEAGE: lineage_handler,
     AgentName.RECOMMENDATION: recommendation_handler,
 }
 

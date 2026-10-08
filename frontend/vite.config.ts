@@ -65,6 +65,8 @@ const BACKEND_ROUTES = [
   '/predictive',
   // Data Quality Command Center (api/data_quality.py, Prompt 41) -- same reason.
   '/data-quality',
+  // Data Lineage Platform (api/lineage.py, Prompt 42) -- same reason.
+  '/lineage',
 ]
 
 export default defineConfig({

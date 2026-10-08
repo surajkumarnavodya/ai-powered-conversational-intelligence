@@ -2177,6 +2177,25 @@ class Settings(BaseSettings):
     data_quality_max_tables: int = Field(default=20, gt=0)
     data_quality_max_rows_per_table: int = Field(default=5000, gt=0)
 
+    # --- Prompt 42 (42_DATA_LINEAGE_PLATFORM_CONTRACT.md): lineage/'s own
+    # tunables -- end-to-end lineage from source database objects through
+    # columns/metrics/SQL to visualizations/insights/recommendations.
+    # Deterministic sqlglot parsing + reuse of already-introspected schema
+    # and already-published catalog entries, never an LLM call of its own.
+    # Gates api/lineage.py's three routes (404 when off) and the
+    # multi-agent supervisor's own lineage specialist.
+    enable_lineage_platform: bool = True
+    # Bounds lineage.graph.trace_lineage's own BFS walk depth -- a trace
+    # request may ask for less, never more.
+    lineage_max_trace_depth: int = Field(default=10, gt=0)
+    # Hard caps on one /lineage/graph request's own size (how many queries
+    # may be appended to the schema+catalog layer in one call, and how many
+    # nodes a /lineage/trace request's own caller-supplied graph may carry)
+    # -- the identical "cap regardless of what a caller sends" philosophy
+    # data_quality_max_tables/predictive_max_features already establish.
+    lineage_max_queries_per_request: int = Field(default=20, gt=0)
+    lineage_max_trace_graph_nodes: int = Field(default=5000, gt=0)
+
     # Prompt 19 (19_QUERY_STORE_PERFORMANCE_CONTRACT.md): db.query_store's
     # own tunables -- a no-op for every DB_TYPE other than "mssql"
     # regardless of these values (see that module's own docstring).

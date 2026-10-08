@@ -10,6 +10,7 @@ import { watchSystemTheme, applyThemeMode } from '@/lib/theme'
 import { AcceptInvitation } from '@/pages/AcceptInvitation'
 import { AuthCallback } from '@/pages/AuthCallback'
 import { Chat } from '@/pages/Chat'
+import { DataLineage } from '@/pages/DataLineage'
 import { DatabaseOnboarding } from '@/pages/DatabaseOnboarding'
 import { Recommendations } from '@/pages/Recommendations'
 import { KnowledgeSources } from '@/pages/KnowledgeSources'
@@ -84,6 +85,14 @@ export function App() {
             element={
               <RequireNavItem screen="media_search">
                 <MediaSearch />
+              </RequireNavItem>
+            }
+          />
+          <Route
+            path="/data-lineage"
+            element={
+              <RequireNavItem screen="data_lineage">
+                <DataLineage />
               </RequireNavItem>
             }
           />

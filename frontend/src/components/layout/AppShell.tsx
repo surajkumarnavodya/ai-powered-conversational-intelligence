@@ -8,6 +8,7 @@ import {
   Plug,
   ShieldAlert,
   ShieldCheck,
+  Workflow,
 } from 'lucide-react'
 import { useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -31,6 +32,7 @@ const SCREEN_PRESENTATION: Record<string, { icon: typeof MessageSquare; labelKey
   chat: { icon: MessageSquare, labelKey: 'nav.chat' },
   knowledge_sources: { icon: BookOpen, labelKey: 'nav.knowledgeSources' },
   media_search: { icon: ImageIcon, labelKey: 'nav.mediaSearch' },
+  data_lineage: { icon: Workflow, labelKey: 'nav.dataLineage' },
   recommendations: { icon: Lightbulb, labelKey: 'nav.recommendations' },
   db_onboarding: { icon: Plug, labelKey: 'nav.dbOnboarding' },
   semantic_review: { icon: ShieldCheck, labelKey: 'nav.semanticReview' },

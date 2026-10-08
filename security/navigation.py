@@ -77,6 +77,18 @@ NAV_ITEMS: tuple[NavItem, ...] = (
         agent_any=frozenset({AgentPermission.MEDIA_SEARCH}),
     ),
     NavItem(
+        id="data_lineage",
+        path="/data-lineage",
+        group="workspace",
+        # `api/lineage.py`'s `/graph`/`/stale-check` routes additionally
+        # require a local account (`require_local_user`) -- hiding this
+        # tab for a non-local caller is not this module's job (per this
+        # module's own docstring: visibility is a presentation of an
+        # access decision, not the decision itself); the route itself
+        # still refuses them.
+        agent_any=frozenset({AgentPermission.ASK}),
+    ),
+    NavItem(
         id="recommendations",
         # Not `/recommendations`: that path is the governance API's list route
         # (`api/recommendation_governance.py`), so a page reload there would

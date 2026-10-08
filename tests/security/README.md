@@ -84,6 +84,20 @@ anywhere else at the time it was written:
   invariant: `data_quality.lineage` never asserts a governed metric IS
   broken/wrong from a table-level finding -- only that it is
   *potentially affected* (exposure, not a verdict).
+- `test_lineage_kpi_end_to_end_and_tenant_isolation.py` — Prompt 42
+  (`42_DATA_LINEAGE_PLATFORM_CONTRACT.md`): spans `lineage/graph.py`,
+  `api/lineage.py`, and the real, tenant-scoped semantic-catalog
+  repository together -- the mission's own two named acceptance checks,
+  proven against the real HTTP API with a real identity database (real
+  tenants, real users, real published catalog rows), not a mock of the
+  authorization path. Proves a governed KPI traces end to end (source
+  column -> published metric -> executed query -> its own visualization/
+  insight/recommendation, every inference-tier node still disclosed as
+  `ai_inference` even reached transitively through a trace), and that
+  cross-tenant authorization holds (one tenant's published metric never
+  appears in another tenant's lineage graph for the same shared database
+  connection; a database outside a tenant's own configured set is a 404,
+  never a leak of whether it exists).
 
 Before adding a new file here, check whether the scenario already has
 coverage under its own module's `tests/test_<module>.py` first — this

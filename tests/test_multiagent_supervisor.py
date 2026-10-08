@@ -32,6 +32,7 @@ from agent.multiagent.policy import (
 from agent.multiagent.resolution import resolve_conflicts, validate_outputs
 from agent.multiagent.supervisor import (
     DataQualityRequest,
+    LineageRequest,
     OptimizationRequest,
     PredictiveRequest,
     RootCausePair,
@@ -1214,6 +1215,68 @@ class TestDataQualityAndWorkspace:
         monkeypatch.setattr(supervisor, "build_supervisor_registry", spying_registry)
 
         _turn(data_quality_requests=[DataQualityRequest(data_task="Q1", table_name="sales")])
+
+        assert "caller_roles" not in captured.get("input_data_keys", {"caller_roles"})
+
+
+class TestLineageAndWorkspace:
+    """Prompt 42 (`42_DATA_LINEAGE_PLATFORM_CONTRACT.md`): the deterministic
+    SQL-lineage specialist, gated on an explicit caller-supplied
+    `LineageRequest` -- the planner never creates one. Self-contained
+    (no `data_task`): lineage describes the text of a SQL statement the
+    caller already has, not a result this turn's own `sql_data` task
+    produced."""
+
+    def test_lineage_runs_only_for_an_explicit_request(self, sql):
+        result = _turn(
+            lineage_requests=[LineageRequest(sql="SELECT SUM(SalesAmount) AS Total FROM FactSales")]
+        )
+
+        lineage_claims = [c for c in result.claims if c.agent == AgentName.LINEAGE]
+        assert lineage_claims
+        # Unlike every AI_INFERENCE-ceiling engine specialist, these claims
+        # are DATABASE_FACT -- a deterministic parse of the SQL text's own
+        # structure, never a prediction/simulation.
+        assert all(c.truth_level == DataTruthLevel.DATABASE_FACT for c in lineage_claims)
+        assert any("FactSales" in c.text and "SalesAmount" in c.text for c in lineage_claims)
+
+    def test_lineage_is_never_attempted_without_an_explicit_request(self, sql):
+        result = _turn()
+
+        assert [t for t in result.trace if t["agent"] == "lineage"] == []
+
+    def test_unparseable_sql_is_disclosed_as_an_open_item_not_a_claim(self, sql):
+        result = _turn(lineage_requests=[LineageRequest(sql="SELEC FROM WHERE :::")])
+
+        lineage_claims = [c for c in result.claims if c.agent == AgentName.LINEAGE]
+        assert lineage_claims == []
+        assert any("could not be parsed" in item for item in result.open_items)
+
+    def test_a_lineage_request_cannot_smuggle_identity_through_its_own_tool_call(
+        self, monkeypatch, sql
+    ):
+        """The identical guarantee `TestDataQualityAndWorkspace`/
+        `TestPredictiveAndWorkspace` already prove for other tools --
+        `caller_roles` is injected by the registry itself, never settable
+        by the handler's own payload."""
+        captured: dict = {}
+        real_call = tools.build_supervisor_registry
+
+        def spying_registry(**kwargs):
+            registry = real_call(**kwargs)
+            original_execute = registry.execute
+
+            def spying_execute(name, input_data, **exec_kwargs):
+                if name == "lineage_engine":
+                    captured["input_data_keys"] = set(input_data)
+                return original_execute(name, input_data, **exec_kwargs)
+
+            registry.execute = spying_execute  # type: ignore[method-assign]
+            return registry
+
+        monkeypatch.setattr(supervisor, "build_supervisor_registry", spying_registry)
+
+        _turn(lineage_requests=[LineageRequest(sql="SELECT SUM(SalesAmount) FROM FactSales")])
 
         assert "caller_roles" not in captured.get("input_data_keys", {"caller_roles"})
 

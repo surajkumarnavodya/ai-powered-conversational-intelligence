@@ -11,6 +11,7 @@ the supervisor, which decides what runs next.
         -> optimization* (explicit problems only)
         -> predictive* (explicit training requests only)
         -> data_quality* (explicit scan requests only)
+        -> lineage* (explicit, self-contained SQL-lineage requests only)
         -> recommendation
         -> validate -> resolve conflicts -> report
 
@@ -241,6 +242,29 @@ class DataQualityRequest:
     consistency_rules: tuple[ConsistencyRule, ...] = ()
 
 
+@dataclass(frozen=True)
+class LineageRequest:
+    """An explicit lineage-extraction request -- Prompt 42
+    (`42_DATA_LINEAGE_PLATFORM_CONTRACT.md`). The identical "explicit,
+    caller-supplied, the planner never creates one" gate every other
+    engine request in this module already establishes.
+
+    Self-contained like `OptimizationRequest` (no `data_task`): lineage
+    describes the text of a SQL statement the caller already has, not a
+    result this turn's own `sql_data` task produced -- `DataSlot` does
+    not carry the SQL text that produced its rows, so there is no
+    governed-rows slot a `data_task` could point at here.
+
+    Attributes:
+        sql: The SQL statement's own text to deterministically parse.
+        dialect: Optional sqlglot dialect (e.g. `"tsql"`) -- `None` uses
+            sqlglot's own generic dialect.
+    """
+
+    sql: str
+    dialect: str | None = None
+
+
 @dataclass
 class SupervisedResult:
     status: str
@@ -276,6 +300,7 @@ def run_supervised_analysis(
     optimization_requests: Sequence[OptimizationRequest] = (),
     predictive_requests: Sequence[PredictiveRequest] = (),
     data_quality_requests: Sequence[DataQualityRequest] = (),
+    lineage_requests: Sequence[LineageRequest] = (),
     handlers: dict[AgentName, Handler] | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> SupervisedResult:
@@ -585,6 +610,18 @@ def run_supervised_analysis(
                     "unique_key_sets": [list(k) for k in dq_request.unique_key_sets],
                     "consistency_rules": [r.model_dump() for r in dq_request.consistency_rules],
                 },
+            )
+        )
+
+    # 9b. Lineage extraction, only for explicit, self-contained requests
+    #     the caller asked for -- never a data_task (see LineageRequest's
+    #     own docstring).
+    for index, lineage_request in enumerate(lineage_requests, start=1):
+        dispatch(
+            AgentTask(
+                id=f"LIN{index}",
+                agent=AgentName.LINEAGE,
+                params={"sql": lineage_request.sql, "dialect": lineage_request.dialect},
             )
         )
 

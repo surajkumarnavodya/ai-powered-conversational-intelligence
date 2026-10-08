@@ -41,6 +41,10 @@ class AgentName(str, Enum):
     #: docstring for why that is the honest classification here.
     DATA_QUALITY = "data_quality"
     RECOMMENDATION = "recommendation"
+    #: Prompt 42 (42_DATA_LINEAGE_PLATFORM_CONTRACT.md) -- deterministic
+    #: column-lineage extraction from one caller-supplied SQL statement.
+    #: Like DATA_QUALITY, its claims are DataTruthLevel.DATABASE_FACT.
+    LINEAGE = "lineage"
 
 
 # Truth levels ordered from least to most trusted. A claim's level may be

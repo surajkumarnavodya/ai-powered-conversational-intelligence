@@ -46,6 +46,7 @@ from data_quality.models import (
     DateColumnRule,
     TableQualityInput,
 )
+from lineage.sql_lineage import extract_column_lineage
 from optimization.engine import solve_optimization_problem
 from optimization.models import OptimizationProblem
 
@@ -78,6 +79,12 @@ TOOL_PREDICTIVE = "predictive_engine"
 #: DataTruthLevel.DATABASE_FACT -- see data_quality/models.py's own
 #: module docstring.
 TOOL_DATA_QUALITY = "data_quality_engine"
+#: Prompt 42 (42_DATA_LINEAGE_PLATFORM_CONTRACT.md) -- deterministic,
+#: sqlglot-based column-lineage extraction from one caller-supplied SQL
+#: statement's own text. Like TOOL_DATA_QUALITY, its claims are
+#: DataTruthLevel.DATABASE_FACT -- a parse of the SQL text's own
+#: structure, never a prediction/simulation.
+TOOL_LINEAGE = "lineage_engine"
 
 
 def build_supervisor_registry(
@@ -203,6 +210,11 @@ def build_supervisor_registry(
             table_input, tuple(payload["caller_roles"]), settings
         ).model_dump(mode="json")
 
+    def _lineage(payload: dict[str, Any]) -> Any:
+        return extract_column_lineage(payload["sql"], payload.get("dialect")).model_dump(
+            mode="json"
+        )
+
     specs = [
         (
             TOOL_GOVERNED_SQL,
@@ -318,6 +330,16 @@ def build_supervisor_registry(
             # inside data_quality.engine.assess_table_quality itself,
             # which suppresses the specific finding rather than denying
             # the whole scan -- see that module's own docstring.
+            Permission.ASK,
+            RetryPolicy(max_attempts=1),
+        ),
+        (
+            TOOL_LINEAGE,
+            "Deterministic sqlglot parse of one SQL statement's own text, into which "
+            "real tables/columns it reads and how each output column derives "
+            "(observed fact about the SQL's own structure, never a guess).",
+            ToolCategory.READ,
+            _lineage,
             Permission.ASK,
             RetryPolicy(max_attempts=1),
         ),

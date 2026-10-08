@@ -48,6 +48,7 @@
     "chat": "Chat",
     "knowledgeSources": "Knowledge Sources",
     "mediaSearch": "Media Search",
+    "dataLineage": "Data Lineage",
     "dbOnboarding": "Database Onboarding",
     "semanticReview": "SME Semantic Review",
     "recommendations": "Recommendations",

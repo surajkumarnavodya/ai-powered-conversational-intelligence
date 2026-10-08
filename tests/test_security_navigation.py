@@ -81,13 +81,19 @@ class TestPersonas:
             "chat",
             "knowledge_sources",
             "media_search",
+            "data_lineage",
             "recommendations",
             "db_onboarding",
             "semantic_review",
         }
 
     def test_business_user_sees_the_ai_workspace_only(self):
-        assert _screens(("user",)) == {"chat", "knowledge_sources", "media_search"}
+        assert _screens(("user",)) == {
+            "chat",
+            "knowledge_sources",
+            "media_search",
+            "data_lineage",
+        }
 
     def test_read_only_viewer_sees_the_tenant_dashboard_and_no_questions(self):
         """`auditor` holds the dashboard read permission but not `ask`, so it
@@ -97,7 +103,7 @@ class TestPersonas:
 
     def test_base_viewer_role_sees_the_ai_workspace_without_sql_execution(self):
         screens, capabilities = _navigate(("viewer",))
-        assert screens == {"chat", "knowledge_sources", "media_search"}
+        assert screens == {"chat", "knowledge_sources", "media_search", "data_lineage"}
         assert capabilities["ask"] is True
         assert capabilities["execute_sql"] is False
 

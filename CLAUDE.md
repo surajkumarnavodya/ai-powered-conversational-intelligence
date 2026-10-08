@@ -4014,6 +4014,119 @@ explicit, already-structured request.
 for the full inspection findings, every new module's design, the testing
 summary, and the security/tenant-isolation/performance review.
 
+### Data Lineage Platform (Prompt 42)
+
+`lineage/` (new top-level package, a peer of `analytics/`/
+`optimization/`/`data_quality/`) is end-to-end lineage from source
+database objects through columns, governed metrics, executed SQL, to
+visualizations/insights/recommendations. Deterministic parsing is
+preferred over LLM guesses throughout: `lineage/sql_lineage.py`'s
+`extract_column_lineage` is a sqlglot-based parse of one top-level
+`SELECT` (no recursion into a `FROM`-nested subquery; a CTE's own name
+is excluded from `tables_read` and never traced into its base tables —
+disclosed scope boundaries, never a silent wrong guess), reused by
+`lineage/catalog_lineage.py` to recover **column-level** lineage for a
+governed metric's own `approved_expression` wherever it declares exactly
+one source table and the expression parses cleanly — a real improvement
+over Prompt 41's `data_quality/lineage.py`, which stayed table-level
+only because the catalog schema itself has no `source_columns` field
+(still the fallback here when column-level resolution isn't possible).
+`lineage/schema_lineage.py` builds the `DATABASE_FACT` schema layer
+(declared FKs) plus optional `AI_INFERENCE` candidate-relationship edges
+(`db.relationship_inference.InferredRelationship`, reused verbatim,
+including its own `truth_level`); `lineage/presentation_lineage.py`
+connects an already-produced query/visualization/insight/recommendation
+tail (never recomputing or calling an LLM itself — a plain, primitive-
+shaped description of an object the caller already has).
+
+**One uniform edge-direction convention makes a single trace function
+correct across the whole mission-named chain**: `lineage/graph.py`'s
+every edge has `source_id` *depend on* `target_id` (a query `READS` a
+table, a metric is `GOVERNED_BY` a column, a visualization `VISUALIZES`
+a query). `trace_lineage(graph, node_id, direction, max_depth)` is a
+breadth-first, cycle-safe, depth-bounded walk — **upstream** follows a
+node's own outgoing edges ("where did this KPI's number come from");
+**downstream** follows its own incoming edges ("what breaks if this
+table/column changes" — impact analysis). `lineage/staleness.py
+.detect_staleness` is a pure comparison (never reads a wall clock or
+re-fetches anything itself) between a graph's own recorded
+`schema_fingerprint`/`catalog_versions` (the literal versioning
+requirement — reuses `db.schema_introspection.get_schema_fingerprint`
+verbatim) and caller-supplied current live values.
+
+**New, standalone REST surface, `api/lineage.py`**: `POST /lineage/graph`
+(requires a local account, like `data_quality`'s own `/lineage` route —
+live-introspects the caller's tenant-scoped database and reads that
+tenant's own *published* catalog entries, the identical
+`GET /schema/tables`-shaped tenant-scoping + anti-enumeration-404
+convention), `POST /lineage/trace` (pure, `Permission.ASK` only — never
+touches a database, operates over a graph the caller already has),
+`POST /lineage/stale-check` (requires a local account; re-fingerprints
+live and compares). Gated by `Settings.enable_lineage_platform` (404
+when off), rate limiting, and payload bounds
+(`lineage_max_queries_per_request`/`lineage_max_trace_graph_nodes`/
+`lineage_max_trace_depth`).
+
+**Authorization is node suppression, not value redaction** — a `COLUMN`
+node naming a column `config.sensitive_columns` classifies "restricted"
+is removed from the graph entirely (never kept with a placeholder
+value) for a caller lacking `Permission.VIEW_RESTRICTED_COLUMNS`, since
+a lineage graph can disclose a restricted column's *existence/name*
+even without ever disclosing a *value* — `LineageGraph
+.suppressed_restricted_nodes` discloses what was removed, never a
+silent omission.
+
+**Multi-agent wiring**: a new `AgentName.LINEAGE` specialist, gated on
+an explicit, **self-contained** `LineageRequest` (sql + optional
+dialect, no `data_task` — `DataSlot` does not carry the SQL text that
+produced its rows, confirmed by inspection, so there is no governed-rows
+slot a `data_task` could point at here; the identical shape
+`OptimizationRequest` already establishes for the same reason). Its
+`AgentSpec.max_truth_level` is `DataTruthLevel.DATABASE_FACT` — a
+deterministic parse of SQL text is an observed fact about that text's
+own structure, the identical reasoning `DATA_QUALITY`'s own spec gives.
+`TOOL_LINEAGE` is registered at `Permission.ASK` (the two-tier pattern
+`TOOL_DATA_QUALITY`/`TOOL_OPTIMIZATION` already establish, reused from
+the start rather than rediscovering the Prompt-39 bug).
+
+**Frontend**: `frontend/src/pages/DataLineage.tsx` is a lean, read-only
+explorer (database selector, "Build graph," nodes grouped by type with
+`TruthLevelBadge` reused, a trace panel) — deliberately a plain grouped-
+list view, not a graph-visualization library, matching this app's own
+conservatism against adding a new rendering library for a chart/graph
+type. Wired through `security/navigation.py` (a new `data_lineage`
+`NavItem`, `agent_any={ASK}` — hiding the tab is UX only; the route's
+own `require_local_user` is the real enforcement), `App.tsx`, and all 5
+locale files' nav label.
+
+**Invariant that must not regress:** every node/edge's `DataTruthLevel`
+stays correct even reached transitively through a multi-hop trace — a
+`draft`/`reviewed` catalog entry or an inferred relationship is always
+`AI_INFERENCE`, a `published` entry's own edges are
+`CONFIRMED_BUSINESS_TRUTH`, and an LLM-narrated insight or a
+recommendation is always `AI_INFERENCE` regardless of how many hops
+`trace_lineage` took to reach it. Locked in by
+`tests/security/test_lineage_kpi_end_to_end_and_tenant_isolation.py`,
+which also proves, against a real identity database with real tenants/
+users/published rows, that one tenant's published metric never appears
+in another tenant's lineage graph for the same shared database
+connection.
+
+**Known, disclosed limitations:** column-level lineage is single-
+statement/outermost-`SELECT`-only (no subquery recursion, a CTE is
+opaque); a composite foreign key is table-level only in this graph;
+`/lineage/graph`'s query/presentation layer is entirely caller-supplied
+per call — nothing in this platform auto-captures every live `/ask`/
+`/execute` call's own lineage into a persisted history yet (the same
+"engine first, persistence later, if ever" posture Prompts 38-41 already
+established); `/lineage/trace` requires the caller to already hold the
+graph from a prior `/graph` call (no server-side persisted graph store
+by id).
+
+**Read [`42_DATA_LINEAGE_PLATFORM_CONTRACT.md`](42_DATA_LINEAGE_PLATFORM_CONTRACT.md)**
+for the full inspection findings, every new module's design, the testing
+summary, and the security/tenant-isolation/performance review.
+
 ## How to run
 
 See `README.md` for full setup. Short version:
