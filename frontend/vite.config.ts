@@ -63,6 +63,8 @@ const BACKEND_ROUTES = [
   '/optimization',
   // Predictive Analytics engine (api/predictive.py, Prompt 40) -- same reason.
   '/predictive',
+  // Data Quality Command Center (api/data_quality.py, Prompt 41) -- same reason.
+  '/data-quality',
 ]
 
 export default defineConfig({

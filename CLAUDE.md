@@ -3904,6 +3904,116 @@ vector; no nonlinear model support.
 for the full inspection findings, every new module's design, the testing
 summary, and the security/tenant-isolation/performance review.
 
+### Data Quality Command Center (Prompt 41)
+
+`data_quality/` (new top-level package, a peer of `analytics/`/
+`optimization/`/`recommendation/`) covers completeness, validity,
+uniqueness, consistency, referential integrity, freshness, and
+distribution stability. `data_quality.engine.assess_data_quality` is a
+pure function over already-fetched table data (`TableQualityInput.columns`/
+`.rows` per table): it never queries a database and never calls an LLM —
+the identical "neither route ever queries a database" posture
+`analytics.scenario`/`optimization`/`analytics.predictive` already
+establish. **Reused, not reimplemented**: `analytics.engine
+.compute_analytics_result` supplies completeness (null counts) and
+validity-outlier findings (z-score/IQR); `analytics.predictive
+.detect_feature_drift` supplies distribution-stability in full (a
+two-sample Kolmogorov-Smirnov test) — this package only re-tags its
+typed result.
+
+**The one deliberate departure from every sibling engine in this
+series**: `DataQualityFinding.claim.level`/`DataQualityReport.truth_level`
+are always `DataTruthLevel.DATABASE_FACT`, never `AI_INFERENCE` — unlike
+`analytics.scenario`/`optimization`/`analytics.predictive`/
+`analytics.causal` (all `AI_INFERENCE` ceilings), a null rate, a
+duplicate key, an orphaned foreign-key value, an out-of-range date, an
+unexpected category, and a stale timestamp are not predictions or
+inferences about something not yet observed — they are deterministic
+measurements of real, already-fetched rows, the identical posture
+`analytics.engine.AnalyticsResult` already establishes for its own,
+narrower statistics.
+
+**Seven dimensions, each independently gated on a table actually
+declaring a relevant check** (a dimension with zero configured checks is
+never assessed — `DimensionScore.score` is `None`, not a false `100`):
+COMPLETENESS (null-rate threshold, configurable per column), VALIDITY
+(`DateColumnRule`/`CategoricalColumnRule`, plus the reused outliers),
+UNIQUENESS (`unique_key_sets` — composite-key duplicate detection),
+CONSISTENCY (`ConsistencyRule` — a typed `left OP right` cross-column
+comparison, never a formula string an LLM could author, the identical
+structural guarantee `optimization.models`/`analytics.scenario.models`
+already establish), REFERENTIAL_INTEGRITY (`ReferentialCheck` — a child
+value absent from the caller-supplied `parent_key_values` is an orphan),
+FRESHNESS (`FreshnessRule` — the table's own most recent timestamp
+compared against a caller-supplied `as_of`, never the server's wall
+clock), and DISTRIBUTION_STABILITY (reuses `detect_feature_drift` against
+a caller-supplied reference dataset).
+
+**Authorization**: a finding whose column `config.sensitive_columns`
+classifies "restricted" is suppressed outright for a caller lacking
+`Permission.VIEW_RESTRICTED_COLUMNS` — never partially redacted, the
+identical posture `recommendation.engine`'s own restricted-column gate
+already establishes. Unlike `optimization.validator`/`analytics.predictive`
+(which reject the *whole* problem/model for touching a restricted
+column), a data-quality scan never rejects the whole request — only the
+specific restricted finding is withheld, disclosed via
+`DataQualityReport.insufficient_checks` and audit-logged.
+
+**Lineage** (`data_quality/lineage.py`) connects a finding to affected
+governed metrics/dashboards by *table* name only, never by column —
+`identity.models.SemanticCatalogEntry.source_tables` is a real,
+persisted field; the catalog schema has no `source_columns` field at
+all (confirmed by inspection), so column-level lineage would imply a
+precision this codebase's own catalog schema cannot back. A finding is
+never presented as proof a governed metric IS wrong — only that the
+metric *potentially* reads a table with an open finding (exposure, not
+a verdict). Only a `published` catalog entry is ever linked (a `draft`/
+`reviewed` one is silently excluded, defense in depth). `build_lineage_report`
+is a pure function over a lightweight per-table severity-count summary
+(`TableFindingsSummary`), not the full report — a caller never needs to
+re-transmit raw finding detail already returned by a prior scan.
+
+**New, standalone REST surface, `api/data_quality.py`**: `POST
+/data-quality/scan` (never touches a database or calls an LLM — the
+dataset(s) are taken directly in the request body, `Permission.ASK`) and
+`POST /data-quality/lineage` (the one route in this feature that *does*
+touch a database — it reads the tenant's own published semantic-catalog
+entries via `identity.repositories.semantic_catalog.list_entries`,
+gated by `require_local_user`). Both gated by `Settings
+.enable_data_quality_engine` (404 when off), rate limiting, and payload
+bounds (`data_quality_max_tables`/`data_quality_max_rows_per_table`).
+
+**Multi-agent wiring**: a new `AgentName.DATA_QUALITY` specialist, gated
+on an explicit, caller-supplied `DataQualityRequest` (carries a
+`data_task`, like `ScenarioRequest`/`PredictiveRequest`) — the planner
+never creates one. Scoped to the single-table checks (completeness,
+validity, uniqueness, consistency) only — referential-integrity,
+freshness, and distribution-stability each need a second dataset this
+specialist does not have, the identical disclosed scope boundary
+`RootCausePair`'s own plain `investigate_root_cause` path has for the
+live graph. Its `AgentSpec.max_truth_level` is `DataTruthLevel
+.DATABASE_FACT` — the only engine specialist in this series whose
+ceiling is not `AI_INFERENCE`.
+
+**Invariant that must not regress:** every `DataQualityFinding`/
+`DataQualityReport.truth_level` stays `DataTruthLevel.DATABASE_FACT`,
+and `data_quality.lineage` never asserts a governed metric IS broken —
+only that it is potentially affected. Locked in by
+`tests/security/test_data_quality_findings_stay_observed_fact.py`.
+
+**Known, disclosed limitations:** lineage is table-level only (no
+column-level catalog field exists to back a finer claim); the
+multi-agent specialist covers only the four single-dataset dimensions;
+no persisted scan history/dashboard exists (every call is self-contained,
+the same "engine first, persistence/governance later, if ever" posture
+Prompts 17/18/39/40 already established); no automatic trigger proposes
+a scan from a natural-language question — both REST routes require an
+explicit, already-structured request.
+
+**Read [`41_DATA_QUALITY_COMMAND_CENTER_CONTRACT.md`](41_DATA_QUALITY_COMMAND_CENTER_CONTRACT.md)**
+for the full inspection findings, every new module's design, the testing
+summary, and the security/tenant-isolation/performance review.
+
 ## How to run
 
 See `README.md` for full setup. Short version:

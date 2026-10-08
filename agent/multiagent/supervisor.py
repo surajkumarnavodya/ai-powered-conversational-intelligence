@@ -10,6 +10,7 @@ the supervisor, which decides what runs next.
         -> scenario* (explicit what-if requests only)
         -> optimization* (explicit problems only)
         -> predictive* (explicit training requests only)
+        -> data_quality* (explicit scan requests only)
         -> recommendation
         -> validate -> resolve conflicts -> report
 
@@ -73,6 +74,7 @@ from agent.provenance import DataTruthLevel
 from agent.state import ConversationExchange
 from agent.tools.types import ToolPermissionError
 from config.settings import Settings, get_settings
+from data_quality.models import CategoricalColumnRule, ConsistencyRule, DateColumnRule
 from optimization.models import OptimizationProblem
 from security.audit_log import log_security_event
 
@@ -200,6 +202,45 @@ class PredictiveRequest:
     random_seed: int = 0
 
 
+@dataclass(frozen=True)
+class DataQualityRequest:
+    """An explicit data-quality scan the caller asks for -- Prompt 41
+    (`41_DATA_QUALITY_COMMAND_CENTER_CONTRACT.md`). The identical
+    "explicit, caller-supplied, the planner never creates one" gate
+    `ScenarioRequest`/`PredictiveRequest` already establish.
+
+    Like `ScenarioRequest`/`PredictiveRequest`, this carries a
+    `data_task` -- the data scanned comes from one `sql_data`
+    subquestion's own already-governed rows, never a second query.
+    Scoped to the single-table checks (completeness, validity,
+    uniqueness, consistency): referential-integrity, freshness, and
+    distribution-stability each need a second dataset (a parent table, a
+    reference period) this specialist does not have -- the identical
+    disclosed scope boundary `RootCausePair`'s own plain
+    `investigate_root_cause` path has for the live graph.
+
+    Attributes:
+        data_task: Which `sql_data` subquestion's own already-governed
+            rows to scan.
+        table_name: A caller-supplied label for the scanned table (this
+            specialist has no real table name -- the data came from a
+            query result, not a schema lookup).
+        null_rate_overrides: Per-column null-rate threshold overrides.
+        date_rules: `data_quality.models.DateColumnRule`.
+        categorical_rules: `data_quality.models.CategoricalColumnRule`.
+        unique_key_sets: Column-name tuples to check for duplicates.
+        consistency_rules: `data_quality.models.ConsistencyRule`.
+    """
+
+    data_task: str
+    table_name: str
+    null_rate_overrides: dict[str, float] = field(default_factory=dict)
+    date_rules: tuple[DateColumnRule, ...] = ()
+    categorical_rules: tuple[CategoricalColumnRule, ...] = ()
+    unique_key_sets: tuple[tuple[str, ...], ...] = ()
+    consistency_rules: tuple[ConsistencyRule, ...] = ()
+
+
 @dataclass
 class SupervisedResult:
     status: str
@@ -234,6 +275,7 @@ def run_supervised_analysis(
     scenario_requests: Sequence[ScenarioRequest] = (),
     optimization_requests: Sequence[OptimizationRequest] = (),
     predictive_requests: Sequence[PredictiveRequest] = (),
+    data_quality_requests: Sequence[DataQualityRequest] = (),
     handlers: dict[AgentName, Handler] | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> SupervisedResult:
@@ -527,7 +569,26 @@ def run_supervised_analysis(
             )
         )
 
-    # 9. Recommendations, over whatever the data tasks produced.
+    # 9. Data-quality scans, only for explicit requests the caller asked for --
+    #    run over one data task's own already-governed rows.
+    for index, dq_request in enumerate(data_quality_requests, start=1):
+        dispatch(
+            AgentTask(
+                id=f"DQ{index}",
+                agent=AgentName.DATA_QUALITY,
+                params={
+                    "data_task": dq_request.data_task,
+                    "table_name": dq_request.table_name,
+                    "null_rate_overrides": dict(dq_request.null_rate_overrides),
+                    "date_rules": [r.model_dump() for r in dq_request.date_rules],
+                    "categorical_rules": [r.model_dump() for r in dq_request.categorical_rules],
+                    "unique_key_sets": [list(k) for k in dq_request.unique_key_sets],
+                    "consistency_rules": [r.model_dump() for r in dq_request.consistency_rules],
+                },
+            )
+        )
+
+    # 10. Recommendations, over whatever the data tasks produced.
     if workspace.slots:
         dispatch(AgentTask(id="REC", agent=AgentName.RECOMMENDATION))
 

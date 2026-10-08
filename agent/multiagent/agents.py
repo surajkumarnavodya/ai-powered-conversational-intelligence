@@ -37,6 +37,7 @@ from agent.multiagent.policy import ToolGateway
 from agent.multiagent.tools import (
     TOOL_ANALYTICS,
     TOOL_BUSINESS_CONTEXT,
+    TOOL_DATA_QUALITY,
     TOOL_FORECAST,
     TOOL_GOVERNED_SQL,
     TOOL_LLM_PLAN,
@@ -123,6 +124,18 @@ SPECS: dict[AgentName, AgentSpec] = {
         kind="engine",
         allowed_tools=frozenset({TOOL_PREDICTIVE}),
         max_truth_level=DataTruthLevel.AI_INFERENCE,
+        cost_units=1,
+    ),
+    AgentName.DATA_QUALITY: AgentSpec(
+        name=AgentName.DATA_QUALITY,
+        kind="engine",
+        allowed_tools=frozenset({TOOL_DATA_QUALITY}),
+        # DATABASE_FACT, not AI_INFERENCE, unlike every other engine spec
+        # above -- see agent.multiagent.contracts.AgentName.DATA_QUALITY's
+        # own docstring and data_quality/models.py's module docstring for
+        # why a data-quality finding is a genuine observed fact, not an
+        # inference/prediction/simulation.
+        max_truth_level=DataTruthLevel.DATABASE_FACT,
         cost_units=1,
     ),
     AgentName.RECOMMENDATION: AgentSpec(
@@ -784,6 +797,72 @@ def predictive_handler(ctx: AgentContext, task: AgentTask) -> AgentOutput:
     return AgentOutput(agent=task.agent, task_id=task.id, status="ok", claims=tuple(claims))
 
 
+def data_quality_handler(ctx: AgentContext, task: AgentTask) -> AgentOutput:
+    """Prompt 41 (41_DATA_QUALITY_COMMAND_CENTER_CONTRACT.md): assesses
+    one `sql_data` task's own already-governed rows for completeness/
+    validity/uniqueness/consistency findings -- never a second query,
+    never caller-side raw data. Gated, like `predictive`/`scenario`, on
+    an explicit caller-supplied request
+    (`agent.multiagent.supervisor.DataQualityRequest`) -- the planner
+    never creates one, a model proposing which checks to run is not
+    authority to do so.
+
+    Unlike every other engine handler in this module, every claim this
+    handler renders is `DataTruthLevel.DATABASE_FACT`, never
+    `AI_INFERENCE` -- a data-quality finding is a deterministic
+    measurement of real, already-fetched rows, not a prediction/
+    simulation/inference about something not yet observed (see
+    `data_quality/models.py`'s own module docstring).
+
+    `caller_roles` is never included in the dict passed to `ctx.call` --
+    the registry injects the real, already-authorized roles
+    automatically (see `predictive_handler`'s own docstring, identical
+    reasoning here).
+    """
+    slot = ctx.workspace.slots[task.params["data_task"]]
+    if slot.governed_rows is None or not slot.columns:
+        return _skipped(task, "no governed rows to run a data-quality scan against")
+    result = ctx.call(
+        TOOL_DATA_QUALITY,
+        {
+            "table": task.params["table_name"],
+            "columns": slot.columns,
+            "rows": slot.governed_rows,
+            "null_rate_overrides": task.params.get("null_rate_overrides") or {},
+            "date_rules": task.params.get("date_rules") or [],
+            "categorical_rules": task.params.get("categorical_rules") or [],
+            "unique_key_sets": task.params.get("unique_key_sets") or [],
+            "consistency_rules": task.params.get("consistency_rules") or [],
+        },
+    )
+    if not result.success:
+        return _failed(task, "data-quality tool failed")
+    output = result.output
+    grounded = (slot.row_evidence_id,) if slot.row_evidence_id else ()
+
+    if not output["findings"]:
+        return AgentOutput(
+            agent=task.agent,
+            task_id=task.id,
+            status="ok",
+            open_items=(f"No data-quality findings for '{task.params['table_name']}'.",),
+        )
+
+    claims = tuple(
+        Claim(
+            agent=task.agent,
+            task_id=task.id,
+            text=finding["claim"]["value"],
+            truth_level=DataTruthLevel.DATABASE_FACT,
+            key=f"data_quality_finding:{task.params['table_name']}:{finding['dimension']}:{finding['column']}",
+            value=finding["severity"],
+            grounded_in=grounded,
+        )
+        for finding in output["findings"]
+    )
+    return AgentOutput(agent=task.agent, task_id=task.id, status="ok", claims=claims)
+
+
 def recommendation_handler(ctx: AgentContext, task: AgentTask) -> AgentOutput:
     """Reuses the analyst's own recommend node, unchanged, over this turn's
     evidence and candidates. Nothing is recomputed here."""
@@ -828,6 +907,7 @@ HANDLERS: dict[AgentName, Handler] = {
     AgentName.SCENARIO: scenario_handler,
     AgentName.OPTIMIZATION: optimization_handler,
     AgentName.PREDICTIVE: predictive_handler,
+    AgentName.DATA_QUALITY: data_quality_handler,
     AgentName.RECOMMENDATION: recommendation_handler,
 }
 

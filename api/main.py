@@ -82,6 +82,7 @@ from api.identity_auth import router as identity_auth_router
 from api.media import router as media_router
 from api.media_library import router as media_library_router
 from api.media_search import router as media_search_router
+from api.data_quality import router as data_quality_router
 from api.navigation import router as navigation_router
 from api.onboarding import router as onboarding_router
 from api.optimization import router as optimization_router
@@ -401,6 +402,7 @@ app.include_router(recommendation_governance_router)
 app.include_router(scenarios_router)
 app.include_router(optimization_router)
 app.include_router(predictive_router)
+app.include_router(data_quality_router)
 app.include_router(platform_admin_router)
 app.include_router(tenant_admin_router)
 app.include_router(navigation_router)

@@ -31,6 +31,7 @@ from agent.multiagent.policy import (
 )
 from agent.multiagent.resolution import resolve_conflicts, validate_outputs
 from agent.multiagent.supervisor import (
+    DataQualityRequest,
     OptimizationRequest,
     PredictiveRequest,
     RootCausePair,
@@ -1133,6 +1134,86 @@ class TestPredictiveAndWorkspace:
                 )
             ]
         )
+
+        assert "caller_roles" not in captured.get("input_data_keys", {"caller_roles"})
+
+
+def _dq_rows() -> list[tuple]:
+    """5 rows, 2 nulls in 'region' -- a 40% null rate, well above the
+    default 20% data_quality_null_spike_threshold."""
+    return [
+        ("2024-01", "West", 100.0),
+        ("2024-02", None, 150.0),
+        ("2024-03", "East", 200.0),
+        ("2024-04", None, 120.0),
+        ("2024-05", "West", 130.0),
+    ]
+
+
+class TestDataQualityAndWorkspace:
+    """Prompt 41 (`41_DATA_QUALITY_COMMAND_CENTER_CONTRACT.md`): the Data
+    Quality Command Center specialist, gated on an explicit caller-
+    supplied `DataQualityRequest` -- the planner never creates one."""
+
+    def test_data_quality_runs_only_for_an_explicit_request(self, monkeypatch, sql):
+        by_q = {"Revenue by region?": _sql_final(("period", "region", "revenue"), _dq_rows())}
+        monkeypatch.setattr(tools, "run_agent", FakeSql(by_question=by_q))
+
+        result = _turn(
+            data_quality_requests=[DataQualityRequest(data_task="Q1", table_name="sales")]
+        )
+
+        dq_claims = [c for c in result.claims if c.agent == AgentName.DATA_QUALITY]
+        assert dq_claims
+        # Unlike every other engine specialist, these claims are
+        # DATABASE_FACT -- a real, observed measurement, not a
+        # prediction/simulation/inference.
+        assert all(c.truth_level == DataTruthLevel.DATABASE_FACT for c in dq_claims)
+        assert any("region" in c.text and "null" in c.text for c in dq_claims)
+
+    def test_data_quality_is_never_attempted_without_an_explicit_request(self, sql):
+        result = _turn()
+
+        assert [t for t in result.trace if t["agent"] == "data_quality"] == []
+
+    def test_no_findings_is_disclosed_as_an_open_item_not_a_claim(self, sql):
+        # The default FakeSql fixture's rows have no nulls/duplicates at
+        # all, so a scan with no declared rules finds nothing.
+        result = _turn(
+            data_quality_requests=[DataQualityRequest(data_task="Q1", table_name="sales")]
+        )
+
+        dq_claims = [c for c in result.claims if c.agent == AgentName.DATA_QUALITY]
+        assert dq_claims == []
+        assert any("No data-quality findings" in item for item in result.open_items)
+
+    def test_a_data_quality_request_cannot_smuggle_identity_through_its_own_tool_call(
+        self, monkeypatch, sql
+    ):
+        """The identical guarantee `TestPredictiveAndWorkspace`/
+        `TestScenarioAndWorkspace` already prove for other tools --
+        `caller_roles` is injected by the registry itself, never
+        settable by the handler's own payload."""
+        by_q = {"Revenue by region?": _sql_final(("period", "region", "revenue"), _dq_rows())}
+        monkeypatch.setattr(tools, "run_agent", FakeSql(by_question=by_q))
+        captured: dict = {}
+        real_call = tools.build_supervisor_registry
+
+        def spying_registry(**kwargs):
+            registry = real_call(**kwargs)
+            original_execute = registry.execute
+
+            def spying_execute(name, input_data, **exec_kwargs):
+                if name == "data_quality_engine":
+                    captured["input_data_keys"] = set(input_data)
+                return original_execute(name, input_data, **exec_kwargs)
+
+            registry.execute = spying_execute  # type: ignore[method-assign]
+            return registry
+
+        monkeypatch.setattr(supervisor, "build_supervisor_registry", spying_registry)
+
+        _turn(data_quality_requests=[DataQualityRequest(data_task="Q1", table_name="sales")])
 
         assert "caller_roles" not in captured.get("input_data_keys", {"caller_roles"})
 

@@ -33,6 +33,13 @@ class AgentName(str, Enum):
     SCENARIO = "scenario"
     OPTIMIZATION = "optimization"
     PREDICTIVE = "predictive"
+    #: Prompt 41 (41_DATA_QUALITY_COMMAND_CENTER_CONTRACT.md) -- the Data
+    #: Quality Command Center, run over one `sql_data` task's own
+    #: already-governed rows. Unlike every other engine specialist above,
+    #: its findings are `DataTruthLevel.DATABASE_FACT`, not
+    #: `AI_INFERENCE` -- see `data_quality/models.py`'s own module
+    #: docstring for why that is the honest classification here.
+    DATA_QUALITY = "data_quality"
     RECOMMENDATION = "recommendation"
 
 

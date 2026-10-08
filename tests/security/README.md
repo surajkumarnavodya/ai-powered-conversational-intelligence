@@ -70,6 +70,20 @@ anywhere else at the time it was written:
   never promoted), and at the text level through the one live
   multi-agent handler, that a prediction is never presented as an
   observed fact.
+- `test_data_quality_findings_stay_observed_fact.py` — Prompt 41
+  (`41_DATA_QUALITY_COMMAND_CENTER_CONTRACT.md`): the **inverse**
+  direction of every engine test above -- spans `data_quality/models.py`,
+  `data_quality/engine.py`/`lineage.py`, and `agent/multiagent/agents
+  .py`'s `data_quality_handler` together. A data-quality finding (a null
+  rate, a duplicate key, an orphaned value) is a genuine, deterministic
+  measurement of real, already-fetched rows, so the invariant here is
+  that it stays honestly classified `DataTruthLevel.DATABASE_FACT` (never
+  silently downgraded to `AI_INFERENCE`, and never a claim text that
+  falsely disclaims it as a "modeled estimate" the way every other
+  engine's own claims correctly must), plus a second, independent
+  invariant: `data_quality.lineage` never asserts a governed metric IS
+  broken/wrong from a table-level finding -- only that it is
+  *potentially affected* (exposure, not a verdict).
 
 Before adding a new file here, check whether the scenario already has
 coverage under its own module's `tests/test_<module>.py` first — this

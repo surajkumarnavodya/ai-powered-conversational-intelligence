@@ -2150,6 +2150,33 @@ class Settings(BaseSettings):
     predictive_max_features: int = Field(default=20, gt=0)
     predictive_max_predict_rows: int = Field(default=200, gt=0)
 
+    # --- Prompt 41 (41_DATA_QUALITY_COMMAND_CENTER_CONTRACT.md):
+    # data_quality/'s own tunables -- the Data Quality Command Center
+    # (completeness/validity/uniqueness/consistency/referential-integrity/
+    # freshness/distribution-stability). Pure, deterministic, zero-I/O over
+    # caller-supplied, already-fetched table data (reuses analytics.engine/
+    # analytics.predictive, never a second statistics implementation). Gates
+    # api/data_quality.py's two routes (404 when off) and the multi-agent
+    # supervisor's own data_quality specialist.
+    enable_data_quality_engine: bool = True
+    # A column's null fraction at/above this is a "null spike" finding --
+    # overridable per column via TableQualityInput.null_rate_overrides.
+    data_quality_null_spike_threshold: float = Field(default=0.2, gt=0.0, lt=1.0)
+    # A table's most-recent freshness_rule timestamp older than this many
+    # seconds past as_of is flagged stale -- a FreshnessRule.max_staleness_
+    # seconds, when set, always overrides this per-table default.
+    data_quality_default_max_staleness_seconds: int = Field(default=86400, gt=0)
+    # How many distinct duplicate-key/orphan-value sample strings one
+    # finding may disclose -- bounds response size, never affects the
+    # reported occurrence counts (always the true total).
+    data_quality_max_reported_samples: int = Field(default=10, gt=0)
+    # Hard caps on one scan request's own size -- bound this pure-compute
+    # endpoint's worst-case cost regardless of payload size, mirroring
+    # predictive_max_features/optimization_max_variables' identical "cap
+    # regardless of what a caller sends" philosophy for a different resource.
+    data_quality_max_tables: int = Field(default=20, gt=0)
+    data_quality_max_rows_per_table: int = Field(default=5000, gt=0)
+
     # Prompt 19 (19_QUERY_STORE_PERFORMANCE_CONTRACT.md): db.query_store's
     # own tunables -- a no-op for every DB_TYPE other than "mssql"
     # regardless of these values (see that module's own docstring).

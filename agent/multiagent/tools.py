@@ -39,6 +39,13 @@ from agent.state import ConversationExchange
 from agent.tools.registry import ToolRegistry
 from agent.tools.types import RetryPolicy, Tool, ToolCategory
 from config.settings import Settings
+from data_quality.engine import assess_table_quality
+from data_quality.models import (
+    CategoricalColumnRule,
+    ConsistencyRule,
+    DateColumnRule,
+    TableQualityInput,
+)
 from optimization.engine import solve_optimization_problem
 from optimization.models import OptimizationProblem
 
@@ -65,6 +72,12 @@ TOOL_OPTIMIZATION = "optimization_engine"
 #: predictive analytics engine (regression/classification), run over one
 #: data task's own already-governed rows (the training dataset).
 TOOL_PREDICTIVE = "predictive_engine"
+#: Prompt 41 (41_DATA_QUALITY_COMMAND_CENTER_CONTRACT.md) -- the Data
+#: Quality Command Center, run over one data task's own already-governed
+#: rows. Unlike every other engine tool above, its findings are
+#: DataTruthLevel.DATABASE_FACT -- see data_quality/models.py's own
+#: module docstring.
+TOOL_DATA_QUALITY = "data_quality_engine"
 
 
 def build_supervisor_registry(
@@ -171,6 +184,25 @@ def build_supervisor_registry(
             settings,
         ).model_dump()
 
+    def _data_quality(payload: dict[str, Any]) -> Any:
+        table_input = TableQualityInput(
+            table=payload["table"],
+            columns=payload["columns"],
+            rows=[tuple(row) for row in payload["rows"]],
+            null_rate_overrides=payload.get("null_rate_overrides") or {},
+            date_rules=tuple(DateColumnRule(**r) for r in payload.get("date_rules") or []),
+            categorical_rules=tuple(
+                CategoricalColumnRule(**r) for r in payload.get("categorical_rules") or []
+            ),
+            unique_key_sets=tuple(tuple(k) for k in payload.get("unique_key_sets") or []),
+            consistency_rules=tuple(
+                ConsistencyRule(**r) for r in payload.get("consistency_rules") or []
+            ),
+        )
+        return assess_table_quality(
+            table_input, tuple(payload["caller_roles"]), settings
+        ).model_dump(mode="json")
+
     specs = [
         (
             TOOL_GOVERNED_SQL,
@@ -271,6 +303,21 @@ def build_supervisor_registry(
             # analytics.predictive.train_predictive_model itself, surfaced as a
             # disclosed PredictiveModelStatus.UNAUTHORIZED, never a bare,
             # unexplained registry-level denial.
+            Permission.ASK,
+            RetryPolicy(max_attempts=1),
+        ),
+        (
+            TOOL_DATA_QUALITY,
+            "Deterministic completeness/validity/uniqueness/consistency assessment over "
+            "one already-executed result (observed fact, computed directly from real rows).",
+            ToolCategory.READ,
+            _data_quality,
+            # Permission.ASK, the identical reasoning TOOL_OPTIMIZATION/
+            # TOOL_PREDICTIVE's own comments above give: the real,
+            # specific restricted-column authorization check happens
+            # inside data_quality.engine.assess_table_quality itself,
+            # which suppresses the specific finding rather than denying
+            # the whole scan -- see that module's own docstring.
             Permission.ASK,
             RetryPolicy(max_attempts=1),
         ),
