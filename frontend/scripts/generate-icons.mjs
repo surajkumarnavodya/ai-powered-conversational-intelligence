@@ -19,6 +19,12 @@ await Promise.all([
   sharp(icon).resize(512, 512).png().toFile(join(publicDir, 'icon-512.png')),
   sharp(iconMaskable).resize(512, 512).png().toFile(join(publicDir, 'icon-512-maskable.png')),
   sharp(icon).resize(180, 180).png().toFile(join(publicDir, 'apple-touch-icon.png')),
+  // The browser-tab favicon (index.html's <link rel="icon">) -- small
+  // enough that a crisp direct resize (rather than a second, down-scaled
+  // design) reads fine at tab size.
+  sharp(icon).resize(64, 64).png().toFile(join(publicDir, 'favicon.png')),
 ])
 
-console.log('Generated icon-192.png, icon-512.png, icon-512-maskable.png, apple-touch-icon.png in public/')
+console.log(
+  'Generated icon-192.png, icon-512.png, icon-512-maskable.png, apple-touch-icon.png, favicon.png in public/',
+)

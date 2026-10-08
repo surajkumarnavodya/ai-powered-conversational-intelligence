@@ -79,7 +79,13 @@ export default defineConfig({
       // show a stale or wrong answer, which is worse than the request
       // simply failing offline. See workbox.runtimeCaching below for the
       // explicit NetworkOnly guard on every backend route.
-      includeAssets: ['icon-192.png', 'icon-512.png', 'icon-512-maskable.png', 'apple-touch-icon.png'],
+      includeAssets: [
+        'favicon.png',
+        'icon-192.png',
+        'icon-512.png',
+        'icon-512-maskable.png',
+        'apple-touch-icon.png',
+      ],
       manifest: {
         name: 'AI-Powered Conversational Intelligence',
         short_name: 'Text-to-SQL',
