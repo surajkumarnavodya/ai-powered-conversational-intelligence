@@ -24,10 +24,32 @@ from __future__ import annotations
 
 import logging
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from governance_center.artifacts import (
+    AgentArtifactSpec,
+    AnalyticalPolicyArtifactSpec,
+    ArtifactSpecError,
+    PromptArtifactSpec,
+    parse_artifact_spec,
+)
+from governance_center.inventory import (
+    InventoryEntry,
+    full_inventory,
+    known_evaluation_suites,
+    known_model_names,
+    known_tool_names,
+)
 from governance_center.models import GovernedAssetType
 from governance_center.policy import GovernanceAction, authorize_governance_action
+from governance_center.safety import SafetyInvariant, invariants_present
+from governance_center.validation import (
+    ArtifactValidationReport,
+    ValidationContext,
+    requires_validation,
+    validate_artifact_config,
+)
 from identity.models import GovernanceAssetVersion, GovernanceEvent, User
 from identity.repositories.governance import (
     InvalidGovernanceStageTransitionError,
@@ -56,10 +78,14 @@ from sqlalchemy.orm import Session
 
 from api.governance_schemas import (
     ApproveRequest,
+    ArtifactValidationReportOut,
+    ArtifactViolationOut,
     CreateGovernanceAssetRequest,
     DeployResponse,
     GovernanceAssetVersionOut,
     GovernanceEventOut,
+    InventoryEntryOut,
+    InventoryOut,
     RecordEvaluationResultsRequest,
     RecordTestResultsRequest,
     RecordUsageRequest,
@@ -69,6 +95,7 @@ from api.governance_schemas import (
     RollbackResponse,
     UpdateGovernanceDraftRequest,
     UsageSummaryOut,
+    ValidateArtifactRequest,
 )
 from api.identity_authz import require_local_user
 from security.audit_log import log_security_event
@@ -91,6 +118,179 @@ _DEFAULT_RETIRE_REQUEST = RetireRequest()
 def _not_found() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_404_NOT_FOUND, detail="Governance asset version not found."
+    )
+
+
+# --------------------------------------------------------------------------
+# Prompt 45 (`45_PROMPT_AGENT_REGISTRY_CONTRACT.md`) -- artifact-spec
+# validation, enforced at four lifecycle gates below. Everything here is
+# additive: an asset type with no typed spec (`model`/`provider`/`tool`/
+# `retrieval_source`) takes exactly the Prompt 44 path it always did,
+# because `requires_validation` is false for it.
+# --------------------------------------------------------------------------
+
+
+def _validation_context() -> ValidationContext:
+    """Builds the validator's context from the live registries.
+
+    Rebuilt per request rather than cached: it reads `Settings` (whose
+    own accessor is already process-cached) plus two in-process module
+    registries, so the cost is a handful of dict comprehensions, and a
+    cache here would be one more thing to invalidate for no measurable
+    gain.
+    """
+    inventory = full_inventory()
+    return ValidationContext(
+        known_tools=known_tool_names(),
+        known_models=known_model_names(),
+        known_evaluation_suites=known_evaluation_suites(),
+        live_prompt_invariants={
+            entry.asset_key: frozenset(entry.declared_invariants) for entry in inventory.prompts
+        },
+        live_agent_tools={
+            entry.asset_key: frozenset(entry.spec.allowed_tools)
+            for entry in inventory.agents
+            if isinstance(entry.spec, AgentArtifactSpec)
+        },
+        live_agent_truth_levels={
+            entry.asset_key: entry.spec.max_truth_level
+            for entry in inventory.agents
+            if isinstance(entry.spec, AgentArtifactSpec)
+        },
+    )
+
+
+def _report_out(report: ArtifactValidationReport) -> ArtifactValidationReportOut:
+    return ArtifactValidationReportOut(
+        asset_type=report.asset_type.value,
+        asset_key=report.asset_key,
+        is_valid=report.is_valid,
+        compared_against_live=report.compared_against_live,
+        truth_level=report.truth_level.value,
+        violations=tuple(
+            ArtifactViolationOut(
+                code=violation.code.value,
+                severity=violation.severity.value,
+                subject=violation.subject,
+                message=violation.message,
+            )
+            for violation in report.violations
+        ),
+    )
+
+
+def _deployed_predecessor_config(
+    session: Session, version: GovernanceAssetVersion
+) -> dict[str, Any] | None:
+    """The currently-deployed config for this version's own asset key.
+
+    Used as the inherited baseline at the submit-for-testing and deploy
+    gates. Without it, those two gates would catch a config that was
+    tampered into containing a *subversive* instruction but not one that
+    merely had its framing deleted -- there would be nothing to compare
+    the absence against. Returns `None` when this version is itself the
+    currently-deployed one, or when nothing is deployed for that key.
+    """
+    deployed = get_current_deployed(
+        session, version.tenant_id, version.asset_type, version.asset_key
+    )
+    if deployed is None or deployed.id == version.id:
+        return None
+    return dict(deployed.config or {})
+
+
+def _prompt_invariants_of(config: dict[str, Any]) -> frozenset[SafetyInvariant]:
+    """The invariants a stored prompt config declares or carries.
+
+    Both, unioned: a predecessor that carried the untrusted-data framing
+    in its template without declaring it still constrains its successor,
+    because the control was genuinely there. A config that does not parse
+    as a prompt spec contributes nothing -- it cannot have established a
+    baseline, and refusing the action over an already-stored malformed
+    row would block a reviewer from fixing it.
+    """
+    try:
+        spec = parse_artifact_spec(GovernedAssetType.PROMPT, config)
+    except ArtifactSpecError:
+        return frozenset()
+    if not isinstance(spec, PromptArtifactSpec):  # pragma: no cover - type narrowing
+        return frozenset()
+    return frozenset(spec.safety_invariants) | invariants_present(spec.template)
+
+
+def _enforce_artifact_validity(
+    asset_type: GovernedAssetType,
+    asset_key: str,
+    config: dict[str, Any],
+    *,
+    gate: str,
+    actor_user_id: str,
+    predecessor_config: dict[str, Any] | None = None,
+) -> None:
+    """Refuses a lifecycle action whose artifact has a blocking violation.
+
+    Applied at four gates -- create-draft, edit-draft, submit-for-testing
+    and deploy (see each route). Re-validating at **deploy** and not only
+    at authoring time is the point: an artifact's `config` is mutable
+    while it is a draft, so a check that ran only at creation could be
+    satisfied by a first version and then edited away before release.
+
+    `predecessor_config` closes a real hole found while writing this
+    feature's own regression suite: without it, an author could escape
+    the dropped-invariant check by deleting the *declaration* along with
+    the control. Version N declares `untrusted_data_framing`; version
+    N+1 declares nothing and carries nothing, so nothing was "dropped"
+    relative to its own (now empty) declaration, and it passed. Passing
+    the predecessor makes the required set monotonic: a successor
+    inherits whatever its predecessor declared or carried, and can only
+    ever add to it. That is what makes "a prompt change cannot weaken
+    security" true across versions rather than only within one.
+
+    Args:
+        asset_type: The version's asset type. A type with no typed spec
+            returns immediately, leaving Prompt 44's behavior untouched.
+        asset_key: The version's asset key.
+        config: The raw `config` payload to validate.
+        gate: Which lifecycle gate is being enforced, for the audit event.
+        actor_user_id: The acting account, for the audit event.
+        predecessor_config: The config this one supersedes -- the stored
+            draft being edited, or the currently-deployed version of the
+            same asset key. Its invariants are folded into the required
+            set. `None` when there is genuinely no predecessor.
+
+    Raises:
+        HTTPException: 422 with the full report when a blocking violation
+            is present. Every violation is included, not just the first,
+            so one round-trip surfaces every real problem.
+    """
+    if not requires_validation(asset_type):
+        return
+    context = _validation_context()
+    if predecessor_config and asset_type is GovernedAssetType.PROMPT:
+        inherited = _prompt_invariants_of(predecessor_config)
+        if inherited:
+            merged = dict(context.live_prompt_invariants)
+            merged[asset_key] = merged.get(asset_key, frozenset()) | inherited
+            context = context.model_copy(update={"live_prompt_invariants": merged})
+    report = validate_artifact_config(asset_type, asset_key, config, context)
+    if report.is_valid:
+        return
+    # Metadata only -- violation codes and subjects, never the `config`
+    # payload or template text (a template is caller-supplied content and
+    # has no business in a log line).
+    log_security_event(
+        "governance_artifact_validation_failed",
+        "warning",
+        "A governed AI-asset version was refused by artifact validation.",
+        asset_type=asset_type.value,
+        asset_key=asset_key,
+        gate=gate,
+        violation_codes=sorted({violation.code.value for violation in report.errors}),
+        actor_user_id=actor_user_id,
+    )
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail=_report_out(report).model_dump(),
     )
 
 
@@ -199,7 +399,23 @@ def create_asset_draft(
             detail=f"Unrecognized asset_type {payload.asset_type!r}.",
         ) from None
     _authorize(user, session, GovernanceAction.CREATE_DRAFT, None)
-    tenant_id = resolve_actor_tenant_id(user)
+    caller_tenant_id = resolve_actor_tenant_id(user)
+    deployed_predecessor = (
+        get_current_deployed(session, caller_tenant_id, asset_type.value, payload.asset_key)
+        if caller_tenant_id
+        else None
+    )
+    _enforce_artifact_validity(
+        asset_type,
+        payload.asset_key,
+        payload.config,
+        gate="create_draft",
+        actor_user_id=str(user.id),
+        predecessor_config=(
+            dict(deployed_predecessor.config or {}) if deployed_predecessor else None
+        ),
+    )
+    tenant_id = caller_tenant_id
     if tenant_id is None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -303,6 +519,14 @@ def update_asset_draft(
     user, session = user_and_session
     version = _require_version(session, version_id)
     _authorize(user, session, GovernanceAction.EDIT_DRAFT, version)
+    _enforce_artifact_validity(
+        GovernedAssetType(version.asset_type),
+        version.asset_key,
+        payload.config if payload.config is not None else dict(version.config or {}),
+        gate="edit_draft",
+        actor_user_id=str(user.id),
+        predecessor_config=dict(version.config or {}),
+    )
     try:
         updated = _update_draft(
             session,
@@ -326,6 +550,14 @@ def submit_for_testing(
     user, session = user_and_session
     version = _require_version(session, version_id)
     _authorize(user, session, GovernanceAction.SUBMIT_FOR_TESTING, version)
+    _enforce_artifact_validity(
+        GovernedAssetType(version.asset_type),
+        version.asset_key,
+        dict(version.config or {}),
+        gate="submit_for_testing",
+        actor_user_id=str(user.id),
+        predecessor_config=_deployed_predecessor_config(session, version),
+    )
     try:
         updated = _submit_for_testing(session, version, actor_user_id=user.id)
     except InvalidGovernanceStageTransitionError as exc:
@@ -441,6 +673,14 @@ def deploy_asset_version(
     user, session = user_and_session
     version = _require_version(session, version_id)
     _authorize(user, session, GovernanceAction.DEPLOY, version)
+    _enforce_artifact_validity(
+        GovernedAssetType(version.asset_type),
+        version.asset_key,
+        dict(version.config or {}),
+        gate="deploy",
+        actor_user_id=str(user.id),
+        predecessor_config=_deployed_predecessor_config(session, version),
+    )
     try:
         deployed, retired = _deploy(session, version, actor_user_id=user.id)
     except InvalidGovernanceStageTransitionError as exc:
@@ -535,3 +775,121 @@ def record_asset_usage(
         payload=payload.model_dump(exclude_none=True),
     )
     return _event_out(event)
+
+
+# --------------------------------------------------------------------------
+# Prompt 45 -- the registry's own inventory and validation routes.
+# --------------------------------------------------------------------------
+
+
+def _inventory_entry_out(entry: InventoryEntry) -> InventoryEntryOut:
+    """Flattens one inventory entry into its wire shape.
+
+    The spec's own type-specific fields are projected into a single flat
+    shape (`variables`/`allowed_tools`/`max_truth_level`/`policy_rules`),
+    each empty for an entry it does not apply to -- deliberately one
+    response model rather than three, so a client renders one table.
+    **A prompt's own template text is not included**: the inventory is
+    about which artifacts exist and whether they still carry their
+    controls, and shipping every live system prompt over HTTP would hand
+    any reader of this route the full prompt set, which is exactly what
+    every one of those prompts' own `NO_PROMPT_DISCLOSURE` rule exists to
+    prevent. `fingerprint` is what a caller compares instead.
+    """
+    spec = entry.spec
+    variables: tuple[str, ...] = ()
+    allowed_tools: tuple[str, ...] = ()
+    max_truth_level: str | None = None
+    policy_rules: tuple[str, ...] = ()
+    if isinstance(spec, PromptArtifactSpec):
+        variables = tuple(variable.name for variable in spec.variables)
+    elif isinstance(spec, AgentArtifactSpec):
+        allowed_tools = spec.allowed_tools
+        max_truth_level = spec.max_truth_level.value
+    elif isinstance(spec, AnalyticalPolicyArtifactSpec):
+        policy_rules = tuple(f"{rule.subject} {rule.operator} {rule.value}" for rule in spec.rules)
+    return InventoryEntryOut(
+        asset_type=entry.asset_type.value,
+        asset_key=entry.asset_key,
+        display_name=entry.display_name,
+        source_module=entry.source_module,
+        source_symbol=entry.source_symbol,
+        fingerprint=entry.fingerprint,
+        truth_level=entry.truth_level.value,
+        declared_invariants=tuple(invariant.value for invariant in entry.declared_invariants),
+        variables=variables,
+        allowed_tools=allowed_tools,
+        max_truth_level=max_truth_level,
+        policy_rules=policy_rules,
+        notes=entry.notes,
+    )
+
+
+@router.get("/inventory", response_model=InventoryOut)
+def get_registry_inventory(
+    user_and_session: tuple[User, Session] = Depends(require_local_user),
+) -> InventoryOut:
+    """The live inventory of this platform's prompts, agents and policies.
+
+    Gated on `GovernanceAction.LIST` -- the action for a route with no
+    one specific target version, authorized by permission alone (either
+    governance permission grants it), exactly as `GET /governance/assets`
+    already is. `VIEW` would be wrong here: it always tenant-matches
+    against a resolved version's own `tenant_id`, so with no version it
+    correctly denies. Not public, because the
+    inventory names every prompt/agent/policy this platform runs, their
+    source locations, and their safety posture, which is internal
+    architectural detail even though it carries no template text and no
+    secret.
+
+    Reads only in-process module state and `Settings` -- no database
+    query, no LLM call.
+    """
+    user, session = user_and_session
+    _authorize(user, session, GovernanceAction.LIST, None)
+    inventory = full_inventory()
+    return InventoryOut(
+        prompts=tuple(_inventory_entry_out(entry) for entry in inventory.prompts),
+        agents=tuple(_inventory_entry_out(entry) for entry in inventory.agents),
+        policies=tuple(_inventory_entry_out(entry) for entry in inventory.policies),
+        known_tools=tuple(sorted(known_tool_names())),
+        known_models=tuple(sorted(known_model_names())),
+        known_evaluation_suites=tuple(sorted(known_evaluation_suites())),
+        truth_level=inventory.truth_level.value,
+    )
+
+
+@router.post("/assets/validate", response_model=ArtifactValidationReportOut)
+def validate_artifact(
+    payload: ValidateArtifactRequest,
+    user_and_session: tuple[User, Session] = Depends(require_local_user),
+) -> ArtifactValidationReportOut:
+    """Validates a candidate artifact without persisting anything.
+
+    Returns `200` with the report either way -- a validation *finding* is
+    this route's successful result, unlike the lifecycle routes, where a
+    blocking violation refuses the action with a `422`. A reviewer uses
+    this to check a payload before creating a draft from it.
+
+    Deliberately routed at `/assets/validate` rather than
+    `/assets/{version_id}/validate`: there is no version yet.
+    FastAPI matches this literal path ahead of the
+    `/assets/{version_id}` parameterised route because it is declared
+    with a different method (`POST` vs `GET`/`PATCH`), so the two cannot
+    collide.
+    """
+    user, session = user_and_session
+    # `LIST` for the same reason `GET /governance/inventory` uses it:
+    # there is no specific version to tenant-match against.
+    _authorize(user, session, GovernanceAction.LIST, None)
+    try:
+        asset_type = GovernedAssetType(payload.asset_type)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unrecognized asset_type {payload.asset_type!r}.",
+        ) from None
+    report = validate_artifact_config(
+        asset_type, payload.asset_key, payload.config, _validation_context()
+    )
+    return _report_out(report)

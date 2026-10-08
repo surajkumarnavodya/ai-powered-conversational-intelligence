@@ -460,6 +460,85 @@ contract documents.
 
 Cross-tenant resources and databases a tenant may not use return 404, not 403.
 
+### AI asset governance: lifecycle, inventory and validation
+
+`api/governance.py` (`/governance/*`, all routes require a local account
+and one of two RBAC permissions: `governance.manage`, admin tier, for
+every mutating/release action, or `governance.review`, analyst tier, for
+approve/reject and read).
+
+**Lifecycle** (Prompt 44): `POST /governance/assets` creates a `draft`
+version of one governed asset -- `model`, `provider`, `prompt`, `agent`,
+`tool`, `retrieval_source` or `policy`. From there,
+`POST /governance/assets/{id}/` + `submit-for-testing`, `test-results`,
+`submit-for-evaluation`, `evaluation-results`, `approve`, `reject`,
+`deploy`, `rollback`, `retire`, `usage` move it through
+`draft -> testing -> evaluating -> approved -> deployed`, with
+`rolled_back`/`rejected`/`retired` as terminal states. Reads:
+`GET /governance/assets` (list, filterable by `asset_type`),
+`GET /governance/assets/current`, `GET /governance/assets/{id}`,
+`.../events` (the append-only audit trail), `.../usage-summary`.
+`PATCH /governance/assets/{id}` edits a draft -- the one stage a version
+is mutable in. Deploying atomically retires whichever version of the
+same asset key was deployed before. Every version is tenant-scoped; a
+cross-tenant id returns `404`, never `403`.
+
+**Inventory** (Prompt 45): `GET /governance/inventory` returns this
+platform's live, in-code artifacts -- prompt templates, multi-agent
+specialist definitions and analytical policies -- each with its source
+module/symbol, a content `fingerprint`, its declared safety invariants,
+and its variables/tools/truth-level ceiling/policy rules as applicable.
+Also returns `known_tools`, `known_models` and
+`known_evaluation_suites`: the exact name sets validation checks a
+candidate against, so a reviewer sees the valid values up front.
+`truth_level` is always `"database_fact"` -- a deterministic observation
+about the repository's own source, never a claim an artifact is
+approved. **A prompt's template text is deliberately not returned**;
+`fingerprint` is what a caller compares instead.
+
+**Validation** (Prompt 45): `POST /governance/assets/validate` validates
+a candidate `(asset_type, asset_key, config)` triple without persisting
+anything, and returns `200` with the report either way -- a finding is
+this route's successful result. The same validation is *enforced* at
+four lifecycle gates (create-draft, edit-draft, submit-for-testing and
+**deploy**), where a blocking violation is a `422` whose `detail` is the
+full report. It applies to `prompt`, `agent` and `policy` only; the
+other four asset types keep their original free-form `config` behavior.
+
+Violation codes: `untyped_asset_type`, `spec_parse_error`,
+`positional_placeholder`, `missing_variable_declaration`,
+`unused_required_variable`, `unapproved_tool`,
+`tool_privilege_escalation`, `truth_level_escalation`, `unknown_model`,
+`unknown_evaluation_suite`, `dropped_safety_invariant`,
+`unsafe_composition`, `injection_phrase_in_template`, `empty_policy`.
+Each carries `severity` (`error` blocks, `warning` is reported) and a
+`subject` naming the specific variable/tool/model/invariant involved.
+One `error` makes the whole artifact invalid -- there is no partial
+acceptance.
+
+`config` shape per typed asset type (every field optional except the
+first, unknown fields rejected):
+
+- `prompt`: `template` (required), `variables`
+  (`[{name, required, description}]`), `required_tools`,
+  `compatible_models`, `evaluation_suites`, `safety_invariants` (from
+  `untrusted_data_framing`, `no_write_statements`,
+  `no_prompt_disclosure`, `no_fabrication`, `citation_required`,
+  `governed_metric_precedence`).
+- `agent`: `agent_name` (required), `kind` (required: `llm`/`data`/
+  `engine`/`control`/`retrieval`), `allowed_tools`, `max_truth_level`,
+  `cost_units`, `max_attempts`, `compatible_models`,
+  `evaluation_suites`.
+- `policy`: `policy_kind` (required), `rules`
+  (`[{subject, operator, value}]` -- a typed triple, never an
+  expression string), `applies_to`, `evaluation_suites`.
+
+A successor version inherits whatever safety invariants its predecessor
+declared **or** carried, so a change can add controls but never remove
+them. See `CLAUDE.md`'s "Prompt/agent/policy registry" section and
+`45_PROMPT_AGENT_REGISTRY_CONTRACT.md` for the full design, including
+why a deployed prompt artifact is never loaded as a live system prompt.
+
 ### Other routes
 
 `POST /execute` (SQL "Confirm and Run" equivalent), `POST /schema/refresh`,

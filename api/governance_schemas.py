@@ -168,3 +168,104 @@ class DeployResponse(BaseModel):
 
     deployed: GovernanceAssetVersionOut
     retired: GovernanceAssetVersionOut | None
+
+
+# --------------------------------------------------------------------------
+# Prompt 45 (`45_PROMPT_AGENT_REGISTRY_CONTRACT.md`) -- the prompt/agent/
+# policy registry's own inventory and validation surface, layered on the
+# lifecycle above. Every model below is additive; none of Prompt 44's own
+# shapes changed.
+# --------------------------------------------------------------------------
+
+
+class ArtifactViolationOut(BaseModel):
+    """One problem found in a candidate artifact version."""
+
+    model_config = ConfigDict(frozen=True)
+
+    code: str
+    severity: str
+    subject: str
+    message: str
+
+
+class ArtifactValidationReportOut(BaseModel):
+    """A candidate artifact version's validation result.
+
+    `is_valid` is false whenever any `severity == "error"` violation is
+    present -- the API never reports a partially-valid artifact (see
+    `governance_center/validation.py`'s own "no partial trust" note).
+    `truth_level` is always `"database_fact"`: a deterministic finding
+    about the submitted payload's structure, never a judgment that the
+    artifact is safe to deploy, which stays a human approval.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    asset_type: str
+    asset_key: str
+    is_valid: bool
+    compared_against_live: bool
+    truth_level: str
+    violations: tuple[ArtifactViolationOut, ...] = ()
+
+
+class ValidateArtifactRequest(BaseModel):
+    """Validate a candidate artifact without persisting anything.
+
+    Deliberately takes the same `(asset_type, asset_key, config)` triple
+    a real version carries, so a reviewer can check a payload before
+    creating a draft from it and get a byte-identical report.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    asset_type: str = Field(..., min_length=1)
+    asset_key: str = Field(..., min_length=1, max_length=200)
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class InventoryEntryOut(BaseModel):
+    """One live, in-code artifact as the registry sees it.
+
+    `truth_level` is always `"database_fact"` -- an inventory entry is a
+    deterministic observation about this repository's own source, not a
+    claim that the artifact is approved (that is `stage`'s job on a real
+    version).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    asset_type: str
+    asset_key: str
+    display_name: str
+    source_module: str
+    source_symbol: str
+    fingerprint: str
+    truth_level: str
+    declared_invariants: tuple[str, ...] = ()
+    variables: tuple[str, ...] = ()
+    allowed_tools: tuple[str, ...] = ()
+    max_truth_level: str | None = None
+    policy_rules: tuple[str, ...] = ()
+    notes: str = ""
+
+
+class InventoryOut(BaseModel):
+    """The full live inventory of prompts, agents and analytical policies.
+
+    `known_tools`/`known_models`/`known_evaluation_suites` are the same
+    sets validation checks a candidate artifact against, returned here so
+    a reviewer authoring a version can see the valid names up front
+    rather than discovering them from rejections.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    prompts: tuple[InventoryEntryOut, ...] = ()
+    agents: tuple[InventoryEntryOut, ...] = ()
+    policies: tuple[InventoryEntryOut, ...] = ()
+    known_tools: tuple[str, ...] = ()
+    known_models: tuple[str, ...] = ()
+    known_evaluation_suites: tuple[str, ...] = ()
+    truth_level: str = "database_fact"

@@ -4403,6 +4403,109 @@ already establish).
 for the full inspection findings, every new module's design, the testing
 summary, and the security/tenant-isolation/performance review.
 
+### Prompt/agent/policy registry: inventory + typed specs + validation (Prompt 45)
+
+Prompt 44 above already built the governed **lifecycle** (draft → testing
+→ evaluating → approved → deployed, plus rollback/rejected/retired),
+owners, versions, tenant isolation, RBAC and the audit trail -- across
+asset types that already include `prompt`/`agent`/`policy`. Prompt 45
+deliberately added **no second registry**; it added the three things
+that genuinely did not exist, as three modules inside the same package:
+
+- **`governance_center/inventory.py`** -- the live inventory (15 prompt
+  templates, 13 agent definitions, 6 analytical policies), each resolved
+  from the **live** object at call time (`importlib` + the real
+  constant, the real `agent.multiagent.agents.SPECS` dict, real
+  `Settings` fields), never transcribed. A named artifact that has moved
+  raises `InventoryUnavailableError` rather than being skipped, so the
+  inventory can never silently shrink into a falsely-clean picture.
+  Every entry is `DataTruthLevel.DATABASE_FACT` -- an observation about
+  this repository's own source, never a claim the artifact is approved
+  (that stays `GovernanceStage`'s job).
+- **`governance_center/artifacts.py`** -- gives Prompt 44's deliberately
+  free-form `config` a typed, frozen, `extra="forbid"` reading for
+  **exactly three** asset types (`TYPED_ASSET_TYPES`): template,
+  variables, required tools, compatible models, evaluation suites,
+  declared safety invariants. The other four asset types keep their
+  original never-parsed behavior byte for byte. A `PolicyRule` is a
+  typed `(subject, operator, value)` triple, so there is no field an
+  authored expression could occupy -- the same structural guarantee
+  `optimization/models.py` and `analytics/scenario.py` already make.
+- **`governance_center/safety.py` + `validation.py`** -- six named
+  `SafetyInvariant`s with detectors anchored on real phrasings this
+  codebase's own prompts use, eight `WEAKENING_PATTERNS` for text that
+  actively subverts a control, and 14 `ViolationCode`s. One `ERROR`
+  invalidates the whole artifact (no partial trust).
+
+**Invariants that must not regress:**
+- **The required-invariant set is monotonic across versions.** A
+  successor inherits whatever its predecessor *declared or carried*
+  (`api/governance.py::_enforce_artifact_validity`'s
+  `predecessor_config` -- the stored draft being edited, or the
+  currently-deployed version of the same asset key), so deleting a
+  control together with its declaration is refused. Without this, a
+  version declaring nothing had nothing to drop and passed -- a real
+  hole this prompt's own regression suite found and closed.
+- **Validation is enforced at four gates, including `deploy`.** A
+  draft's `config` is mutable, so a check that ran only at authoring
+  time could be edited away before release.
+  `tests/security/test_prompt_registry_cannot_weaken_security.py
+  ::test_the_deploy_gate_revalidates_the_stored_config` weakens a row
+  directly in the database to prove deploy re-validates rather than
+  trusting creation.
+- **The registry never hot-swaps a live prompt.** `agent/llm_client.py`
+  still uses its own in-code constants; nothing loads a deployed
+  artifact as a system prompt. Making a database row the system prompt
+  would turn every write path into the registry into prompt injection
+  with full pipeline reach. Promoting a reviewed artifact into the
+  runtime stays a code change, deliberately.
+- **`GET /governance/inventory` never returns live prompt template
+  text** -- only names, source locations, fingerprints and declared
+  invariants. Shipping the prompt set over HTTP would make every
+  prompt's own `NO_PROMPT_DISCLOSURE` rule pointless; asserted against a
+  60-character probe of every real template.
+- **`safety.py` is not the security boundary** and says so in its own
+  docstring, mirroring `security/injection_patterns.py`'s identical
+  framing. `agent/sql_validator.py`'s AST allowlist and the RBAC/
+  restricted-column gates remain what bound consequences.
+- Both new routes (`GET /governance/inventory`,
+  `POST /governance/assets/validate`) use `GovernanceAction.LIST` -- the
+  action for a route with no specific target. `VIEW` is wrong there and
+  correctly denies, since it always tenant-matches a resolved version.
+
+**A real validator bug found and fixed by its own test suite:** running
+`security.injection_patterns.INJECTION_PATTERNS` as a *blocking* check
+over prompt templates rejected this codebase's own most
+security-conscious prompt -- `agent.llm_client._system_prompt` quotes the
+attacks it defends against and prohibits a "connection string" in
+generated SQL. All three matches were defensive mentions. That pattern
+set is tuned for untrusted *user input*; an authored prompt discussing
+security is the opposite context. Fixed by stripping quoted spans and
+downgrading the finding to a **warning**, leaving `UNSAFE_COMPOSITION`
+(imperative-phrased, zero false positives across all 15 live prompts) to
+carry the blocking weight. See `validation._scan_for_injection_mentions`.
+
+**Known, disclosed limitations:** a brand-new asset key with no
+predecessor and no declared invariants gets only self-consistency
+validation (deliberate -- the live inventory itself contains two prompts
+carrying no safety framing, so requiring one would reject a real artifact
+shape; active subversion is still refused). **Inventory finding, reported
+rather than fixed:** `rag.retriever._GRADE_SYSTEM_PROMPT` receives raw
+document excerpt text and states no untrusted-data framing, and
+`_REWRITE_SYSTEM_PROMPT` states none either -- bounded blast radius (a
+YES/NO gating retry, and a search string; neither reaches generated SQL
+or the user's answer), left unchanged because this pass does not edit
+live prompt wording, and recorded as `set()` in the regression suite's
+own expectation table so the gap stays visible. `AgentSpec.kind`'s own
+docstring is stale (it lists four kinds; `semantic` is a live
+`"retrieval"` agent) -- the real set is taken from the live specs and
+pinned by a test. No frontend surface; evaluation suites are validated
+for existence, not for having actually been run.
+
+**Read [`45_PROMPT_AGENT_REGISTRY_CONTRACT.md`](45_PROMPT_AGENT_REGISTRY_CONTRACT.md)**
+for the full inspection findings, both real bugs, the 101-test testing
+summary, and the security/tenant-isolation/performance review.
+
 ## How to run
 
 See `README.md` for full setup. Short version:

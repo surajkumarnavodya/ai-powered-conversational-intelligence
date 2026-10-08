@@ -118,6 +118,33 @@ anywhere else at the time it was written:
   (`governance_center.policy` conflated "no specific resource" with
   "resource not found"), and `approve`/`retire` required a request body
   even though every field on each is optional.
+- `test_prompt_registry_cannot_weaken_security.py` —
+  Prompt 45 (`45_PROMPT_AGENT_REGISTRY_CONTRACT.md`): spans
+  `governance_center/safety.py`, `inventory.py`, `validation.py` and
+  `api/governance.py` together, and its subject is this platform's own
+  live prompt set rather than any single module. Two independent halves.
+  (1) **Drift detection** — pure, no HTTP: `EXPECTED_LIVE_INVARIANTS`
+  pins, per live prompt, which safety invariants it must carry (pinned
+  explicitly, never derived from the live text, since a derived
+  expectation would pass whatever the prompts said), so editing
+  `agent/llm_client.py` to drop the untrusted-data framing or
+  `rag/graph.py` to drop its citation rule fails CI with a diff naming
+  the dropped control — the only mechanism in this repository that
+  catches that at all. It also asserts no live prompt *contains* a
+  weakening instruction, and that every live artifact validates against
+  itself without errors (the assertion that found the real
+  `INJECTION_PATTERNS` false-positive on this codebase's own most
+  security-conscious prompt). (2) **End-to-end refusal** — real HTTP,
+  real identity database, real tenants/users/RBAC: a candidate artifact
+  that drops a control, subverts one, overrides a governed metric, names
+  an unapproved tool, or escalates an agent's tools/truth-level ceiling
+  is refused at authoring time *and* at the deploy gate.
+  `test_the_deploy_gate_revalidates_the_stored_config` weakens a row
+  directly in the database, bypassing the API's own edit gate, which is
+  the only way to distinguish "deploy re-validates" from "deploy trusts
+  that creation validated". Also the origin of the monotonic-invariant
+  fix: without predecessor inheritance, deleting a control together with
+  its declaration passed validation.
 
 Before adding a new file here, check whether the scenario already has
 coverage under its own module's `tests/test_<module>.py` first — this
