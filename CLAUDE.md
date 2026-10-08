@@ -4506,6 +4506,96 @@ for existence, not for having actually been run.
 for the full inspection findings, both real bugs, the 101-test testing
 summary, and the security/tenant-isolation/performance review.
 
+### AI Evaluation Benchmarking platform (Prompt 46)
+
+`eval_platform/` (new top-level package, a peer of `governance_center/`)
+is a persisted, versioned, release-gated wrapper **combining** the four
+evaluation harnesses this codebase already had -- never a second
+evaluation engine. `eval/component_benchmark/` gained five new domains
+this prompt's own mission named and nothing covered before:
+`cases_groundedness.py`/`cases_calculations.py`/
+`cases_anomaly_root_cause.py`/`cases_forecasting.py`/`cases_intent.py`
+(62 cases across 9 domains total, up from 28 across 4), each wrapping a
+real, already-tested production function directly with zero I/O, the
+identical shape `cases_semantic.py`/`cases_analytics.py` already
+establish. `eval_platform.models.EvalDomain` is the full 12-domain union
+(the 9 real component-benchmark domains plus `sql`/`security`/
+`tenant_isolation`) -- the mission's other three named domains
+deliberately get **no** parallel zero-I/O dataset here, since each
+already has its own real, much larger harness that needs live
+infrastructure (`eval/benchmark/`+`eval.runner`, `eval/security_benchmark/`)
+or is already a CI-enforced pytest suite
+(`tests/security/test_cross_tenant_isolation.py`) -- adding a stub would
+misrepresent coverage, not add it.
+
+`eval_platform.release_gate.evaluate_release_gate` is a pure function
+that **reuses, never recomputes**: it takes the real
+`eval.component_benchmark.regression.ComponentBenchmarkComparison`/
+`eval.regression.RegressionReport` dataclasses directly, plus plain
+operator-reported counts/booleans for the security benchmark and
+tenant-isolation suite (both genuinely need live DB/LLM/pytest
+infrastructure this platform does not itself run -- see
+`eval_platform.models.EvalRunSource`'s own docstring). Two floors are
+non-negotiable regardless of any baseline comparison -- any critical
+security finding, or a failed tenant-isolation suite, blocks a release
+outright, matching those two domains' own real-world shape elsewhere in
+this codebase; every other domain blocks only on a genuine regression. A
+domain nothing reported produces a warning, never a block.
+
+New `identity.models.EvaluationRun` (one row per recorded run, always
+created already-complete -- no background worker exists in this
+codebase) + `EvaluationCaseReview` (an independent, append-only human-
+review table satisfying the mission's own "support ... human review"
+requirement -- never mutates its parent run's own `summary`/
+`total_passed`). `EvaluationRun.dataset_version` is a `sha256` fingerprint
+(`eval_platform.dataset_registry.fingerprint_baseline`) of the actual
+baseline/dataset a run was graded against -- the literal "version
+datasets" requirement, without a second dataset-storage mechanism (the
+dataset itself already lives wherever it always has).
+`governed_asset_type`/`governed_asset_key`/`governed_asset_version` are a
+deliberately **loose** link (plain strings, never a foreign key) to a
+`governance_asset_versions` row -- satisfying "track quality, latency and
+cost" for "model/prompt/agent versions" without this table depending on
+`governance_center`'s own schema at all.
+
+New RBAC (`Permission.EVAL_MANAGE`/`EVAL_REVIEW`, the identical two-tier
+operational-vs-domain-judgment split every prior `*_MANAGE`/`*_REVIEW`
+pair already establishes) and `api/eval_platform.py` (7 routes under
+`/eval-platform`, mirroring `api/governance.py`/`api/semantic_catalog.py`'s
+own authorization/anti-enumeration discipline exactly). No
+`Settings.enable_*` feature flag -- the identical reasoning
+`api/governance.py`'s own docstring already gives for an administrative/
+compliance surface gated purely by RBAC.
+
+**Invariants that must not regress:** `POST /eval-platform/runs/report`
+rejects `source=component_benchmark` with a 422 -- an operator can never
+hand-report a result for the one domain this platform can actually
+verify itself, which would let a caller fabricate a clean run. Submitting
+a case review never changes its parent run's own persisted `summary`/
+`total_passed` -- the identical "feedback must not automatically alter
+production numbers from a single event" posture
+`recommendation.governance`'s own repository docstring already
+establishes. Cross-tenant access to a run, its release gate, or its case
+reviews are all 404s, not 403s.
+
+**Known, disclosed limitations:** no background worker exists, so a run
+is always created already-complete -- there is no "in-progress" run
+state. Usage/cost/latency is entirely caller/operator-reported (no live
+per-call token/cost instrumentation exists anywhere in this codebase).
+The release gate's REST layer takes primitive, flattened inputs for the
+SQL/security/tenant-isolation domains rather than reconstructing the
+richer dataclasses the pure engine function itself accepts -- a
+disclosed, bounded simplification at the API boundary, not a loss of
+genuine reuse at the engine layer (the component-benchmark path *does*
+reconstruct and reuse the real `ComponentBenchmarkComparison` dataclass
+from a run's own already-stored outcome). No dashboard/frontend surface
+exists for this platform in this pass.
+
+**Read [`46_AI_EVALUATION_BENCHMARKING_CONTRACT.md`](46_AI_EVALUATION_BENCHMARKING_CONTRACT.md)**
+for the full inspection findings, every new module's design, the
+150-test testing summary, and the security/tenant-isolation/performance
+review.
+
 ## How to run
 
 See `README.md` for full setup. Short version:

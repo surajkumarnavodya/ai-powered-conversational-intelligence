@@ -11,6 +11,11 @@ from __future__ import annotations
 
 from eval.component_benchmark import (
     cases_analytics,
+    cases_anomaly_root_cause,
+    cases_calculations,
+    cases_forecasting,
+    cases_groundedness,
+    cases_intent,
     cases_planning,
     cases_recommendations,
     cases_semantic,
@@ -22,13 +27,31 @@ from eval.component_benchmark.schema import (
 )
 
 #: One entry per domain, in report order -- the single place that knows
-#: about all four domain modules; adding a fifth domain means adding one
-#: line here; no other module needs to change.
+#: about every domain module; adding a new domain means adding one line
+#: here; no other module needs to change. Prompt 46
+#: (`46_AI_EVALUATION_BENCHMARKING_CONTRACT.md`) added
+#: groundedness/calculations/anomaly_root_cause/forecasting/intent -- the
+#: five named-mission domains this harness had no coverage for at all
+#: before. "SQL correctness"/"security"/"tenant isolation" (the mission's
+#: other three named domains) are deliberately NOT added here -- each
+#: already has its own real, much larger evaluation harness that needs a
+#: live database/LLM (`eval/benchmark/` + `eval/runner.py`,
+#: `eval/security_benchmark/`) or is already a CI-enforced pytest
+#: regression suite (`tests/security/test_cross_tenant_isolation.py`) --
+#: adding a parallel, zero-I/O-only dataset for them here would either
+#: duplicate that coverage or, worse, misrepresent a live-dependent
+#: domain as fully covered by this zero-I/O harness alone. See
+#: `eval_platform/release_gate.py` for how all of these are combined.
 _DOMAIN_MODULES = {
     "semantic": cases_semantic,
     "planning": cases_planning,
     "analytics": cases_analytics,
     "recommendations": cases_recommendations,
+    "groundedness": cases_groundedness,
+    "calculations": cases_calculations,
+    "anomaly_root_cause": cases_anomaly_root_cause,
+    "forecasting": cases_forecasting,
+    "intent": cases_intent,
 }
 
 

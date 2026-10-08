@@ -77,6 +77,7 @@ from api.chat_history import router as chat_history_router
 from api.chat_persistence import persist_ask_turn, persist_execute_result
 from api.data_quality import router as data_quality_router
 from api.documents import router as documents_router
+from api.eval_platform import router as eval_platform_router
 from api.generation import router as generation_router
 from api.governance import router as governance_router
 from api.identity_auth import router as identity_auth_router
@@ -409,6 +410,7 @@ app.include_router(data_quality_router)
 app.include_router(lineage_router)
 app.include_router(schema_drift_router)
 app.include_router(governance_router)
+app.include_router(eval_platform_router)
 app.include_router(platform_admin_router)
 app.include_router(tenant_admin_router)
 app.include_router(navigation_router)

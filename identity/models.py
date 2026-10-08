@@ -1700,3 +1700,144 @@ class GovernanceEvent(Base):
     reason: Mapped[str] = mapped_column(Text, nullable=True)
     payload: Mapped[dict] = mapped_column(_METADATA_JSON, nullable=True)
     created_at: Mapped[datetime] = _created_at()
+
+
+class EvaluationRun(Base):
+    """One recorded evaluation run -- Prompt 46
+    (`46_AI_EVALUATION_BENCHMARKING_CONTRACT.md`): the persisted,
+    versioned record of one pass through one of this codebase's four
+    evaluation harnesses (`eval_platform.models.EvalRunSource`).
+
+    **Created already-complete, never mid-flight** -- there is no
+    background worker anywhere in this codebase (the same disclosed
+    limitation `OnboardingJob`'s own docstring already names for an
+    identical reason), so a run is recorded only once its own result is
+    already known: either this platform executed
+    `eval.component_benchmark.runner.run_all()` itself synchronously
+    (`source == "component_benchmark"`), or an operator is reporting a
+    result produced elsewhere (the SQL benchmark, the security
+    benchmark, or the tenant-isolation pytest suite -- all three need
+    live database/LLM infrastructure this platform does not itself run).
+
+    `dataset_version` is a deterministic fingerprint of the actual
+    dataset/baseline this run was graded against
+    (`eval_platform.dataset_registry.fingerprint_baseline`, the
+    identical `sha256`-of-already-computed-content convention
+    `db.schema_introspection.get_schema_fingerprint`/`analytics.predictive
+    .PredictiveModelMetadata.data_fingerprint` already establish) -- the
+    literal "version datasets" requirement, satisfied without a second
+    dataset-storage mechanism (the dataset itself already lives in
+    `eval/benchmark/*.yaml`, `eval/security_benchmark/dataset.py`, and
+    `eval/baselines/component_benchmark_latest.json`; this column only
+    identifies *which* version of it a given run used).
+
+    `governed_asset_type`/`governed_asset_key`/`governed_asset_version`
+    are an optional, deliberately **loose** link (plain strings, not a
+    foreign key) to a `GovernanceAssetVersion` row -- the mission's own
+    "track quality, latency, and cost" requirement for "model/prompt/
+    agent versions" is satisfied by letting a run name which governed
+    asset version it was evaluating, without this table depending on
+    `governance_center`'s own schema at all (a run may legitimately name
+    an asset version that was never itself registered with that
+    separate system, or evaluate something governance doesn't track at
+    all, e.g. a whole pipeline rather than one asset).
+
+    `summary` holds the harness-specific result shape this run reports
+    (see `identity.repositories.eval_platform`'s own docstring for the
+    exact shape per `source`) -- `quality`/`latency_seconds`/
+    `cost_estimate` are the mission's own named tracking dimensions,
+    pulled out as their own queryable columns (never only buried inside
+    `summary`) specifically so `list_runs`'s own filtering/sorting never
+    needs to parse JSON. All three are **caller/operator-reported**, the
+    identical "no live per-call token/cost instrumentation exists in
+    this codebase" disclosure `GovernanceEvent.event_type ==
+    "usage_recorded"` already makes -- never a number this platform
+    fabricates on a caller's behalf.
+    """
+
+    __tablename__ = "evaluation_runs"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    source: Mapped[str] = mapped_column(
+        Enum(
+            "component_benchmark",
+            "sql_benchmark",
+            "security_benchmark",
+            "tenant_isolation_suite",
+            name="eval_run_source",
+            native_enum=False,
+            validate_strings=True,
+        ),
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(
+        Enum(
+            "completed",
+            "failed_to_run",
+            name="eval_run_status",
+            native_enum=False,
+            validate_strings=True,
+        ),
+        nullable=False,
+        default="completed",
+    )
+    dataset_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    governed_asset_type: Mapped[str] = mapped_column(String(32), nullable=True)
+    governed_asset_key: Mapped[str] = mapped_column(String(200), nullable=True)
+    governed_asset_version: Mapped[int] = mapped_column(Integer, nullable=True)
+    summary: Mapped[dict] = mapped_column(_METADATA_JSON, nullable=False, default=dict)
+    total_cases: Mapped[int] = mapped_column(Integer, nullable=True)
+    total_passed: Mapped[int] = mapped_column(Integer, nullable=True)
+    quality: Mapped[float] = mapped_column(Float, nullable=True)
+    latency_seconds: Mapped[float] = mapped_column(Float, nullable=True)
+    cost_estimate: Mapped[float] = mapped_column(Float, nullable=True)
+    release_gate_verdict: Mapped[str] = mapped_column(String(16), nullable=True)
+    release_gate_reasons: Mapped[dict] = mapped_column(_METADATA_JSON, nullable=True)
+    notes: Mapped[str] = mapped_column(Text, nullable=True)
+    triggered_by_user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = _created_at()
+
+
+class EvaluationCaseReview(Base):
+    """One human review of one evaluation case's outcome -- Prompt 46.
+
+    Exists for the mission's own "support deterministic assertions and
+    human review" requirement: a deterministic, zero-I/O
+    `eval.component_benchmark` case needs no human review at all (its
+    own pass/fail *is* the ground truth), but a SQL/security-benchmark
+    case graded by an LLM, or one whose `expected_behavior` is itself a
+    judgment call, benefits from a human confirming or overriding that
+    automated verdict -- recorded here as an independent, append-only
+    row, never by mutating the parent `EvaluationRun`'s own `summary`.
+
+    `reviewed_verdict` can disagree with `original_verdict` (a human
+    overriding what the automated grader said) -- this table only ever
+    *records* that disagreement; nothing in this codebase reads a review
+    row back and silently rewrites the parent run's own `summary`/
+    `total_passed`, the identical "feedback must not automatically alter
+    production numbers from a single event" posture
+    `recommendation.governance`'s own repository docstring already
+    establishes for the structurally similar recommendation-feedback
+    table.
+    """
+
+    __tablename__ = "evaluation_case_reviews"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("evaluation_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    domain: Mapped[str] = mapped_column(String(32), nullable=False)
+    case_name: Mapped[str] = mapped_column(String(300), nullable=False)
+    original_verdict: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    reviewed_verdict: Mapped[bool] = mapped_column(Boolean, nullable=True)
+    comment: Mapped[str] = mapped_column(Text, nullable=True)
+    reviewer_user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = _created_at()

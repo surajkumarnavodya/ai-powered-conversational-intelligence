@@ -19,6 +19,11 @@ import pytest
 
 from eval.component_benchmark import (
     cases_analytics,
+    cases_anomaly_root_cause,
+    cases_calculations,
+    cases_forecasting,
+    cases_groundedness,
+    cases_intent,
     cases_planning,
     cases_recommendations,
     cases_semantic,
@@ -35,11 +40,21 @@ from eval.component_benchmark.schema import (
     ComponentDomainReport,
 )
 
+#: Prompt 46 (`46_AI_EVALUATION_BENCHMARKING_CONTRACT.md`) added
+#: groundedness/calculations/anomaly_root_cause/forecasting -- mirrors
+#: `eval.component_benchmark.runner._DOMAIN_MODULES` exactly; kept as a
+#: separate dict (not an import of the runner's own) so this test still
+#: catches the runner's own dict drifting out of sync with reality.
 _ALL_DOMAIN_MODULES = {
     "semantic": cases_semantic,
     "planning": cases_planning,
     "analytics": cases_analytics,
     "recommendations": cases_recommendations,
+    "groundedness": cases_groundedness,
+    "calculations": cases_calculations,
+    "anomaly_root_cause": cases_anomaly_root_cause,
+    "forecasting": cases_forecasting,
+    "intent": cases_intent,
 }
 _ALL_CASES = [
     pytest.param(domain_name, case, id=f"{domain_name}/{case.name}")

@@ -83,6 +83,17 @@ class Permission(str, Enum):
     # already establish.
     GOVERNANCE_REVIEW = "governance.review"
     GOVERNANCE_MANAGE = "governance.manage"
+    # Prompt 46 (46_AI_EVALUATION_BENCHMARKING_CONTRACT.md): the AI
+    # Evaluation Benchmarking platform's own persisted-run/release-gate
+    # surface. EVAL_REVIEW (submitting a human review verdict on a
+    # non-deterministic case's outcome) sits at the analyst tier, the
+    # identical domain-judgment reasoning every other `*_REVIEW`
+    # permission above already establishes; EVAL_MANAGE (recording a new
+    # run, computing a release-gate verdict -- operational actions, not
+    # domain judgment) sits at the admin tier, the identical reasoning
+    # every other `*_MANAGE` permission above already establishes.
+    EVAL_REVIEW = "eval.review"
+    EVAL_MANAGE = "eval.manage"
     # Prompt 28 (28_GLOBAL_PLATFORM_ADMIN_DASHBOARD_CONTRACT.md): the one
     # permission that crosses tenant boundaries deliberately -- every
     # other permission in this file is exercised through an ABAC check
@@ -169,6 +180,14 @@ SEED_PERMISSIONS: tuple[tuple[Permission, str], ...] = (
         "roll it back, or retire it.",
     ),
     (
+        Permission.EVAL_REVIEW,
+        "Submit a human review verdict on a non-deterministic evaluation case's outcome.",
+    ),
+    (
+        Permission.EVAL_MANAGE,
+        "Record a new evaluation run and compute a release-gate verdict.",
+    ),
+    (
         Permission.PLATFORM_ADMIN,
         "Operate the platform-wide admin dashboard: view and administer every "
         "tenant, not only the actor's own.",
@@ -234,6 +253,11 @@ _ANALYST: frozenset[Permission] = _USER | {
     # domain-judgment call every other *_REVIEW permission above already
     # sits at this tier for -- Prompt 44 (44_AI_GOVERNANCE_CENTER_CONTRACT.md).
     Permission.GOVERNANCE_REVIEW,
+    # EVAL_REVIEW (submitting a human review verdict on a non-
+    # deterministic evaluation case's outcome) is the identical domain-
+    # judgment call every other *_REVIEW permission above already sits
+    # at this tier for -- Prompt 46 (46_AI_EVALUATION_BENCHMARKING_CONTRACT.md).
+    Permission.EVAL_REVIEW,
 }
 _ADMIN: frozenset[Permission] = _ANALYST | {
     Permission.USERS_READ,
@@ -265,6 +289,11 @@ _ADMIN: frozenset[Permission] = _ANALYST | {
     # identical reason ONBOARDING_MANAGE/CATALOG_MANAGE/
     # RECOMMENDATION_MANAGE are.
     Permission.GOVERNANCE_MANAGE,
+    # EVAL_MANAGE (recording a new evaluation run, computing a release-
+    # gate verdict -- operational actions, not domain judgment) is
+    # admin-tier for the identical reason ONBOARDING_MANAGE/
+    # CATALOG_MANAGE/GOVERNANCE_MANAGE are.
+    Permission.EVAL_MANAGE,
 }
 # A read-focused compliance/oversight role -- can review any user's audit
 # trail and the admin dashboard, but cannot create/edit/deactivate users or
