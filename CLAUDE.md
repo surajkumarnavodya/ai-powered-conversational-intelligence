@@ -4127,6 +4127,148 @@ by id).
 for the full inspection findings, every new module's design, the testing
 summary, and the security/tenant-isolation/performance review.
 
+### Schema Drift Impact Analysis (Prompt 43)
+
+`schema_drift/` (new top-level package) is continuous schema-drift
+detection on top of Prompt 42's lineage platform: `schema_drift.diff
+.compare_schemas` is a pure, deterministic comparison between two
+already-introspected `db.schema_introspection.TableSchemaInfo` snapshots
+(the last one captured for a database vs. a fresh live introspection),
+reporting every added/removed column, type/nullability change, primary-
+key/foreign-key/unique-constraint change, and table/view change (plus a
+table-flipping-to-a-view `OBJECT_TYPE_CHANGED` case) as a typed
+`SchemaDriftFact`. A bounded, same-table, same-type/nullability,
+name-similarity heuristic (`difflib.SequenceMatcher`,
+`Settings.schema_drift_rename_similarity_threshold`) additionally offers
+a `COLUMN_RENAMED` candidate — additive, never a replacement for the two
+underlying `COLUMN_ADDED`/`COLUMN_REMOVED` facts (master rule 10: an
+inference never stands in for an observed fact).
+
+**Heavy, deliberate reuse rather than a second governance/persistence
+layer — the mission's own first mandatory control ("inspect and reuse
+existing implementation before adding code") applied literally:**
+`schema_drift.findings.fact_to_finding` wraps each `SchemaDriftFact` into
+`semantic.intelligence.detect.Finding` (Prompt 35's own domain-agnostic
+review-candidate shape — kind/key/title/detail/subjects/evidence/
+confidence/truth_level/risk/payload), new `kind` values prefixed
+`schema_drift_` so they're never confused with a catalog-detector
+finding sharing the same table. `identity.models.SemanticFinding` +
+`identity.repositories.semantic_intelligence` (`upsert_findings`/
+`list_findings`/`get_finding`/`decide_finding`/`rollback_finding`) persist
+and govern them completely unmodified — the exact same tenant-scoped,
+versioned (append-only `history`), accept/dismiss/rollback review-queue
+lifecycle Prompt 35 already built, which is already the "approval-aware
+remediation" shape this prompt's own mission calls for.
+`semantic.intelligence.risk.score`'s `_BASE` dict gained thirteen new,
+disclosed entries (one per `DriftChangeKind`, weighted by real
+operational severity — a removal/key-change scores comparably to a
+catalog conflict; an additive change scores low) so the exact same risk
+formula (base + published-dependent bonus + dependent-count bonus +
+confidence gap, high/medium/low tiers) prioritizes a drift finding too —
+no second scoring engine.
+
+**"Map impact to metrics, semantic definitions, golden questions,
+dashboards, queries and recommendations through lineage" is genuine
+reuse of Prompt 42's own `lineage.graph.trace_lineage`, never a second
+impact-analysis implementation.** `schema_drift.impact.assess_impact`
+resolves each finding's own table/column into a `lineage.schema_lineage`
+node id and traces **downstream** (what depends on it) over a
+`lineage.graph.build_lineage_graph` result built from the *previous*
+schema snapshot (so "what used to depend on the thing that just
+changed" is answerable even for a since-removed column) — a newly
+`ADDED` finding correctly gets zero impact, since nothing could have
+depended on a column that didn't exist yet. A `CONFIRMED_BUSINESS_TRUTH`
+node reached this way (a *published* governed metric/dimension) bumps
+`Finding.published_count`, which `risk.score` already knows how to
+weight — impact and risk compose through the same two pre-existing
+mechanisms, not a new one.
+
+**"Support approval-aware remediation and metadata rollback" is the
+existing `POST /semantic-intelligence/entries/{entry_id}/rollback`
+route** (`identity.repositories.semantic_intelligence
+.rollback_catalog_entry`, also Prompt 35) — creates a brand-new `DRAFT`
+from an older published version's own content; the published row is
+never touched, and the draft still needs the catalog's normal
+review-and-publish approval before it goes live.
+`schema_drift.impact`'s own `payload["impacted"]` tells an operator
+*which* catalog entry/concept_key/version a drift finding threatens;
+acting on that is always a separate, human-initiated call to that
+already-built, already-tested route — `schema_drift/` itself contains no
+call site that creates, edits, publishes, or rolls back a catalog entry
+(locked in structurally, not just by convention, by
+`tests/security/test_schema_drift_never_rewrites_catalog.py`, which
+parses every module's own source and asserts no such name is ever
+referenced). Reviewing a schema-drift finding (accept/dismiss) or
+restoring an earlier version of *it* likewise reuses the existing
+`POST /semantic-intelligence/findings/{id}/decision`/`.../rollback`
+routes unmodified — `api/schema_drift.py`'s own surface is deliberately
+narrow: `POST /schema-drift/scan` (genuinely new behavior) and
+`GET /schema-drift/findings`(`/{id}`) (a kind-scoped, read-only
+convenience view over the same shared `SemanticFinding` table Prompt
+35's own, unscoped `/semantic-intelligence/findings` already exposes).
+
+**Snapshot capture (`schema_drift.snapshot_store`) is the one genuinely
+new persistence mechanism** — nothing else in this codebase stores a
+full column-level historical schema snapshot (`embeddings
+.schema_indexer`'s own manifest only stores a per-table *fingerprint*,
+not the column/type/nullability/key detail a real diff needs). A small
+per-database JSON file alongside the Chroma persist directory
+(`.schema_drift_snapshot__<db_name>.json`), mirroring that manifest's
+own naming convention — not a new identity-DB table, since this is an
+operational cache of the last-seen shape, not governed content. Fails
+open on a missing/corrupt file (treated as "no previous snapshot,"
+i.e. a first scan, where every table legitimately reports as
+`TABLE_ADDED`/`VIEW_ADDED` — the identical precedent `embeddings
+.schema_indexer.SchemaDiscoveryDiff` already establishes for table-level
+discovery).
+
+`POST /schema-drift/scan` (requires a local account, the same
+requirement `POST /lineage/graph` already has, since both read
+tenant-scoped catalog data) live-introspects the caller's own
+tenant-scoped database, loads the previous snapshot, diffs, builds the
+previous-schema lineage graph from this tenant's own *published* catalog
+entries, assesses impact, persists findings (`Settings
+.enable_schema_drift_detection`, default on — a pure, deterministic,
+zero-cost-until-triggered structural diff, the same "safe to default on"
+posture `enable_data_quality_engine`/`enable_lineage_platform` already
+establish, unlike the LLM-adjacent `enable_semantic_intelligence`, off by
+default), and saves the current snapshot for next time.
+`scripts/run_schema_drift_scan.py` is a standalone, no-authentication CLI
+for cron/Task Scheduler alerting (exits `2` if any finding is
+`risk_tier == "high"`) — the literal "continuous detection"/"generate
+actionable alerts" mechanism at the operator level, since this
+application has no built-in background scheduler (the same disclosed
+"no background worker" limitation `onboarding/`'s own docstring already
+names). It shares `schema_drift.snapshot_store`'s same on-disk baseline
+with the API route (alternating between the two never desyncs it) but
+deliberately skips impact assessment and governed persistence (both need
+a real local-account actor/tenant) — `schema_drift.reports
+.render_markdown_report` is the one rendering both the CLI's stdout and
+`ScanOut.report_markdown` use, so there is exactly one report format,
+not an API-only and a CLI-only copy.
+
+**Known, disclosed limitations:** no automatic trigger exists — a scan
+only runs when `POST /schema-drift/scan` or the CLI script is actually
+called (by an operator, a cron entry, or a future scheduled job this
+prompt does not build); impact assessment only considers declared
+foreign keys and published catalog entries, never `db
+.relationship_inference`'s own lower-confidence candidates (keeps a
+scan's own impact claims at `DATABASE_FACT`/`CONFIRMED_BUSINESS_TRUTH`,
+never a second inference layered under this one); "golden questions" and
+"dashboards" named in the mission are not separately, structurally
+traced — a golden question has no lineage node type in Prompt 42's own
+chain, and a dashboard is this application's own chart specs (`lineage
+.presentation_lineage`'s `VISUALIZATION` nodes), reachable only for a
+query the caller explicitly supplies to `/lineage/graph`, which this
+prompt's own impact assessment does not do (it builds a schema+catalog-
+only graph, not a query-history one) — disclosed rather than silently
+narrowed; the column-rename heuristic is a bounded, greedy, same-table
+pairing, never a cross-table or cross-type fuzzy match.
+
+**Read [`43_SCHEMA_DRIFT_IMPACT_ANALYSIS_CONTRACT.md`](43_SCHEMA_DRIFT_IMPACT_ANALYSIS_CONTRACT.md)**
+for the full inspection findings, every new module's design, the testing
+summary, and the security/tenant-isolation/performance review.
+
 ## How to run
 
 See `README.md` for full setup. Short version:

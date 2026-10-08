@@ -93,6 +93,7 @@ from api.rate_limit import enforce_api_action_rate_limit
 from api.recommendation_governance import router as recommendation_governance_router
 from api.recommendation_persistence import persist_ask_recommendations
 from api.scenarios import router as scenarios_router
+from api.schema_drift import router as schema_drift_router
 from api.schemas import (
     AccessibilityMetadataOut,
     AnalyticalIntentOut,
@@ -405,6 +406,7 @@ app.include_router(optimization_router)
 app.include_router(predictive_router)
 app.include_router(data_quality_router)
 app.include_router(lineage_router)
+app.include_router(schema_drift_router)
 app.include_router(platform_admin_router)
 app.include_router(tenant_admin_router)
 app.include_router(navigation_router)

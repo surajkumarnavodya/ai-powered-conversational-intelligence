@@ -27,6 +27,30 @@ _BASE: dict[str, int] = {
     "metric_relationship": 10,
     "synonym": 5,
     "term_cluster": 5,
+    # Prompt 43 (43_SCHEMA_DRIFT_IMPACT_ANALYSIS_CONTRACT.md):
+    # schema_drift.findings' own kinds, scored by the same formula --
+    # base (by structural severity) + 15 per published/confirmed
+    # downstream dependent (schema_drift.impact sets `published_count`
+    # for a CONFIRMED_BUSINESS_TRUTH impacted node) + 5 per dependent,
+    # at most five, + an inference-confidence gap. A table/column
+    # removal or a primary-key change is base-level comparable to a
+    # catalog conflict (both mean "something currently relied upon is
+    # now wrong"); an additive change (a new table/column/view/FK) is
+    # low-risk on its own regardless of what (nothing yet) depends on it.
+    "schema_drift_table_removed": 60,
+    "schema_drift_view_removed": 45,
+    "schema_drift_column_removed": 45,
+    "schema_drift_primary_key_changed": 45,
+    "schema_drift_foreign_key_removed": 40,
+    "schema_drift_column_renamed": 35,
+    "schema_drift_object_type_changed": 30,
+    "schema_drift_column_type_changed": 30,
+    "schema_drift_column_nullability_changed": 20,
+    "schema_drift_unique_constraint_changed": 20,
+    "schema_drift_foreign_key_added": 10,
+    "schema_drift_table_added": 5,
+    "schema_drift_view_added": 5,
+    "schema_drift_column_added": 5,
 }
 HIGH_THRESHOLD = 70
 MEDIUM_THRESHOLD = 40

@@ -67,6 +67,9 @@ const BACKEND_ROUTES = [
   '/data-quality',
   // Data Lineage Platform (api/lineage.py, Prompt 42) -- same reason.
   '/lineage',
+  // Schema Drift Impact Analysis (api/schema_drift.py, Prompt 43) -- same
+  // reason, added here up front rather than found the hard way.
+  '/schema-drift',
 ]
 
 export default defineConfig({

@@ -2196,6 +2196,36 @@ class Settings(BaseSettings):
     lineage_max_queries_per_request: int = Field(default=20, gt=0)
     lineage_max_trace_graph_nodes: int = Field(default=5000, gt=0)
 
+    # --- Prompt 43 (43_SCHEMA_DRIFT_IMPACT_ANALYSIS_CONTRACT.md): schema_drift/'s
+    # own tunables -- continuous schema-drift detection (compares the
+    # previously-captured per-database snapshot against a fresh live
+    # introspection) plus lineage-based impact mapping. Reuses
+    # identity.models.SemanticFinding/identity.repositories
+    # .semantic_intelligence (Prompt 35's governed review-queue storage,
+    # decision/rollback routes) rather than a second persistence layer --
+    # see schema_drift/__init__.py's own docstring. Gates api/schema_drift
+    # .py's two routes (404 when off). Default on: unlike
+    # enable_semantic_intelligence (an LLM-adjacent catalog-wide analysis,
+    # off by default), this is a pure, deterministic, zero-cost-until-
+    # triggered structural diff -- the same "safe to default on" posture
+    # enable_data_quality_engine/enable_lineage_platform already establish.
+    enable_schema_drift_detection: bool = True
+    # Most findings one scan persists (riskiest first) -- mirrors
+    # semantic_intelligence_max_findings's identical truncation contract
+    # (reported, never silently dropped).
+    schema_drift_max_findings_per_scan: int = Field(default=200, gt=0)
+    # schema_drift.diff's column-rename heuristic (same table, matching
+    # type/nullability, a removed name and an added name) needs at least
+    # this much difflib.SequenceMatcher similarity before it's even
+    # reported as a *candidate* rename -- always AI_INFERENCE, additive to
+    # (never a replacement for) the two underlying COLUMN_ADDED/
+    # COLUMN_REMOVED DATABASE_FACT findings.
+    schema_drift_rename_similarity_threshold: float = Field(default=0.6, gt=0.0, le=1.0)
+    # Bounds schema_drift.impact's own lineage.graph.trace_lineage call --
+    # mirrors lineage_max_trace_depth's identical "cap regardless of what
+    # a caller sends" philosophy, scoped to this feature's own impact walk.
+    schema_drift_impact_max_trace_depth: int = Field(default=6, gt=0)
+
     # Prompt 19 (19_QUERY_STORE_PERFORMANCE_CONTRACT.md): db.query_store's
     # own tunables -- a no-op for every DB_TYPE other than "mssql"
     # regardless of these values (see that module's own docstring).

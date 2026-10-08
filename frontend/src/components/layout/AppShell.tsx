@@ -1,7 +1,6 @@
 import {
   BookOpen,
   Building2,
-  Database,
   ImageIcon,
   Lightbulb,
   MessageSquare,
@@ -120,8 +119,8 @@ export function AppShell({ children }: { children?: ReactNode } = {}) {
             <MobileNav />
             <SidebarToggle controls={SIDEBAR_ID} className="hidden lg:inline-flex" />
             <div className="flex items-center gap-2">
-              <span className="flex h-7 w-7 items-center justify-center rounded-md bg-[var(--accent)] text-[var(--accent-foreground)]">
-                <Database className="h-4 w-4" />
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-md bg-white">
+                <img src="/favicon.png" alt="" className="h-full w-full object-contain" />
               </span>
               <span className="text-sm font-semibold">{t('app.title')}</span>
               <span className="hidden rounded-full bg-[var(--muted)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted-foreground)] sm:inline">

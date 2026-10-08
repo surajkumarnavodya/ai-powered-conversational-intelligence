@@ -1,4 +1,4 @@
-import { AlertTriangle, Database, FileText, Loader2, Lock } from 'lucide-react'
+import { AlertTriangle, FileText, Loader2, Lock } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useParams } from 'react-router-dom'
@@ -82,8 +82,8 @@ export function SharedConversation({ inShell = false }: { inShell?: boolean } = 
         <header className="sticky top-0 z-10 border-b border-[var(--border)] bg-[var(--header)]">
           <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 py-3">
             <div className="flex min-w-0 items-center gap-2.5">
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--accent)] text-[var(--accent-foreground)]">
-                <Database className="h-4 w-4" aria-hidden="true" />
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white">
+                <img src="/favicon.png" alt="" aria-hidden="true" className="h-full w-full object-contain" />
               </span>
               <div className="min-w-0">
                 <p className="flex items-center gap-1 text-[11px] font-medium uppercase tracking-wide text-[var(--muted-foreground)]">
@@ -185,8 +185,8 @@ function SharedTurn({ turn, shareRef }: { turn: ProjectedTurn; shareRef: string 
 
   return (
     <div className="flex gap-2.5">
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--muted)] text-[var(--muted-foreground)]">
-        <Database className="h-4 w-4" aria-hidden="true" />
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--muted)] text-[var(--muted-foreground)]">
+        <img src="/favicon.png" alt="" aria-hidden="true" className="h-full w-full object-contain" />
       </span>
       <div className="flex min-w-0 flex-1 flex-col gap-3 rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4">
         <Markdown>{answer}</Markdown>
