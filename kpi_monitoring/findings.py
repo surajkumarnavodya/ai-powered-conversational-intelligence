@@ -27,9 +27,12 @@ alone would re-raise an identical-looking movement in a later period as
 a duplicate of an older one.
 
 **Kind names are kept short on purpose.** `identity.models
-.SemanticFinding.kind` is `String(32)`. Every kind this module emits is
-well inside that; `_assert_kinds_fit` fails at import if a future edit
-is not, rather than at the first PostgreSQL write.
+.SemanticFinding.kind` is `String(64)` (widened from 32 by migration
+`m6q9r2s5t8u1`, after `schema_drift`'s own 39-character kinds turned out
+to be rejected by PostgreSQL while SQLite ignored the length). Every kind
+this module emits is well inside that; `_assert_kinds_fit` fails at
+import if a future edit is not, rather than at the first PostgreSQL
+write.
 """
 
 from __future__ import annotations
@@ -50,8 +53,10 @@ from kpi_monitoring.models import (
 #: silently ignores a VARCHAR length, so an over-long kind passes every
 #: test in this suite and only fails against the real PostgreSQL identity
 #: database -- which is exactly why this is asserted at import time
-#: instead of being left to a deployment to discover.
-KIND_MAX_LENGTH = 32
+#: instead of being left to a deployment to discover. Restated here
+#: rather than imported, because this package deliberately never imports
+#: `identity` (see its own module docstring).
+KIND_MAX_LENGTH = 64
 
 
 def _assert_kinds_fit() -> None:

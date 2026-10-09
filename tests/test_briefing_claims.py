@@ -199,6 +199,55 @@ class TestUnsupportedClaimDetection:
         )
         assert find_unsupported_claims([candidate]) == ()
 
+    def test_a_percentage_rendered_from_a_stored_rate_is_grounded(self):
+        """`data_quality.engine` records `null_rate = 1.0` and renders
+        "is 100.0% null"; `analytics.root_cause` does the same for a
+        share. A rate and the percentage rendered from it are the same
+        observed fact, so refusing the percentage would withhold a real,
+        deterministic observation over a unit convention -- which is
+        exactly what happened to most data-quality claims before this
+        allowance existed (found by running the briefing end to end
+        against real data)."""
+        candidate = _candidate(
+            headline="demo.name is 100.0% null (1 of 1)",
+            evidence=(_link(observed={"null_rate": 1.0, "null_count": 1.0, "total_count": 1.0}),),
+        )
+        assert find_unsupported_claims([candidate]) == ()
+
+    def test_a_fractional_rate_still_grounds_its_own_plain_form(self):
+        candidate = _candidate(
+            headline="The null rate is 0.42 of rows",
+            evidence=(_link(observed={"null_rate": 0.42}),),
+        )
+        assert find_unsupported_claims([candidate]) == ()
+
+    def test_a_fabricated_percentage_is_still_refused(self):
+        """The allowance is a unit identity, not a loosening: 91% is not
+        derivable from a rate of 0.42 in either unit."""
+        problems = find_unsupported_claims(
+            [
+                _candidate(
+                    headline="Coverage collapsed by 91.0%",
+                    evidence=(_link(observed={"null_rate": 0.42}),),
+                )
+            ]
+        )
+        assert [p.code for p in problems] == ["ungrounded_number"]
+
+    def test_a_plain_number_is_not_grounded_by_a_scaled_observation(self):
+        """The scaling is confined to percent-typed numbers. A bare 100
+        must still match a plain observed value, or the check would
+        accept almost any integer."""
+        problems = find_unsupported_claims(
+            [
+                _candidate(
+                    headline="There were 100 affected rows",
+                    evidence=(_link(observed={"rate": 1.0}),),
+                )
+            ]
+        )
+        assert [p.code for p in problems] == ["ungrounded_number"]
+
     def test_every_problem_is_reported_not_just_the_first_candidate(self):
         problems = find_unsupported_claims(
             [

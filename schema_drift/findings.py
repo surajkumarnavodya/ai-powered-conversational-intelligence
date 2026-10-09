@@ -34,6 +34,32 @@ _KIND_BY_CHANGE: dict[DriftChangeKind, str] = {
     change: f"{KIND_PREFIX}{change.value}" for change in DriftChangeKind
 }
 
+#: The hard limit on `identity.models.SemanticFinding.kind`. Restated here
+#: rather than imported, because this package deliberately never imports
+#: `identity` (see `schema_drift/__init__.py`), mirroring
+#: `kpi_monitoring.findings.KIND_MAX_LENGTH`'s own identical constant.
+#:
+#: This module is why that column had to be widened: two of the kinds
+#: below are 38 and 39 characters, and the column was `String(32)` until
+#: migration `m6q9r2s5t8u1`. SQLite silently ignores a VARCHAR length, so
+#: every test passed while every write to the real PostgreSQL identity
+#: database was rejected -- disclosed as a known latent bug by Prompt 50
+#: and confirmed live during Prompt 51's end-to-end run. The assertion
+#: below is what keeps a future `DriftChangeKind` from reintroducing it.
+KIND_MAX_LENGTH = 64
+
+
+def _assert_kinds_fit() -> None:
+    too_long = [kind for kind in _KIND_BY_CHANGE.values() if len(kind) > KIND_MAX_LENGTH]
+    if too_long:
+        raise RuntimeError(
+            f"schema-drift finding kind(s) exceed SemanticFinding.kind's "
+            f"{KIND_MAX_LENGTH}-character column and would fail on PostgreSQL: {too_long}"
+        )
+
+
+_assert_kinds_fit()
+
 
 def _finding_key(database_id: str, fact: SchemaDriftFact) -> str:
     """Stable identity for one fact: database + kind + table + column,
@@ -106,6 +132,7 @@ def is_schema_drift_kind(kind: str) -> bool:
 
 
 __all__ = [
+    "KIND_MAX_LENGTH",
     "KIND_PREFIX",
     "fact_to_finding",
     "facts_to_findings",

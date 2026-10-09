@@ -164,32 +164,59 @@ def _isclose(value: float, allowed: float, *, is_percent: bool) -> bool:
     return abs(value - allowed) <= max(abs_tol, abs(allowed) * 0.01)
 
 
-def _allowed_numbers(candidate: ClaimCandidate) -> set[float]:
-    """Every number a candidate may state.
+def _allowed_numbers(candidate: ClaimCandidate) -> tuple[set[float], set[float]]:
+    """Every number a candidate may state, split by whether the text
+    wrote it as a percentage.
 
-    Each evidence number is allowed in both its signed and absolute
-    form: a movement's own `change_percent` is stored signed
-    (`-36.0`) while any readable sentence says "fell 36.0%", and
-    rejecting that would reject correct text.
+    Two pools rather than one, mirroring `agent.insight.ResultSummary
+    .allowed_values`/`allowed_percents`'s own split, because a percentage
+    and a plain quantity are never interchangeable.
+
+    **Plain pool**: each evidence number in both its signed and absolute
+    form. A movement's `change_percent` is stored signed (`-36.0`) while
+    any readable sentence says "fell 36.0%", and rejecting that would
+    reject correct text.
+
+    **Percent pool**: the plain pool, plus each value multiplied by 100.
+    A rate and the percentage rendered from it are the same observed
+    fact in different units -- `data_quality.engine` records
+    `null_rate = 1.0` and renders "is 100.0% null", and
+    `analytics.root_cause` does the same for a contribution share.
+    Without this, a real, deterministic observation would be withheld as
+    unsupported purely over a unit convention, which is what happened to
+    most data-quality claims when this function had one pool (found by
+    running the briefing end to end against real data, not by review).
+
+    The scaling is deliberately one-directional (stored fraction ->
+    rendered percent, the direction every producer in this codebase
+    actually renders) and confined to percent-typed numbers, so a plain
+    quantity still has to match a plain observed value exactly. It does
+    widen the percent pool, which is a disclosed, bounded trade: the
+    alternative suppresses true claims, and a claim's text here always
+    comes from a deterministic engine, never from a model.
     """
-    numbers: set[float] = set()
+    plain: set[float] = set()
     for link in candidate.evidence:
         for value in link.observed.values():
-            numbers.add(round(float(value), 4))
-            numbers.add(round(abs(float(value)), 4))
-    return numbers
+            plain.add(round(float(value), 4))
+            plain.add(round(abs(float(value)), 4))
+    percent = set(plain)
+    percent.update(round(value * 100.0, 4) for value in plain)
+    return plain, percent
 
 
 def _ungrounded_number(candidate: ClaimCandidate) -> float | None:
     """The first number in a candidate's own text that its evidence does
     not support, or `None` when every number is supported."""
+    plain, percent = _allowed_numbers(candidate)
     label_text = " ".join([candidate.subject, candidate.period_label, *candidate.grounding_context])
-    allowed = _allowed_numbers(candidate)
     for value, _ in extract_numbers(label_text):
-        allowed.add(round(value, 4))
-        allowed.add(round(abs(value), 4))
+        for pool in (plain, percent):
+            pool.add(round(value, 4))
+            pool.add(round(abs(value), 4))
 
     for value, is_percent in extract_numbers(f"{candidate.headline} {candidate.detail}"):
+        allowed = percent if is_percent else plain
         if not any(
             _isclose(value, candidate_value, is_percent=is_percent) for candidate_value in allowed
         ):
@@ -527,12 +554,12 @@ def kpi_candidates(
                         section=BriefingSection.DRIVERS,
                         claim_class=ClaimClass.ESTIMATE,
                         headline=(
-                            f"{label} accounts for {float(share):+.1f}% of the change in "
+                            f"{label} accounts for {float(share):.1f}% of the change in "
                             f"{subject}"
                         ),
                         detail=(
                             f"Of {subject}'s movement in {period}, {label} contributes "
-                            f"{float(share):+.1f}%. This is a contribution to an "
+                            f"{float(share):.1f}%. This is a contribution to an "
                             "arithmetic total, not a demonstrated cause."
                         ),
                         truth_level=DataTruthLevel.AI_INFERENCE,

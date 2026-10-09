@@ -235,10 +235,17 @@ A caller holding one but not the other gets the other source named as omitted in
 `BRIEFING_READ` code would have created a second, drifting answer to "who may see this finding".
 An unknown or cross-tenant `database_id` is the same 404 a nonexistent one gets.
 
-### No database or schema change
+### Database changes
 
-Nothing is persisted. A briefing is a read of governed state, not a new governed artifact — the
-same "engine first, persistence later, if ever" posture Prompts 38–42 took.
+**The briefing itself persists nothing.** It is a read of governed state, not a new governed
+artifact — the same "engine first, persistence later, if ever" posture Prompts 38–42 took, and
+it adds no table and no column of its own.
+
+One migration was nevertheless required, `m6q9r2s5t8u1`, to **repair** the table the briefing
+reads from. Running this feature end to end against the real PostgreSQL identity database (§5a)
+found that `semantic_findings` could not be written to at all. See §5a for the full finding; the
+migration adds the `created_at`/`updated_at` server defaults the ORM has always assumed and
+widens `kind` from `String(32)` to `String(64)`.
 
 ### `config/settings.py`
 
@@ -271,6 +278,122 @@ pre-existing, in `db/schema_introspection.py` and two `identity/repositories/` m
 by this prompt).
 
 ---
+
+## 5a. Live end-to-end run, and the three real bugs it found
+
+The test suite in §5 is fully mocked. This feature was additionally exercised **end to end
+against real infrastructure**: the real uvicorn process, the real PostgreSQL identity database,
+and four real SQL Server 2025 monitored databases — with every one of the four sources produced
+through its own real production path, not fabricated:
+
+| Source | How it was produced for the run |
+|---|---|
+| `kpi_findings` | `POST /kpi-monitoring/scan` against a real published catalog metric |
+| `schema_drift_findings` | `POST /schema-drift/scan` twice — the second scan observing a genuine column removal |
+| `data_quality_findings` | `GET /schema/tables` → `POST /execute` (real rows from a real table) → `POST /data-quality/scan` |
+| `recommendations` | `identity.repositories.recommendation_governance.create_record` — the only creation path outside `/ask`, and the one `/ask` itself calls |
+
+**Final result: every check passed.** 25 claims across all seven sections (11 observed fact /
+12 estimate / 2 recommendation), 0 withheld, every claim carrying an evidence reference and its
+versions; plus all three cadences, the staleness path, the empty-period path, and the 404 / 403 /
+401 / 422 paths. Everything the run created was removed afterwards.
+
+Getting there found three real bugs. Two were pre-existing and are **not** in this feature's own
+code; all three were invisible to the entire mocked suite.
+
+### Bug 1 — nothing could be written to `semantic_findings` at all (pre-existing, critical)
+
+`identity.models.SemanticFinding` declares `created_at`/`updated_at` through `_created_at()`/
+`_updated_at()`, which carry `server_default=func.now()`. The ORM therefore omits both columns
+from every INSERT and lets the database fill them. Migration `a1f5c9e3b7d2` created them
+`NOT NULL` **without** that default — the only one of 15 migrations to do so, against six other
+tables that all have `CURRENT_TIMESTAMP`. Every insert raised:
+
+```
+psycopg2.errors.NotNullViolation: null value in column "created_at"
+of relation "semantic_findings" violates not-null constraint
+```
+
+The blast radius is much wider than this prompt: `semantic_findings` is the **shared review
+queue**, so semantic intelligence (Prompt 35), schema drift (Prompt 43) and KPI monitoring
+(Prompt 50) were all silently unable to persist anything against a real deployment — and
+therefore two of this briefing's four sources returned nothing.
+
+**Why no test caught it:** every test builds its schema with `Base.metadata.create_all`, which
+reads the models and is correct. Only a migration-built database is affected — which is every
+real one.
+
+### Bug 2 — `kind` was too short for schema drift's own kinds (pre-existing, already disclosed)
+
+`kind` was `String(32)`, while `schema_drift.findings` emits
+`schema_drift_column_nullability_changed` (39 characters) and
+`schema_drift_unique_constraint_changed` (38). PostgreSQL rejects those; SQLite silently ignores
+a VARCHAR length. This was already named as a known latent bug in
+`50_PROACTIVE_AI_ANALYST_CONTRACT.md` and in CLAUDE.md's Prompt 50 section — this run is the
+first time it was actually hit.
+
+### The fix for 1 and 2
+
+Migration `m6q9r2s5t8u1` adds the two server defaults (with a defensive backfill) and widens
+`kind` to 64, applied and verified against the live database. The model's `kind` column and both
+producers' restated `KIND_MAX_LENGTH` constants move with it, and `schema_drift/findings.py`
+gained the import-time guard it never had (`kpi_monitoring/findings.py` already had one — which
+is why the overflow came from the package without it).
+
+The migration uses `op.batch_alter_table` rather than bare `alter_column` so it is portable:
+identical ALTERs on PostgreSQL, copy-and-move on SQLite.
+
+New `tests/test_identity_schema_invariants.py` (10 cases) is the guard, and it catches the whole
+bug *family* rather than these two instances:
+
+- a static AST scan of **every** migration asserting that no `create_table` declares an
+  ORM-filled timestamp column without a `server_default`, with the one historical violation in
+  an explicit, documented allowlist plus a test that the allowlist must shrink if that migration
+  is ever corrected, and a test that the repair migration still exists;
+- the model-side half of the same invariant;
+- that both producers' restated `KIND_MAX_LENGTH` constants equal the real column length (the
+  duplication is deliberate — neither package may import `identity` — so this is what makes it
+  safe), and that every kind all three producers can emit fits.
+
+Both guards were mutation-tested: reintroducing each bug makes 3 and 2 of them fail
+respectively, so neither passes vacuously.
+
+> Running the whole migration chain against SQLite and diffing it against the models would be a
+> stronger check. It is not available: `b7e2d4a1c9f0` (already applied) uses constraint
+> operations SQLite cannot perform outside batch mode, and this project never hand-edits an
+> applied migration. The static checks cover the same two failure modes without that dependency.
+
+### Bug 3 — the evidence gate withheld true data-quality claims over a unit convention (this feature's own code)
+
+With sources 1 and 2 unblocked, 12 of 22 candidate claims were withheld as `ungrounded_number`:
+"The claim states 100, which none of its evidence links records as an observed value."
+
+The cause was real and not niche. `data_quality.engine` records `null_rate = 1.0` (a fraction)
+and renders `"EmployeeConversion.ConvertedAtUtc is 100.0% null (1 of 1)."` (a percentage). The
+grounding check compared `100.0` against the observed values and found only `1.0`, so it
+suppressed a correct, deterministic measurement. Since every `null_spike` finding renders a
+percentage this way — the most common data-quality finding type — this would have withheld most
+data-quality claims for any caller.
+
+**Fix:** `_allowed_numbers` now returns two pools instead of one, mirroring
+`agent.insight.ResultSummary.allowed_values`/`allowed_percents`'s own split. A plain number must
+still match a plain observed value exactly; a **percent-typed** number may additionally match an
+observed value scaled by 100, because a rate and the percentage rendered from it are the same
+observed fact in different units. The scaling is one-directional (stored fraction → rendered
+percent, the direction every producer actually renders) and confined to percent-typed numbers.
+
+This is a disclosed, bounded widening of the percent pool, chosen deliberately: the alternative
+suppresses true claims, and a claim's text here always comes from a deterministic engine, never
+from a model. Four new cases in `tests/test_briefing_claims.py` pin both halves — a percentage
+rendered from a rate is grounded, and a fabricated percentage (91% from a rate of 0.42) is still
+refused, as is a bare `100` backed only by a rate of `1.0`.
+
+### One rendering correction
+
+The live output read `"EMEA accounts for +83.3% of the change"` for a metric that *fell*. The
+number is correct (a share of a negative change) but the leading `+` reads as a rise. A share is
+a fraction *of* the change, not a change itself, so it now renders without a forced sign; a
+negative share — a dimension that moved against the overall direction — still keeps its minus.
 
 ## 6. REVIEW — security, tenant isolation, performance
 
@@ -340,11 +463,17 @@ well-bounded database read, not inference.
 - `tests/test_briefing_freshness.py`, `tests/test_briefing_claims.py`, `tests/test_briefing_engine.py`, `tests/test_api_briefing.py`
 - `tests/security/test_briefing_never_presents_estimate_as_fact.py`
 - `51_EXECUTIVE_AI_BRIEFING_CONTRACT.md`
+- `identity/migrations/versions/m6q9r2s5t8u1_semantic_findings_defaults.py` — the §5a repair
+- `tests/test_identity_schema_invariants.py` — the §5a guard
 
 **Modified**
 - `config/settings.py` — six new fields (§4)
 - `api/main.py` — router import + registration
-- `CLAUDE.md` — a new section for this feature
+- `CLAUDE.md`, `docs/API.md`, `docs/CONFIGURATION.md`, `.env.example`, `tests/security/README.md`
+- `identity/models.py` — `SemanticFinding.kind` widened to `String(64)` (§5a, Bug 2)
+- `kpi_monitoring/findings.py`, `schema_drift/findings.py` — the `KIND_MAX_LENGTH` constants, and
+  the import-time guard `schema_drift` never had (§5a)
+- `briefing/claims.py` — the percent-unit grounding fix and the share rendering (§5a, Bug 3)
 
 ---
 

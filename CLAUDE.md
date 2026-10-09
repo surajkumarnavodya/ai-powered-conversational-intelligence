@@ -5223,10 +5223,92 @@ evidence gate, and/or one shared source-adapter layer) is the
 recommended next step, and should happen before either surface gains a
 frontend.
 
+**Live end-to-end verification, and the three real bugs it found.** This
+feature was exercised against real infrastructure (real uvicorn, the real
+PostgreSQL identity database, four real SQL Server 2025 monitored
+databases), with each of the four sources produced through its own real
+production path: `POST /kpi-monitoring/scan`, `POST /schema-drift/scan`
+twice (the second observing a genuine column removal), `GET
+/schema/tables` -> `POST /execute` -> `POST /data-quality/scan`, and
+`identity.repositories.recommendation_governance.create_record`. Final
+result: 25 claims across all seven sections, 0 withheld, every claim
+carrying its evidence reference and versions. Two of the three bugs it
+surfaced are **not** in `briefing/` at all:
+
+- **`semantic_findings` could not be written to at all** (pre-existing,
+  critical). `identity.models.SemanticFinding` declares `created_at`/
+  `updated_at` with `server_default=func.now()`, so the ORM omits both
+  from every INSERT; migration `a1f5c9e3b7d2` created them `NOT NULL`
+  **without** that default -- the only one of 15 migrations to do so.
+  Every insert raised `NotNullViolation`. Because that table is the
+  **shared review queue**, semantic intelligence (Prompt 35), schema
+  drift (Prompt 43) and KPI monitoring (Prompt 50) were all silently
+  unable to persist anything against a real deployment. Invisible to
+  every test, because tests build the schema with
+  `Base.metadata.create_all` (which reads the models, and is correct) --
+  only a migration-built database is affected, which is every real one.
+- **`kind` was `String(32)`, too short for schema drift's own kinds**
+  (pre-existing; already disclosed as a latent bug by Prompt 50, hit for
+  the first time here). `schema_drift.findings` emits
+  `schema_drift_column_nullability_changed` (39 chars) and
+  `schema_drift_unique_constraint_changed` (38).
+- **The evidence gate withheld true data-quality claims over a unit
+  convention** (this feature's own code). `data_quality.engine` records
+  `null_rate = 1.0` and renders `"... is 100.0% null (1 of 1)."`, so the
+  grounding check compared `100.0` against observed values holding only
+  `1.0` and suppressed a correct, deterministic measurement -- 12 of 22
+  candidates on the first real run. Every `null_spike` finding renders a
+  percentage this way, so this would have withheld most data-quality
+  claims for any caller.
+
+**Fixes, and the invariants that must not regress:**
+- Migration **`m6q9r2s5t8u1`** adds the two server defaults (with a
+  defensive backfill) and widens `kind` to `String(64)`; applied and
+  verified against the live database. It uses `op.batch_alter_table`
+  rather than bare `alter_column` so it is portable -- identical ALTERs
+  on PostgreSQL, copy-and-move on SQLite.
+- **`tests/test_identity_schema_invariants.py`** (10 cases) guards the
+  whole bug *family*, not these two instances: a static AST scan of
+  **every** migration refusing any `create_table` that declares an
+  ORM-filled timestamp column without a `server_default` (the one
+  historical violation sits in an explicit allowlist, with a test that
+  the allowlist must shrink if that migration is ever corrected and a
+  test that the repair migration still exists), the model-side half of
+  the same invariant, and that both producers' restated
+  `KIND_MAX_LENGTH` constants equal the real column length with every
+  emitted kind fitting. Both halves were mutation-tested -- reintroducing
+  each bug fails 3 and 2 cases respectively, so neither passes
+  vacuously. **`schema_drift/findings.py` gained the import-time kind
+  guard it never had**; `kpi_monitoring/findings.py` already had one,
+  which is exactly why the overflow came from the package without it.
+  Note the deliberate duplication: neither package may import
+  `identity` (both assert that structurally), so each restates the
+  limit and the test above is what keeps them honest.
+- **Grounding is now unit-aware for percentages only.**
+  `briefing.claims._allowed_numbers` returns two pools, mirroring
+  `agent.insight.ResultSummary.allowed_values`/`allowed_percents`'s own
+  split: a plain number must still match a plain observed value exactly,
+  while a percent-typed number may additionally match an observed value
+  scaled by 100, since a rate and the percentage rendered from it are
+  the same observed fact in different units. One-directional (stored
+  fraction -> rendered percent) and confined to percent-typed numbers --
+  a disclosed, bounded widening, taken because the alternative
+  suppresses true claims and a claim's text here always comes from a
+  deterministic engine, never a model. A fabricated percentage (91% from
+  a rate of 0.42) is still refused, as is a bare `100` backed only by a
+  rate of `1.0`.
+- A driver's share renders without a forced `+` (the live run read
+  `"+83.3% of the change"` for a metric that *fell*, which reads as a
+  rise); a negative share still keeps its minus.
+
+**Run it yourself**: the exercise is a scratchpad driver, not a committed
+test -- it needs the real databases and creates/removes real rows.
+`tests/test_api_briefing.py` is the committed, mocked equivalent.
+
 **Read [`51_EXECUTIVE_AI_BRIEFING_CONTRACT.md`](51_EXECUTIVE_AI_BRIEFING_CONTRACT.md)**
-for the full inspection findings, every module's design, the 174-test
-testing summary, the real asymmetry bug the tests caught, and the
-security/tenant-isolation/performance review.
+for the full inspection findings, every module's design, the 188-test
+testing summary, §5a's live end-to-end run and the three real bugs it
+found, and the security/tenant-isolation/performance review.
 
 ### Executive Decision Center (Prompt 52)
 

@@ -1505,7 +1505,13 @@ class SemanticFinding(Base):
     tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     database_id: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
     finding_key: Mapped[str] = mapped_column(String(64), nullable=False)
-    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    # 64, not 32: `schema_drift.findings` emits kinds up to 39 characters
+    # (`schema_drift_column_nullability_changed`), which PostgreSQL rejects
+    # while SQLite silently ignores the length -- so the original 32 passed
+    # every test and failed every real write. Widened by migration
+    # `m6q9r2s5t8u1`; `kpi_monitoring.findings.KIND_MAX_LENGTH` guards the
+    # ceiling at import time.
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
     title: Mapped[str] = mapped_column(String(300), nullable=False)
     content: Mapped[dict] = mapped_column(_METADATA_JSON, nullable=False, default=dict)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
