@@ -4713,6 +4713,132 @@ for the full inspection findings, every new module's design, the
 testing summary, and the security/tenant-isolation/performance review.
 
 
+### Governed model routing (Prompt 47)
+
+`model_routing/` (new top-level package, a peer of `analytics/`/
+`optimization/`/`data_quality/`/`lineage/`/`schema_drift/`/
+`governance_center/`) picks **which locally-installed Ollama model drafts
+each LLM call the SQL pipeline makes**, instead of using one model for
+every call in a run. Almost entirely wiring: every ingredient already
+existed and is reused by import, not by copy --
+`agent.complexity.detect_complexity_signals` (read from
+`state["complexity_signals"]`, never re-scanned, so the retry budget and
+routing can never disagree about a question's difficulty),
+`agent.intent.intent_implies_planning`, `config/ollama_models.yaml`'s own
+`resource_level`/`capabilities` tags, `agent.multiagent.policy
+.CircuitBreaker`/`get_breaker` and `TurnBudget`, `agent.rate_limit
+.SlidingWindowRateLimiter`/`BoundedLimiterCache`, and Prompt 44's
+`governance_center` as the place a model's evaluation lives.
+
+Routed at exactly the seven `*_from_llm` call sites in `agent/nodes.py`,
+through one helper (`_routed_llm_call`). No prompt, no node contract, no
+retry rule and no conditional edge changed.
+
+**Off by default** (`Settings.enable_model_routing`), unlike the pure-
+computation engines (`enable_data_quality_engine`/`enable_lineage_platform`/
+`enable_schema_drift_detection`): this changes which model answers a real
+question. With it off, `state["model_router"]` is `None` and every call
+uses `state["selected_model"]` exactly as before.
+
+**Invariants that must not regress:**
+- **Routing is never a security decision.** No module in `model_routing/`
+  imports `agent.sql_validator`, `agent.authz`, `agent.input_guard`,
+  `security.injection_patterns`, `security.tenancy`, `db.execution`,
+  `db.connection` or `identity.rbac`, and none imports or calls an LLM
+  client -- asserted by parsing the real source in
+  `tests/security/test_model_routing_never_weakens_deterministic_controls.py`,
+  which also proves the AST allowlist still refuses a `DELETE`/`DROP`/
+  system-catalog read with routing *on*, through the real compiled graph.
+  `RiskLevel` in `model_routing/models.py` is **not** an authorization
+  concept; it answers only "may routing trade accuracy for compute on
+  this task".
+- **`Settings.ollama_allowed_models` stays the only gate.** Routing
+  chooses within it, never beyond it (swept across every task, question
+  shape, latency setting and breaker state).
+- **A caller's explicit model always wins.** `api/main.py` resolves an
+  omitted `AskRequest.model` to `Settings.ollama_model` *before* the graph
+  runs, so a new `model_explicitly_selected` flag -- threaded `/ask` ->
+  `run_orchestrated` -> `run_agent` -- is what distinguishes "the caller
+  asked for this model" from "the caller asked for nothing". When it is
+  set, the router is not even constructed.
+- **Risk decides the direction a task may move; complexity decides
+  whether it moves.** `sql_generation`, `sql_review` and
+  `metric_conformance_review` (Prompt 45 treats governed-metric precedence
+  as a safety invariant) are HIGH and `query_plan`/`analytical_plan` are
+  MEDIUM: upgradeable, never downgraded. `analytical_intent`/`sql_insight`
+  are LOW: downgradeable, **never upgraded** -- classifying a complex
+  question's intent is still a 13-way label and narrating an
+  already-computed result is still narration, so escalating either would
+  be the opposite of cost optimization. (The first version of the policy
+  thresholded on complexity alone and did exactly that; found by the
+  integration test meant to demonstrate per-task routing.)
+- **Capability metadata never gates the operator's own default.**
+  `config/ollama_models.yaml`'s docstring promises it is "never a gate",
+  so `TASK_REQUIRED_CAPABILITIES` filters only models routing would swap
+  *to*. An un-catalogued model is honestly `ModelTier.UNKNOWN` and is
+  never chosen as either an upgrade or a downgrade target.
+- **An availability failure and a quality failure are different things.**
+  `OllamaUnavailableError` trips the per-model breaker and walks the
+  decision's `fallback_chain` (configured default first); any other
+  `AgentError` is re-raised unchanged to the calling node with no second
+  model tried, and **never** reaches the breaker -- otherwise one
+  adversarial question could disable a healthy model for every caller.
+  That is a regression test, not a comment.
+- **A spent budget never fails a question.** It removes the *option* to
+  escalate; the request proceeds on `Settings.ollama_model`. The
+  per-tenant hourly window is consulted only after an optimistic policy
+  pass has decided an escalation is actually wanted, so an operator's
+  allowance is never burned on a task routing was not going to escalate.
+- **Cost units are ordinal, never money.** Every routable model runs
+  locally through Ollama, so there is no per-token price to report;
+  inventing a dollar figure would present an estimate as observed fact.
+  A test asserts no money-shaped field appears in the API response.
+- **`RouteDecision.truth_level` is a fixed
+  `Literal[DataTruthLevel.AI_INFERENCE]`** -- pydantic itself refuses a
+  decision claiming to be an observed fact. `RouteOutcome.latency_ms` is
+  a real measurement, recorded separately so decision and result are
+  never conflated. An evaluation score is read verbatim from an
+  operator's own governed record, never computed here.
+- **Evidence is tenant-scoped and fail-open.** `list_versions` is already
+  tenant-filtered; the TTL cache is keyed per tenant; a disabled or
+  unreachable identity database yields an empty mapping, which (with the
+  requirement on) correctly means "no escalation", never an exception on
+  the request path.
+- **`GET /model-routing/*` has no write route, deliberately** -- routing
+  is configured in `.env` and its escalation targets are governed through
+  `/governance`. `policy`/`preview` need `Permission.ASK`; `metrics` needs
+  `ADMIN_CONFIG` like `GET /metrics/performance`. `preview` runs the real
+  `decide_route` (never a parallel implementation) and consumes no budget
+  and no breaker probe.
+
+**Known, disclosed limitations:** no per-model quality numbers exist
+anywhere in this repository (`docs/EVALUATION_CURRENT.md` is one model,
+dated 2026-09-16), so with `model_routing_require_evaluation_evidence` on
+(the default) routing correctly does nothing but record
+`no_evaluation_evidence` until a model is evaluated and approved through
+`/governance` -- the honest outcome, not a bug; only the seven SQL-pipeline
+LLM calls are routed (RAG/attachment/vision/media/analyst calls thread no
+per-request model); installed-status is still never checked on the request
+path, so a configured-but-unpulled model fails with
+`OllamaUnavailableError` -- which routing now answers with a fallback
+chain, strictly better than the previous hard failure; breakers, budget
+windows and the per-route rollup are process-local (one per worker, the
+same limitation `agent/rate_limit.py`/`observability/metrics.py` already
+disclose); `RequestProfile.latency_sensitive` has no live producer yet (the
+policy brake and its tests are real, and `POST /model-routing/preview`
+exposes it, but nothing computes "short on wall clock" from
+`Settings.request_timeout_seconds`); no frontend surface.
+
+**One pre-existing gap found and fixed in passing:**
+`agent.orchestrator.nodes.sql_subgraph_node` never passed `tenant_id` to
+`run_agent`, so on the multi-source path every `security.audit_log` event
+the SQL subgraph emitted was un-stamped. Fixed, because this feature's
+tenant scoping depends on it.
+
+**Read [`47_MODEL_ROUTING_COST_OPTIMIZATION_CONTRACT.md`](47_MODEL_ROUTING_COST_OPTIMIZATION_CONTRACT.md)**
+for the full inspection findings, every module's design, the 101-test
+testing summary, and the security/tenant-isolation/performance review.
+
 ## How to run
 
 See `README.md` for full setup. Short version:

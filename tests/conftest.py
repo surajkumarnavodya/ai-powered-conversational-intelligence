@@ -124,10 +124,14 @@ def _clear_process_singleton_caches() -> None:
 
     from agent.graph import build_graph
     from agent.llm_client import _get_ollama_client
+    from agent.multiagent.policy import reset_breakers
     from agent.orchestrator.graph import build_orchestrator_graph
     from api.main import _get_ask_executor
     from db.query_store import clear_query_store_cache
     from embeddings.schema_indexer import _cached_chroma_client
+    from model_routing.budget import reset_escalation_limiters
+    from model_routing.evidence import reset_evidence_cache
+    from model_routing.metrics import get_route_metrics
 
     build_graph.cache_clear()
     build_orchestrator_graph.cache_clear()
@@ -138,3 +142,15 @@ def _clear_process_singleton_caches() -> None:
     _cached_session_factory.cache_clear()
     _get_ask_executor.cache_clear()
     clear_query_store_cache()
+    # Prompt 47 (model routing): the per-route metrics rollup, the
+    # per-model circuit breakers and the per-tenant escalation windows are
+    # all process-wide by design (a model being down is a fact about the
+    # deployment, not about one question) -- which makes them exactly the
+    # order-dependent hazard this fixture exists for. The breaker in
+    # particular: one test that drives a model to its failure threshold
+    # would otherwise leave that model circuit-open for every later test
+    # in the process.
+    get_route_metrics().reset()
+    reset_breakers()
+    reset_escalation_limiters()
+    reset_evidence_cache()

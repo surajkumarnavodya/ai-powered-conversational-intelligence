@@ -396,6 +396,7 @@ def run_agent(
     model: str | None = None,
     tenant_id: str | None = None,
     forecast_horizon: int | None = None,
+    model_explicitly_selected: bool = False,
 ) -> AgentState:
     """Runs the full agent graph for a single natural-language question.
 
@@ -458,6 +459,17 @@ def run_agent(
             `state["forecast_horizon"]`; only read when
             `generate_forecast_node` actually attempts a forecast (see
             that node's own docstring for the full gate).
+        model_explicitly_selected: Whether `model` above is the caller's
+            own explicit choice (`AskRequest.model` was set) rather than
+            the server's resolved default. `False` (the default -- every
+            caller before Prompt 47, and every caller that omits the
+            field) lets `model_routing` pick a per-task model when
+            `Settings.enable_model_routing` is on; `True` pins every call
+            in the run to `model`, which routing never overrides. Needed
+            as its own flag because `api/main.py` resolves an omitted
+            `AskRequest.model` to `Settings.ollama_model` before this
+            function is ever called -- see `AgentState
+            .model_explicitly_selected`.
     """
     settings = get_settings()
     effective_model = model or settings.ollama_model
@@ -482,6 +494,27 @@ def run_agent(
         complexity_signals,
         effective_model,
     )
+    # Prompt 47: one router per run, holding this request's own routing
+    # budget. None whenever routing is off or the caller pinned a model,
+    # in which case every node falls back to `state["selected_model"]`
+    # exactly as it did before this feature existed. Built fail-open: a
+    # routing/metadata problem is never a reason a question can't be
+    # answered, the same posture every other accuracy aid in this graph
+    # takes (plan_query, golden examples, business context).
+    model_router: object | None = None
+    if settings.enable_model_routing and not model_explicitly_selected:
+        try:
+            from model_routing.router import ModelRouter
+
+            model_router = ModelRouter(settings, tenant_id=tenant_id, pinned_model=None)
+        except Exception as exc:  # noqa: BLE001 - routing must never fail a run
+            logger.warning(
+                "[model_routing] could not initialize the router; using %s for every call: %s",
+                effective_model,
+                type(exc).__name__,
+            )
+            model_router = None
+
     compiled_graph = build_graph()
     initial_state: AgentState = {
         "question": question,
@@ -496,6 +529,9 @@ def run_agent(
         "clarification_message": None,
         "selected_database": None,
         "selected_model": effective_model,
+        "model_explicitly_selected": model_explicitly_selected,
+        "model_router": model_router,
+        "route_decisions": [],
         "retrieved_context": [],
         "retrieval_query": None,
         "retrieval_sources": [],
@@ -565,6 +601,21 @@ def run_agent(
         )
     finally:
         reset_audit_tenant_id(audit_token)
+    # Prompt 47: the router recorded one decision per routed LLM call, in
+    # order, including the ones that changed nothing. Read back here
+    # rather than threaded through each node's return dict -- see
+    # `AgentState["route_decisions"]`'s own comment. Never allowed to fail
+    # the run it is describing.
+    if model_router is not None:
+        try:
+            final_state["route_decisions"] = [
+                decision.model_dump(mode="json")
+                for decision in model_router.decisions  # type: ignore[attr-defined]
+            ]
+        except Exception as exc:  # noqa: BLE001 - reporting must never fail a run
+            logger.warning(
+                "[model_routing] could not record route decisions: %s", type(exc).__name__
+            )
     total_duration_ms = (time.perf_counter() - run_start) * 1000
     logger.info(
         "Agent run finished: status=%s retries=%d followup_classification=%s has_insight=%s "

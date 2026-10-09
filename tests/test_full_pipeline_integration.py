@@ -311,3 +311,153 @@ class TestGovernedMetricEnforcementJourney:
         assert final_state["governing_metrics"][0]["business_name"] == "Net Revenue"
         conformance_mock.assert_called_once()
         assert final_state["metric_conformance_passed"] is True
+
+
+class TestGovernedModelRoutingThroughTheRealGraph:
+    """Prompt 47: with `Settings.enable_model_routing` on, different
+    tasks in **one** run are served by different models -- the feature's
+    headline claim, which only a real traversal of the compiled graph can
+    actually demonstrate. Every unit test in
+    `tests/test_model_routing.py` exercises the policy or the router in
+    isolation; this one proves the seven `*_from_llm` call sites really do
+    receive the routed model, in a run that also plans, reviews, executes
+    and narrates."""
+
+    SMALL = "llama3.2:3b"
+    DEFAULT = "llama3.1:8b"
+    LARGE = "qwen2.5:14b"
+    HARD_QUESTION = "top 5 products per region with year-over-year growth and total margin ratio"
+
+    def _routed_settings(self, **overrides: object) -> Settings:
+        return Settings(
+            **{
+                **_SETTINGS.__dict__,
+                "enable_model_routing": True,
+                "ollama_model": self.DEFAULT,
+                "ollama_allowed_models": f"{self.SMALL},{self.LARGE}",
+                # The evidence gate has its own dedicated coverage in
+                # tests/test_model_routing.py; this test is about the
+                # wiring, so it routes on catalog metadata alone.
+                "model_routing_require_evaluation_evidence": False,
+                **overrides,
+            }
+        )
+
+    @staticmethod
+    def _record_models(monkeypatch, used: dict[str, str | None]) -> None:
+        """Replaces each pipeline LLM call with a stand-in that records
+        which model it was handed, then returns a plausible result so the
+        run keeps going."""
+
+        def generate_sql(*args, **kwargs):
+            used["sql_generation"] = kwargs.get("model")
+            return "SELECT customer_id, order_total FROM orders"
+
+        def generate_insight(*args, **kwargs):
+            used["sql_insight"] = kwargs.get("model")
+            return "Customer 1 has the highest order total."
+
+        def generate_intent(*args, **kwargs):
+            used["analytical_intent"] = kwargs.get("model")
+            return None
+
+        def generate_query_plan(*args, **kwargs):
+            used["query_plan"] = kwargs.get("model")
+            return ["Aggregate order_total by customer_id", "Order descending"]
+
+        def generate_analytical_plan(*args, **kwargs):
+            used["analytical_plan"] = kwargs.get("model")
+            return None
+
+        def review_against_plan(*args, **kwargs):
+            used["sql_review"] = kwargs.get("model")
+            return True, None
+
+        monkeypatch.setattr("agent.nodes.generate_sql_from_llm", generate_sql)
+        monkeypatch.setattr("agent.nodes.generate_insight_from_llm", generate_insight)
+        monkeypatch.setattr("agent.nodes.generate_analytical_intent_from_llm", generate_intent)
+        monkeypatch.setattr("agent.nodes.generate_query_plan_from_llm", generate_query_plan)
+        monkeypatch.setattr(
+            "agent.nodes.generate_analytical_plan_from_llm", generate_analytical_plan
+        )
+        monkeypatch.setattr("agent.nodes.review_sql_against_plan_from_llm", review_against_plan)
+        monkeypatch.setattr(
+            "agent.nodes.execute_readonly_sql",
+            lambda sql, timeout, max_rows, engine=None: (
+                ["customer_id", "order_total"],
+                [(1, 500.0), (2, 300.0)],
+            ),
+        )
+
+    def test_one_run_uses_a_stronger_model_for_generation_and_a_smaller_one_for_insight(
+        self, monkeypatch
+    ):
+        settings = self._routed_settings()
+        monkeypatch.setattr("agent.nodes.get_settings", lambda: settings)
+        monkeypatch.setattr("agent.graph.get_settings", lambda: settings)
+        used: dict[str, str | None] = {}
+        self._record_models(monkeypatch, used)
+
+        final_state = run_agent(self.HARD_QUESTION)
+
+        assert final_state["status"] == "succeeded"
+        # A hard question escalates the task whose correctness *is* the
+        # answer...
+        assert used["sql_generation"] == self.LARGE
+        # ...and the two advisory, independently-grounded tasks are never
+        # escalated with it, whatever the complexity score says (see
+        # `model_routing.policy`'s own note on direction-by-risk).
+        assert used["sql_insight"] == self.DEFAULT
+        assert used["analytical_intent"] == self.DEFAULT
+        # Planning/review are MEDIUM risk: upgradeable, and this question
+        # triggers planning, so they ran and were escalated too.
+        assert used["query_plan"] == self.LARGE
+        assert used["sql_review"] == self.LARGE
+
+    def test_a_simple_question_uses_a_smaller_model_only_for_the_low_risk_tasks(self, monkeypatch):
+        settings = self._routed_settings()
+        monkeypatch.setattr("agent.nodes.get_settings", lambda: settings)
+        monkeypatch.setattr("agent.graph.get_settings", lambda: settings)
+        used: dict[str, str | None] = {}
+        self._record_models(monkeypatch, used)
+
+        final_state = run_agent("Which customers have the highest order totals?")
+
+        assert final_state["status"] == "succeeded"
+        assert used["sql_generation"] == self.DEFAULT
+        assert used["sql_insight"] == self.SMALL
+        assert used["analytical_intent"] == self.SMALL
+
+    def test_the_run_records_one_decision_per_routed_call(self, monkeypatch):
+        settings = self._routed_settings()
+        monkeypatch.setattr("agent.nodes.get_settings", lambda: settings)
+        monkeypatch.setattr("agent.graph.get_settings", lambda: settings)
+        self._record_models(monkeypatch, {})
+
+        final_state = run_agent(self.HARD_QUESTION)
+
+        decisions = final_state["route_decisions"]
+        assert len(decisions) >= 4
+        tasks = [decision["task"] for decision in decisions]
+        # Recorded in call order, which is the graph's own node order.
+        assert tasks.index("analytical_intent") < tasks.index("sql_generation")
+        assert tasks.index("sql_generation") < tasks.index("sql_insight")
+        assert all(decision["truth_level"] == "ai_inference" for decision in decisions)
+        assert all(decision["policy_version"] for decision in decisions)
+
+    def test_with_routing_off_every_call_gets_the_one_configured_model(self, monkeypatch):
+        """The byte-for-byte-unchanged guarantee for an untouched
+        deployment, stated as a test: with the flag off, no router is built
+        and every call receives `Settings.ollama_model`, exactly as before
+        Prompt 47 existed."""
+        settings = self._routed_settings(enable_model_routing=False)
+        monkeypatch.setattr("agent.nodes.get_settings", lambda: settings)
+        monkeypatch.setattr("agent.graph.get_settings", lambda: settings)
+        used: dict[str, str | None] = {}
+        self._record_models(monkeypatch, used)
+
+        final_state = run_agent(self.HARD_QUESTION)
+
+        assert final_state["status"] == "succeeded"
+        assert set(used.values()) == {self.DEFAULT}
+        assert final_state["route_decisions"] == []

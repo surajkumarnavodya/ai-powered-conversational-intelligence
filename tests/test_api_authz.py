@@ -216,6 +216,40 @@ class TestVerticalPrivilegeEscalation:
 
         assert response.status_code == 403
 
+    def test_analyst_cannot_view_model_routing_metrics(self, client, _keypair):
+        """Prompt 47: `GET /model-routing/metrics` is gated the same way
+        `/metrics/performance` right above is, and for the same reason --
+        aggregate operational data, but still an internal view. The 403
+        comes from the dependency, so it holds whether or not
+        `Settings.enable_model_routing` is on (an authorized caller gets
+        the feature flag's own 404 instead)."""
+        private_key, _ = _keypair
+        token = _token(private_key, subject="u1", roles=("analyst",))
+
+        response = client.get("/model-routing/metrics", headers=_auth(token))
+
+        assert response.status_code == 403
+
+    def test_a_viewer_may_preview_model_routing_but_not_read_its_metrics(self, client, _keypair):
+        """Prompt 47: the policy/preview pair is gated on
+        `Permission.ASK` deliberately -- it describes which models would
+        serve *this caller's own* questions, which is no more than
+        `GET /models` already tells anyone who may ask one. A "viewer"
+        holds ASK, so it reaches past the authz gate (and then gets the
+        feature flag's own 404, since routing is off in this file's
+        settings); the admin-only metrics rollup still refuses it.
+        """
+        private_key, _ = _keypair
+        token = _token(private_key, subject="u1", roles=("viewer",))
+
+        preview = client.post(
+            "/model-routing/preview", json={"question": "how many orders"}, headers=_auth(token)
+        )
+        metrics = client.get("/model-routing/metrics", headers=_auth(token))
+
+        assert preview.status_code == 404
+        assert metrics.status_code == 403
+
     def test_admin_can_view_performance_metrics(self, client, _keypair):
         private_key, _ = _keypair
         token = _token(private_key, subject="admin1", roles=("admin",))

@@ -733,6 +733,25 @@ class AskResponse(BaseModel):
             "was omitted. Always set on a run that reached generation."
         ),
     )
+    route_decisions: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "One entry per routed LLM call this question made "
+            "(model_routing.models.RouteDecision.model_dump()'s shape: task, "
+            "model_id, tier, reason, baseline_model_id, risk_level, "
+            "complexity_score, required_capabilities, considered_model_ids, "
+            "fallback_chain, cost_units, evaluation_backed, policy_version). "
+            "Empty when Settings.enable_model_routing is off (the default), "
+            "when the caller pinned AskRequest.model, or when the run never "
+            "reached an LLM call -- in all of those cases the single model "
+            "named by the `model` field above served every call. Always "
+            "DataTruthLevel.AI_INFERENCE: a routing decision is this "
+            "platform's judgment about which model was likely to do better, "
+            "never an observed fact about the answer's quality. `cost_units` "
+            "are ordinal compute units, never money -- every model runs "
+            "locally (see model_routing.models.TIER_COST_UNITS)."
+        ),
+    )
     sql: str | None = None
     result_columns: list[str] | None = None
     result_rows: list[list[Any]] | None = None

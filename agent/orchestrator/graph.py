@@ -155,6 +155,7 @@ def run_orchestrated(
     model: str | None = None,
     tenant_id: str | None = None,
     forecast_horizon: int | None = None,
+    model_explicitly_selected: bool = False,
 ) -> AgentState | OrchestratorState:
     """Routes a question to one or more sources and returns the combined result.
 
@@ -212,6 +213,14 @@ def run_orchestrated(
             `generate_recommendations_node`'s performance snapshot, and the
             per-tenant metrics rollup -- plus bound here as the tenant every
             `security.audit_log` event from this run is stamped with.
+        model_explicitly_selected: Same shape and meaning as
+            `agent.graph.run_agent`'s parameter of the same name (Prompt
+            47) -- whether `model` above is the caller's own explicit
+            choice rather than the server's resolved default. Forwarded
+            unchanged on both paths: directly to `run_agent` on the
+            short-circuit path, and via
+            `OrchestratorState["model_explicitly_selected"]` on the
+            multi-source path, which `sql_subgraph_node` reads back.
         forecast_horizon: Same shape and meaning as `agent.graph.run_agent`'s
             parameter of the same name -- already validated by `api/main.py`'s
             `/ask` handler. Passed directly to `run_agent` on the
@@ -239,6 +248,7 @@ def run_orchestrated(
             model,
             tenant_id,
             forecast_horizon,
+            model_explicitly_selected,
         )
 
     logger.info(
@@ -269,6 +279,7 @@ def run_orchestrated(
         "clarification_message": None,
         "selected_database": None,
         "selected_model": model,
+        "model_explicitly_selected": model_explicitly_selected,
         "forecast_horizon": forecast_horizon,
         "forecast_result": None,
         "enable_insight": enable_insight,

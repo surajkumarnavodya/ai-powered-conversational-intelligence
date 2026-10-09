@@ -325,6 +325,101 @@ exposes `OLLAMA_HOST`, secrets, or any other environment/connection detail.
 Cache this response client-side (the React dashboard does, 30 seconds,
 matching `GET /health`) — this endpoint is never called from `/ask` itself.
 
+### Governed model routing: `/model-routing/*`
+
+Three read-only routes over the model router (Prompt 47,
+[`47_MODEL_ROUTING_COST_OPTIMIZATION_CONTRACT.md`](../47_MODEL_ROUTING_COST_OPTIMIZATION_CONTRACT.md)),
+which picks *which* locally-installed Ollama model drafts each LLM call the
+SQL pipeline makes — by complexity, risk, latency and capability — instead
+of using one model for every call in a run.
+
+All three answer **404** unless `ENABLE_MODEL_ROUTING=true` (off by
+default). **None of them calls an LLM**, and there is deliberately no write
+route: routing is configured in `.env`, and the models it may escalate to
+are governed through `/governance` below. A write route here would be a
+second, ungoverned way to change which model answers a question.
+
+| Route | Permission | What it does |
+|---|---|---|
+| `GET /model-routing/policy` | `ASK` | The resolved configuration and candidate set for the calling tenant. |
+| `POST /model-routing/preview` | `ASK` | What routing *would* decide for a question, per task. Consumes no budget and no circuit-breaker probe. |
+| `GET /model-routing/metrics` | `ADMIN_CONFIG` | The live per-route quality/latency/failure/cost rollup. |
+
+`GET /model-routing/policy` returns the candidate models (id, `tier`,
+`tier_known`, `capabilities`, `context_length`, `recommended`, `is_default`,
+`evaluation_backed`, `evaluation_quality_score`, `governance_version_id`),
+the resolved thresholds, `tier_cost_units`, and one entry per task with its
+`risk_level` and `required_capabilities`. Evidence is scoped to the caller's
+own tenant, so one tenant never learns which models another approved.
+
+`POST /model-routing/preview` takes `{"question": "...", "latency_sensitive":
+false}` and returns the matched `complexity_signals`, the
+`complexity_score`, and one decision per task:
+
+```json
+{
+  "enabled": true,
+  "complexity_signals": ["top_n_per_group", "growth_comparison", "multi_metric"],
+  "complexity_score": 3,
+  "decisions": [
+    {
+      "task": "sql_generation",
+      "model_id": "qwen2.5:14b",
+      "tier": "large",
+      "reason": "upgraded_for_complexity",
+      "baseline_model_id": "llama3.1:8b",
+      "risk_level": "high",
+      "complexity_score": 3,
+      "required_capabilities": ["sql"],
+      "considered_model_ids": ["qwen2.5:14b"],
+      "fallback_chain": ["llama3.1:8b", "llama3.2:3b"],
+      "cost_units": 5,
+      "evaluation_backed": true,
+      "policy_version": "1.0.0",
+      "truth_level": "ai_inference"
+    }
+  ]
+}
+```
+
+It runs the same pure decision function the live pipeline uses, so a preview
+and a real run cannot disagree. The question text is scanned for complexity
+signals and discarded — never put in a prompt, never stored, and never
+echoed back (only the matched signal *names* are).
+
+`reason` is a closed set: `routing_disabled`, `caller_pinned_model`,
+`default_no_change`, `upgraded_for_complexity`,
+`downgraded_for_simplicity`, `no_eligible_candidate`,
+`no_evaluation_evidence`, `upgrade_blocked_by_latency`, `budget_exhausted`,
+`circuit_open`.
+
+**`cost_units` are ordinal compute units, never money.** Every routable
+model runs locally through Ollama, so there is no per-token price to report;
+small/medium/large are 1/2/5, used only to bound how often one request may
+escalate.
+
+**`truth_level` is always `ai_inference`.** A routing decision is this
+platform's judgment about which model was likely to do better, never an
+observed fact about the answer's quality.
+
+`GET /model-routing/metrics` returns per-`(task, model)` counters —
+`calls`, `successes`, `availability_failures`, `quality_failures`,
+`quality_failure_rate`, `fallback_uses`, mean/p50/p95/max latency, and
+`cost_units` — plus `decisions`, `escalations`, `de_escalations`,
+`decisions_by_reason`, `budget_denials`, `breaker_denials` and
+`total_cost_units`. `quality_failure_rate` is the share of judged calls this
+application's own deterministic parsers/validators rejected — a real
+observed signal about a route, explicitly **not** an accuracy score (a
+parseable answer can still be wrong). Single-process, in-memory and reset on
+restart, the same disclosed limitation `GET /metrics/performance` carries.
+No question, SQL or answer content appears in any of these responses.
+
+`POST /ask` gained one additive field for this: `route_decisions`, the same
+decision shape as above, one entry per routed LLM call the question made.
+It is empty when routing is off (the default), when the caller pinned
+`AskRequest.model`, or when the run never reached an LLM call — in all of
+those cases the single model named by `model` served every call.
+
 ### `GET /schema/tables`
 
 Live table/column listing (metadata-only, no data queries) via the same

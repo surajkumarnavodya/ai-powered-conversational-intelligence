@@ -86,6 +86,7 @@ from api.lineage import router as lineage_router
 from api.media import router as media_router
 from api.media_library import router as media_library_router
 from api.media_search import router as media_search_router
+from api.model_routing import router as model_routing_router
 from api.navigation import router as navigation_router
 from api.onboarding import router as onboarding_router
 from api.optimization import router as optimization_router
@@ -415,6 +416,7 @@ app.include_router(eval_platform_router)
 app.include_router(bi_integration_router)
 app.include_router(platform_admin_router)
 app.include_router(tenant_admin_router)
+app.include_router(model_routing_router)
 app.include_router(navigation_router)
 
 # No-op when Settings.cors_allowed_origins is empty (the default) -- a
@@ -900,6 +902,7 @@ def _ask_response_from_state(
         status=state.get("status", "failed"),
         database=state.get("selected_database"),
         model=state.get("selected_model"),
+        route_decisions=state.get("route_decisions") or [],
         sql=state.get("sql"),
         result_columns=state.get("result_columns"),
         result_rows=_rows_to_json(result_rows),
@@ -1136,6 +1139,7 @@ def _run_orchestrated_with_timeout(
     model: str | None = None,
     tenant_id: str | None = None,
     forecast_horizon: int | None = None,
+    model_explicitly_selected: bool = False,
 ) -> Mapping[str, Any]:
     """Runs `run_orchestrated` on `_get_ask_executor`'s bounded pool and
     gives up *waiting* past `timeout_seconds`, raising `_AskRequestTimedOut`
@@ -1175,6 +1179,7 @@ def _run_orchestrated_with_timeout(
                 model=model,
                 tenant_id=tenant_id,
                 forecast_horizon=forecast_horizon,
+                model_explicitly_selected=model_explicitly_selected,
             )
         except BaseException as exc:  # noqa: BLE001 - re-raised on the caller's thread below
             error["error"] = exc
@@ -1341,6 +1346,12 @@ def ask(
             model=selected_model,
             tenant_id=resolve_tenant_id_for_identity(identity),
             forecast_horizon=payload.forecast_horizon,
+            # Prompt 47: `selected_model` above is already resolved (an
+            # omitted AskRequest.model becomes Settings.ollama_model), so
+            # this flag is the only thing that still distinguishes 'the
+            # caller asked for this model' from 'the caller asked for
+            # nothing'. Model routing never overrides an explicit choice.
+            model_explicitly_selected=payload.model is not None,
         )
     except _AskRequestTimedOut:
         # See Settings.request_timeout_seconds's docstring: this is "stop

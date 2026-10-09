@@ -114,6 +114,22 @@ class CircuitBreaker:
             return True
         return False
 
+    def would_refuse(self, now: float) -> bool:
+        """Read-only counterpart to `allow`: whether a call right now would
+        be refused, **without** consuming the half-open probe.
+
+        Added for `model_routing.router` (Prompt 47), which needs to know
+        which models are currently circuit-broken in order to not *choose*
+        one, separately from the moment it actually attempts a call (where
+        it still calls `allow`, so the probe is spent by a real attempt and
+        not by planning one). `allow`'s own behavior is unchanged.
+        """
+        if self._opened_at is None:
+            return False
+        if self._probing:
+            return True
+        return now - self._opened_at < self.cooldown_seconds
+
     def record_success(self) -> None:
         self._failures = 0
         self._opened_at = None

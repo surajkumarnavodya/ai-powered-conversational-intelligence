@@ -172,6 +172,52 @@ from generation time (wall-clock alone can't, per that module's own docstring), 
 both `eval/runner.py`'s benchmark and available to any future API-layer caller that
 wants the same breakdown for a live request.
 
+### 3b. Per-route model-routing metrics (Prompt 47)
+
+When `ENABLE_MODEL_ROUTING` is on, `model_routing/metrics.py` keeps a
+second, separate rollup keyed by **route** -- one `(task, model)` pair, the
+granularity a routing decision is actually made at -- read back by
+`GET /model-routing/metrics` (admin-only, like `GET /metrics/performance`).
+
+It is a sibling of `observability/metrics.py`, not a new dimension on it, on
+purpose: `PerformanceMetrics` aggregates per LangGraph *stage* per *tenant*
+and knows nothing about which model served a call, so adding `(task, model)`
+keys there would change the shape `GET /metrics/performance` has returned
+since Prompt 22 for every existing consumer, for data only this feature
+produces. It copies that module's disclosed posture rather than inventing a
+better one, because the same constraints apply: **single-process,
+in-memory, resets on restart, bounded by sample count**. A multi-worker
+deployment has one rollup per worker.
+
+Per route it tracks `calls`, `successes`, `availability_failures`,
+`quality_failures`, `quality_failure_rate`, `fallback_uses`,
+mean/p50/p95/max latency and `cost_units`; process-wide it tracks
+`decisions`, `escalations`, `de_escalations`, `decisions_by_reason`,
+`budget_denials`, `breaker_denials` and `total_cost_units`.
+
+Two things it deliberately does not claim:
+
+- **`quality_failure_rate` is not an accuracy score.** It is the share of
+  judged calls this application's own deterministic parsers/validators
+  rejected (a malformed SQL block, an unreadable plan). A perfectly
+  parseable answer can still be wrong. Benchmarked accuracy lives in
+  `eval/` and, for a governed model version, in that version's own
+  operator-recorded `evaluation_results` -- never synthesized from these
+  counters. An off-topic refusal is recorded as a *success*, since that is
+  the model doing its job.
+- **`cost_units` are ordinal compute units, never money.** Every routable
+  model runs locally through Ollama, so there is no per-token price to
+  report.
+
+Routing also emits one `INFO` line per decision that actually moved off the
+configured default (`[model_routing] task=... model=... (baseline=...)
+reason=... tier=... complexity=... risk=... evaluation_backed=...`). It
+carries no question text, no SQL and no answer -- only task names, model
+ids and the decision's own reason, so it is safe at `INFO` in a way the
+free-text lines named in section 4 below are not. A decision that changed
+nothing is counted in the rollup but not logged, to keep the common case
+quiet.
+
 ## 4. What's never logged
 
 **Secrets.** `security/redaction.py::redact_secrets` scrubs a configured DB password

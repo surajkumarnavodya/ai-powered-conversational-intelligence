@@ -2279,6 +2279,71 @@ class Settings(BaseSettings):
     # reached.
     bi_export_cache_max_entries: int = Field(default=200, gt=0)
 
+    # --- Prompt 47 (47_MODEL_ROUTING_COST_OPTIMIZATION_CONTRACT.md):
+    # model_routing/'s own tunables -- which locally-installed Ollama model
+    # drafts each LLM call the SQL pipeline makes, by complexity, risk,
+    # latency and capability.
+    #
+    # Default OFF, unlike enable_data_quality_engine/enable_lineage_platform/
+    # enable_schema_drift_detection (pure, deterministic, zero-cost
+    # computations that are safe to default on). This one changes which
+    # model answers a real question, which is a behavioral change to
+    # output quality -- an operator opts in. With it off, every run uses
+    # exactly one model for every call (Settings.ollama_model, or the
+    # caller's own validated AskRequest.model), byte-identically to
+    # pre-Prompt-47 behavior.
+    enable_model_routing: bool = False
+    # A model is only ever chosen *over* ollama_model when an approved or
+    # deployed `model`-typed governed asset version exists for it with
+    # recorded evaluation_results (governance_center, Prompt 44) -- the
+    # literal mechanism behind this prompt's own "when evaluation supports
+    # it". Applies to a downgrade as well as an upgrade: swapping in a
+    # cheaper model is still a change to how answers are produced. Turn it
+    # off only to route on config/ollama_models.yaml metadata alone.
+    model_routing_require_evaluation_evidence: bool = True
+    # model_routing.signals.assess_request's complexity score at or above
+    # which routing may escalate to a stronger model, and at or below
+    # which a LOW-risk task (analytical_intent, sql_insight) may use a
+    # smaller one. The score counts independent hardness signals
+    # (agent.complexity's own signals, plus intent-implies-planning and
+    # ambiguity), so 2 means "at least two of them".
+    model_routing_upgrade_complexity_threshold: int = Field(default=2, ge=0)
+    model_routing_downgrade_complexity_threshold: int = Field(default=0, ge=0)
+    # A candidate this deployment has actually measured as slower than
+    # this at p95 (model_routing.metrics) is dropped from the escalation
+    # set -- "route by latency" from real evidence, never a vendor claim.
+    # A model with no measurement yet is never blocked by it.
+    model_routing_max_p95_latency_ms: float = Field(default=30_000.0, gt=0.0)
+    # How many alternative models one decision may list to try if the
+    # chosen one turns out to be unavailable. 0 disables fallback (the
+    # pre-Prompt-47 behavior: an unreachable model is a hard failure).
+    model_routing_max_fallbacks: int = Field(default=2, ge=0)
+    # Per-request ceilings (model_routing.budget, reusing agent.multiagent
+    # .policy.TurnBudget). A spent budget removes the *option* to escalate
+    # and nothing else -- the request proceeds on ollama_model, never
+    # fails. The call cap is sized well above this graph's own worst-case
+    # retry path so it only ever catches a genuine runaway.
+    model_routing_max_llm_calls_per_request: int = Field(default=40, gt=0)
+    model_routing_max_cost_units_per_request: int = Field(default=60, gt=0)
+    # Per-tenant hourly cap on *escalations* (a decision to use a stronger
+    # model than configured), metered by agent.rate_limit's own sliding
+    # window. Deliberately not a cap on questions -- those are already
+    # metered by the pre-existing /ask rate and concurrency limits.
+    model_routing_escalations_per_hour: int = Field(default=500, gt=0)
+    # Per-model circuit breaker (agent.multiagent.policy.CircuitBreaker,
+    # reused verbatim): consecutive *availability* failures before a model
+    # is skipped, and how long before one probe is allowed through. A
+    # malformed/unparseable answer is a quality failure and deliberately
+    # never trips this -- see model_routing/router.py's own docstring.
+    model_routing_breaker_failure_threshold: int = Field(default=3, gt=0)
+    model_routing_breaker_cooldown_seconds: float = Field(default=60.0, gt=0.0)
+    # How long a tenant's governed model-evaluation evidence is cached on
+    # the request path (model_routing.evidence) -- mirrors
+    # query_store_refresh_interval_seconds' own reasoning: an approval
+    # changes on a human timescale, so re-reading the identity database
+    # per LLM call would be pure waste.
+    model_routing_evidence_ttl_seconds: float = Field(default=300.0, gt=0.0)
+
     # Prompt 19 (19_QUERY_STORE_PERFORMANCE_CONTRACT.md): db.query_store's
     # own tunables -- a no-op for every DB_TYPE other than "mssql"
     # regardless of these values (see that module's own docstring).
@@ -2825,6 +2890,30 @@ class Settings(BaseSettings):
                 f"COST_MODERATE_ROW_THRESHOLD ({self.cost_moderate_row_threshold}) must be "
                 f"strictly less than COST_HIGH_ROW_THRESHOLD ({self.cost_high_row_threshold}) "
                 f"-- otherwise a query is never classified 'moderate', only 'low' or 'high'. "
+                f"Fix both in .env."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_model_routing_threshold_ordering(self) -> Settings:
+        """`MODEL_ROUTING_DOWNGRADE_COMPLEXITY_THRESHOLD` must be strictly
+        less than `MODEL_ROUTING_UPGRADE_COMPLEXITY_THRESHOLD` -- otherwise
+        a single complexity score satisfies both the "simple enough to use
+        a smaller model" and the "complex enough to need a stronger one"
+        test at once, and which one won would depend on the order
+        `model_routing.policy` happens to check them in. The same
+        cross-field-ordering shape `_validate_cost_threshold_ordering`
+        already establishes above."""
+        if (
+            self.model_routing_downgrade_complexity_threshold
+            >= self.model_routing_upgrade_complexity_threshold
+        ):
+            raise ConfigurationError(
+                f"MODEL_ROUTING_DOWNGRADE_COMPLEXITY_THRESHOLD "
+                f"({self.model_routing_downgrade_complexity_threshold}) must be strictly less "
+                f"than MODEL_ROUTING_UPGRADE_COMPLEXITY_THRESHOLD "
+                f"({self.model_routing_upgrade_complexity_threshold}) -- otherwise one "
+                f"complexity score would qualify a request as both simple and complex. "
                 f"Fix both in .env."
             )
         return self

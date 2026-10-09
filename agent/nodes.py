@@ -28,8 +28,6 @@ from typing import Any
 from analytics.engine import compute_analytics_result
 from analytics.forecasting import generate_forecast
 from analytics.models import AnalyticsResult
-from governance.request_policy import evaluate_request
-from governance.result_policy import govern_rows_for_caller
 from recommendation.engine import RecommendationInputs, generate_recommendations
 from retrieval.retriever import extract_governing_metrics, retrieve_business_context
 from sqlalchemy.exc import SQLAlchemyError
@@ -95,6 +93,9 @@ from db.query_store import QueryStoreFindings, get_cached_query_store_findings
 from db.schema_introspection import extract_ddl_column_names
 from embeddings.golden_examples import retrieve_golden_examples
 from embeddings.retriever import retrieve_relevant_schema, select_database
+from governance.request_policy import evaluate_request
+from governance.result_policy import govern_rows_for_caller
+from model_routing.models import RouteTask
 from observability.metrics import get_default_metrics
 from security.audit_log import log_security_event
 from security.injection_patterns import INJECTION_PATTERNS
@@ -221,6 +222,58 @@ def _timed_node(stage: str) -> Callable[[Callable[[AgentState], dict[str, Any]]]
         return wrapper
 
     return decorator
+
+
+def _routed_llm_call(state: AgentState, task: RouteTask, call: Callable[[str | None], Any]) -> Any:
+    """Runs one pipeline LLM call through model routing, when it is on.
+
+    Prompt 47 (`47_MODEL_ROUTING_COST_OPTIMIZATION_CONTRACT.md`). This is
+    the single seam every `*_from_llm` call in this module goes through, so
+    routing, per-model circuit breaking, fallback and outcome recording are
+    written once rather than seven times.
+
+    `state["model_router"]` is None whenever routing is disabled
+    (`Settings.enable_model_routing`, the default), the caller pinned their
+    own model (`AskRequest.model`), or the router could not be built -- and
+    in every one of those cases this function calls `call` with
+    `state["selected_model"]`, which is byte-identically what each call
+    site did before this feature existed.
+
+    Args:
+        state: The current agent state.
+        task: Which pipeline LLM call this is. Only
+            `model_routing.models` (pure typed vocabulary, no I/O, no
+            `agent/` dependency beyond `agent.provenance`) is imported at
+            module scope; `model_routing.signals` is imported lazily
+            below, so nothing in the routing stack loads for a deployment
+            that never turns the feature on.
+        call: Performs the real call for a given model id. Receives
+            `state["selected_model"]` (possibly None, which every
+            `*_from_llm` function already accepts as "use
+            `Settings.ollama_model`") when routing is off, and a concrete
+            routed model id when it is on.
+
+    Returns:
+        Whatever `call` returns.
+
+    Raises:
+        Whatever `call` raises -- unchanged, so every node's existing
+        exception handling applies exactly as before. The one difference
+        when routing is on: an `OllamaUnavailableError` is only surfaced
+        after the decision's fallback chain has also been tried.
+    """
+    router = state.get("model_router")
+    if router is None:
+        return call(state.get("selected_model"))
+    from model_routing.signals import assess_request
+
+    profile = assess_request(
+        state["question"],
+        state.get("complexity_signals"),
+        state.get("analytical_intent"),
+    )
+    result, _decision = router.execute(task, profile, call)  # type: ignore[attr-defined]
+    return result
 
 
 def _give_up_explanation(state: AgentState, detailed_message: str) -> str:
@@ -875,12 +928,16 @@ def classify_analytical_intent_node(state: AgentState) -> dict[str, Any]:
 
     question = state["question"]
     try:
-        classification = generate_analytical_intent_from_llm(
-            question,
-            settings,
-            model=state.get("selected_model"),
-            retrieved_context=state.get("retrieved_context"),
-            governing_metrics=state.get("governing_metrics"),
+        classification = _routed_llm_call(
+            state,
+            RouteTask.ANALYTICAL_INTENT,
+            lambda routed_model: generate_analytical_intent_from_llm(
+                question,
+                settings,
+                model=routed_model,
+                retrieved_context=state.get("retrieved_context"),
+                governing_metrics=state.get("governing_metrics"),
+            ),
         )
     except OllamaUnavailableError as exc:
         logger.warning(
@@ -975,14 +1032,18 @@ def build_analytical_plan_node(state: AgentState) -> dict[str, Any]:
     question = state["question"]
     schema_context = state.get("schema_context_text", "")
     try:
-        raw_plan = generate_analytical_plan_from_llm(
-            question,
-            schema_context,
-            settings,
-            model=state.get("selected_model"),
-            retrieved_context=state.get("retrieved_context"),
-            analytical_intent=state.get("analytical_intent"),
-            governing_metrics=state.get("governing_metrics"),
+        raw_plan = _routed_llm_call(
+            state,
+            RouteTask.ANALYTICAL_PLAN,
+            lambda routed_model: generate_analytical_plan_from_llm(
+                question,
+                schema_context,
+                settings,
+                model=routed_model,
+                retrieved_context=state.get("retrieved_context"),
+                analytical_intent=state.get("analytical_intent"),
+                governing_metrics=state.get("governing_metrics"),
+            ),
         )
     except OllamaUnavailableError as exc:
         logger.warning(
@@ -1096,13 +1157,17 @@ def plan_query_node(state: AgentState) -> dict[str, Any]:
     question = state["question"]
     schema_context = state.get("schema_context_text", "")
     try:
-        plan = generate_query_plan_from_llm(
-            question,
-            schema_context,
-            settings,
-            model=state.get("selected_model"),
-            retrieved_context=state.get("retrieved_context"),
-            analytical_intent=state.get("analytical_intent"),
+        plan = _routed_llm_call(
+            state,
+            RouteTask.QUERY_PLAN,
+            lambda routed_model: generate_query_plan_from_llm(
+                question,
+                schema_context,
+                settings,
+                model=routed_model,
+                retrieved_context=state.get("retrieved_context"),
+                analytical_intent=state.get("analytical_intent"),
+            ),
         )
     except OllamaUnavailableError as exc:
         logger.warning("[plan_query] LLM call failed, proceeding without a plan: %s", exc)
@@ -1187,20 +1252,24 @@ def generate_sql_node(state: AgentState) -> dict[str, Any]:
         bool(followup_context),
     )
     try:
-        raw_sql = generate_sql_from_llm(
-            question=question,
-            schema_context=schema_context,
-            previous_sql=previous_sql,
-            error_feedback=last_error,
-            error_category=last_error_category,
-            settings=settings,
-            followup_context=followup_context,
-            query_plan=state.get("query_plan"),
-            golden_examples=state.get("golden_examples"),
-            retrieved_context=state.get("retrieved_context"),
-            governing_metrics=state.get("governing_metrics"),
-            analytical_plan=state.get("analytical_plan"),
-            model=state.get("selected_model"),
+        raw_sql = _routed_llm_call(
+            state,
+            RouteTask.SQL_GENERATION,
+            lambda routed_model: generate_sql_from_llm(
+                question=question,
+                schema_context=schema_context,
+                previous_sql=previous_sql,
+                error_feedback=last_error,
+                error_category=last_error_category,
+                settings=settings,
+                followup_context=followup_context,
+                query_plan=state.get("query_plan"),
+                golden_examples=state.get("golden_examples"),
+                retrieved_context=state.get("retrieved_context"),
+                governing_metrics=state.get("governing_metrics"),
+                analytical_plan=state.get("analytical_plan"),
+                model=routed_model,
+            ),
         )
     except OffTopicQuestionError as exc:
         # Defense-in-depth backstop, not the normal path: agent.input_guard's
@@ -1286,8 +1355,12 @@ def review_sql_node(state: AgentState) -> dict[str, Any]:
         return {"plan_review_passed": None, "plan_review_feedback": None, "status": "validating"}
 
     try:
-        passed, feedback = review_sql_against_plan_from_llm(
-            query_plan, sql, settings, model=state.get("selected_model")
+        passed, feedback = _routed_llm_call(
+            state,
+            RouteTask.SQL_REVIEW,
+            lambda routed_model: review_sql_against_plan_from_llm(
+                query_plan, sql, settings, model=routed_model
+            ),
         )
     except OllamaUnavailableError as exc:
         logger.warning(
@@ -1392,8 +1465,12 @@ def review_metric_conformance_node(state: AgentState) -> dict[str, Any]:
         }
 
     try:
-        passed, feedback = review_sql_against_metrics_from_llm(
-            governing_metrics, sql, settings, model=state.get("selected_model")
+        passed, feedback = _routed_llm_call(
+            state,
+            RouteTask.METRIC_CONFORMANCE_REVIEW,
+            lambda routed_model: review_sql_against_metrics_from_llm(
+                governing_metrics, sql, settings, model=routed_model
+            ),
         )
     except OllamaUnavailableError as exc:
         logger.warning(
@@ -2390,12 +2467,16 @@ def generate_insight_node(state: AgentState) -> dict[str, Any]:
     sql = state.get("sql") or ""
 
     try:
-        insight_text = generate_insight_from_llm(
-            question=question,
-            sql=sql,
-            summary=summary,
-            settings=settings,
-            model=state.get("selected_model"),
+        insight_text = _routed_llm_call(
+            state,
+            RouteTask.SQL_INSIGHT,
+            lambda routed_model: generate_insight_from_llm(
+                question=question,
+                sql=sql,
+                summary=summary,
+                settings=settings,
+                model=routed_model,
+            ),
         )
     except OllamaUnavailableError as exc:
         logger.warning("[generate_insight] LLM call failed, omitting insight: %s", exc)

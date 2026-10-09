@@ -638,6 +638,50 @@ class AgentState(TypedDict, total=False):
     # Overall progress, useful for the UI to show a status indicator
     status: AgentStatus
 
+    # --- Prompt 47 (47_MODEL_ROUTING_COST_OPTIMIZATION_CONTRACT.md):
+    # governed model routing. All three are request-scoped, exactly like
+    # `selected_model`/`selected_database`/`tenant_id` above and for the
+    # same reason -- a routing budget and a caller's own pinned model must
+    # never leak into a concurrent request.
+
+    # True when the caller explicitly named a model (`AskRequest.model`),
+    # as opposed to letting the server pick. Needed as its own field
+    # because `api/main.py` resolves an omitted `AskRequest.model` to
+    # `Settings.ollama_model` *before* the graph runs (see
+    # `agent.model_registry.validate_model_selection`), so
+    # `selected_model` alone can no longer tell "the caller asked for this
+    # model" from "the caller asked for nothing". Routing never overrides
+    # an explicit choice, so this flag is what makes that guarantee
+    # expressible.
+    model_explicitly_selected: bool
+
+    # The request's `model_routing.router.ModelRouter`, or None when
+    # routing is off (`Settings.enable_model_routing`) or this run was
+    # started by a caller that did not build one (`eval/runner.py`,
+    # `scripts/integration_test.py`). Typed `object | None` rather than the
+    # real class so `agent/state.py` keeps importing nothing from
+    # `model_routing/` -- the same import-direction discipline that keeps
+    # this module free of `db`/`api` dependencies. A live object in state
+    # is safe here because this graph runs without a LangGraph
+    # checkpointer: nothing in this codebase ever serializes a whole
+    # `AgentState` (verified by inspection, Prompt 47), only named fields.
+    model_router: object | None
+
+    # One entry per routed LLM call -- `model_routing.models
+    # .RouteDecision.model_dump()`'s shape (task, model, tier, reason,
+    # baseline, risk, complexity score, fallback chain, cost units, and
+    # `truth_level: "ai_inference"`). Deliberately a plain list, not an
+    # `operator.add` reducer channel like `error_history`/`stage_timings`:
+    # no node returns this key. `agent.graph.run_agent` fills it once,
+    # after the graph has run, from the router's own ordered record of
+    # every decision it made -- which keeps seven call sites in
+    # `agent/nodes.py` from each having to thread an extra key through
+    # every one of their return paths. Surfaced on
+    # `AskResponse.route_decisions`; always an AI_INFERENCE judgment about
+    # which model was likely to do better, never a claim about the
+    # answer's own quality.
+    route_decisions: list[dict]
+
     # Per-node-call wall-clock timings (see StageTiming) -- one entry per
     # node call, accumulated across retries. Powers performance profiling
     # (scripts/profile_pipeline.py) and, potentially, a live "which stage is

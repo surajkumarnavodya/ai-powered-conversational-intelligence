@@ -26,8 +26,6 @@ import re
 from collections.abc import Hashable
 from typing import Any, Literal, cast
 
-from governance.request_policy import evaluate_request
-
 from agent.authz import Permission, has_role_permission
 from agent.graph import run_agent
 from agent.orchestrator.state import (
@@ -45,6 +43,7 @@ from agent.rate_limit import (
     get_session_expensive_source_limiter,
 )
 from config.settings import Settings, get_settings
+from governance.request_policy import evaluate_request
 from media_gen.content_policy import basic_prompt_safety_check as _basic_prompt_safety_check
 from rag.graph import Citation
 from rag.store import RagStoreNotConfiguredError
@@ -723,7 +722,18 @@ def sql_subgraph_node(state: OrchestratorState) -> dict[str, Any]:
         state.get("enable_insight", True),
         state.get("caller_roles", ()),
         state.get("selected_model"),
+        # Prompt 47: forwarded so model routing's own governed evaluation
+        # evidence and per-tenant escalation budget are scoped to the real
+        # tenant on this path too, and so a caller who pinned a model keeps
+        # it. Before this, neither value reached `run_agent` from the
+        # multi-source path at all -- `tenant_id` had simply never been
+        # threaded here (its only prior consumers resolved it independently
+        # or did without), which also means every `security.audit_log`
+        # event the SQL subgraph emits is now tenant-stamped on this path,
+        # matching the single-source path.
+        tenant_id=state.get("tenant_id"),
         forecast_horizon=state.get("forecast_horizon"),
+        model_explicitly_selected=state.get("model_explicitly_selected", False),
     )
     result = dict(sql_state)
     result["sources_used"] = ["sql"]

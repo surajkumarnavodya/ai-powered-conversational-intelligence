@@ -300,6 +300,57 @@ startup" hook, so a newly-added permission (like the ones sharing needs)
 is invisible to existing roles until this is run. See
 `docs/SHARING_SECURITY.md`'s "External configuration / staging steps".
 
+### Governed model routing (optional, off by default)
+
+Picks which locally-installed Ollama model drafts each LLM call the SQL
+pipeline makes, instead of using one model for every call in a run. See
+[`47_MODEL_ROUTING_COST_OPTIMIZATION_CONTRACT.md`](../47_MODEL_ROUTING_COST_OPTIMIZATION_CONTRACT.md)
+for the full design and limitations.
+
+**Off by default**, unlike the pure-computation analytics engines: this
+changes which model answers a real question. With `ENABLE_MODEL_ROUTING`
+unset or false, every call in a run uses `OLLAMA_MODEL` (or the caller's
+own `AskRequest.model`), byte-identically to before this feature existed.
+
+Three things worth knowing before turning it on:
+
+1. **A caller's explicit model choice always wins.** When `AskRequest.model`
+   is set, the router is not even constructed.
+2. **With `MODEL_ROUTING_REQUIRE_EVALUATION_EVIDENCE` on (the default),
+   routing does nothing until a model has been evaluated and approved
+   through the AI Governance Center** (`/governance`, an `approved` or
+   `deployed` `model`-typed asset version with recorded
+   `evaluation_results`). That is deliberate — "governed routing" means a
+   human approved the model routing may move to — but it does mean a fresh
+   deployment will see every decision recorded as `no_evaluation_evidence`
+   until that is done. Set it to `false` to route on
+   `config/ollama_models.yaml`'s tier/capability metadata alone.
+3. **Routing is not a security control.** It never validates SQL, checks a
+   permission or resolves a tenant; `agent/sql_validator.py`'s AST allowlist
+   and the RBAC/restricted-column gates are unchanged and still decide
+   everything they decided before.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ENABLE_MODEL_ROUTING` | `false` | Enables routing and the three `/model-routing/*` routes (404 when off). |
+| `MODEL_ROUTING_REQUIRE_EVALUATION_EVIDENCE` | `true` | A model is only chosen over `OLLAMA_MODEL` when a governed, approved evaluation record exists for it. Applies to downgrades too. |
+| `MODEL_ROUTING_UPGRADE_COMPLEXITY_THRESHOLD` | `2` | Complexity score at or above which routing may escalate. |
+| `MODEL_ROUTING_DOWNGRADE_COMPLEXITY_THRESHOLD` | `0` | Score at or below which a low-risk task (`analytical_intent`, `sql_insight`) may use a smaller model. Must be strictly less than the upgrade threshold. |
+| `MODEL_ROUTING_MAX_P95_LATENCY_MS` | `30000.0` | A model this deployment has *measured* as slower than this at p95 is dropped from the escalation set. An unmeasured model is never blocked. |
+| `MODEL_ROUTING_MAX_FALLBACKS` | `2` | Alternative models one decision may try if the chosen one is unavailable. `0` disables fallback. |
+| `MODEL_ROUTING_MAX_LLM_CALLS_PER_REQUEST` | `40` | Per-request routed-call cap. |
+| `MODEL_ROUTING_MAX_COST_UNITS_PER_REQUEST` | `60` | Per-request compute-unit cap (small 1, medium 2, large 5 — ordinal units, never money: every model runs locally). |
+| `MODEL_ROUTING_ESCALATIONS_PER_HOUR` | `500` | Per-tenant hourly cap on escalations (not on questions). |
+| `MODEL_ROUTING_BREAKER_FAILURE_THRESHOLD` | `3` | Consecutive *availability* failures before a model is skipped. A malformed answer is a quality failure and never trips this. |
+| `MODEL_ROUTING_BREAKER_COOLDOWN_SECONDS` | `60.0` | Time before an open breaker allows one probe. |
+| `MODEL_ROUTING_EVIDENCE_TTL_SECONDS` | `300.0` | How long a tenant's governed evaluation evidence is cached on the request path. |
+
+A spent budget never fails a question — it removes the *option* to escalate,
+and the request proceeds on `OLLAMA_MODEL`. Breakers, budget windows and the
+per-route metrics rollup are process-local, so a multi-worker deployment has
+one of each per worker (the same already-disclosed limitation as
+`agent/rate_limit.py` and `observability/metrics.py`).
+
 ## AI analysis layers (optional, all off by default)
 
 See the Prompt 33/34/35 contract documents for design and limitations. Every
