@@ -390,6 +390,36 @@ per-metric and per-tenant, not per-deployment.
 exits `2` when any finding is high-risk. It cannot persist a governed
 review record (no actor/tenant) -- see the contract's §9.
 
+### Executive Decision Center (on by default)
+
+One screen over everything Prompts 33-50 record. See
+[`52_EXECUTIVE_DECISION_CENTER_CONTRACT.md`](../52_EXECUTIVE_DECISION_CENTER_CONTRACT.md)
+for the full design and limitations.
+
+Three things worth knowing:
+
+1. **It aggregates; it never computes a business fact.** Every number
+   comes from a record an earlier capability already wrote, carried with
+   that capability's own truth level.
+2. **Only capabilities that persist tenant-scoped records can appear** --
+   KPI monitoring, schema drift, semantic intelligence, recommendations,
+   governance, workflows and onboarding. The compute-on-demand engines
+   (forecasting, scenarios, optimization, predictive, data quality,
+   lineage, root cause) persist nothing, so they appear only through what
+   a persisted record captured. Every briefing lists what did not
+   contribute, so "nothing to report" is distinguishable from "not read".
+3. **Personalization reorders; it never changes a fact.** Section order
+   and the per-section cap come from the viewer's server-resolved role.
+   Every section is present for every role, and the numbers are identical.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ENABLE_DECISION_CENTER` | `true` | Enables `GET /decision-center/briefing` (404 when off). |
+| `DECISION_CENTER_MAX_CHAINS` | `10` | Decision chains assembled per briefing. |
+
+Authorization is `ADMIN_DASHBOARD_READ` (admin, auditor, manager) -- the
+same tier the tenant-admin read routes use.
+
 ## AI analysis layers (optional, all off by default)
 
 See the Prompt 33/34/35 contract documents for design and limitations. Every

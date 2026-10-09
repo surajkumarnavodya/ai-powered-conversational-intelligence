@@ -66,6 +66,7 @@ _REPRESENTATIVE: dict[str, tuple[str, str]] = {
     "recommendations": ("GET", "/recommendations"),
     "db_onboarding": ("GET", "/onboarding/jobs"),
     "semantic_review": ("GET", "/semantic-catalog/entries"),
+    "decision_center": ("GET", "/decision-center/briefing"),
     "tenant_admin": ("GET", "/tenant-admin/profile"),
     "platform_admin": ("GET", "/platform-admin/tenants"),
 }
@@ -162,6 +163,7 @@ class TestNavigationEndpoint:
                     "db_onboarding",
                     "semantic_review",
                     "ai_governance",
+                    "decision_center",
                     "tenant_admin",
                     "platform_admin",
                 },
@@ -177,6 +179,7 @@ class TestNavigationEndpoint:
                     "db_onboarding",
                     "semantic_review",
                     "ai_governance",
+                    "decision_center",
                     "tenant_admin",
                 },
             ),
@@ -194,7 +197,7 @@ class TestNavigationEndpoint:
                 },
             ),
             ("business_user", {"chat", "knowledge_sources", "media_search", "data_lineage"}),
-            ("read_only_viewer", {"tenant_admin"}),
+            ("read_only_viewer", {"decision_center", "tenant_admin"}),
         ],
     )
     def test_each_persona_gets_exactly_its_screens(self, client, persona, expected):

@@ -98,9 +98,10 @@ class TestPersonas:
 
     def test_read_only_viewer_sees_the_tenant_dashboard_and_no_questions(self):
         """`auditor` holds the dashboard read permission but not `ask`, so it
-        sees the tenant dashboard and nothing it could only use to ask
-        questions."""
-        assert _screens(("auditor",)) == {"tenant_admin"}
+        sees the read-only dashboards -- the tenant dashboard and (Prompt 52)
+        the Executive Decision Center, both gated on ADMIN_DASHBOARD_READ --
+        and nothing it could only use to ask questions."""
+        assert _screens(("auditor",)) == {"decision_center", "tenant_admin"}
 
     def test_base_viewer_role_sees_the_ai_workspace_without_sql_execution(self):
         screens, capabilities = _navigate(("viewer",))

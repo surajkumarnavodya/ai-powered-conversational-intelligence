@@ -54,7 +54,8 @@
     "semanticReview": "Revisión semántica (SME)",
     "recommendations": "Recomendaciones",
     "platformAdmin": "Administración de la plataforma",
-    "tenantAdmin": "Administración del inquilino"
+    "tenantAdmin": "Administración del inquilino",
+    "decisionCenter": "Centro de Decisiones"
   },
   "header": {
     "openHistory": "Abrir historial de chat",
@@ -271,5 +272,37 @@
     "success": "Ahora tienes acceso a esta conversación.",
     "openConversation": "Abrir conversación",
     "genericError": "No se pudo aceptar esta invitación."
+  },
+  "decisionCenter": {
+    "title": "Centro Ejecutivo de Decisiones",
+    "subtitle": "De la señal al resultado, en una vista. Ordenado para la vista {{profile}}; los hechos son los mismos para cada rol.",
+    "businessHealth": "Salud del negocio",
+    "chains": "Cadenas de decisión",
+    "chainsHint": "Señal, evidencia, explicación, recomendación, acción, resultado.",
+    "chainIncomplete": "Esta cadena está incompleta. La etapa marcada como ausente explica por qué.",
+    "stageReached": "alcanzada",
+    "stageMissing": "ausente",
+    "declaredHint": "Un vínculo registrado entre estos dos registros.",
+    "correlatedHint": "Estos registros comparten un sujeto. Eso no prueba que uno derive del otro.",
+    "source": "Fuente",
+    "period": "Período",
+    "confidence": "Confianza",
+    "recordedAt": "Registrado el",
+    "metricDefinition": "Definición de la métrica",
+    "definitionUnresolved": "No se pudo resolver la definición gobernada de esta métrica.",
+    "noMetricDefinition": "Este titular no trata de una métrica gobernada.",
+    "evidence": "Evidencia",
+    "noEvidence": "La capacidad de origen no registró evidencia.",
+    "limitations": "Limitaciones",
+    "lineageAvailable": "Se puede rastrear el linaje de este sujeto.",
+    "lineageUnavailable": "No hay rastreo de linaje disponible para este sujeto.",
+    "notRecorded": "no registrado",
+    "notIncluded": "No incluido en este informe",
+    "notIncludedHint": "Se informa para distinguir 'nada que reportar' de 'no leído'.",
+    "showingOf": "Mostrando {{shown}} de {{total}}",
+    "higherIsBetter": "Más alto es mejor",
+    "lowerIsBetter": "Más bajo es mejor",
+    "loading": "Cargando el informe...",
+    "loadFailed": "No se pudo cargar el informe."
   }
 }

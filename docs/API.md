@@ -496,6 +496,82 @@ still persisted and still appears in the review queue.
 `created`/`updated`/`unchanged` report the storage-level half of duplicate
 suppression: an identical re-run records `unchanged` and writes nothing.
 
+### Executive Decision Center: `GET /decision-center/briefing`
+
+One read model over everything Prompts 33-50 record (Prompt 52,
+[`52_EXECUTIVE_DECISION_CENTER_CONTRACT.md`](../52_EXECUTIVE_DECISION_CENTER_CONTRACT.md)):
+business health, KPI movement, anomalies, risks, recommendations, pending
+decisions, actions and outcomes.
+
+404 unless `ENABLE_DECISION_CENTER=true` (on by default). Requires a
+local account and `ADMIN_DASHBOARD_READ` (admin, auditor, manager).
+**Never queries a monitored database, generates SQL, or calls an LLM** --
+it reads only governed records this tenant already holds, through
+repository functions that are themselves tenant-filtered.
+
+Optional `database_id` narrows the scope; one this tenant may not use
+answers 404, the same anti-enumeration convention every tenant-scoped
+route here uses.
+
+**There is deliberately no `profile` parameter.** Personalization is
+resolved from the viewer's own server-side capabilities -- a viewer
+cannot ask to be shown someone else's view. It reorders sections and caps
+how many headlines each shows; it never changes a value, a truth level,
+or which sections exist. Every section is present for every role.
+
+The response carries `health`, `sections`, `chains`, `metric_definitions`,
+`contributing_sources` and `unavailable_sources`.
+
+Every headline carries its full drill-down inline, so opening one costs
+no second request:
+
+```json
+{
+  "headline_id": "finding:...",
+  "kind": "kpi_movement",
+  "title": "Net Revenue fell 36.0% in 2026-06",
+  "severity": 73, "severity_tier": "high", "status": "open",
+  "truth_level": "ai_inference",
+  "provenance": {
+    "source": "kpi_monitoring", "period": "2026-06",
+    "metric_concept_key": "revenue", "confidence": 0.94,
+    "limitations": ["one value excluded as noise"],
+    "lineage_available": true, "metric_definition_available": true
+  },
+  "evidence": [
+    {"label": "observed", "value": "...", "truth_level": "database_fact"},
+    {"label": "attribution", "value": "...", "truth_level": "ai_inference"}
+  ]
+}
+```
+
+A provenance field the producing capability never recorded reads
+`"not recorded"` rather than being omitted -- an omission reads as
+"nothing to see" instead of "nobody wrote this down".
+
+**Truth levels are carried, never assigned.** A health indicator is
+always `database_fact` (a count); a recommendation or a KPI signal stays
+`ai_inference`; a workflow's status is `database_fact`. An
+`ai_inference` headline can never report a confidence of 1.0.
+
+**No "healthy/amber/red" verdict is returned.** Health indicators carry
+`direction` (which way is better) and nothing more: a threshold turning a
+count into a colour is a business judgment this platform has not been
+given.
+
+`chains` is the acceptance chain -- signal, evidence, explanation,
+recommendation, action, outcome. Each link is `present`, or absent **with
+an `absent_reason`**. `link_type` distinguishes `declared` (a real
+foreign key, e.g. `workflows.recommendation_id`) from `correlated` (two
+records that merely share a subject, which is *not* evidence that one
+followed from the other). **Nothing in this platform links a signal to a
+recommendation**, so that stage is always at best `correlated`, and a
+chain stopping there says so.
+
+`unavailable_sources` lists capabilities that did not contribute and why,
+including the compute-on-demand engines that persist no records of their
+own.
+
 ### `GET /schema/tables`
 
 Live table/column listing (metadata-only, no data queries) via the same

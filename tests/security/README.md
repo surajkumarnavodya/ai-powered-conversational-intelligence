@@ -203,6 +203,26 @@ anywhere else at the time it was written:
   that an identical re-run records `unchanged` and a restatement versions
   the same row rather than adding a second.
 
+- **`test_decision_center_personalization_never_changes_facts.py`**
+  (Prompt 52, `52_EXECUTIVE_DECISION_CENTER_CONTRACT.md`) -- the
+  Executive Decision Center presents governed facts; it may reorder them
+  per role but never change them. Cross-cutting by nature. Five halves.
+  (1) **Structurally cannot produce data**, asserted by parsing the real
+  source: no module in `decision_center/` imports the SQL validator, the
+  execution path, a database connection, SQLAlchemy or an LLM client, and
+  none contains a `SELECT ... FROM` literal. (2) **Personalization cannot
+  change a fact**: three profiles over identical input produce
+  byte-identical headline objects, identical health numbers and identical
+  chains -- and `personalize` is asserted to return *the same objects*,
+  not rebuilt ones, since a rebuilt headline is a place a value could
+  change. No profile can hide a section. (3) **Never promotes a truth
+  level**, and a complete chain stays an inference even when every link
+  is declared. (4) **A correlated link is never presented as declared** --
+  the difference between "these concern the same metric" and "this
+  followed from that". (5) **Tenant isolation** against a real identity
+  database, plus the structural guarantee that `MetricDefinitionOut`
+  cannot carry a metric's `approved_expression`.
+
 Before adding a new file here, check whether the scenario already has
 coverage under its own module's `tests/test_<module>.py` first — this
 directory is for genuinely cross-cutting adversarial scenarios or brand

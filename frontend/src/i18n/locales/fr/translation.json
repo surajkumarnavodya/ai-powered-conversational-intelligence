@@ -54,7 +54,8 @@
     "semanticReview": "Revue sémantique (expert)",
     "recommendations": "Recommandations",
     "platformAdmin": "Administration de la plateforme",
-    "tenantAdmin": "Administration du client"
+    "tenantAdmin": "Administration du client",
+    "decisionCenter": "Centre de Décision"
   },
   "header": {
     "openHistory": "Ouvrir l'historique du chat",
@@ -271,5 +272,37 @@
     "success": "Vous avez maintenant accès à cette conversation.",
     "openConversation": "Ouvrir la conversation",
     "genericError": "Cette invitation n'a pas pu être acceptée."
+  },
+  "decisionCenter": {
+    "title": "Centre de Décision Exécutif",
+    "subtitle": "Du signal au résultat, en une vue. Ordonné pour la vue {{profile}} ; les faits sont les mêmes pour chaque rôle.",
+    "businessHealth": "Santé de l'activité",
+    "chains": "Chaînes de décision",
+    "chainsHint": "Signal, preuve, explication, recommandation, action, résultat.",
+    "chainIncomplete": "Cette chaîne est incomplète. L'étape marquée absente en explique la raison.",
+    "stageReached": "atteinte",
+    "stageMissing": "absente",
+    "declaredHint": "Un lien enregistré entre ces deux enregistrements.",
+    "correlatedHint": "Ces enregistrements partagent un sujet. Ce n'est pas une preuve que l'un découle de l'autre.",
+    "source": "Source",
+    "period": "Période",
+    "confidence": "Confiance",
+    "recordedAt": "Enregistré le",
+    "metricDefinition": "Définition de la métrique",
+    "definitionUnresolved": "La définition gouvernée de cette métrique n'a pas pu être résolue.",
+    "noMetricDefinition": "Ce titre ne concerne pas une métrique gouvernée.",
+    "evidence": "Preuves",
+    "noEvidence": "La capacité d'origine n'a enregistré aucune preuve.",
+    "limitations": "Limites",
+    "lineageAvailable": "Le lignage peut être tracé pour ce sujet.",
+    "lineageUnavailable": "Aucun tracé de lignage n'est disponible pour ce sujet.",
+    "notRecorded": "non enregistré",
+    "notIncluded": "Non inclus dans ce rapport",
+    "notIncludedHint": "Signalé afin de distinguer « rien à signaler » de « non consulté ».",
+    "showingOf": "Affichage de {{shown}} sur {{total}}",
+    "higherIsBetter": "Plus élevé est mieux",
+    "lowerIsBetter": "Plus bas est mieux",
+    "loading": "Chargement du rapport...",
+    "loadFailed": "Le rapport n'a pas pu être chargé."
   }
 }

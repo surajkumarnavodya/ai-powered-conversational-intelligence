@@ -2368,6 +2368,20 @@ class Settings(BaseSettings):
     kpi_monitor_max_points_per_metric: int = Field(default=500, gt=0)
     kpi_monitor_max_findings_per_scan: int = Field(default=200, gt=0)
 
+    # --- Prompt 52 (52_EXECUTIVE_DECISION_CENTER_CONTRACT.md):
+    # decision_center/'s own flag. The Executive Decision Center is a pure
+    # read model over records Prompts 33-50 already wrote -- it never
+    # queries a monitored database, generates SQL or calls an LLM, so it
+    # is safe on by default, the same posture enable_data_quality_engine/
+    # enable_lineage_platform/enable_kpi_monitoring already take. Gates
+    # api/decision_center.py's one route (404 when off).
+    enable_decision_center: bool = True
+    # Most decision chains one briefing assembles (signal -> evidence ->
+    # explanation -> recommendation -> action -> outcome). Chains are
+    # expensive to *read*, not to compute: an executive works the top of
+    # the list, and fifty chains is a wall rather than a summary.
+    decision_center_max_chains: int = Field(default=10, gt=0)
+
     # Prompt 19 (19_QUERY_STORE_PERFORMANCE_CONTRACT.md): db.query_store's
     # own tunables -- a no-op for every DB_TYPE other than "mssql"
     # regardless of these values (see that module's own docstring).

@@ -58,7 +58,8 @@
     "menu": "AI Workspace",
     "groupWorkspace": "Workspace",
     "groupReview": "Review",
-    "groupAdministration": "Administration"
+    "groupAdministration": "Administration",
+    "decisionCenter": "Decision Center"
   },
   "header": {
     "openHistory": "Open chat history",
@@ -486,5 +487,37 @@
     "success": "You now have access to this conversation.",
     "openConversation": "Open conversation",
     "genericError": "This invitation could not be accepted."
+  },
+  "decisionCenter": {
+    "title": "Executive Decision Center",
+    "subtitle": "Signal to outcome, in one view. Ordered for the {{profile}} view; the facts are the same for every role.",
+    "businessHealth": "Business health",
+    "chains": "Decision chains",
+    "chainsHint": "Signal, evidence, explanation, recommendation, action, outcome.",
+    "chainIncomplete": "This chain is incomplete. The stage marked missing explains why.",
+    "stageReached": "reached",
+    "stageMissing": "missing",
+    "declaredHint": "A recorded link between these two records.",
+    "correlatedHint": "These records share a subject. That is not evidence that one followed from the other.",
+    "source": "Source",
+    "period": "Period",
+    "confidence": "Confidence",
+    "recordedAt": "Recorded at",
+    "metricDefinition": "Metric definition",
+    "definitionUnresolved": "The governed definition could not be resolved for this metric.",
+    "noMetricDefinition": "This headline is not about a governed metric.",
+    "evidence": "Evidence",
+    "noEvidence": "The producing capability recorded no evidence.",
+    "limitations": "Limitations",
+    "lineageAvailable": "Lineage can be traced for this subject.",
+    "lineageUnavailable": "No lineage trace is available for this subject.",
+    "notRecorded": "not recorded",
+    "notIncluded": "Not included in this briefing",
+    "notIncludedHint": "Reported so that nothing to report is distinguishable from not read.",
+    "showingOf": "Showing {{shown}} of {{total}}",
+    "higherIsBetter": "Higher is better",
+    "lowerIsBetter": "Lower is better",
+    "loading": "Loading the briefing...",
+    "loadFailed": "The briefing could not be loaded."
   }
 }

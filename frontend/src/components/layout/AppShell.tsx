@@ -4,6 +4,7 @@ import {
   ClipboardCheck,
   ImageIcon,
   Lightbulb,
+  Gauge,
   MessageSquare,
   Plug,
   ShieldAlert,
@@ -30,6 +31,7 @@ const SIDEBAR_ID = 'app-sidebar'
  * (`GET /navigation`). A screen with no entry here is simply not drawn. */
 const SCREEN_PRESENTATION: Record<string, { icon: typeof MessageSquare; labelKey: string }> = {
   chat: { icon: MessageSquare, labelKey: 'nav.chat' },
+  decision_center: { icon: Gauge, labelKey: 'nav.decisionCenter' },
   knowledge_sources: { icon: BookOpen, labelKey: 'nav.knowledgeSources' },
   media_search: { icon: ImageIcon, labelKey: 'nav.mediaSearch' },
   data_lineage: { icon: Workflow, labelKey: 'nav.dataLineage' },

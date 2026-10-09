@@ -54,7 +54,8 @@
     "semanticReview": "विषय-तज्ज्ञ सिमेंटिक पुनरावलोकन",
     "recommendations": "शिफारसी",
     "platformAdmin": "प्लॅटफॉर्म प्रशासन",
-    "tenantAdmin": "टेनंट प्रशासन"
+    "tenantAdmin": "टेनंट प्रशासन",
+    "decisionCenter": "निर्णय केंद्र"
   },
   "header": {
     "openHistory": "चॅट इतिहास उघडा",
@@ -271,5 +272,37 @@
     "success": "आता तुम्हाला या संभाषणात प्रवेश आहे.",
     "openConversation": "संभाषण उघडा",
     "genericError": "हे आमंत्रण स्वीकारता आले नाही."
+  },
+  "decisionCenter": {
+    "title": "कार्यकारी निर्णय केंद्र",
+    "subtitle": "संकेतापासून परिणामापर्यंत, एका दृश्यात। {{profile}} दृश्यासाठी क्रमबद्ध; तथ्ये प्रत्येक भूमिकेसाठी समान आहेत।",
+    "businessHealth": "व्यवसाय आरोग्य",
+    "chains": "निर्णय साखळ्या",
+    "chainsHint": "संकेत, पुरावा, स्पष्टीकरण, शिफारस, कृती, परिणाम।",
+    "chainIncomplete": "ही साखळी अपूर्ण आहे। गहाळ टप्पा कारण सांगतो।",
+    "stageReached": "पोहोचले",
+    "stageMissing": "गहाळ",
+    "declaredHint": "या दोन नोंदींमधील नोंदवलेला दुवा।",
+    "correlatedHint": "या नोंदींचा विषय समान आहे। एक दुसऱ्यातून आले याचा हा पुरावा नाही।",
+    "source": "स्रोत",
+    "period": "कालावधी",
+    "confidence": "विश्वास",
+    "recordedAt": "नोंदवले",
+    "metricDefinition": "मेट्रिक व्याख्या",
+    "definitionUnresolved": "या मेट्रिकची शासित व्याख्या सोडवता आली नाही।",
+    "noMetricDefinition": "हे शीर्षक शासित मेट्रिकबद्दल नाही।",
+    "evidence": "पुरावा",
+    "noEvidence": "उत्पादक क्षमतेने पुरावा नोंदवला नाही।",
+    "limitations": "मर्यादा",
+    "lineageAvailable": "या विषयाचा वंश शोधता येईल।",
+    "lineageUnavailable": "या विषयासाठी वंश उपलब्ध नाही।",
+    "notRecorded": "नोंदवलेले नाही",
+    "notIncluded": "या सारांशात समाविष्ट नाही",
+    "notIncludedHint": "'काही नाही' आणि 'वाचले नाही' यात फरक कळावा म्हणून।",
+    "showingOf": "{{total}} पैकी {{shown}} दाखवत आहे",
+    "higherIsBetter": "जास्त चांगले",
+    "lowerIsBetter": "कमी चांगले",
+    "loading": "सारांश लोड होत आहे...",
+    "loadFailed": "सारांश लोड होऊ शकला नाही।"
   }
 }

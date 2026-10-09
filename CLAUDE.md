@@ -5078,6 +5078,100 @@ for the full inspection findings, every module's design, the 110-test
 testing summary, the three real bugs the tests caught, and the
 security/tenant-isolation/performance review.
 
+### Executive Decision Center (Prompt 52)
+
+`decision_center/` (new top-level package) is one read model over
+everything Prompts 33-50 already record: business health, KPI movement,
+anomalies, risks, recommendations, pending decisions, actions and
+outcomes -- each headline drillable to its evidence, metric definition,
+period, source, confidence and lineage. `GET /decision-center/briefing`
+plus `frontend/src/pages/DecisionCenter.tsx`.
+
+**It aggregates; it never computes a business fact.** Every number comes
+from a record an earlier capability wrote, carried with that
+capability's own truth level. Its own contribution is ordering, grouping
+and linking -- itself an `AI_INFERENCE` judgment, labelled as one on
+`DecisionChain`.
+
+**Prompts 36 and 51 do not exist** -- "33-51" is 17 real contracts.
+
+**Invariants that must not regress:**
+- **It structurally cannot produce data.** No module in
+  `decision_center/` imports `agent.sql_validator`, `agent.graph`,
+  `agent.nodes`, `agent.llm_client`, `db.execution`, `db.connection`,
+  `db.schema_introspection`, `sqlalchemy`, `identity.models` or
+  `identity.db`; none imports an LLM client; **none contains a
+  `SELECT ... FROM` literal** -- all asserted by parsing the real source.
+  The API route performs the tenant-scoped identity reads and hands rows
+  in.
+- **Personalization reorders and caps; it can do nothing else.**
+  `personalize` never constructs a `Headline` or `HealthIndicator` -- it
+  re-sequences the ones it was given, and is asserted to return *the
+  same objects*. Health is computed from the complete sets **before** any
+  per-role cap, so a display limit cannot change a count. **Every section
+  is present for every role**, including empty ones: hiding one would let
+  a briefing silently omit an open risk.
+- **`Provenance` is mandatory on every `Headline`**, so a headline
+  without it is unrepresentable. A field the producing capability never
+  recorded reads `"not recorded"` rather than being omitted.
+- **`LinkType.DECLARED` and `LinkType.CORRELATED` are never merged** --
+  a real foreign key versus two records sharing a subject, the same
+  discipline `db/relationship_inference.py` applies to declared versus
+  inferred foreign keys.
+- **An `AI_INFERENCE` headline may not report a confidence of 1.0.**
+  Nothing inferred is certain. A stored 1.0 is clamped rather than
+  failing the briefing, so one malformed row cannot take the page down.
+- **No "healthy/amber/red" verdict is rendered.** `HealthIndicator` is
+  always `DATABASE_FACT` and carries `direction` only -- a threshold
+  turning a count into a colour is a business judgment nobody has given
+  this platform.
+- **An absent chain stage must state why** (`ChainLink`'s validator):
+  a chain that simply stops is indistinguishable from one nobody looked
+  at.
+- **One unavailable source degrades rather than failing the briefing** --
+  each repository read is wrapped, the exception *type* is logged (never
+  its message, which can carry driver text), and the reason is reported
+  on `unavailable_sources`.
+- **`MetricDefinitionOut` omits `approved_expression`** -- a metric's
+  authoritative SQL is read through `/semantic-catalog` by someone with
+  the catalog permission, not shown as briefing content.
+- **There is no `profile` request parameter**: personalization comes
+  from the viewer's own server-resolved capabilities.
+
+**The one real break in the acceptance chain, disclosed rather than
+papered over:** `workflows.recommendation_id` is a real foreign key, so
+recommendation -> action -> outcome is `DECLARED` end to end, and
+signal -> evidence -> explanation is complete inside a single finding
+record. But **nothing links a signal to a recommendation** -- the
+recommendation engine builds from query results, not from findings. A
+signal and a recommendation about the same subject are therefore offered
+as `CORRELATED` (same database *and*, when the signal names a governed
+metric, that metric appearing in the recommendation's text -- a bare
+same-database rule would correlate everything with everything), and a
+chain stopping there names the structural reason. Adding a
+`source_finding_id` column was considered and rejected: nothing would
+populate it, so it would advertise a capability that does not exist.
+
+**Known, disclosed limitations:** only capabilities that persist
+tenant-scoped records can appear (KPI monitoring, schema drift, semantic
+intelligence, recommendations, governance, workflows, onboarding); the
+compute-on-demand engines (forecasting, scenarios, optimization,
+predictive, data quality, lineage, root cause) persist nothing and reach
+a briefing only through what a persisted record captured -- every
+briefing lists them as not contributing, so "nothing to report" stays
+distinguishable from "not read". Severity is carried, never recomputed,
+so sections rank on each capability's own scale. The screen is read-only
+and links to the surfaces that own each lifecycle. Accessibility is
+asserted at component level (roles, `aria-expanded`/`aria-controls`,
+text-not-colour, `role="alert"`), not by an automated axe audit --
+this project has no browser-level E2E harness. Performance is reasoned,
+not load-measured (Docker is unavailable here).
+
+**Read [`52_EXECUTIVE_DECISION_CENTER_CONTRACT.md`](52_EXECUTIVE_DECISION_CENTER_CONTRACT.md)**
+for the full inspection findings, the persisted-versus-computed split
+that decided the design, the 98-test testing summary, and the
+security/tenant-isolation/accessibility review.
+
 ## How to run
 
 See `README.md` for full setup. Short version:

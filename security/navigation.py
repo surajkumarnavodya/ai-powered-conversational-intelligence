@@ -99,6 +99,16 @@ NAV_ITEMS: tuple[NavItem, ...] = (
             IdentityPermission.RECOMMENDATION_REVIEW, IdentityPermission.RECOMMENDATION_MANAGE
         ),
     ),
+    # Prompt 52: the Executive Decision Center. Gated on the same
+    # dashboard-read permission its route enforces (admin/auditor/
+    # manager) -- hiding the tab is UX only; `api/decision_center.py`
+    # re-checks on every request regardless.
+    NavItem(
+        id="decision_center",
+        path="/decision-center",
+        group="workspace",
+        identity_any=_identity(IdentityPermission.ADMIN_DASHBOARD_READ),
+    ),
     NavItem(
         id="db_onboarding",
         path="/db-onboarding",

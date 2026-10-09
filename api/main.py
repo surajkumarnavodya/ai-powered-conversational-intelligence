@@ -77,6 +77,7 @@ from api.bi_integration import router as bi_integration_router
 from api.chat_history import router as chat_history_router
 from api.chat_persistence import persist_ask_turn, persist_execute_result
 from api.data_quality import router as data_quality_router
+from api.decision_center import router as decision_center_router
 from api.documents import router as documents_router
 from api.eval_platform import router as eval_platform_router
 from api.generation import router as generation_router
@@ -411,6 +412,7 @@ app.include_router(scenarios_router)
 app.include_router(optimization_router)
 app.include_router(predictive_router)
 app.include_router(data_quality_router)
+app.include_router(decision_center_router)
 app.include_router(kpi_monitoring_router)
 app.include_router(lineage_router)
 app.include_router(schema_drift_router)

@@ -12,6 +12,7 @@ import { AIGovernance } from '@/pages/AIGovernance'
 import { AuthCallback } from '@/pages/AuthCallback'
 import { Chat } from '@/pages/Chat'
 import { DataLineage } from '@/pages/DataLineage'
+import DecisionCenter from '@/pages/DecisionCenter'
 import { DatabaseOnboarding } from '@/pages/DatabaseOnboarding'
 import { Recommendations } from '@/pages/Recommendations'
 import { KnowledgeSources } from '@/pages/KnowledgeSources'
@@ -86,6 +87,14 @@ export function App() {
             element={
               <RequireNavItem screen="media_search">
                 <MediaSearch />
+              </RequireNavItem>
+            }
+          />
+          <Route
+            path="/decision-center"
+            element={
+              <RequireNavItem screen="decision_center">
+                <DecisionCenter />
               </RequireNavItem>
             }
           />
