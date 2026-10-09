@@ -179,6 +179,30 @@ anywhere else at the time it was written:
   breaker (if it did, one adversarial question could disable a healthy
   model for every other caller).
 
+- **`test_kpi_monitoring_never_asserts_cause.py`** (Prompt 50,
+  `50_PROACTIVE_AI_ANALYST_CONTRACT.md`) -- proactive monitoring may
+  report that a governed number moved; it may never assert *why*, reach
+  an unapproved metric, or produce a row of its own. Cross-cutting by
+  nature. Four halves. (1) **Structurally cannot produce data**, asserted
+  by parsing the real source: no module in `kpi_monitoring/` imports the
+  SQL validator, the execution path, a database connection, SQLAlchemy or
+  an LLM client, and none contains a `SELECT ... FROM` string literal --
+  which is what makes "monitoring cannot bypass the deterministic SQL
+  controls" structural rather than conventional. (2) **Never asserts a
+  cause**: seven causal phrasings are absent from the finding title, the
+  detail, the rendered report and every user-facing string in the package
+  (docstrings excluded deliberately -- they discuss causation to explain
+  why the code refuses to); the title never names an attribution at all,
+  since a reviewer scanning a list would read one as established. (3)
+  **Approved metrics only**, with a restricted-dimension gate requiring
+  `VIEW_RESTRICTED_COLUMNS`, and a refusal that never echoes a metric's
+  own expression. (4) **Tenant isolation and duplicate suppression**
+  against a real identity database: one tenant's findings never appear in
+  another's queue, one tenant's published metric never approves another's
+  policy, and suppression is per-tenant -- plus the storage-level half,
+  that an identical re-run records `unchanged` and a restatement versions
+  the same row rather than adding a second.
+
 Before adding a new file here, check whether the scenario already has
 coverage under its own module's `tests/test_<module>.py` first — this
 directory is for genuinely cross-cutting adversarial scenarios or brand

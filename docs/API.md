@@ -420,6 +420,82 @@ It is empty when routing is off (the default), when the caller pinned
 `AskRequest.model`, or when the run never reached an LLM call — in all of
 those cases the single model named by `model` served every call.
 
+### Proactive KPI monitoring: `/kpi-monitoring/*`
+
+Two routes over the KPI monitor (Prompt 50,
+[`50_PROACTIVE_AI_ANALYST_CONTRACT.md`](../50_PROACTIVE_AI_ANALYST_CONTRACT.md)),
+which watches governed catalog metrics for meaningful movement.
+
+Both answer **404** unless `ENABLE_KPI_MONITORING=true` (on by default).
+**Neither queries a monitored database and neither calls an LLM** -- the
+period series and dimension breakdowns arrive in the request body,
+already fetched through `POST /execute`.
+
+| Route | Requires | What it does |
+|---|---|---|
+| `POST /kpi-monitoring/scan` | local account + catalog review | Runs one monitoring pass; persists findings into the shared review queue unless `persist=false`. |
+| `GET /kpi-monitoring/findings` | local account + catalog review | This tenant's KPI findings, most impactful first. |
+
+**Deciding a finding is not re-implemented here.** Accept/dismiss/rollback
+are `/semantic-intelligence/findings/...`'s existing routes over the same
+rows -- a KPI finding is stored in the same governed queue the catalog
+detectors (Prompt 35) and schema drift (Prompt 43) already use.
+
+`POST /kpi-monitoring/scan` takes `database_id`, `policies`, `series`, and
+optionally `calendar`, `quiet_periods`, `preferences` and `persist`:
+
+```json
+{
+  "database_id": "default",
+  "policies": [
+    {"policy_id": "p-revenue", "metric_concept_key": "revenue",
+     "comparison": "previous_period", "min_change_percent": 10.0,
+     "lower_threshold": null, "dimension_columns": ["region"]}
+  ],
+  "series": [
+    {"policy_id": "p-revenue",
+     "points": [["2026-05", 1000.0], ["2026-06", 640.0]],
+     "value_column": "revenue",
+     "current_breakdown": {"columns": ["region", "revenue"],
+                           "rows": [["East", 160.0]]},
+     "baseline_breakdown": {"columns": ["region", "revenue"],
+                            "rows": [["East", 500.0]]}}
+  ],
+  "quiet_periods": [{"name": "freeze", "periods": ["2026-07"]}],
+  "preferences": [{"user_id": "ops", "min_risk_tier": "medium"}]
+}
+```
+
+Each returned change carries its baseline (with a human-readable
+`baseline_label`), the change, which detection methods fired, its rank and
+`rank_reasons`, and an `evidence` object holding the affected dimensions,
+`confidence` and `limitations`.
+
+**`contributors` and `confidence` exist only when
+`has_sufficient_evidence` is true**, and a contributor is a contribution
+to an arithmetic total, **never a demonstrated cause**. When evidence is
+insufficient the contributor list is empty, confidence is null, and
+`limitations` says why.
+
+**`truth_level` is always `ai_inference`** on a change and its evidence:
+the numbers cited are observed arithmetic over the supplied rows, but the
+judgment that a movement is *meaningful* is this platform's inference.
+
+`comparison` is one of `previous_period`, `same_period_last_year`,
+`trailing_average`. `kind` is one of `kpi_drop`, `kpi_spike`,
+`kpi_threshold_breach`, `kpi_trend_break`.
+
+`alert_bundles` describes, per recipient, which findings would be alerted
+and why the rest were not -- `quiet_period`, `non_business_period`,
+`below_user_severity`, `metric_muted_by_user`,
+`duplicate_of_open_finding`. Reasons accumulate rather than
+short-circuiting. **This platform has no delivery channel; nothing is
+actually sent.** Suppression governs alerting only -- every finding is
+still persisted and still appears in the review queue.
+
+`created`/`updated`/`unchanged` report the storage-level half of duplicate
+suppression: an identical re-run records `unchanged` and writes nothing.
+
 ### `GET /schema/tables`
 
 Live table/column listing (metadata-only, no data queries) via the same

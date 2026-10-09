@@ -4975,6 +4975,109 @@ frontend surface exists for this platform in this pass.
 for the full inspection findings, every new module's design, the testing
 summary, and the security/tenant-isolation/performance review.
 
+### Proactive KPI monitoring (Prompt 50)
+
+`kpi_monitoring/` (new top-level package, a peer of `analytics/`/
+`data_quality/`/`lineage/`/`schema_drift/`/`optimization/`/
+`model_routing/`) watches **governed** business metrics for meaningful
+movement, investigates what moved, suppresses repeats and noise, and
+ranks what is left by impact.
+
+Almost entirely composition of things that already existed. Detection is
+`analytics.anomaly.detect_anomalies` (Prompt 14) verbatim; attribution is
+`analytics.root_cause.investigate_root_cause` (Prompt 14) verbatim;
+persistence, content versioning, duplicate suppression and the
+accept/dismiss/rollback lifecycle are Prompt 35's
+`identity.models.SemanticFinding` + `identity.repositories
+.semantic_intelligence` **unmodified** -- monitoring is the third
+consumer of that one review queue (after the catalog detectors and
+Prompt 43's schema drift), not a third place to look for open items.
+Ranking is `semantic.intelligence.risk.score`, extended additively.
+
+What genuinely did not exist, and is new here: monitoring policies over
+approved metrics, business calendars, quiet periods, per-recipient alert
+preferences, and the orchestration tying it together.
+
+**Invariants that must not regress:**
+- **Only a *published* catalog metric can be monitored.** A policy naming
+  a draft metric, a dimension/entity, or an unknown key is refused --
+  with three distinguishable codes, because they need different fixes.
+  A KPI alert asserts that a governed business number moved, so the
+  number has to be a governed business number first (Prompt 09/10's
+  approval workflow decides that; monitoring reuses the decision).
+- **Monitoring structurally cannot produce a row.** No module in
+  `kpi_monitoring/` imports `agent.sql_validator`, `agent.graph`,
+  `agent.nodes`, `agent.llm_client`, `db.execution`, `db.connection`,
+  `db.schema_introspection`, `sqlalchemy`, `identity.models` or
+  `identity.db`; none imports an LLM client; and none contains a
+  `SELECT ... FROM` string literal -- all asserted by parsing the real
+  source in `tests/security/test_kpi_monitoring_never_asserts_cause.py`.
+  Series and breakdowns arrive from the caller, already fetched through
+  the governed path. That is what makes "cannot bypass the deterministic
+  SQL controls" structural rather than conventional.
+- **It never asserts a cause.** A contributor is a contribution to an
+  arithmetic total. Seven causal phrasings are asserted absent from the
+  finding title, the detail, the report and every user-facing string in
+  the package. The **title never names an attribution at all** -- a
+  reviewer scanning a list would read one there as established long
+  before opening the evidence.
+- **No attribution without evidence, enforced by the type.**
+  `ChangeEvidence`'s model validator refuses contributors or confidence
+  when `has_sufficient_evidence` is `False`, and refuses insufficient
+  evidence carrying no limitation. The wrong combination is
+  unrepresentable, not merely discouraged.
+- **Suppression governs alerting, never evidence.** Every finding is
+  persisted and appears in the review queue regardless; suppression
+  decides only whether a human is told *now*. Reasons accumulate rather
+  than short-circuiting, because "why didn't I get paged" needs the
+  whole answer.
+- **Duplicate suppression has two independent halves, and both are
+  needed.** Storage-level: the stable `finding_key` (policy + metric +
+  **period**) plus a content hash, so an unchanged re-run records
+  `unchanged` and a restatement versions the *same* row rather than
+  adding a second. Alert-level: a finding already open and undecided is
+  not re-paged. Keying on policy+metric alone would collapse every
+  period into one row and destroy the history.
+- **A business calendar does two separate things on purpose**: excludes
+  non-business periods from the **baseline** (so a holiday never poisons
+  a trailing average and manufactures a finding in the *next* period)
+  *and* refuses to alert on one. Doing only one leaves a real hole
+  either way.
+- **Period labels are opaque strings** -- never parsed as dates, the same
+  boundary `analytics.engine.detect_missing_periods` already draws.
+- **Tenant isolation**: findings, approval and duplicate suppression are
+  all per tenant, proven against a real identity database.
+- `semantic.intelligence.risk.score` gained an optional `impact_bonus`
+  defaulting to `0`, so every pre-existing caller scores identically.
+  Kind alone ranks a catalog conflict correctly but not a KPI, where two
+  drops of the same kind differ by orders of magnitude.
+
+**Known, disclosed limitations:** **no delivery channel exists** --
+nothing is emailed, posted or messaged; a run returns a typed
+`AlertBundle` describing what *would* be sent. No scheduler exists
+either; `scripts/run_kpi_monitor.py` is the cron/Task Scheduler entry
+point (exit `2` on a high-risk finding), and it cannot persist a governed
+record because it has no actor or tenant. **The caller supplies the
+series** -- monitoring does not fetch a metric from its own
+`approved_expression`, which would mean generating SQL it deliberately
+cannot generate. Attribution is single-level (`analytics.causal`'s
+hierarchical engine is not wired in -- a policy cannot yet express a
+dimension hierarchy). No frontend.
+
+**A latent bug found in the shared storage and reported, not fixed:**
+`identity.models.SemanticFinding.kind` is `String(32)`, but Prompt 43
+already stores `schema_drift_column_nullability_changed` (39 chars) and
+`schema_drift_unique_constraint_changed` (38). SQLite ignores a VARCHAR
+length so every test passes; PostgreSQL -- the real identity database --
+would reject those writes. Prompt 50's own four kinds all fit and
+`kpi_monitoring.findings._assert_kinds_fit` fails at import if a future
+edit breaks that, so this feature cannot reintroduce the problem.
+
+**Read [`50_PROACTIVE_AI_ANALYST_CONTRACT.md`](50_PROACTIVE_AI_ANALYST_CONTRACT.md)**
+for the full inspection findings, every module's design, the 110-test
+testing summary, the three real bugs the tests caught, and the
+security/tenant-isolation/performance review.
+
 ## How to run
 
 See `README.md` for full setup. Short version:

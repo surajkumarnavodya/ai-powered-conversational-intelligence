@@ -2344,6 +2344,30 @@ class Settings(BaseSettings):
     # per LLM call would be pure waste.
     model_routing_evidence_ttl_seconds: float = Field(default=300.0, gt=0.0)
 
+    # --- Prompt 50 (50_PROACTIVE_AI_ANALYST_CONTRACT.md): kpi_monitoring/'s
+    # own tunables -- proactive monitoring of governed catalog metrics.
+    #
+    # Default ON, matching enable_data_quality_engine/
+    # enable_lineage_platform/enable_schema_drift_detection: this is a
+    # pure, deterministic, zero-cost-until-triggered computation over
+    # data the caller already fetched. It never queries a database,
+    # never calls an LLM, and does nothing at all until a monitoring
+    # policy is configured and a scan is actually requested.
+    enable_kpi_monitoring: bool = True
+    # The default "meaningful change" floor, in percent, for a policy
+    # that does not set its own MonitoringPolicy.min_change_percent.
+    # The primary noise control and the first thing an operator tunes.
+    kpi_monitor_min_change_percent: float = Field(default=10.0, ge=0.0)
+    # Payload/work bounds, mirroring data_quality_max_tables'/
+    # lineage_max_queries_per_request's identical "cap regardless of
+    # what a caller sends" philosophy. A policy beyond the policy cap is
+    # reported as a `too_many_policies` violation, never silently
+    # dropped; findings beyond the findings cap are dropped
+    # lowest-ranked-first, with `MonitorResult.truncated` set.
+    kpi_monitor_max_policies_per_scan: int = Field(default=50, gt=0)
+    kpi_monitor_max_points_per_metric: int = Field(default=500, gt=0)
+    kpi_monitor_max_findings_per_scan: int = Field(default=200, gt=0)
+
     # Prompt 19 (19_QUERY_STORE_PERFORMANCE_CONTRACT.md): db.query_store's
     # own tunables -- a no-op for every DB_TYPE other than "mssql"
     # regardless of these values (see that module's own docstring).

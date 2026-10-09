@@ -82,6 +82,7 @@ from api.eval_platform import router as eval_platform_router
 from api.generation import router as generation_router
 from api.governance import router as governance_router
 from api.identity_auth import router as identity_auth_router
+from api.kpi_monitoring import router as kpi_monitoring_router
 from api.lineage import router as lineage_router
 from api.media import router as media_router
 from api.media_library import router as media_library_router
@@ -410,6 +411,7 @@ app.include_router(scenarios_router)
 app.include_router(optimization_router)
 app.include_router(predictive_router)
 app.include_router(data_quality_router)
+app.include_router(kpi_monitoring_router)
 app.include_router(lineage_router)
 app.include_router(schema_drift_router)
 app.include_router(governance_router)

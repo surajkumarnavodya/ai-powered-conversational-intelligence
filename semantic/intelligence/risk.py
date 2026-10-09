@@ -10,6 +10,9 @@ reason, so an SME can see why an item sits where it does.
     + published subjects  15 per published concept, at most two
     + dependents          5 per dependent, at most five
     + inference gap       (1 - confidence) * 20, rounded
+    + impact (optional)   a caller-supplied, already-capped term for a kind
+                          whose severity varies continuously (a KPI move's
+                          own size); 0 for every other kind
 
 Tiers: high at 70 and above, medium at 40 and above, otherwise low.
 """
@@ -51,18 +54,46 @@ _BASE: dict[str, int] = {
     "schema_drift_table_added": 5,
     "schema_drift_view_added": 5,
     "schema_drift_column_added": 5,
+    # Prompt 50 (50_PROACTIVE_AI_ANALYST_CONTRACT.md):
+    # kpi_monitoring.findings' own kinds. A monitoring policy may only
+    # target a *published* catalog metric, so every one of these is a
+    # movement in confirmed business truth -- which is why their bases
+    # sit near a catalog conflict's rather than a synonym candidate's.
+    # A threshold breach outranks an ordinary move because an operator
+    # explicitly declared that level significant; a drop outranks a
+    # spike because a KPI falling is more often the thing someone needs
+    # to act on, while a spike is as often a good surprise or a data
+    # artifact; a trend break is the weakest, since it fires for a point
+    # that is statistically unusual without clearing the operator's own
+    # threshold. Move *size* is not in this table -- it varies
+    # continuously and arrives through `impact_bonus` below.
+    "kpi_threshold_breach": 45,
+    "kpi_drop": 40,
+    "kpi_spike": 35,
+    "kpi_trend_break": 20,
 }
 HIGH_THRESHOLD = 70
 MEDIUM_THRESHOLD = 40
 
 
-def score(finding: Finding, dependents: int = 0) -> Finding:
+def score(finding: Finding, dependents: int = 0, impact_bonus: int = 0) -> Finding:
     """Returns `finding` with `risk_score`, `risk_tier` and `reasons` set. The
-    input is not mutated."""
+    input is not mutated.
+
+    `impact_bonus` (Prompt 50) is an optional, already-bounded term for a
+    kind whose severity varies continuously rather than being fixed by the
+    kind alone -- a KPI movement, where two findings of the same kind can
+    differ by orders of magnitude and the larger one must rank first. It
+    defaults to 0, so every caller that predates it scores identically.
+    Callers that use it are responsible for capping it (see
+    `kpi_monitoring.findings._impact_bonus`); the total is clamped to 100
+    either way.
+    """
     published = min(finding.published_count, 2)
     dependent_points = min(dependents, 5) * 5
     gap = round((1.0 - finding.confidence) * 20)
-    total = min(100, _BASE.get(finding.kind, 0) + 15 * published + dependent_points + gap)
+    impact = max(0, impact_bonus)
+    total = min(100, _BASE.get(finding.kind, 0) + 15 * published + dependent_points + gap + impact)
     tier = "high" if total >= HIGH_THRESHOLD else "medium" if total >= MEDIUM_THRESHOLD else "low"
     reasons = [f"{finding.kind} base {_BASE.get(finding.kind, 0)}"]
     if published:
@@ -71,6 +102,8 @@ def score(finding: Finding, dependents: int = 0) -> Finding:
         reasons.append(f"{dependents} dependent(s): +{dependent_points}")
     if gap:
         reasons.append(f"confidence {finding.confidence:.2f}: +{gap}")
+    if impact:
+        reasons.append(f"impact: +{impact}")
     return replace(
         finding,
         risk_score=total,

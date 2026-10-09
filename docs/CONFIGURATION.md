@@ -351,6 +351,45 @@ per-route metrics rollup are process-local, so a multi-worker deployment has
 one of each per worker (the same already-disclosed limitation as
 `agent/rate_limit.py` and `observability/metrics.py`).
 
+### Proactive KPI monitoring (on by default)
+
+Watches **governed** catalog metrics for meaningful movement, investigates
+what moved, suppresses repeats and noise, and ranks what is left by
+impact. See
+[`50_PROACTIVE_AI_ANALYST_CONTRACT.md`](../50_PROACTIVE_AI_ANALYST_CONTRACT.md)
+for the full design and limitations.
+
+Three things worth knowing before configuring it:
+
+1. **Only an approved metric can be monitored.** A policy must name a
+   *published* `METRIC` entry in the caller's own semantic catalog
+   (Prompt 09/10's approval workflow). A draft metric, a dimension, or an
+   unknown key is refused with a distinct reason code.
+2. **It never fetches anything.** The period series and dimension
+   breakdowns are supplied by the caller, already fetched through the
+   governed path (`POST /execute`). That is why monitoring cannot bypass
+   `agent/sql_validator.py` -- it has no way to produce a row.
+3. **No alerts are actually delivered.** This platform has no email,
+   webhook or chat channel. A run returns a typed description of what
+   *would* be sent per recipient.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ENABLE_KPI_MONITORING` | `true` | Enables the two `/kpi-monitoring/*` routes (404 when off). |
+| `KPI_MONITOR_MIN_CHANGE_PERCENT` | `10.0` | Default "meaningful change" floor for a policy that does not set its own. |
+| `KPI_MONITOR_MAX_POLICIES_PER_SCAN` | `50` | Policies evaluated per scan; the excess is reported, not dropped. |
+| `KPI_MONITOR_MAX_POINTS_PER_METRIC` | `500` | Most recent points kept per series. |
+| `KPI_MONITOR_MAX_FINDINGS_PER_SCAN` | `200` | Findings kept per scan, ranked before truncation. |
+
+Per-policy settings (thresholds, comparison period, dimension columns)
+and per-run settings (business calendar, quiet periods, recipient
+preferences) are supplied in the request, not in `.env` -- they are
+per-metric and per-tenant, not per-deployment.
+
+`scripts/run_kpi_monitor.py` runs a scan from cron/Task Scheduler and
+exits `2` when any finding is high-risk. It cannot persist a governed
+review record (no actor/tenant) -- see the contract's §9.
+
 ## AI analysis layers (optional, all off by default)
 
 See the Prompt 33/34/35 contract documents for design and limitations. Every
