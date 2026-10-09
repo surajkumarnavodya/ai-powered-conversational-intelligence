@@ -29,6 +29,7 @@ from analytics.engine import compute_analytics_result
 from analytics.forecasting import generate_forecast
 from analytics.models import AnalyticsResult
 from recommendation.engine import RecommendationInputs, generate_recommendations
+from recommendation.models import Recommendation
 from retrieval.retriever import extract_governing_metrics, retrieve_business_context
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -93,8 +94,11 @@ from db.query_store import QueryStoreFindings, get_cached_query_store_findings
 from db.schema_introspection import extract_ddl_column_names
 from embeddings.golden_examples import retrieve_golden_examples
 from embeddings.retriever import retrieve_relevant_schema, select_database
+from governance.domains import BusinessDomain
+from governance.recommendation_safety import WITHHELD_NOTICE, filter_recommendations
 from governance.request_policy import evaluate_request
-from governance.result_policy import govern_rows_for_caller
+from governance.result_policy import govern_result_for_domain
+from governance.telemetry import get_governance_metrics, normalize_action
 from model_routing.models import RouteTask
 from observability.metrics import get_default_metrics
 from security.audit_log import log_security_event
@@ -520,11 +524,34 @@ def sanitize_input_node(state: AgentState) -> dict[str, Any]:
                 "conversation_history": sanitized_history,
             }
 
+        # A non-blocking verdict still carries the detected domain, which
+        # the result gate and the recommendation-safety filter both read.
+        governance_domain = verdict.domain
+    else:
+        governance_domain = BusinessDomain.GENERAL.value
+
     return {
         "question": result.cleaned_question,
         "status": "classifying_followup",
         "conversation_history": sanitized_history,
+        "governance_domain": governance_domain,
     }
+
+
+def _governance_domain(state: AgentState) -> BusinessDomain:
+    """The domain recorded by the request gate, or the strict fallback.
+
+    Reads `AgentState["governance_domain"]` rather than re-detecting, so
+    the result gate and the recommendation filter enforce exactly the
+    domain the request was judged under -- re-detecting from different
+    evidence later could silently apply a different policy than the one
+    the refusal decision used.
+    """
+    raw = state.get("governance_domain") or BusinessDomain.GENERAL.value
+    try:
+        return BusinessDomain(raw)
+    except ValueError:
+        return BusinessDomain.GENERAL
 
 
 @_timed_node("classify_followup")
@@ -2086,7 +2113,23 @@ def execute_sql_node(state: AgentState) -> dict[str, Any]:
     # Result-level governance (governance/result_policy.py): protected before the
     # insight step, the recommendation engine, or the UI sees the values.
     if settings.enable_result_governance:
-        rows = govern_rows_for_caller(columns, rows, state.get("caller_roles", ()))
+        governed = govern_result_for_domain(
+            columns,
+            rows,
+            state.get("caller_roles", ()),
+            _governance_domain(state),
+            settings.governance_min_group_size,
+        )
+        rows = governed.rows
+        if governed.changed:
+            log_security_event(
+                "governance_result_protected",
+                "info",
+                "Result-level governance protected values before the insight step, the "
+                "recommendation engine or the response saw them.",
+                domain=_governance_domain(state).value,
+                actions=",".join(normalize_action(action) for action in governed.actions),
+            )
     return {
         "result_columns": columns,
         "result_rows": rows,
@@ -2419,7 +2462,37 @@ def generate_recommendations_node(state: AgentState) -> dict[str, Any]:
         "[generate_recommendations] produced %d recommendation(s)",
         len(recommendations),
     )
-    return {"recommendations": [rec.model_dump(mode="json") for rec in recommendations]}
+
+    # Domain-safety filter (governance/recommendation_safety.py): drops any
+    # recommendation that would amount to a decision about an individual
+    # this system does not make -- an employment action, a clinical or
+    # credit decision, a fraud accusation, a legal conclusion. Runs after
+    # the engine's own evidence and authorization checks, because a
+    # perfectly evidenced recommendation to terminate someone is still one
+    # that must not be shown. Withheld, never rewritten.
+    withheld: tuple[str, ...] = ()
+    if settings.enable_recommendation_safety:
+        domain = _governance_domain(state)
+        kept, withheld = filter_recommendations(recommendations, domain)
+        if withheld:
+            metrics = get_governance_metrics()
+            for action in withheld:
+                metrics.record_withheld_recommendation(action)
+            log_security_event(
+                "governance_recommendation_withheld",
+                "warning",
+                "One or more recommendations were withheld by the domain-safety filter "
+                "before the response was built.",
+                domain=domain.value,
+                actions=",".join(sorted(set(withheld))),
+                withheld_count=len(withheld),
+            )
+        recommendations = tuple(item for item in kept if isinstance(item, Recommendation))
+
+    return {
+        "recommendations": [rec.model_dump(mode="json") for rec in recommendations],
+        "governance_notice": WITHHELD_NOTICE if withheld else None,
+    }
 
 
 @_timed_node("generate_insight")

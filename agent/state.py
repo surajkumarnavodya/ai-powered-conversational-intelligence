@@ -487,6 +487,20 @@ class AgentState(TypedDict, total=False):
     # didn't succeed at all.
     low_confidence_notice: str | None
 
+    # Set once by `sanitize_input_node` from the request-level governance
+    # verdict (`governance.request_policy`), read by the result gate in
+    # `execute_sql_node` and by the recommendation-safety filter. A plain
+    # value in per-request state, never a global -- the identical pattern
+    # `selected_database`/`selected_model` already use. Absent means the
+    # strict `governance.domains.BusinessDomain.GENERAL` fallback applies.
+    governance_domain: str
+
+    # A fixed, reviewed notice when the domain-safety filter withheld a
+    # recommendation (`governance.recommendation_safety.WITHHELD_NOTICE`).
+    # `None` when nothing was withheld. Never names which recommendation
+    # or which rule matched -- that detail goes to the audit log only.
+    governance_notice: str | None
+
     # Set by compute_analytics_node (Prompt 13,
     # 13_ANALYTICAL_RESULT_ENGINE_CONTRACT.md), which runs between
     # execute_sql and generate_insight, only after a successful execution

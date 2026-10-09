@@ -42,6 +42,15 @@ class GovernanceVerdict:
     domain: str = GENERAL_DOMAIN
     category: str = ""
     message: str = ""
+    #: `governance.domains.GOVERNANCE_POLICY_VERSION` at decision time, so
+    #: an audit trail says which policy set produced this outcome. Empty
+    #: only for a verdict built before the registry existed (the module
+    #: constant `ALLOW_VERDICT`, which carries no decision of its own).
+    policy_version: str = ""
+    #: Every domain the request was found to touch, when more than one.
+    #: Empty for a single-domain request. Read by the cross-domain check;
+    #: never shown to the caller.
+    domains_touched: tuple[str, ...] = ()
 
     @property
     def is_blocking(self) -> bool:

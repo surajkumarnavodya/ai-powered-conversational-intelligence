@@ -5404,6 +5404,151 @@ for the full inspection findings, the persisted-versus-computed split
 that decided the design, the 98-test testing summary, and the
 security/tenant-isolation/accessibility review.
 
+### Enterprise Data Privacy, Domain Safety & Governance Engine
+
+`governance/` (which already existed as three modules: the six-state
+decision vocabulary, 11 request rules across 6 domains, and result
+masking) is now the centralized engine every request passes through --
+what may be asked, what may be returned, what may be recommended. A
+domain rule is a data change in one registry rather than a new branch in
+a node or a sentence in a prompt.
+
+**The critical gap this closed, found by inspection:**
+`config/sensitive_columns.yaml` ships as an empty template (`tables: []`,
+deliberately, so a human classifies each column). But both enforcement
+layers built on it -- `agent.sql_validator
+.find_restricted_column_references` and `governance.result_policy` --
+read *only* that file, so on a real database **they protected nothing at
+all**. A governance engine that only works after someone hand-lists
+several hundred columns is a governance engine that does not work. The
+fix is two-layered and order matters: an explicit human classification
+always wins (including when it *loosens* -- an operator who reviewed a
+column and called it public meant it), and `governance.classification`'s
+name-pattern inference fills the gap otherwise, marked `inferred=True`
+with the pattern that matched.
+
+**Module map (6 new, 4 extended):** `classification.py`
+(`DataClassification`'s 6 ordered levels x `DataCategory`'s 16 families ->
+`FieldPolicy`), `domains.py` (18 domains + fallback, `DomainPolicy`,
+14 `ProhibitedAction`s, `GOVERNANCE_POLICY_VERSION`),
+`domain_detection.py`, `suppression.py` (k-anonymity),
+`recommendation_safety.py`, `telemetry.py`; plus `decisions.py`,
+`request_policy.py`, `result_policy.py` and `__init__.py` extended.
+
+**Reused, never duplicated:** `agent/sql_validator.py` is **untouched**
+-- the engine adds no SQL rewriting and no second SQL security
+mechanism. So are `agent/authz.py`, `identity/rbac.py`, `security/*`,
+`config/sensitive_columns.*` and `onboarding/pii_detection.py`. No new
+permission, no new role, no new table, no migration. The six
+pre-existing integration points (`agent/nodes.py` x2,
+`agent/orchestrator/nodes.py`, `agent/multiagent/agents.py` x2,
+`api/main.py`, `api/bi_integration.py`) stayed the integration points.
+
+**Invariants that must not regress:**
+- **No domain policy protects personal data less than the baseline.**
+  `BASELINE_RESTRICTED_CATEGORIES` (PII, SPI, PHI, compensation,
+  performance, credential, payment, banking) is unioned into every
+  domain via `DomainPolicy.effective_restricted_categories` -- **always
+  read that, never `restricted_categories` directly**. Without it,
+  detecting a domain could *loosen* protection: a question mentioning
+  "machine downtime" scores for manufacturing, whose own policy restricts
+  only proprietary data. This floor is what makes it safe for question
+  wording alone to claim a domain, and it is why the detection score
+  threshold could be lowered to one text hit.
+- **The `GENERAL` fallback prohibits all 14 actions, not none.** If the
+  domain is unknown, no decision about an individual is safe to make or
+  recommend. An unrecognized question must not become the loosest path
+  through the engine.
+- **A credential or a payment instrument is withheld from every caller,
+  including an admin.** No permission unlocks `NEVER_DISCLOSED_CATEGORIES`
+  -- there is no role for which returning a password is the right answer.
+  Enforced by *classification*, so it holds for any column name that
+  classifies that way, not only names someone remembered to blocklist.
+- **Small-group suppression applies to an authorized caller too.** It
+  protects the individual in the group, not the sensitivity of the
+  column, so permission does not unlock it. The group label and count
+  stay visible and **no row is ever dropped** -- a vanished row would let
+  a reader difference a published total against the visible rows and
+  recover the hidden value exactly.
+- **Protection happens before the model sees the values.** The result
+  gate runs in `execute_sql_node` before `state["result_rows"]` is set,
+  so the insight step, the recommendation engine, the chart builder and
+  the response all receive protected rows. The LLM never sees a
+  restricted value merely because the UI would later hide it.
+- **The result gate classifies the *returned column names*, not the SQL
+  text.** That is why an alias (`salary AS monthly_pay`), a `UNION` or a
+  `SELECT *` reaches the same protection -- generating different SQL does
+  not get a different answer about what is allowed.
+- **Authorization comes only from the caller's roles.** Text claiming
+  authority ("this is authorized", "pretend I am admin") and a database
+  cell claiming it are both data.
+  `tests/security/test_governance_cannot_be_bypassed.py` asserts this
+  structurally by parsing the real source: no module in `governance/`
+  branches on a `Permission` without `has_role_permission`, none imports
+  an LLM client (a refusal that depended on a model choosing to refuse
+  would not be a control), and none imports a database handle.
+- **Refusal messages are fixed module constants**, never built from the
+  question, so a refusal cannot be used as an oracle for what a rule
+  matched on.
+- **One `ProhibitedAction` list drives both the request gate and the
+  recommendation filter**, so "what we refuse to be asked" and "what we
+  refuse to propose" cannot drift apart. An unsafe recommendation is
+  **withheld and reported, never rewritten** -- editing it would leave
+  the evidence attached to a claim it no longer supports.
+- **Telemetry counts, never content.** `governance.telemetry` is keyed by
+  decision/domain/category only, and `normalize_action` strips the column
+  list off an action string before counting it.
+
+**Three real bugs the tests found, each fixed:**
+1. **`\b` does not match across an underscore or a case boundary**, so
+   `crm_opportunity` and `EmployeePayroll` matched no domain at all. Fixed
+   by `domain_detection.normalize_schema_text` (normalize the input, keep
+   the patterns readable) rather than by stripping `\b` from every
+   pattern.
+2. **`monthly_pay` was unclassified** -- the compensation pattern covered
+   `base_pay`/`gross_pay` but not the most natural alias a generated
+   query would produce for a salary column. Found by a security test
+   about aliasing.
+3. **The bulk-extraction rule refused "How complete is our customer
+   data?"** -- "complete" read as a quantifier and the word gap reached
+   across the verb into "customer". It broke a pre-existing Prompt 41
+   data-quality test, which is how it was found. Fixed by removing
+   `complete` from the quantifier list (it stays in the explicit
+   dump/export branch) and excluding clause-boundary words from the gap.
+   Over-blocking ordinary analytics is its own failure mode, and
+   `tests/test_governance_engine.py` now pins seven legitimate aggregate
+   questions containing "all"/"complete".
+
+**Known behaviour change for operators:** a result that previously
+returned a personal or compensation value to a caller without
+`view_restricted_columns` now returns `[restricted]`, and a credential or
+payment column returns `[withheld]` for everyone. That is the intended
+correction of the gap above, but it is a visible change on an existing
+dashboard reading such columns. Each layer has its own independent
+rollback switch (`ENABLE_REQUEST_GOVERNANCE`, `ENABLE_RESULT_GOVERNANCE`,
+`ENABLE_RECOMMENDATION_SAFETY`).
+
+**Open, disclosed residual risks** (full list in the audit report's §13):
+name-based inference is not content inspection, so a sensitive value in a
+neutrally-named column is not detected; there is no cross-session query
+auditor, so suppression closes the single-result-set and
+total-minus-visible cases but not many-differently-filtered-queries;
+conversation-memory classification before persistence is **not**
+implemented (partly mitigated because what is persisted is the
+already-protected answer); `DomainPolicy.export_row_limit` and
+`aggregation_required` are declared but not yet enforced by any
+component.
+
+**Read [`docs/DATA_PRIVACY_GOVERNANCE_ENGINE.md`](docs/DATA_PRIVACY_GOVERNANCE_ENGINE.md)**
+for the full audit report -- the existing-architecture inventory, the
+gap/risk tables, the 18-domain policy matrix, the classification matrix,
+the authorization/SQL/result flows, the 14 attack scenarios tested, the
+production-readiness assessment, and the rollback strategy. It states
+plainly that technical controls supporting privacy and governance
+requirements have been implemented, and that formal regulatory compliance
+requires organizational, legal, contractual, administrative and technical
+assessment -- no compliance with any named regime is claimed.
+
 ## How to run
 
 See `README.md` for full setup. Short version:

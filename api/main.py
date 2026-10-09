@@ -19,6 +19,7 @@ programmatic/scripted access on its own.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import sys
 import time
@@ -68,7 +69,12 @@ from agent.rate_limit import (
     get_per_caller_ask_concurrency_limiter,
 )
 from agent.result_charting import classify_columns, recommend_chart
-from agent.sql_validator import enforce_row_limit, qualify_table_schema, validate_sql
+from agent.sql_validator import (
+    enforce_row_limit,
+    find_unexpected_table_references,
+    qualify_table_schema,
+    validate_sql,
+)
 from agent.state import ConversationExchange
 from api.analyst import router as analyst_router
 from api.attachments import router as attachments_router
@@ -165,7 +171,9 @@ from embeddings.schema_indexer import (
     refresh_all_schema_indexes,
 )
 from feedback.store import save_response_feedback
-from governance.result_policy import govern_rows_for_caller
+from governance.domain_detection import detect_domain
+from governance.result_policy import govern_result_for_domain
+from governance.telemetry import normalize_action as governance_normalize_action
 from observability.metrics import get_default_metrics
 from security.audit_log import (
     get_correlation_id,
@@ -1449,6 +1457,27 @@ def ask(
     )
 
 
+def _referenced_names(sql: str, columns: list[str]) -> tuple[str, ...]:
+    """Table and column names a result is about, for domain detection.
+
+    Reuses `agent.sql_validator.find_unexpected_table_references` as a
+    generic table extractor over an empty allowlist (every table is
+    therefore "unexpected" and returned) rather than parsing the SQL a
+    second time here -- the identical reuse `bi_integration
+    .metric_binding` already makes of that function. Falls back to the
+    result column names alone if the SQL does not parse, which is enough
+    for detection and never an error: a worse domain guess only ever
+    means the strict `GENERAL` policy applies.
+    """
+    names = list(columns)
+    # Suppressed deliberately: a worse domain guess only ever means the
+    # strict GENERAL policy applies, so an unparseable statement must
+    # never fail the request here.
+    with contextlib.suppress(Exception):
+        names.extend(find_unexpected_table_references(sql, set()))
+    return tuple(names)
+
+
 @app.post("/execute", response_model=ExecuteResponse)
 def execute(
     payload: ExecuteRequest,
@@ -1608,7 +1637,31 @@ def execute(
     # AFTER the result cache: the cache holds raw rows, so a cache hit is masked
     # for this caller's own roles exactly as a fresh execution would be.
     if settings.enable_result_governance:
-        rows = govern_rows_for_caller(columns, rows, identity.roles)
+        # Domain detection is strongest here: unlike the request gate, the
+        # real referenced table names are known, and a table name is much
+        # better evidence than question wording (see
+        # governance.domain_detection's own weighting).
+        governance_domain = detect_domain(
+            execution_sql, _referenced_names(execution_sql, columns)
+        ).domain
+        governed = govern_result_for_domain(
+            columns,
+            rows,
+            identity.roles,
+            governance_domain,
+            settings.governance_min_group_size,
+        )
+        rows = governed.rows
+        if governed.changed:
+            log_security_event(
+                "governance_result_protected",
+                "info",
+                "Result-level governance protected values returned by Confirm and Run.",
+                domain=governance_domain.value,
+                actions=",".join(
+                    governance_normalize_action(action) for action in governed.actions
+                ),
+            )
     result_df = pd.DataFrame(rows, columns=columns)
     column_types: dict[str, str] = dict(classify_columns(result_df)) if not result_df.empty else {}
     recommendation = recommend_chart(result_df, column_types)

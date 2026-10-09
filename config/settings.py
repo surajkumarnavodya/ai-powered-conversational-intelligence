@@ -1779,6 +1779,20 @@ class Settings(BaseSettings):
     # a plain deployment. Turn off only to roll back.
     enable_request_governance: bool = True
     enable_result_governance: bool = True
+    # Prompt: Enterprise Data Privacy, Domain Safety & Governance Engine.
+    # The default k-anonymity threshold for a grouped result containing
+    # individual-level sensitive measures (governance/suppression.py). A
+    # domain declaring its own minimum_group_size overrides this; a domain
+    # declaring 0 opts out because it has no individuals to protect.
+    governance_min_group_size: int = Field(default=5, ge=0)
+    # Whether an unsafe recommendation is withheld before the response is
+    # built (governance/recommendation_safety.py). On by default: a
+    # deterministic, zero-cost content check with no LLM call, and the
+    # failure mode it prevents (this system proposing an individual
+    # employment, clinical or credit decision) is exactly what the
+    # governance engine exists for. False restores pre-engine behaviour
+    # for rollback, like the two flags above.
+    enable_recommendation_safety: bool = True
     enable_result_cache: bool = False
     result_cache_ttl_seconds: int = Field(default=30, gt=0)
     result_cache_max_entries: int = Field(default=500, gt=0)
