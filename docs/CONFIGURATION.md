@@ -390,6 +390,56 @@ per-metric and per-tenant, not per-deployment.
 exits `2` when any finding is high-risk. It cannot persist a governed
 review record (no actor/tenant) -- see the contract's §9.
 
+### Executive AI briefing (on by default)
+
+An evidence-linked daily/weekly/monthly summary over records the KPI
+monitor, schema drift, the recommendation engine and the data-quality
+engine already produced. See
+[`51_EXECUTIVE_AI_BRIEFING_CONTRACT.md`](../51_EXECUTIVE_AI_BRIEFING_CONTRACT.md)
+for the full design and limitations.
+
+Four things worth knowing:
+
+1. **It reads; it never detects, computes or persists.** Every claim is
+   read back from a record another governed subsystem already wrote, and
+   nothing is stored -- a briefing is a read of governed state, not a new
+   governed artifact. No monitored-database query, no LLM call, no
+   outbound call.
+2. **Every claim links to evidence and versions, or it is withheld.** A
+   claim with no evidence, with an evidence link recording no version, or
+   stating a number its own evidence does not contain is reported in
+   `withheld_claims` rather than shown.
+3. **Facts, estimates and recommendations are separate claim classes**,
+   and the mismatched pairings are refused at construction. Nothing a
+   briefing shows is ever confirmed business truth -- confirming stays an
+   explicit human action elsewhere (publishing a catalog entry, accepting
+   a finding, resolving a recommendation).
+4. **Nothing is delivered.** This platform has no email, webhook or chat
+   channel, and no scheduler. `period` selects the freshness budget and
+   the heading; it is not a date filter, because period labels stay
+   opaque strings throughout.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ENABLE_EXECUTIVE_BRIEFING` | `true` | Enables `POST /briefing/generate` (404 when off). |
+| `BRIEFING_STALE_AFTER_DAILY_HOURS` | `36.0` | How old evidence may be before a daily briefing marks it stale. |
+| `BRIEFING_STALE_AFTER_WEEKLY_HOURS` | `192.0` | The same budget for a weekly briefing. |
+| `BRIEFING_STALE_AFTER_MONTHLY_HOURS` | `840.0` | The same budget for a monthly briefing. |
+| `BRIEFING_MAX_ITEMS_PER_SECTION` | `10` | Claims kept per section, ranked before truncation; the affected sections are named in the response. |
+| `BRIEFING_RISK_MIN_TIER` | `medium` | Tier a finding must reach before a *second*, inferred risk/opportunity claim is made about it. Never gates the observed movement itself. |
+| `BRIEFING_MAX_DATA_QUALITY_FINDINGS` | `200` | Payload bound on the one source that arrives in the request body. |
+
+Three budgets rather than one because the honest threshold scales with
+the cadence: evidence gathered a week ago is misleading in a daily
+briefing and entirely normal in a monthly one. A stale claim is marked
+and ranked below fresh claims, never dropped -- hiding it would turn a
+freshness problem into an apparent absence of problems.
+
+Authorization reuses the gates the underlying records already answer to
+(catalog review for findings, recommendation view for recommendation
+records); there is no briefing-specific permission. A caller entitled to
+one source but not the other gets the other named as omitted.
+
 ### Executive Decision Center (on by default)
 
 One screen over everything Prompts 33-50 record. See

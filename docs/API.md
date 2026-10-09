@@ -496,6 +496,102 @@ still persisted and still appears in the review queue.
 `created`/`updated`/`unchanged` report the storage-level half of duplicate
 suppression: an identical re-run records `unchanged` and writes nothing.
 
+### Executive AI briefing: `POST /briefing/generate`
+
+One route over the executive briefing (Prompt 51,
+[`51_EXECUTIVE_AI_BRIEFING_CONTRACT.md`](../51_EXECUTIVE_AI_BRIEFING_CONTRACT.md)),
+which assembles an evidence-linked daily, weekly or monthly summary from
+records the KPI monitor, schema drift, the recommendation engine and the
+data-quality engine already produced.
+
+Answers **404** unless `ENABLE_EXECUTIVE_BRIEFING=true` (on by default).
+**It never queries a monitored database, never calls an LLM, and persists
+nothing** -- the only database it reads is the identity database, for two
+already-tenant-filtered repository reads.
+
+| Route | Requires | What it does |
+|---|---|---|
+| `POST /briefing/generate` | local account + catalog review and/or recommendation view | Assembles one briefing for the caller's own tenant and returns the typed claims plus a markdown rendering. |
+
+**Authorization is per section, and adds no new permission.** KPI and
+schema-drift findings answer to the same catalog-review gate
+`/kpi-monitoring/*` and `/schema-drift/*` apply to the same rows;
+recommendation records answer to the same view gate `/recommendations`
+applies. A caller holding one but not the other gets the other source
+**named as omitted** in `coverage` and `limitations`, never silently
+absent. A caller holding neither gets **403**. An unknown or cross-tenant
+`database_id` is the same **404** a nonexistent one gets.
+
+Request -- `data_quality_findings` is the one input that arrives in the
+body, because nothing in this codebase persists a data-quality scan;
+aggregates only, never a sampled row value:
+
+```json
+{
+  "database_id": "default",
+  "period": "daily",
+  "period_label": "2026-06-30",
+  "as_of": "2026-07-01T09:00:00+00:00",
+  "data_quality_findings": [
+    {"dimension": "completeness", "severity": "critical",
+     "table": "sales", "column": "amount",
+     "claim_text": "amount is null in 42.00% of rows",
+     "formula": "null_rate = null_count / total_count",
+     "observed": {"null_rate": 42.0},
+     "engine_version": "1.0.0",
+     "observed_at": "2026-07-01T08:00:00+00:00"}
+  ]
+}
+```
+
+`as_of` is the reference instant every staleness check is made against;
+omitting it uses the server's current time. Supplying it is what makes a
+briefing for a past period judge freshness against that period.
+
+Every returned claim carries `claim_class` (`observed_fact` / `estimate` /
+`recommendation`), its `truth_level`, and one or more evidence links --
+each naming the record it came from, the deterministic numbers the claim
+is allowed to state, and the engine/content versions that produced them:
+
+```json
+{
+  "section": "kpi_movement",
+  "claim_class": "observed_fact",
+  "truth_level": "database_fact",
+  "headline": "revenue fell 36.0% in 2026-06",
+  "risk_score": 78, "risk_tier": "high",
+  "is_stale": false,
+  "evidence": [
+    {"source": "kpi_monitoring.findings", "reference_kind": "kpi_finding",
+     "reference_id": "0f1e...", 
+     "observed": {"current_value": 640.0, "baseline_value": 1000.0,
+                  "change_percent": -36.0},
+     "versions": {"kpi_engine_version": "1.0.0", "finding_version": "2",
+                  "briefing_engine_version": "1.0.0"},
+     "recorded_at": "2026-06-30T22:00:00+00:00",
+     "truth_level": "database_fact"}
+  ]
+}
+```
+
+Three response fields make a quiet briefing honest rather than merely
+short:
+
+- `coverage[]` distinguishes **not supplied** ("nothing was checked") from
+  **supplied but quiet** ("none produced a claim") from **omitted** (with
+  the caller's own reason), per source.
+- `stale_inputs[]` lists every evidence record older than this cadence's
+  freshness budget, or recording no timestamp at all. A stale claim is
+  still shown, marked, and ranked below fresh claims of equal risk.
+- `withheld_claims[]` lists every claim that was proposed but not shown,
+  because its own evidence did not support it -- `no_evidence`,
+  `missing_version`, `truth_level_mismatch` or `ungrounded_number`.
+
+`empty_sections[]`, `truncated_sections[]`, the three claim-class counts,
+`stale_item_count` and `report_markdown` round out the response. Nothing
+is delivered anywhere: this platform has no email, webhook or chat
+channel, so the route returns a document.
+
 ### Executive Decision Center: `GET /decision-center/briefing`
 
 One read model over everything Prompts 33-50 record (Prompt 52,

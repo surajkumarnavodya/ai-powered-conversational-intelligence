@@ -5078,6 +5078,156 @@ for the full inspection findings, every module's design, the 110-test
 testing summary, the three real bugs the tests caught, and the
 security/tenant-isolation/performance review.
 
+### Executive AI briefing (Prompt 51)
+
+`briefing/` (new top-level package, a peer of `kpi_monitoring/`/
+`data_quality/`/`schema_drift/`/`recommendation/`) assembles an
+evidence-linked daily, weekly or monthly executive briefing from what
+those subsystems already recorded: KPI movement, significant anomalies,
+drivers, risks, opportunities, unresolved recommendations and
+data-quality issues. **It detects, computes and ranks nothing of its
+own** -- KPI movement, anomaly flags and dimension attribution are read
+back verbatim from `kpi_monitoring`'s own persisted
+`finding_payload` in Prompt 35's shared review queue; downstream impact
+comes from `schema_drift.impact`'s already-resolved impacted-concept
+list; unresolved recommendations come from `identity.models
+.RecommendationRecord` with its own `engine_version`/`evidence_version`
+snapshots; ranking reuses the score `semantic.intelligence.risk.score`
+already assigned; and number grounding reuses `agent.insight
+.extract_numbers` verbatim.
+
+**Two orthogonal classifications, deliberately not merged.**
+`agent.provenance.DataTruthLevel` keeps answering *how* something came
+to be known; a new `briefing.models.ClaimClass` answers *what kind of
+statement a reader is looking at* -- `OBSERVED_FACT` (arithmetic over
+governed query results), `ESTIMATE` (this platform's own inference about
+those numbers), `RECOMMENDATION` (a suggestion awaiting a decision) --
+the same orthogonality `analytics.models.ScenarioValueKind` already
+established against the same enum. One record legitimately produces
+several claims in different sections, because they are different kinds
+of statement about the same evidence: a revenue drop yields an
+`OBSERVED_FACT` movement, an `ESTIMATE` anomaly, an `ESTIMATE` risk, and
+an `ESTIMATE` driver per contributor.
+
+**Invariants that must not regress:**
+- **Every claim links to deterministic evidence and versions, enforced
+  twice.** `BriefingItem.evidence` is `Field(min_length=1)` and
+  `EvidenceLink` refuses a link recording no version, so a claim with
+  nothing behind it is unrepresentable; on top of that,
+  `briefing.claims.finalize` is the **only** `BriefingItem` constructor
+  call in the package (pinned by a test that parses the real source) and
+  `briefing.engine` runs every candidate through
+  `find_unsupported_claims` first -- the same two-layer shape
+  `recommendation.engine._finalize_candidate` establishes for its own
+  evidence rule. Four withholding codes: `no_evidence`,
+  `missing_version`, `truth_level_mismatch`, `ungrounded_number`.
+- **No briefing claim is ever `CONFIRMED_BUSINESS_TRUTH`**, for any
+  claim class -- pydantic refuses it. A briefing reports what other
+  governed subsystems recorded; confirming anything stays an explicit
+  human action elsewhere (publishing a catalog entry, accepting a
+  finding, resolving a recommendation).
+- **Trusted source text may be quoted; caller-supplied text must be
+  verified.** A KPI/schema-drift finding and a recommendation record are
+  rows this server's own engines wrote through authorized paths, so
+  their wording goes into `BriefingItem.grounding_context` and is quoted
+  as-is. A data-quality finding arrives in the **request body** (nothing
+  in this codebase persists a data-quality scan), which makes it
+  untrusted input: its text is *not* self-grounding, so every number it
+  states must also appear in the `observed` aggregates the same request
+  supplies. Found by a failing test, not a design review -- the first
+  implementation verified one section's variant of the same finding and
+  let the other self-certify.
+- **Staleness is judged against a caller-supplied `as_of`, never a clock
+  read** (the identical reason `data_quality.models.FreshnessRule.as_of`
+  is caller-supplied), with three budgets, one per cadence -- the same
+  record is stale in a daily briefing and fresh in a monthly one. **A
+  stale item is marked, ranked below fresh items of equal risk, and
+  listed in `stale_inputs` -- never dropped**, since hiding a week-old
+  finding would turn a freshness problem into an apparent absence of
+  problems. A record with no timestamp is disclosed, never assumed
+  fresh.
+- **An empty briefing is never silently empty.** `SourceCoverage`
+  distinguishes three cases per source -- not supplied ("nothing was
+  checked"), supplied but quiet ("none produced a claim"), and omitted
+  for a stated reason (most importantly: the caller may not read that
+  source) -- which is `kpi_monitoring.models.MonitorResult
+  .series_skipped`'s distinction applied one level up.
+- **Authorization is per section, not all-or-nothing, and adds no new
+  permission.** KPI/schema-drift findings answer to
+  `semantic.catalog_policy.CatalogAction.REVIEW` (the same gate
+  `api/kpi_monitoring.py`/`api/schema_drift.py` apply to the same rows);
+  recommendation records answer to `recommendation.governance_policy
+  .RecommendationAction.VIEW` (the same gate
+  `api/recommendation_governance.py` applies). A caller holding one but
+  not the other gets the other source **named as omitted** in
+  `coverage`/`limitations`, never silently absent; a caller holding
+  neither gets 403. An aggregate must never reveal what the caller could
+  not read directly -- and inventing a `BRIEFING_READ` code would have
+  created a second, drifting answer to "who may see this finding".
+- **A recommendation never ranks `high` and a driver never outranks its
+  own movement.** A suggestion capped at 60 and a driver scored by its
+  own share (capped by its parent) keep the reading order honest; a
+  suggestion outranking an observed collapse would misorder exactly the
+  attention a briefing directs.
+- **Nothing asserts a cause.** A driver is a contribution to an
+  arithmetic total, with the caveat inline on every item (not only in
+  the section note) --
+  `tests/security/test_briefing_never_presents_estimate_as_fact.py`
+  asserts seven causal phrasings appear in neither any claim nor the
+  rendered report, and also parses every module's own source to prove no
+  module in `briefing/` imports `identity`, `sqlalchemy`,
+  `agent.graph`/`nodes`/`llm_client`/`sql_validator`,
+  `db.connection`/`execution`/`schema_introspection`, `ollama` or
+  `rag.llm`. A briefing has no way to produce a row, which is what keeps
+  the deterministic SQL controls unreachable from here.
+
+`api/briefing.py` is the one route (`POST /briefing/generate`, local
+account required, behind `Settings.enable_executive_briefing`, default
+on -- a pure read of already-authorized records, no monitored-database
+query, no LLM, no outbound call, nothing persisted).
+`briefing/reports.py` is the single markdown rendering, shared by the
+route's own `report_markdown` field.
+
+**Known, disclosed limitations:** no delivery channel exists anywhere in
+this codebase (the platform-wide position
+`kpi_monitoring.models.AlertBundle` already states) -- the route returns
+a document, nothing is emailed or posted; no scheduler, and
+deliberately no CLI either (unlike `scripts/run_kpi_monitor.py`), since
+every source here is a tenant-scoped read needing a real authenticated
+actor; **no visualization** -- `analytics.visualization.build_chart_spec`
+needs `columns`/`rows` and a briefing holds only aggregates by design,
+so it was inspected and deliberately not reused rather than faked;
+nothing is persisted, so there is no briefing history; **`period` is not
+a date filter** -- period labels stay opaque strings (the same boundary
+`analytics.engine.detect_missing_periods` draws), so the cadence selects
+the freshness budget and the heading while the briefing summarizes
+currently-open findings and unresolved recommendations; data quality is
+caller-supplied, so a caller that never scans gets an honest "nothing
+was checked" rather than a clean bill of health; drivers are
+single-level (`analytics.causal`'s hierarchical engine is not reached,
+because a KPI finding persists a flat contributor list); no frontend.
+
+**Overlap with the in-flight Prompt 52 work, named rather than left to
+be rediscovered:** `decision_center/` (plus `api/decision_center.py` and
+`frontend/src/pages/DecisionCenter.tsx`) was found **untracked in the
+working tree** while inspecting for this prompt, and has its own
+`ExecutiveBriefing` type. It was inspected in full first. The two are
+genuinely different deliverables -- the Decision Center is a live read
+model (ranked headlines across seven capabilities, decision chains, a
+health rollup, role personalization) with no cadence, no staleness
+comparison, no claim verification and no fact/estimate/recommendation
+axis; `briefing/` is a cadenced, verified document. `briefing/` imports
+nothing from `decision_center/`. Reconciling the two (most plausibly:
+the Decision Center's headlines passing through `briefing.claims`'
+evidence gate, and/or one shared source-adapter layer) is the
+recommended next step, and should happen before either surface gains a
+frontend.
+
+**Read [`51_EXECUTIVE_AI_BRIEFING_CONTRACT.md`](51_EXECUTIVE_AI_BRIEFING_CONTRACT.md)**
+for the full inspection findings, every module's design, the 174-test
+testing summary, the real asymmetry bug the tests caught, and the
+security/tenant-isolation/performance review.
+
 ### Executive Decision Center (Prompt 52)
 
 `decision_center/` (new top-level package) is one read model over

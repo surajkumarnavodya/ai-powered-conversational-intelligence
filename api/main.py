@@ -74,6 +74,7 @@ from api.analyst import router as analyst_router
 from api.attachments import router as attachments_router
 from api.authz import require_permission
 from api.bi_integration import router as bi_integration_router
+from api.briefing import router as briefing_router
 from api.chat_history import router as chat_history_router
 from api.chat_persistence import persist_ask_turn, persist_execute_result
 from api.data_quality import router as data_quality_router
@@ -412,6 +413,7 @@ app.include_router(scenarios_router)
 app.include_router(optimization_router)
 app.include_router(predictive_router)
 app.include_router(data_quality_router)
+app.include_router(briefing_router)
 app.include_router(decision_center_router)
 app.include_router(kpi_monitoring_router)
 app.include_router(lineage_router)

@@ -2368,6 +2368,42 @@ class Settings(BaseSettings):
     kpi_monitor_max_points_per_metric: int = Field(default=500, gt=0)
     kpi_monitor_max_findings_per_scan: int = Field(default=200, gt=0)
 
+    # --- Prompt 51 (51_EXECUTIVE_AI_BRIEFING_CONTRACT.md): briefing/'s own
+    # tunables -- the evidence-linked daily/weekly/monthly executive
+    # briefing.
+    #
+    # Default ON, matching enable_kpi_monitoring/enable_data_quality_engine/
+    # enable_lineage_platform/enable_schema_drift_detection: a briefing is a
+    # pure, deterministic read of governed records the caller is already
+    # authorized to see. It never queries a monitored database, never calls
+    # an LLM, never makes an outbound call, persists nothing, and does
+    # nothing at all until a briefing is actually requested.
+    enable_executive_briefing: bool = True
+    # How old a piece of evidence may be before a briefing of each cadence
+    # marks it stale. Three separate budgets rather than one, because the
+    # honest threshold scales with the cadence: evidence gathered a week ago
+    # is misleading in a daily briefing and entirely normal in a monthly
+    # one. A stale item is still shown -- marked, and ranked below fresh
+    # items (see briefing/freshness.py).
+    briefing_stale_after_daily_hours: float = Field(default=36.0, gt=0.0)
+    briefing_stale_after_weekly_hours: float = Field(default=192.0, gt=0.0)
+    briefing_stale_after_monthly_hours: float = Field(default=840.0, gt=0.0)
+    # Per-section cap, applied after ranking, so a capped briefing keeps the
+    # most important claims rather than whichever source was processed
+    # first. The affected sections are named in
+    # ExecutiveBriefing.truncated_sections, never silently shortened.
+    briefing_max_items_per_section: int = Field(default=10, gt=0)
+    # The risk tier a KPI or schema-drift finding must reach before it is
+    # additionally read as a risk or an opportunity. It never affects
+    # whether the underlying movement itself is reported -- only whether a
+    # second, inferred risk/opportunity claim is made about it.
+    briefing_risk_min_tier: Literal["low", "medium", "high"] = "medium"
+    # Payload bound on the one source with no persisted history anywhere in
+    # this codebase (data-quality findings arrive in the request body),
+    # mirroring data_quality_max_tables'/kpi_monitor_max_policies_per_scan's
+    # identical "cap regardless of what a caller sends" philosophy.
+    briefing_max_data_quality_findings: int = Field(default=200, gt=0)
+
     # --- Prompt 52 (52_EXECUTIVE_DECISION_CENTER_CONTRACT.md):
     # decision_center/'s own flag. The Executive Decision Center is a pure
     # read model over records Prompts 33-50 already wrote -- it never

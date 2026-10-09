@@ -203,6 +203,29 @@ anywhere else at the time it was written:
   that an identical re-run records `unchanged` and a restatement versions
   the same row rather than adding a second.
 
+- **`test_briefing_never_presents_estimate_as_fact.py`** (Prompt 51,
+  `51_EXECUTIVE_AI_BRIEFING_CONTRACT.md`) -- an executive briefing may
+  summarize what other governed subsystems recorded; it may never present
+  an inference, a suggestion or an attribution as observed fact, assert a
+  cause, or reach a monitored database. Cross-cutting by nature. Four
+  levels. (1) **Type level**: every mismatched `ClaimClass`/
+  `DataTruthLevel` pairing raises at construction, `CONFIRMED_BUSINESS_TRUTH`
+  is refused for all three claim classes, and a claim with no evidence, an
+  evidence link with no version, or a stale claim with no stated reason are
+  all unrepresentable. (2) **Pipeline level**: in a real briefing every
+  driver is an estimate and every recommendation a recommendation, every
+  builder's output passes the evidence gate, and an unsupported candidate
+  never reaches `items` while still being reported in `withheld_claims`.
+  (3) **Text level**: seven causal phrasings appear in neither any claim
+  nor the rendered report, and every driver carries its contribution
+  caveat inline rather than only in the section note. (4) **Structural
+  level**, asserted by parsing the real source: no module in `briefing/`
+  imports an identity model, SQLAlchemy, a database connection, the
+  execution path, the SQL validator or an LLM client, none contains a
+  `SELECT ... FROM` literal, and exactly one module constructs a
+  `BriefingItem` -- a second construction site would be a second place the
+  evidence gate could be skipped.
+
 - **`test_decision_center_personalization_never_changes_facts.py`**
   (Prompt 52, `52_EXECUTIVE_DECISION_CENTER_CONTRACT.md`) -- the
   Executive Decision Center presents governed facts; it may reorder them
