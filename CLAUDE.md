@@ -4839,6 +4839,142 @@ tenant scoping depends on it.
 for the full inspection findings, every module's design, the 101-test
 testing summary, and the security/tenant-isolation/performance review.
 
+### Enterprise Workflow Automation (Prompt 49)
+
+`workflow/` (new top-level package, a peer of `recommendation/`/
+`governance_center/`/`bi_integration/`) turns an already-`accepted`/
+`partially_useful` `identity.models.RecommendationRecord` (Prompt 18)
+into a governed, auditable unit of real-world work -- `workflow.models
+.WorkflowStatus`'s exact mission-named chain: proposed ->
+approval_required -> approved -> assigned -> in_progress ->
+completed/rejected/expired, with `EXPIRED` reachable from any
+non-terminal state (the identical pattern `recommendation.governance
+.RecommendationStatus.EXPIRED` already establishes) and `REJECTED`
+reachable only from `APPROVAL_REQUIRED` -- the one real decision point.
+Heavy, deliberate reuse rather than a second governance stack: `workflow
+/models.py`/`workflow/policy.py` mirror `recommendation/governance.py`/
+`recommendation/governance_policy.py`'s own ORM-independent, pure-policy
+split exactly, and `identity/repositories/workflow.py` mirrors
+`identity/repositories/recommendation_governance.py`'s own atomic-
+conditional-`UPDATE` race/retry-safety discipline line for line, applied
+against this table's own columns.
+
+**"Never permit uncontrolled autonomous execution" is structural, not a
+runtime check.** No module in `workflow/`, `identity/repositories
+/workflow.py`, or `api/workflow.py` imports `agent.graph`/`agent.nodes`
+(the LLM/LangGraph pipeline), `agent.multiagent` (the supervisor),
+`db.execution`/`db.connection` (SQL execution), `bi_integration.push`/
+`bi_integration.outbound_safety` (the one real outbound-push precedent
+in this codebase), or any HTTP client -- locked in by `tests/security
+/test_workflow_never_autonomously_executes.py`, which parses this
+package's own source rather than relying on mocking coverage that could
+miss a future added call site. `COMPLETED` records a human's own report
+(`outcome_summary`/`outcome_measured_impact`) that the work was done --
+it never triggers, verifies, or re-runs anything. The workflow's own
+`description` (copied from the source recommendation's `action` field)
+is display text a human reads and acts on themselves, never a string
+this package parses or executes -- the identical "no field a caller or
+an LLM could turn into an executed expression" structural guarantee
+`optimization.models`/`analytics.scenario.models` already establish for
+a formula, applied here to free-text instructions instead.
+
+**"Require approval for consequential actions" is a real separation
+between two permission codes, not one combined grant.** New
+`identity.rbac.Permission.WORKFLOW_MANAGE` (admin tier -- create, submit
+for approval, assign/reassign an owner and due date, start, complete,
+set an external task reference, comment, or force-expire: operational
+actions) and `WORKFLOW_REVIEW` (analyst tier -- approve or reject a
+workflow once it is `approval_required`: the one domain-judgment
+decision point), the identical two-tier split every other `*_MANAGE`/
+`*_REVIEW` pair in this codebase already establishes. Honestly
+disclosed, not overclaimed: `identity/rbac.py`'s `_ADMIN` set is
+`_ANALYST | {...}`, so the seeded `admin` role inherits `WORKFLOW_REVIEW`
+from the analyst tier in addition to its own `WORKFLOW_MANAGE` grant --
+an admin account can propose, submit, *and* approve the same workflow
+today, identically to how an admin can already both manage and review a
+recommendation, a catalog entry, or a governance asset version. The
+separation this policy enforces is between the two permissions
+themselves (load-bearing the moment a future custom role holds only one
+of them), not a claim that no seeded role holds both.
+
+**"Support owners, due dates, comments, external task references and
+outcome measurement" is five typed capabilities on `identity.models
+.Workflow`, each with its own `WorkflowEvent.event_type`
+(`owner_assigned`/`due_date_set`/`comment`/`external_reference_set`,
+plus `status_change`) so none of them ever touches `status` by
+accident.** `external_system`/`external_reference_id`/
+`external_reference_url` are plain, caller-supplied metadata -- a label
+and a link a human can click to open a ticket in whatever system they
+already use; nothing in this codebase calls an external ticketing API
+(no such connector exists, and `bi_integration/push.py`'s own real
+outbound-push precedent targets a BI dataset/webhook, not a
+task-tracking system, so there was nothing safe to reuse here).
+`assign` is both the `approved -> assigned` transition on first
+assignment *and* a plain reassignment (no status change) from
+`assigned`/`in_progress` -- the owner must be an active, same-tenant
+user who holds a workflow permission, the same independently-re-checked
+pattern `recommendation.governance_policy.assign_owner` already
+establishes.
+
+**"Test authorization, retries, duplicate events and audit" --
+all four literally satisfied, not just asserted:**
+- **Authorization**: `tests/test_workflow_policy.py` (pure, every
+  action x permission-combination) plus `tests/test_api_workflow.py`'s
+  `TestCrossTenantAccess`/`TestLifecycleAuthorizationAndHappyPath` (a
+  cross-tenant workflow is a 404, never a 403 -- the identical
+  anti-enumeration convention `api/recommendation_governance.py`/
+  `api/governance.py` already establish; an analyst can approve but
+  cannot assign/start/complete).
+- **Retries**: a client retrying an already-applied transition gets a
+  clean 409 and writes **no** second `WorkflowEvent` -- proven both at
+  the repository layer (`TestRetrySafety`, including the real two-
+  `Session` conditional-`UPDATE` race proof mirroring Prompt 27/31's own
+  precedent) and at the HTTP layer.
+- **Duplicate events**: at most one *active* (non-terminal) workflow may
+  exist per recommendation at a time -- `create_workflow` refuses a
+  second one with `DuplicateActiveWorkflowError`/409
+  (`TestDuplicateActiveWorkflow`), while a *fresh* workflow is correctly
+  allowed once the first one reaches a terminal state.
+- **Audit**: every mutation appends an immutable `WorkflowEvent`
+  (never only a column overwrite) and is logged via
+  `security.audit_log.log_security_event` (`event=workflow_action`,
+  ids/action/status-transition only -- never the title/description/
+  comment/outcome text, proven directly in `TestAudit`).
+
+New, standalone REST surface, `api/workflow.py` (12 routes under
+`/workflows`, no `Settings.enable_*` feature flag -- the identical
+"administrative surface gated purely by RBAC" posture
+`api/governance.py`/`api/semantic_catalog.py`/`api/recommendation
+_governance.py` already establish). `POST /workflows` is the one route
+that resolves a *different* resource first (the source
+`RecommendationRecord`) since a workflow doesn't exist yet to authorize
+against -- a cross-tenant or nonexistent recommendation id gets the same
+404 either way.
+
+**Invariant that must not regress:** `identity.models.Workflow.title`/
+`.description` are set once at creation (from the source recommendation,
+optionally overridden) and never edited afterward -- the identical
+"content is immutable once created; only status changes" discipline
+`RecommendationRecord`'s own docstring establishes word for word, so
+what a reviewer approves can never silently drift after the fact.
+
+**Known, disclosed limitations:** no live ticketing-system connector
+exists or is invoked anywhere in this feature -- `external_reference_*`
+is plain metadata only, never verified against a real Jira/ServiceNow/
+Trello instance. Owner reassignment from `assigned`/`in_progress` is
+last-writer-wins (no conditional-status guard applies, since status
+itself doesn't change) -- the identical disclosed limitation Prompt 31's
+own recommendation-owner-assignment already carries. The per-action rate
+limit is per-IP, not per-identity -- the identical disclosed limitation
+Prompt 31 already names for its own recommendation-action routes. There
+is no scheduled/automated expiry sweep (every `EXPIRED` transition in
+this codebase today is a human-initiated administrative override); no
+frontend surface exists for this platform in this pass.
+
+**Read [`49_ENTERPRISE_WORKFLOW_AUTOMATION_CONTRACT.md`](49_ENTERPRISE_WORKFLOW_AUTOMATION_CONTRACT.md)**
+for the full inspection findings, every new module's design, the testing
+summary, and the security/tenant-isolation/performance review.
+
 ## How to run
 
 See `README.md` for full setup. Short version:

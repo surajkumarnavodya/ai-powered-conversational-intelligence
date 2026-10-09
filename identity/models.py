@@ -1939,3 +1939,209 @@ class BiConnector(Base):
     )
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()
+
+
+class Workflow(Base):
+    """One governed workflow -- Prompt 49
+    (`49_ENTERPRISE_WORKFLOW_AUTOMATION_CONTRACT.md`): turns an
+    already-`ACCEPTED`/`PARTIALLY_USEFUL` `RecommendationRecord` (Prompt
+    18) into real-world work, moving through `workflow.models
+    .WorkflowStatus`'s proposed -> approval_required -> approved ->
+    assigned -> in_progress -> completed/rejected/expired chain.
+
+    **Content describing the work (`title`/`description`, set once at
+    creation time from the source recommendation, optionally overridden
+    by the creator's own text) is immutable once created; only `status`
+    and the fields below ever change afterward** -- the identical
+    "content is immutable once created; only status changes" discipline
+    `RecommendationRecord`'s own docstring establishes word for word,
+    applied here so what a reviewer approves can never silently drift
+    after the fact.
+
+    `status` is mutated in place by `identity/repositories/workflow.py`'s
+    race-safe conditional-`UPDATE` functions, each of which also appends
+    an immutable `WorkflowEvent` row -- the same two-piece "mutable
+    current state + append-only history" shape every governed lifecycle
+    in this codebase already uses (`RecommendationRecord`/
+    `RecommendationFeedbackEvent`, `GovernanceAssetVersion`/
+    `GovernanceEvent`, `SemanticCatalogEntry`'s own inline review
+    columns plus `SemanticFinding.history`).
+
+    `owner_user_id`/`due_date` are the mission's own "support owners,
+    due dates" requirement -- both set by the `assign` action
+    (`identity/repositories/workflow.py::assign_workflow`), independently
+    reassignable later without re-transitioning status (mirrors
+    `RecommendationRecord.owner_user_id`'s own "the one mutable field
+    besides status" shape).
+
+    `external_system`/`external_reference_id`/`external_reference_url`
+    are the mission's own "external task references" requirement --
+    plain, caller-supplied metadata (a label and a link), never a value
+    this codebase calls an external API with. See `workflow/models.py`'s
+    own module docstring for why no live ticketing-system connector
+    exists or is invoked anywhere in this feature.
+
+    `outcome_summary`/`outcome_measured_impact` are the mission's own
+    "outcome measurement" requirement, set only by the `complete` action
+    -- **a human's own report that the work was done and what it
+    achieved, never a value this codebase independently verifies or
+    computes.** `outcome_measured_impact` is free-form JSON (e.g.
+    `{"metric": "...", "before": ..., "after": ...}`), mirroring
+    `GovernanceAssetVersion.config`'s own "free-form, human-authored,
+    never parsed or executed" disclosure.
+
+    `tenant_id` is copied from the source recommendation at creation
+    time (not re-joined on every read) and follows the exact scoped,
+    forward-compatible pattern `RecommendationRecord.tenant_id` already
+    established -- only this table's own rows carry a real `tenant_id`
+    with a real ABAC tenant-match check (`workflow.policy
+    .authorize_workflow_action`).
+    """
+
+    __tablename__ = "workflows"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    recommendation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("recommendation_records.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(
+        Enum(
+            "proposed",
+            "approval_required",
+            "approved",
+            "rejected",
+            "assigned",
+            "in_progress",
+            "completed",
+            "expired",
+            name="workflow_status",
+            native_enum=False,
+            validate_strings=True,
+        ),
+        nullable=False,
+        default="proposed",
+        index=True,
+    )
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    due_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    external_system: Mapped[str] = mapped_column(String(100), nullable=True)
+    external_reference_id: Mapped[str] = mapped_column(String(200), nullable=True)
+    external_reference_url: Mapped[str] = mapped_column(String(2048), nullable=True)
+    outcome_summary: Mapped[str] = mapped_column(Text, nullable=True)
+    outcome_measured_impact: Mapped[dict] = mapped_column(_METADATA_JSON, nullable=True)
+    created_by_user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _updated_at()
+
+    events: Mapped[list[WorkflowEvent]] = relationship(
+        back_populates="workflow",
+        cascade="all, delete-orphan",
+        order_by="WorkflowEvent.created_at",
+    )
+
+
+class WorkflowEvent(Base):
+    """One immutable lifecycle/comment/metadata event against a
+    `Workflow` -- Prompt 49's append-only audit trail, mirroring
+    `RecommendationFeedbackEvent`'s own shape exactly (the mission's own
+    "test ... audit" requirement): every status transition, comment,
+    owner assignment, due-date change, and external-reference change is
+    recorded here, never only as a column overwrite on `Workflow` itself.
+
+    `from_status` is `None` only for the very first event (the one
+    `create_workflow` itself inserts, `to_status="proposed"`) -- every
+    later event always has a real `from_status`.
+
+    `actor_user_id`/`actor_label` are deliberately both optional and
+    mutually a fallback for each other -- the identical convention
+    `RecommendationFeedbackEvent`'s own docstring establishes. In
+    practice, every event this feature produces today has a real human
+    `actor_user_id` (see `workflow/models.py`'s own "never permit
+    uncontrolled autonomous execution" module docstring -- there is no
+    automated actor anywhere in this package); `actor_label` exists for
+    forward compatibility with a future administrative sweep, matching
+    the sibling table's own shape, not because one exists yet.
+
+    **This table is never read by anything that changes
+    `recommendation.engine`'s own behavior, or executes anything.** No
+    code path in this codebase reads a `WorkflowEvent` row and writes
+    back to `config.settings.Settings`, a `recommendation.engine` rule,
+    or triggers a SQL execution/external API call -- see
+    `workflow/models.py`'s own module docstring.
+    """
+
+    __tablename__ = "workflow_events"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    workflow_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("workflows.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    from_status: Mapped[str] = mapped_column(
+        Enum(
+            "proposed",
+            "approval_required",
+            "approved",
+            "rejected",
+            "assigned",
+            "in_progress",
+            "completed",
+            "expired",
+            name="workflow_event_from_status",
+            native_enum=False,
+            validate_strings=True,
+        ),
+        nullable=True,
+    )
+    to_status: Mapped[str] = mapped_column(
+        Enum(
+            "proposed",
+            "approval_required",
+            "approved",
+            "rejected",
+            "assigned",
+            "in_progress",
+            "completed",
+            "expired",
+            name="workflow_event_to_status",
+            native_enum=False,
+            validate_strings=True,
+        ),
+        nullable=False,
+    )
+    event_type: Mapped[str] = mapped_column(
+        Enum(
+            "status_change",
+            "comment",
+            "owner_assigned",
+            "due_date_set",
+            "external_reference_set",
+            name="workflow_event_type",
+            native_enum=False,
+            validate_strings=True,
+        ),
+        nullable=False,
+        default="status_change",
+        server_default="status_change",
+    )
+    actor_user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    actor_label: Mapped[str] = mapped_column(String(200), nullable=True)
+    reason: Mapped[str] = mapped_column(Text, nullable=True)
+    detail: Mapped[dict] = mapped_column(_METADATA_JSON, nullable=True)
+    created_at: Mapped[datetime] = _created_at()
+
+    workflow: Mapped[Workflow] = relationship(back_populates="events")

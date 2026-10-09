@@ -32,10 +32,20 @@ known-first-party = ["agent", "api", "attachments", "config", "db", "embeddings"
 # dependencies" pattern -- `Depends(require_permission(Permission.X))`
 # builds one closure once, at route-registration/import time, not per
 # request) are the same shape of safe, intentional call-in-default.
+# `fastapi.Query` (Prompt 49, found while adding `api/workflow.py`'s own
+# `recommendation_id: uuid.UUID | None = Query(default=None)` query
+# param): ruff's bugbear check already special-cases `Query(default=...)`
+# for plain `str`/`bool`-typed params (every pre-existing route's own
+# `Query()` usage in this codebase is one of those, which is why this
+# gap went unnoticed until a `uuid.UUID | None`-typed one was added) but
+# not for a `uuid.UUID`-typed one -- reproduced directly against a
+# minimal two-line example, confirmed a ruff/bugbear false positive for
+# this exact type, not something special about this route.
 extend-immutable-calls = [
     "fastapi.Depends",
     "fastapi.File",
     "fastapi.Form",
+    "fastapi.Query",
     "api.authz.require_permission",
 ]
 

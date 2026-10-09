@@ -102,6 +102,21 @@ class Permission(str, Enum):
     # step the mission asks for; every action (create/refresh/export/
     # delete a connector) is an equally operational, admin-tier action.
     BI_INTEGRATION_MANAGE = "bi_integration.manage"
+    # Prompt 49 (49_ENTERPRISE_WORKFLOW_AUTOMATION_CONTRACT.md): the
+    # governed workflow lifecycle that turns an accepted recommendation
+    # into real-world work (proposed -> approval_required -> approved ->
+    # assigned -> in_progress -> completed/rejected/expired).
+    # WORKFLOW_REVIEW (approving/rejecting a workflow once it is
+    # submitted for approval -- domain judgment) sits at the analyst
+    # tier, the identical reasoning every other `*_REVIEW` permission
+    # above already establishes; WORKFLOW_MANAGE (create, edit, submit
+    # for approval, assign/reassign an owner and due date, start,
+    # complete, set an external task reference, comment, or
+    # force-expire -- operational actions, not domain judgment) sits at
+    # the admin tier, the identical reasoning every other `*_MANAGE`
+    # permission above already establishes.
+    WORKFLOW_REVIEW = "workflow.review"
+    WORKFLOW_MANAGE = "workflow.manage"
     # Prompt 28 (28_GLOBAL_PLATFORM_ADMIN_DASHBOARD_CONTRACT.md): the one
     # permission that crosses tenant boundaries deliberately -- every
     # other permission in this file is exercised through an ABAC check
@@ -201,6 +216,15 @@ SEED_PERMISSIONS: tuple[tuple[Permission, str], ...] = (
         "Tableau/Excel).",
     ),
     (
+        Permission.WORKFLOW_REVIEW,
+        "Approve or reject a workflow that has been submitted for approval.",
+    ),
+    (
+        Permission.WORKFLOW_MANAGE,
+        "Create, edit, submit for approval, assign/reassign, start, complete, set an external "
+        "task reference on, comment on, or force-expire a governed workflow.",
+    ),
+    (
         Permission.PLATFORM_ADMIN,
         "Operate the platform-wide admin dashboard: view and administer every "
         "tenant, not only the actor's own.",
@@ -271,6 +295,11 @@ _ANALYST: frozenset[Permission] = _USER | {
     # judgment call every other *_REVIEW permission above already sits
     # at this tier for -- Prompt 46 (46_AI_EVALUATION_BENCHMARKING_CONTRACT.md).
     Permission.EVAL_REVIEW,
+    # WORKFLOW_REVIEW (approving/rejecting a workflow submitted for
+    # approval) is the identical domain-judgment call every other
+    # *_REVIEW permission above already sits at this tier for -- Prompt
+    # 49 (49_ENTERPRISE_WORKFLOW_AUTOMATION_CONTRACT.md).
+    Permission.WORKFLOW_REVIEW,
 }
 _ADMIN: frozenset[Permission] = _ANALYST | {
     Permission.USERS_READ,
@@ -312,6 +341,12 @@ _ADMIN: frozenset[Permission] = _ANALYST | {
     # `*_MANAGE` permission above is -- an operational action, not a
     # domain-judgment call.
     Permission.BI_INTEGRATION_MANAGE,
+    # WORKFLOW_MANAGE (create/edit/submit-for-approval/assign/start/
+    # complete/set-external-reference/comment/force-expire a governed
+    # workflow) is admin-tier for the identical reason every other
+    # `*_MANAGE` permission above is -- an operational action, not a
+    # domain-judgment call.
+    Permission.WORKFLOW_MANAGE,
 }
 # A read-focused compliance/oversight role -- can review any user's audit
 # trail and the admin dashboard, but cannot create/edit/deactivate users or
