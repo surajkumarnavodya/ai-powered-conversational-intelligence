@@ -141,7 +141,7 @@ changes. Each was updated, and `tests/test_api_ask.py`'s now *records*
 the flag rather than merely tolerating it, so "an explicit model choice
 reaches the graph as explicit" is pinned at the HTTP boundary too.
 
-`ruff check` and `black --check` clean on all 25 files touched. `mypy` clean on the new package and routes.
+`ruff check` and `black --check` clean on every file touched. `mypy` reports zero errors in `model_routing/` and the two new `api/` modules; the one error it emits when checking them comes from `db/schema_introspection.py:342`, pulled in as a dependency, pre-existing and untouched here. One further pre-existing `ruff` finding was confirmed present in `HEAD` and left alone: `tests/conftest.py:77` F821 (`Undefined name 'Path'`), from Prompt 46's own fixture.
 
 ### Found by this prompt's own review pass, and fixed
 
