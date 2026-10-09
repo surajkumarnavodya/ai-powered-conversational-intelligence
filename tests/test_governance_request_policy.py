@@ -8,6 +8,7 @@ not a safety win.
 from __future__ import annotations
 
 import pytest
+
 from governance.decisions import GovernanceDecision
 from governance.request_policy import evaluate_request
 

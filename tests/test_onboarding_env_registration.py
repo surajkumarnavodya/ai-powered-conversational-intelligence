@@ -61,7 +61,9 @@ def env_file(tmp_path: Path) -> Path:
     return path
 
 
-def _parsed_connections(env_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[DatabaseConnectionConfig, ...]:
+def _parsed_connections(
+    env_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[DatabaseConnectionConfig, ...]:
     """Loads the written file into the environment, as startup does, then parses it like Settings."""
     for key, value in dotenv_values(env_path).items():
         if value is not None:

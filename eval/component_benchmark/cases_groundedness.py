@@ -14,7 +14,6 @@ own much finer-grained unit coverage of every allowed-value computation.
 from __future__ import annotations
 
 from agent.insight import is_insight_grounded, summarize_result
-
 from eval.component_benchmark.schema import ComponentCase
 
 
@@ -44,18 +43,13 @@ def _case_a_value_literally_in_the_question_is_accepted() -> tuple[bool, str]:
 
 
 def _case_the_top_share_percent_claim_is_accepted() -> tuple[bool, str]:
-    summary = summarize_result(
-        ["region", "revenue"], [("East", 600_000.0), ("West", 400_000.0)]
-    )
-    grounded = is_insight_grounded(
-        "East accounted for roughly 60% of total revenue.", summary
-    )
+    summary = summarize_result(["region", "revenue"], [("East", 600_000.0), ("West", 400_000.0)])
+    grounded = is_insight_grounded("East accounted for roughly 60% of total revenue.", summary)
     return grounded, f"grounded={grounded} top_share_percent={summary.top_share_percent}"
 
+
 def _case_a_fabricated_percent_is_rejected() -> tuple[bool, str]:
-    summary = summarize_result(
-        ["region", "revenue"], [("East", 600_000.0), ("West", 400_000.0)]
-    )
+    summary = summarize_result(["region", "revenue"], [("East", 600_000.0), ("West", 400_000.0)])
     grounded = is_insight_grounded("East accounted for 91% of total revenue.", summary)
     passed = grounded is False
     return passed, f"grounded={grounded} (expected False)"

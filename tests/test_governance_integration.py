@@ -3,12 +3,11 @@ result masking at execution, and the rollback switches."""
 
 from __future__ import annotations
 
-from governance.result_policy import RESTRICTED_MASK
-
 from agent.nodes import execute_sql_node, sanitize_input_node
 from agent.orchestrator import nodes as orchestrator_nodes
 from agent.state import AgentState
 from config.settings import Settings
+from governance.result_policy import RESTRICTED_MASK
 from security.secrets import SecretStr
 
 

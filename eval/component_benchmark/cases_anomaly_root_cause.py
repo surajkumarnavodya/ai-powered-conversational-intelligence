@@ -14,8 +14,8 @@ from __future__ import annotations
 
 from analytics.anomaly import detect_anomalies
 from analytics.root_cause import investigate_root_cause
-from config.settings import Settings
 
+from config.settings import Settings
 from eval.component_benchmark.schema import ComponentCase
 
 #: A permissive settings instance so these cases exercise the real
@@ -64,9 +64,7 @@ def _case_a_genuine_single_dimension_driver_is_identified() -> tuple[bool, str]:
     result = investigate_root_cause(
         current_rows, baseline_rows, ["region", "revenue"], ["region"], "revenue", _SETTINGS
     )
-    passed = result.has_sufficient_evidence and any(
-        c.label == "East" for c in result.contributors
-    )
+    passed = result.has_sufficient_evidence and any(c.label == "East" for c in result.contributors)
     return passed, (
         f"has_sufficient_evidence={result.has_sufficient_evidence} "
         f"contributors={[c.label for c in result.contributors]}"

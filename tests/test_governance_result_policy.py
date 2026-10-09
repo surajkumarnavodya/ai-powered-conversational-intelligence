@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+
 from governance.result_policy import RESTRICTED_MASK, govern_result, govern_rows_for_caller
 
 COLUMNS = ["department", "employee_name", "salary"]

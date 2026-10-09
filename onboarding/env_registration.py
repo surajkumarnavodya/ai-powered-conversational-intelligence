@@ -156,9 +156,7 @@ def register_published_database(
     if env_path is None:
         env_path = DEFAULT_ENV_PATH
     with _ENV_LOCK:
-        values: dict[str, str | None] = (
-            dict(dotenv_values(env_path)) if env_path.exists() else {}
-        )
+        values: dict[str, str | None] = dict(dotenv_values(env_path)) if env_path.exists() else {}
         existing = _find_existing(db, values)
         if existing is not None:
             return RegistrationResult(

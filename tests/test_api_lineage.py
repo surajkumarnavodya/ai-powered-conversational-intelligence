@@ -283,7 +283,11 @@ class TestTrace:
         graph["nodes"][0]["type"] = "not_a_real_type"
         response = client.post(
             "/lineage/trace",
-            json={"graph": graph, "start_node_id": graph["nodes"][0]["id"], "direction": "upstream"},
+            json={
+                "graph": graph,
+                "start_node_id": graph["nodes"][0]["id"],
+                "direction": "upstream",
+            },
         )
         assert response.status_code == 422
 

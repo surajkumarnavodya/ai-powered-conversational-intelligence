@@ -56,8 +56,8 @@ from api.onboarding_schemas import (
     RunDiscoveryRequest,
 )
 from config.settings import ConfigurationError, get_settings
-from embeddings.schema_indexer import refresh_schema_index
 from db.connection import DatabaseConnectionConfig, build_connection_url, test_connection
+from embeddings.schema_indexer import refresh_schema_index
 from onboarding.env_registration import (
     PublishedDatabase,
     RegistrationResult,
@@ -426,7 +426,9 @@ def _require_working_connection(engine) -> None:
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))
     except Exception as exc:  # noqa: BLE001 - any connection failure blocks publish
-        logger.warning("[onboarding] publish refused: connection check failed (%s)", type(exc).__name__)
+        logger.warning(
+            "[onboarding] publish refused: connection check failed (%s)", type(exc).__name__
+        )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=(

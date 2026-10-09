@@ -15,8 +15,8 @@ coverage of every model's fitting/backtest logic.
 from __future__ import annotations
 
 from analytics.forecasting import generate_forecast
-from config.settings import Settings
 
+from config.settings import Settings
 from eval.component_benchmark.schema import ComponentCase
 
 _SETTINGS = Settings()
