@@ -149,7 +149,8 @@
   },
   "questionNavigator": {
     "label": "Questions",
-    "toggleLabel": "Toggle question list"
+    "toggleLabel": "Toggle question list",
+    "closeLabel": "Close question list"
   },
   "chat": {
     "placeholder": "Ask a question about your data...",

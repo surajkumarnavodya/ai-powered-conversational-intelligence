@@ -86,32 +86,85 @@ describe('QuestionNavigator', () => {
     expect(screen.queryByRole('navigation', { name: 'Questions' })).not.toBeInTheDocument()
   })
 
-  it('expands on hover and collapses when the pointer leaves', () => {
+  it('does not open on hover -- the panel is opened by an explicit click only', () => {
     const { container } = renderNavigator([makeEntry('First question'), makeEntry('Second question')])
     const wrapper = container.querySelector('button')?.parentElement as HTMLElement
 
     fireEvent.mouseEnter(wrapper)
-    expect(screen.getByRole('navigation', { name: 'Questions' })).toBeInTheDocument()
-
-    fireEvent.mouseLeave(wrapper)
     expect(screen.queryByRole('navigation', { name: 'Questions' })).not.toBeInTheDocument()
   })
 
-  it('gives the hover/focus target a tall rail, not just the icon\'s own small circle -- so a slight up/down mouse move stays inside it', () => {
+  it('stays open when the pointer leaves -- it never auto-hides', () => {
+    // The regression this replaces: the panel sits to the *left* of the
+    // icon with an 8px gap between them, so a pointer travelling from the
+    // icon to the list crossed a region belonging to neither the wrapper
+    // nor any descendant. That fired mouseleave and closed the panel
+    // before it could be reached, which made it unusable in practice.
+    const { container } = renderNavigator([makeEntry('First question'), makeEntry('Second question')])
+    openNavigator()
+    const wrapper = container.querySelector('button')?.parentElement as HTMLElement
+
+    fireEvent.mouseLeave(wrapper)
+
+    expect(screen.getByRole('navigation', { name: 'Questions' })).toBeInTheDocument()
+  })
+
+  it('stays open when focus moves away -- blur never auto-hides it either', () => {
+    renderNavigator([makeEntry('First question'), makeEntry('Second question')])
+    const toggle = openNavigator()
+
+    fireEvent.blur(toggle)
+
+    expect(screen.getByRole('navigation', { name: 'Questions' })).toBeInTheDocument()
+  })
+
+  it('closes on the panel\'s own close button', () => {
+    renderNavigator([makeEntry('First question'), makeEntry('Second question')])
+    openNavigator()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close question list' }))
+
+    expect(screen.queryByRole('navigation', { name: 'Questions' })).not.toBeInTheDocument()
+  })
+
+  it('puts the close button in the panel header, opposite the title', () => {
+    renderNavigator([makeEntry('First question'), makeEntry('Second question')])
+    openNavigator()
+
+    const close = screen.getByRole('button', { name: 'Close question list' })
+    const header = close.parentElement as HTMLElement
+
+    // Same row as the title, pushed to the opposite (right) edge of it.
+    expect(header.textContent).toContain('Questions')
+    expect(header.className).toMatch(/justify-between/)
+    // ...and it is the last child of that row, i.e. after the title.
+    expect(header.lastElementChild).toBe(close)
+  })
+
+  it('returns focus to the toggle after closing, rather than stranding it', () => {
+    renderNavigator([makeEntry('First question'), makeEntry('Second question')])
+    const toggle = openNavigator()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close question list' }))
+
+    expect(document.activeElement).toBe(toggle)
+  })
+
+  it('keeps the decorative rail from swallowing clicks over the conversation', () => {
     renderNavigator([makeEntry('First question'), makeEntry('Second question')])
     const toggle = screen.getByRole('button', { name: 'Toggle question list' })
     const wrapper = toggle.parentElement as HTMLElement
 
-    // The icon itself stays visually small (h-9, 36px)...
+    // The icon itself stays visually small (h-9, 36px) inside a much
+    // taller rail that marks where the control is...
     expect(toggle.className).toMatch(/h-9/)
-    // ...but the shared hover/focus target it sits inside is much taller,
-    // so the whole rail -- well above and below the icon -- keeps the
-    // flyout open on a small vertical mouse move, not just the icon's own
-    // tiny bounding box.
     expect(wrapper.className).toMatch(/h-44/)
-
-    fireEvent.mouseEnter(wrapper)
-    expect(screen.getByRole('navigation', { name: 'Questions' })).toBeInTheDocument()
+    // ...but that rail is no longer a hit target now that nothing depends
+    // on the pointer staying inside it, so the column must not intercept
+    // clicks meant for the conversation underneath. Only the real controls
+    // opt back in.
+    expect(wrapper.className).toMatch(/pointer-events-none/)
+    expect(toggle.className).toMatch(/pointer-events-auto/)
   })
 
   it('marks the toggle control as expanded/collapsed via aria-expanded', () => {
@@ -144,8 +197,7 @@ describe('QuestionNavigator', () => {
     renderNavigator([makeEntry(full), makeEntry('Second question')])
     openNavigator()
 
-    const nav = screen.getByRole('navigation', { name: 'Questions' })
-    const firstButton = within(nav).getAllByRole('button')[0]
+    const firstButton = within(screen.getByRole('list')).getAllByRole('button')[0]
     expect(firstButton.textContent).toContain(full)
   })
 
@@ -153,8 +205,7 @@ describe('QuestionNavigator', () => {
     renderNavigator([makeEntry('word '.repeat(60).trim()), makeEntry('Second question')])
     openNavigator()
 
-    const nav = screen.getByRole('navigation', { name: 'Questions' })
-    const firstButton = within(nav).getAllByRole('button')[0]
+    const firstButton = within(screen.getByRole('list')).getAllByRole('button')[0]
     // Document order: [0] the index-number span, [1] ScrollingText's own
     // clipping container, [2] its inner (unclipped) text span.
     const scrollingTextContainer = firstButton.querySelectorAll('span')[1] as HTMLElement
@@ -166,8 +217,7 @@ describe('QuestionNavigator', () => {
     renderNavigator([makeEntry(full), makeEntry('Second question')])
     openNavigator()
 
-    const nav = screen.getByRole('navigation', { name: 'Questions' })
-    const firstButton = within(nav).getAllByRole('button')[0]
+    const firstButton = within(screen.getByRole('list')).getAllByRole('button')[0]
 
     firstButton.focus()
     await waitFor(() => {
@@ -193,8 +243,7 @@ describe('QuestionNavigator', () => {
     renderNavigator([makeEntry(full), makeEntry('Second question')])
     openNavigator()
 
-    const nav = screen.getByRole('navigation', { name: 'Questions' })
-    const firstButton = within(nav).getAllByRole('button')[0]
+    const firstButton = within(screen.getByRole('list')).getAllByRole('button')[0]
     const scrollingTextContainer = firstButton.querySelectorAll('span')[1] as HTMLElement
     const textSpan = scrollingTextContainer.querySelector('span') as HTMLElement
 
@@ -222,8 +271,7 @@ describe('QuestionNavigator', () => {
     renderNavigator([a, b])
     openNavigator()
 
-    const nav = screen.getByRole('navigation', { name: 'Questions' })
-    const buttons = within(nav).getAllByRole('button')
+    const buttons = within(screen.getByRole('list')).getAllByRole('button')
 
     fireEvent.click(buttons[0])
     expect(scrollIntoViewSpy).toHaveBeenCalledTimes(1)
@@ -241,9 +289,7 @@ describe('QuestionNavigator', () => {
   it('scrolls the main chat with block: start, smooth behavior', () => {
     renderNavigator([makeEntry('First question'), makeEntry('Second question')])
     openNavigator()
-    const nav = screen.getByRole('navigation', { name: 'Questions' })
-
-    fireEvent.click(within(nav).getAllByRole('button')[0])
+    fireEvent.click(within(screen.getByRole('list')).getAllByRole('button')[0])
 
     expect(scrollIntoViewSpy).toHaveBeenCalledWith(
       expect.objectContaining({ block: 'start', behavior: 'smooth' }),
@@ -286,9 +332,7 @@ describe('QuestionNavigator', () => {
   it('has keyboard-reachable, native buttons for each item (Enter/Space activate natively)', () => {
     renderNavigator([makeEntry('First question'), makeEntry('Second question')])
     openNavigator()
-    const nav = screen.getByRole('navigation', { name: 'Questions' })
-
-    for (const button of within(nav).getAllByRole('button')) {
+    for (const button of within(screen.getByRole('list')).getAllByRole('button')) {
       expect(button.tagName).toBe('BUTTON')
     }
   })

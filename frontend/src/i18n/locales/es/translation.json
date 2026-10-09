@@ -132,7 +132,8 @@
   },
   "questionNavigator": {
     "label": "Preguntas",
-    "toggleLabel": "Alternar lista de preguntas"
+    "toggleLabel": "Alternar lista de preguntas",
+    "closeLabel": "Cerrar lista de preguntas"
   },
   "chat": {
     "placeholder": "Haz una pregunta sobre tus datos...",

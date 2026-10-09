@@ -132,7 +132,8 @@
   },
   "questionNavigator": {
     "label": "प्रश्न",
-    "toggleLabel": "प्रश्न सूची टॉगल करें"
+    "toggleLabel": "प्रश्न सूची टॉगल करें",
+    "closeLabel": "प्रश्न सूची बंद करें"
   },
   "chat": {
     "placeholder": "अपने डेटा के बारे में एक सवाल पूछें...",
