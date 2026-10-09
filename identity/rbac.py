@@ -94,6 +94,14 @@ class Permission(str, Enum):
     # every other `*_MANAGE` permission above already establishes.
     EVAL_REVIEW = "eval.review"
     EVAL_MANAGE = "eval.manage"
+    # Prompt 48 (48_ENTERPRISE_BI_INTEGRATIONS_CONTRACT.md): governed
+    # connectors to Power BI/Looker (push) and Tableau/Excel
+    # (authenticated file/feed pull). A single permission, not a
+    # `*_MANAGE`/`*_REVIEW` pair -- unlike `ONBOARDING_*`/`CATALOG_*`/
+    # `GOVERNANCE_*`, this feature has no SME-approval/domain-judgment
+    # step the mission asks for; every action (create/refresh/export/
+    # delete a connector) is an equally operational, admin-tier action.
+    BI_INTEGRATION_MANAGE = "bi_integration.manage"
     # Prompt 28 (28_GLOBAL_PLATFORM_ADMIN_DASHBOARD_CONTRACT.md): the one
     # permission that crosses tenant boundaries deliberately -- every
     # other permission in this file is exercised through an ABAC check
@@ -186,6 +194,11 @@ SEED_PERMISSIONS: tuple[tuple[Permission, str], ...] = (
     (
         Permission.EVAL_MANAGE,
         "Record a new evaluation run and compute a release-gate verdict.",
+    ),
+    (
+        Permission.BI_INTEGRATION_MANAGE,
+        "Create, refresh, export from, or delete a governed BI connector (Power BI/Looker/"
+        "Tableau/Excel).",
     ),
     (
         Permission.PLATFORM_ADMIN,
@@ -294,6 +307,11 @@ _ADMIN: frozenset[Permission] = _ANALYST | {
     # admin-tier for the identical reason ONBOARDING_MANAGE/
     # CATALOG_MANAGE/GOVERNANCE_MANAGE are.
     Permission.EVAL_MANAGE,
+    # BI_INTEGRATION_MANAGE (create/refresh/export/delete a governed BI
+    # connector) is admin-tier for the identical reason every other
+    # `*_MANAGE` permission above is -- an operational action, not a
+    # domain-judgment call.
+    Permission.BI_INTEGRATION_MANAGE,
 }
 # A read-focused compliance/oversight role -- can review any user's audit
 # trail and the admin dashboard, but cannot create/edit/deactivate users or

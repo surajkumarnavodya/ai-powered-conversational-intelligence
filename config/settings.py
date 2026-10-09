@@ -2226,6 +2226,59 @@ class Settings(BaseSettings):
     # a caller sends" philosophy, scoped to this feature's own impact walk.
     schema_drift_impact_max_trace_depth: int = Field(default=6, gt=0)
 
+    # --- Prompt 48 (48_ENTERPRISE_BI_INTEGRATIONS_CONTRACT.md): bi_integration/'s
+    # own tunables -- governed connectors to Power BI/Looker (push) and
+    # Tableau/Excel (authenticated file/feed pull). Unlike
+    # enable_optimization_engine/enable_what_if_scenarios/
+    # enable_data_quality_engine/enable_lineage_platform/
+    # enable_schema_drift_detection above (all pure, zero-network compute,
+    # safe to default on), this feature makes real outbound HTTP calls
+    # (a connector's own refresh may POST to Power BI's REST API or a
+    # tenant-supplied Looker webhook URL) -- the same "an optional feature
+    # that reaches outside this process defaults off" posture
+    # enable_web_search/enable_media_generation already establish, not the
+    # pure-compute engines' own default-on one.
+    enable_bi_integration: bool = False
+    # Power BI's push-dataset REST API is organization-wide (one Azure AD
+    # app registration/service-principal backs an entire deployment, not
+    # a per-tenant-dynamic credential a caller could reasonably supply) --
+    # the identical "operator-configured once in .env" shape
+    # web_search_provider/web_search_api_key already establish, not
+    # onboarding's own "never persist a connection secret" per-call
+    # pattern (which exists specifically for a *caller-supplied* database
+    # credential, a different threat model). `None` (the default) means
+    # push-to-Power-BI is unavailable even with enable_bi_integration=true
+    # -- a connector of that target type then fails closed at refresh
+    # time with a clear, typed error, never a silent no-op.
+    power_bi_push_base_url: str | None = None
+    power_bi_push_api_key: SecretStr | None = None
+    # A Looker connector's own webhook URL is genuinely per-tenant/per-
+    # connector (each customer's own Looker instance), so it is stored on
+    # the connector row itself rather than here -- see
+    # `identity.models.BiConnector.push_config`'s own docstring. It is
+    # never treated as a trusted destination merely because an admin
+    # typed it: `bi_integration.outbound_safety.assert_safe_outbound_url`
+    # independently re-validates it (HTTPS-only, resolved address outside
+    # any private/loopback/reserved range) on every single refresh, not
+    # only at connector-creation time, the identical "re-check every time,
+    # never trust a value because it was valid once" posture
+    # `agent/sql_validator.py`'s own "an edit is exactly as untrusted as
+    # an LLM generation" rule already establishes for SQL text.
+    bi_outbound_request_timeout_seconds: float = Field(default=10.0, gt=0.0)
+    # Hard caps mirroring data_quality_max_rows_per_table/
+    # scenario_max_parameters' identical "cap regardless of what a caller
+    # sends" philosophy -- a connector's own refresh re-executes real SQL
+    # against a real database, so these bound both the query's own row
+    # cap and the in-memory export-file cache's footprint.
+    bi_export_max_rows: int = Field(default=5000, gt=0)
+    # How many connectors' own cached export files (the bytes a pull-style
+    # Tableau/Excel connector's last refresh produced) this process holds
+    # in memory at once -- mirrors media_gen.cache's identical bounded,
+    # in-process, not-persisted-to-a-database cache shape. Least-recently-
+    # refreshed connector's cache entry is evicted first once the cap is
+    # reached.
+    bi_export_cache_max_entries: int = Field(default=200, gt=0)
+
     # Prompt 19 (19_QUERY_STORE_PERFORMANCE_CONTRACT.md): db.query_store's
     # own tunables -- a no-op for every DB_TYPE other than "mssql"
     # regardless of these values (see that module's own docstring).

@@ -4596,6 +4596,123 @@ for the full inspection findings, every new module's design, the
 150-test testing summary, and the security/tenant-isolation/performance
 review.
 
+### Enterprise BI integrations (Prompt 48)
+
+`bi_integration/` (new top-level package, a peer of `eval_platform/`/
+`governance_center/`) is governed connectors to Power BI/Looker (push)
+and Tableau/Excel (authenticated file/feed pull) -- never a second
+query/export engine. A connector's own refresh reuses this app's
+governed SQL execution path **verbatim**: `agent.sql_validator
+.validate_sql` -> `enforce_row_limit` -> `qualify_table_schema` ->
+`db.execution.execute_readonly_sql` -> `governance.result_policy
+.govern_rows_for_caller` (masking a restricted column for a caller
+lacking `Permission.VIEW_RESTRICTED_COLUMNS`), the exact sequence
+`POST /execute` already uses, applied **before** a push-style
+connector's own rows ever leave this process and before a pull-style
+connector's own in-memory export cache is populated.
+
+**"Reuse governed metrics... do not create duplicate metric
+definitions" is structural, not conventional.**
+`identity.models.BiConnector.governed_metric_concept_key`/
+`governed_metric_version` are a deliberately **loose reference** (plain
+strings, never a copy of a metric's own `approved_expression`) --
+`bi_integration.metric_binding.validate_governed_metric_binding`
+rejects linking a connector to anything but a currently-**published**
+semantic-catalog `METRIC` entry, plus a cheap, disclosed sanity check
+(reusing `agent.sql_validator.find_unexpected_table_references` as a
+generic table extractor, never a second sqlglot implementation): at
+least one of the metric's own declared `source_tables` must appear in
+the connector's own SQL. This is a bounded consistency check, not a
+SQL-to-formula equivalence proof -- the identical disclosed scope
+`agent.nodes.review_metric_conformance_node`'s own LLM-judged check
+already carries, applied here deterministically instead since this
+feature has no LLM-call budget for the richer judgment.
+
+**Two push targets, two pull targets, each honestly scoped to what's
+actually implementable without a live tenant:** Power BI's own real,
+documented push-dataset REST API
+(`POST .../datasets/{id}/tables/{table}/rows`) and a generic Looker
+Action-Hub-shaped webhook push are the two **push** connectors --
+`bi_integration/push.py`, disclosed, not live-verified (the identical
+posture `search/web_search.py`/`media_gen/` already carry for their own
+external providers, covered by mocked-`httpx` tests only). Tableau and
+Excel have no equivalent "push" API this app could target without a
+live tenant, so both are **pull**-style instead: `GET /bi/connectors
+/{id}/export?format=csv|xlsx|json` is a plain, authenticated file/feed
+a tool's own generic "Web Data Connector"/"Get Data from Web" can read
+-- not a native plugin, disclosed as such.
+
+**No connection secret is ever stored** -- Power BI's own push
+credential (`Settings.power_bi_push_base_url`/`power_bi_push_api_key`,
+a `SecretStr`) is operator-configured once, process-wide, in `.env`
+(the identical `web_search_api_key` shape, since Power BI's own push
+API is backed by one organization-wide Azure AD app registration, not
+a per-tenant-dynamic credential) -- never per-connector. A Looker
+connector's own `push_config["webhook_url"]` is a destination URL, not
+a credential, and is independently re-validated against SSRF
+(`bi_integration.outbound_safety.assert_safe_outbound_url`) on **every
+single refresh**, never only once at connector-creation time -- the
+identical "an edit is exactly as untrusted as an LLM generation"
+re-check-every-time posture `agent/sql_validator.py` already
+establishes for SQL text, applied here to a caller-supplied URL.
+Deliberately a **second, independent copy** of `media_gen/download.py`'s
+own resolve-and-blocklist SSRF logic, not an extraction into a shared
+helper -- that module's own test suite patches `media_gen.download
+.log_security_event` directly, and moving the call into a shared
+module would silently break that patch target for a marginal
+de-duplication benefit on ~15 lines of logic a security-critical,
+already-audited test suite depends on.
+
+**An operational refresh failure is a 200 with `status: "error"` in
+the body, never an HTTP error code** -- the identical
+"refresh/status/error handling" shape `POST /execute`'s own
+`ExecuteResponse(status="failed", ...)` already establishes. An HTTP
+error code is reserved for a request-level problem (authorization,
+validation, rate limit, not-found); a SQL error, a push HTTP error, or
+an SSRF-blocked webhook are all recorded on the connector's own row
+(`last_error`/`last_refresh_status`) instead.
+
+New RBAC (`Permission.BI_INTEGRATION_MANAGE`, a single admin-tier
+permission -- unlike `ONBOARDING_*`/`CATALOG_*`/`GOVERNANCE_*`, this
+feature has no SME-approval/domain-judgment step the mission asks for)
+and `api/bi_integration.py` (6 routes under `/bi`, behind
+`Settings.enable_bi_integration`, default **off** -- unlike the
+pure-compute analytics engines (`enable_optimization_engine` etc.,
+default on), this feature makes real outbound HTTP calls, the same
+"an optional feature that reaches outside this process defaults off"
+posture `enable_web_search`/`enable_media_generation` already
+establish).
+
+**Invariants that must not regress:** a connector's own SQL is
+re-validated fresh on every refresh, never trusted because it was
+valid at creation time. `govern_rows_for_caller` always runs (when
+`Settings.enable_result_governance` is on) before a push-style
+connector's rows leave this process. Cross-tenant access to a
+connector, its refresh, or its export is a 404, not a 403
+(anti-enumeration, matching `api/eval_platform.py`/`api/governance.py`'s
+own precedent). Deleting a connector also discards its own cached
+export (`bi_integration.export_cache.BiExportCache.discard`), so a
+stale export can never be served under a reused id.
+
+**Known, disclosed limitations:** no soft-disable route is exposed yet
+(`identity.repositories.bi_integration.set_disabled` is built and
+tested but not wired into any route in this pass -- a connector is
+only ever created or deleted, matching this series' own "compute +
+test, defer the deepest wiring" precedent). The export cache is
+process-lifetime, in-memory, not persisted -- a restart loses every
+pull-style connector's last-refreshed rows until the next refresh. The
+governed-metric table-overlap check is a disclosed heuristic, not a
+correctness proof. Looker's own webhook contract and Tableau/Excel's
+own "generic file/feed" shape have not been verified against a real
+Looker/Tableau/Excel instance -- only Power BI's own documented REST
+API shape and this feature's own mocked-`httpx` tests exist as
+evidence.
+
+**Read [`48_ENTERPRISE_BI_INTEGRATIONS_CONTRACT.md`](48_ENTERPRISE_BI_INTEGRATIONS_CONTRACT.md)**
+for the full inspection findings, every new module's design, the
+testing summary, and the security/tenant-isolation/performance review.
+
+
 ## How to run
 
 See `README.md` for full setup. Short version:

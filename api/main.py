@@ -73,6 +73,7 @@ from agent.state import ConversationExchange
 from api.analyst import router as analyst_router
 from api.attachments import router as attachments_router
 from api.authz import require_permission
+from api.bi_integration import router as bi_integration_router
 from api.chat_history import router as chat_history_router
 from api.chat_persistence import persist_ask_turn, persist_execute_result
 from api.data_quality import router as data_quality_router
@@ -411,6 +412,7 @@ app.include_router(lineage_router)
 app.include_router(schema_drift_router)
 app.include_router(governance_router)
 app.include_router(eval_platform_router)
+app.include_router(bi_integration_router)
 app.include_router(platform_admin_router)
 app.include_router(tenant_admin_router)
 app.include_router(navigation_router)

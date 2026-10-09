@@ -1841,3 +1841,101 @@ class EvaluationCaseReview(Base):
         Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     created_at: Mapped[datetime] = _created_at()
+
+
+class BiConnector(Base):
+    """One governed BI connector -- Prompt 48
+    (`48_ENTERPRISE_BI_INTEGRATIONS_CONTRACT.md`): a persisted,
+    tenant-scoped link between a specific, already-validated SQL
+    statement and an external BI/productivity target (Power BI/Looker
+    push, Tableau/Excel authenticated file pull).
+
+    **No connection secret is ever stored here** -- the identical
+    "never persist a credential" discipline `OnboardingJob`'s own
+    docstring establishes, applied to this feature's different shape:
+    Power BI's own push credential is operator-configured once, process-
+    wide, in `Settings` (never per-connector); a Looker connector's own
+    `push_config["webhook_url"]` is a destination URL, not a credential,
+    and is independently re-validated against SSRF on every single
+    refresh (`bi_integration.outbound_safety.assert_safe_outbound_url`),
+    never trusted merely because it was valid once.
+
+    **`governed_metric_concept_key`/`governed_metric_version` are a
+    deliberately loose reference, never a copy of the metric's own
+    formula** -- the mission's own "reuse governed metrics... do not
+    create duplicate metric definitions" requirement, satisfied
+    structurally the identical way `EvaluationRun.governed_asset_key`
+    satisfies the analogous requirement for a governed *asset* version:
+    a plain string pointer resolved fresh against `identity.repositories
+    .semantic_catalog` at bind-time and at every refresh, never
+    persisted as a second copy of `CatalogEntrySnapshot
+    .approved_expression`.
+
+    **`last_error` is always pre-redacted before being stored**
+    (`security.redaction.redact_secrets`, the identical treatment
+    `api/main.py`'s own `/execute` route already gives a raw
+    `SQLAlchemyError`) -- a connector's own refresh failure message is
+    exactly as likely to echo a raw driver/HTTP error as any other
+    execution path in this codebase, and this table is read back
+    through `GET /bi/connectors/{id}` by any caller holding
+    `BI_INTEGRATION_MANAGE`, not only the one who triggered the failing
+    refresh.
+    """
+
+    __tablename__ = "bi_connectors"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    target_type: Mapped[str] = mapped_column(
+        Enum(
+            "power_bi",
+            "looker",
+            "tableau",
+            "excel",
+            name="bi_target_type",
+            native_enum=False,
+            validate_strings=True,
+        ),
+        nullable=False,
+        index=True,
+    )
+    display_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    sql_text: Mapped[str] = mapped_column(Text, nullable=False)
+    database_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    governed_metric_concept_key: Mapped[str] = mapped_column(String(200), nullable=True)
+    governed_metric_version: Mapped[int] = mapped_column(Integer, nullable=True)
+    # Non-secret target configuration -- e.g. {"dataset_id": ..., "table_name":
+    # ...} for power_bi, {"webhook_url": ...} for looker. See this class's
+    # own docstring for why a secret never lives here.
+    push_config: Mapped[dict] = mapped_column(_METADATA_JSON, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(
+        Enum(
+            "never_refreshed",
+            "healthy",
+            "error",
+            "disabled",
+            name="bi_connector_status",
+            native_enum=False,
+            validate_strings=True,
+        ),
+        nullable=False,
+        default="never_refreshed",
+    )
+    last_refresh_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_refresh_status: Mapped[str] = mapped_column(
+        Enum(
+            "success",
+            "failed",
+            name="bi_refresh_outcome",
+            native_enum=False,
+            validate_strings=True,
+        ),
+        nullable=True,
+    )
+    last_error: Mapped[str] = mapped_column(Text, nullable=True)
+    last_row_count: Mapped[int] = mapped_column(Integer, nullable=True)
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _updated_at()

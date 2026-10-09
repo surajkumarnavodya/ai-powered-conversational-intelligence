@@ -187,6 +187,7 @@ class TestAsk:
             model=None,
             tenant_id=None,
             forecast_horizon=None,
+            model_explicitly_selected=False,
         ):
             captured["question"] = question
             captured["conversation_history"] = conversation_history
@@ -198,6 +199,12 @@ class TestAsk:
             captured["model"] = model
             captured["tenant_id"] = tenant_id
             captured["forecast_horizon"] = forecast_horizon
+            # Prompt 47: /ask resolves an omitted AskRequest.model to
+            # Settings.ollama_model before the graph runs, so this flag is
+            # what distinguishes "the caller chose this model" from "the
+            # caller chose nothing" -- model routing never overrides an
+            # explicit choice.
+            captured["model_explicitly_selected"] = model_explicitly_selected
             return {"status": "succeeded", "error_history": []}
 
         monkeypatch.setattr("api.main.run_orchestrated", _capture)
