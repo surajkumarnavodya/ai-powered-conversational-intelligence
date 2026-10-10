@@ -1,7 +1,8 @@
-import { AlertTriangle, BarChart2, Settings2, X } from 'lucide-react'
+import { AlertTriangle, BarChart2, Maximize2, Settings2, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import {
   createDefaultChartOptions,
   defaultSeriesForType,
@@ -47,6 +48,7 @@ export function ChartSection({
 }) {
   const { t } = useTranslation()
   const [draft, setDraft] = useState<ChartOptions | null>(null)
+  const [expanded, setExpanded] = useState(false)
 
   const columnInfos = useMemo(() => inferColumnRoles(columns, rows, columnTypes), [columns, rows, columnTypes])
   const chartTypeOptions = useMemo(() => getChartTypeOptions(columnInfos, rows), [columnInfos, rows])
@@ -154,6 +156,10 @@ export function ChartSection({
             {t('results.chart')}
           </h3>
           <div className="flex items-center gap-1.5">
+            <Button size="sm" variant="secondary" onClick={() => setExpanded(true)}>
+              <Maximize2 className="h-3.5 w-3.5" />
+              {t('chart.expand')}
+            </Button>
             <Button size="sm" variant="secondary" onClick={openEditor}>
               <Settings2 className="h-3.5 w-3.5" />
               {t('chart.customize')}
@@ -173,6 +179,23 @@ export function ChartSection({
         <div className="rounded-md border border-[var(--border)] p-3" style={{ minHeight: 280 }}>
           {renderPreview(chartOptions)}
         </div>
+
+        {/* Expanded view -- the same chart at the width of the viewport
+            rather than of the chat column, for a dense series. It renders
+            the identical `renderPreview` output, so there is one chart
+            implementation and the expanded copy cannot drift from the
+            inline one. The dialog is mounted only while open, so the
+            expanded chart never costs a second Chart.js instance at rest. */}
+        <Dialog open={expanded} onOpenChange={setExpanded}>
+          {expanded && (
+            <DialogContent className="max-w-[min(92vw,80rem)]">
+              <DialogHeader>
+                <DialogTitle>{chartOptions.title || t('results.chart')}</DialogTitle>
+              </DialogHeader>
+              {renderPreview(chartOptions)}
+            </DialogContent>
+          )}
+        </Dialog>
       </div>
     )
   }

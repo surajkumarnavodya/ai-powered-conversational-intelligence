@@ -163,4 +163,54 @@ describe('ChartSection', () => {
     await userEvent.keyboard('{Enter}')
     expect(screen.getByRole('radiogroup')).toBeInTheDocument()
   })
+
+  // --- Interactive Analytics Workspace additions ---
+
+  /** The inline chart-options shape the tests above each build by hand. */
+  const barChartOptions = {
+    chartType: 'bar' as const,
+    series: { xColumn: 'region', yColumns: ['revenue'], groupColumn: null },
+    sortOrder: 'none' as const,
+    topN: null,
+    dateGrouping: 'none' as const,
+    numberFormat: 'plain' as const,
+    title: '',
+    showLegend: true,
+    stacked: false,
+  }
+
+  it('offers no expanded view before a chart has been generated', () => {
+    renderSection()
+    expect(screen.queryByRole('button', { name: /expand/i })).not.toBeInTheDocument()
+  })
+
+  it('opens the same chart in a dialog, mounted only once opened', async () => {
+    renderSection({ chartOptions: barChartOptions })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: /expand/i }))
+
+    const dialog = screen.getByRole('dialog')
+    // The expanded copy renders through the identical `renderPreview` path,
+    // so it carries the same chart -- its canvas and its data table.
+    expect(within(dialog).getByRole('img')).toBeInTheDocument()
+    expect(within(dialog).getByRole('table')).toBeInTheDocument()
+  })
+
+  it('renders the chart data as a table alongside the chart, as the canvas text alternative', () => {
+    renderSection({ chartOptions: barChartOptions })
+    const table = screen.getByRole('table')
+    // Every plotted category reaches assistive technology as real text.
+    expect(within(table).getByRole('cell', { name: 'East' })).toBeInTheDocument()
+    expect(within(table).getByRole('cell', { name: 'West' })).toBeInTheDocument()
+  })
+
+  it('keeps the data table in step with the chart when a top-N cut applies', () => {
+    renderSection({ chartOptions: { ...barChartOptions, topN: 2, sortOrder: 'y-desc' as const } })
+    const table = screen.getByRole('table')
+    const [, body] = within(table).getAllByRole('rowgroup')
+    // Both the canvas and the table read the one prepared series, so the
+    // cut cannot apply to one and not the other.
+    expect(within(body).getAllByRole('row')).toHaveLength(2)
+  })
 })

@@ -187,7 +187,10 @@
     "showChart": "Show chart",
     "showTechnical": "Show technical columns",
     "chart": "Chart",
-    "noSuitableChart": "No suitable chart for this result shape."
+    "noSuitableChart": "No suitable chart for this result shape.",
+    "expand": "Expand",
+    "nullValue": "no value",
+    "filterAll": "All"
   },
   "chart": {
     "visualize": "Visualize",
@@ -226,7 +229,10 @@
     "titlePlaceholder": "Optional chart title",
     "showLegend": "Show legend",
     "stacked": "Stacked",
-    "truncatedNotice": "This chart reflects only the returned rows -- the result may have been truncated by the row limit."
+    "truncatedNotice": "This chart reflects only the returned rows -- the result may have been truncated by the row limit.",
+    "expand": "Expand",
+    "showDataTable": "Show chart data as a table ({{count}} rows)",
+    "dataTableCaption": "The data plotted in the chart above"
   },
   "feedback": {
     "question": "Was this SQL correct?",

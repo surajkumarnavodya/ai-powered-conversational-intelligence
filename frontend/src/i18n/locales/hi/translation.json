@@ -166,7 +166,10 @@
     "showChart": "चार्ट दिखाएं",
     "showTechnical": "तकनीकी कॉलम दिखाएं",
     "chart": "चार्ट",
-    "noSuitableChart": "इस परिणाम के लिए कोई उपयुक्त चार्ट नहीं है।"
+    "noSuitableChart": "इस परिणाम के लिए कोई उपयुक्त चार्ट नहीं है।",
+    "expand": "बड़ा करें",
+    "nullValue": "कोई मान नहीं",
+    "filterAll": "सभी"
   },
   "feedback": {
     "question": "क्या यह SQL सही था?",

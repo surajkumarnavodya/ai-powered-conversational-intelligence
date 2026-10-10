@@ -166,7 +166,10 @@
     "showChart": "Afficher le graphique",
     "showTechnical": "Afficher les colonnes techniques",
     "chart": "Graphique",
-    "noSuitableChart": "Aucun graphique adapté à cette forme de résultat."
+    "noSuitableChart": "Aucun graphique adapté à cette forme de résultat.",
+    "expand": "Agrandir",
+    "nullValue": "aucune valeur",
+    "filterAll": "Tous"
   },
   "feedback": {
     "question": "Ce SQL était-il correct ?",

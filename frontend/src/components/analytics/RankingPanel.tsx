@@ -37,6 +37,10 @@ export function RankingPanel({
 
   return (
     <AnalyticsPanel id={`analytics-ranking-${variant}`} title={title} truthLevel="database_fact">
+      {/* This panel already renders every ranked value as text in the
+          ordered list below, which is the chart's text alternative -- so the
+          shared one `ResultChart` otherwise adds would read the same figures
+          to a screen reader a second time. */}
       <ResultChart
         prepared={prepared}
         chartType={variant === 'share' ? 'doughnut' : 'bar-horizontal'}
@@ -44,6 +48,7 @@ export function RankingPanel({
         showLegend={variant === 'share'}
         numberFormat="plain"
         stacked={false}
+        showDataTable={false}
       />
       <ol className="flex flex-col gap-1 text-sm">
         {listed.map((entry) => {

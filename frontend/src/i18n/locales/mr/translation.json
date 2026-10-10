@@ -166,7 +166,10 @@
     "showChart": "तक्ता दाखवा",
     "showTechnical": "तांत्रिक स्तंभ दाखवा",
     "chart": "तक्ता",
-    "noSuitableChart": "या निकालासाठी योग्य तक्ता उपलब्ध नाही."
+    "noSuitableChart": "या निकालासाठी योग्य तक्ता उपलब्ध नाही.",
+    "expand": "मोठे करा",
+    "nullValue": "मूल्य नाही",
+    "filterAll": "सर्व"
   },
   "feedback": {
     "question": "हे SQL बरोबर होते का?",

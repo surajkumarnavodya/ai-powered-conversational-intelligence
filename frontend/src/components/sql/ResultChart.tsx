@@ -20,6 +20,7 @@ import {
 import { useMemo } from 'react'
 import { Chart } from 'react-chartjs-2'
 import { formatNumber, type ChartTypeId, type NumberFormat, type PreparedChart } from '@/lib/chartEngine'
+import { ChartDataTable } from './ChartDataTable'
 import { useSettingsStore } from '@/store/settingsStore'
 
 ChartJS.register(
@@ -59,6 +60,7 @@ export function ResultChart({
   showLegend,
   numberFormat,
   stacked,
+  showDataTable = true,
 }: {
   prepared: PreparedChart
   chartType: ChartTypeId
@@ -66,6 +68,10 @@ export function ResultChart({
   showLegend: boolean
   numberFormat: NumberFormat
   stacked: boolean
+  /** Set false only where the caller already lists the same values as text
+   * beside the chart (`RankingPanel`'s own ranked list), so assistive
+   * technology is not read the identical data twice. */
+  showDataTable?: boolean
 }) {
   // Subscribed only to force a re-render (and therefore a re-read of the
   // computed CSS variables below) when either setting changes.
@@ -235,9 +241,23 @@ export function ResultChart({
   // is what `getByRole('img')` (rightly) treats as ambiguous. The
   // accessible name is set directly on the canvas itself instead (spread
   // into `canvasProps` by `react-chartjs-2`, landing on the one real node).
+  //
+  // The canvas's accessible *name* is all a screen reader can get from it --
+  // the values themselves are pixels. `ChartDataTable` below is the text
+  // alternative, rendered here rather than at each call site so that every
+  // chart in the app (the SQL chart picker, and the trend/ranking/forecast
+  // analytics panels) has one without each needing to remember.
+  // `showDataTable={false}` is for a caller that already renders the same
+  // values as text next to the chart, where a second copy would just be
+  // repetition for a screen reader.
   return (
-    <div style={{ height: 340 }}>
-      <Chart type={prepared.chartJsType} data={data} options={options} aria-label={title || `${chartType} chart`} />
-    </div>
+    <>
+      <div style={{ height: 340 }}>
+        <Chart type={prepared.chartJsType} data={data} options={options} aria-label={title || `${chartType} chart`} />
+      </div>
+      {showDataTable && (
+        <ChartDataTable prepared={prepared} numberFormat={numberFormat} caption={title || undefined} />
+      )}
+    </>
   )
 }

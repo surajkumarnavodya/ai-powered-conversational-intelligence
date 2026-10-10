@@ -848,3 +848,55 @@ export const CHART_TYPE_LABELS: Record<ChartTypeId, string> = {
   histogram: 'Histogram',
   table: 'Table only',
 }
+
+/** One chart rendered as tabular data: the accessible alternative to the
+ * `<canvas>`, and what an "expand" view shows beside the chart.
+ *
+ * Derived from the already-`prepareChart`ed data rather than from the raw
+ * rows on purpose. The canvas and this table are then two renderings of one
+ * value set, so they cannot disagree: every client-side transform the chart
+ * applied (sort, top-N, date grouping, histogram binning) is already baked
+ * into `prepared`, and re-deriving the table from `rows` would quietly
+ * reintroduce all of it as a second, drifting implementation. */
+export interface ChartDataTable {
+  headers: string[]
+  rows: string[][]
+}
+
+/** Renders a `PreparedChart` as `{ headers, rows }`.
+ *
+ * Numbers go through `formatNumber` -- the same formatter the chart's own
+ * axis ticks and tooltips use -- so a value reads identically whether it is
+ * seen in the chart or in this table. That means this table inherits
+ * `formatNumber`'s display rounding and is a *readable* alternative to the
+ * chart, not a source of exact values; the result table and the CSV export
+ * remain the places exact values are preserved. */
+export function preparedChartToTable(prepared: PreparedChart, format: NumberFormat = 'plain'): ChartDataTable {
+  const isScatter = prepared.datasets.some((dataset) => dataset.data.some((point) => typeof point === 'object'))
+
+  if (isScatter) {
+    const headers = [prepared.xTitle || 'x', ...prepared.datasets.map((dataset) => dataset.label)]
+    // A scatter series carries its own x per point, so there is no shared
+    // label axis to join series on -- each series is listed in turn.
+    const rows: string[][] = []
+    for (const dataset of prepared.datasets) {
+      for (const point of dataset.data as { x: number; y: number }[]) {
+        const cells = prepared.datasets.map((other) =>
+          other === dataset ? formatNumber(point.y, format) : '',
+        )
+        rows.push([formatNumber(point.x, format), ...cells])
+      }
+    }
+    return { headers, rows }
+  }
+
+  const headers = [prepared.xTitle || 'Category', ...prepared.datasets.map((dataset) => dataset.label)]
+  const rows = prepared.labels.map((label, index) => [
+    String(label),
+    ...prepared.datasets.map((dataset) => {
+      const value = (dataset.data as number[])[index]
+      return typeof value === 'number' && Number.isFinite(value) ? formatNumber(value, format) : ''
+    }),
+  ])
+  return { headers, rows }
+}
