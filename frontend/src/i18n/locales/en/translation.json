@@ -150,6 +150,7 @@
   },
   "questionNavigator": {
     "label": "Questions",
+    "itemLabel": "Navigate to question: {{question}}",
     "toggleLabel": "Toggle question list",
     "closeLabel": "Close question list"
   },

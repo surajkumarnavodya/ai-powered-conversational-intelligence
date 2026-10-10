@@ -133,6 +133,7 @@
   },
   "questionNavigator": {
     "label": "प्रश्न",
+    "itemLabel": "प्रश्न पर जाएँ: {{question}}",
     "toggleLabel": "प्रश्न सूची टॉगल करें",
     "closeLabel": "प्रश्न सूची बंद करें"
   },

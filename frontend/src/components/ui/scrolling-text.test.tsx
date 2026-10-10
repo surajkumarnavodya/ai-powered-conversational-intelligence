@@ -104,4 +104,51 @@ describe('ScrollingText', () => {
     const outer = container.querySelector('span') as HTMLElement
     expect(outer.className).toMatch(/overflow-hidden/)
   })
+
+  it('ellipsis-truncates at rest, so a clipped label never cuts mid-character', () => {
+    const { outer, inner } = renderAndGetSpans('A question long enough to overflow its own box')
+    mockOverflow(outer, inner, { scrollWidth: 600, clientWidth: 200 })
+
+    expect(inner.style.textOverflow).toBe('ellipsis')
+    expect(inner.style.overflow).toBe('hidden')
+    // The cap is what makes `text-overflow` apply at all -- an inline-block
+    // at its own intrinsic width never overflows itself, so it would have
+    // nothing to put an ellipsis on. The wrapper's `overflow-hidden` clips
+    // this span but cannot give it an ellipsis.
+    expect(inner.style.maxWidth).toBe('100%')
+  })
+
+  it('drops the resting cap while scrolling, so the hidden text can actually be revealed', () => {
+    const { outer, inner } = renderAndGetSpans('A question long enough to overflow its own box')
+    mockOverflow(outer, inner, { scrollWidth: 600, clientWidth: 200 })
+
+    fireEvent.mouseEnter(outer)
+
+    // Still capped to the container's width, the span would merely
+    // translate its own ellipsis sideways and reveal nothing.
+    expect(inner.style.maxWidth).toBe('none')
+    expect(inner.style.overflow).toBe('visible')
+    expect(inner.style.textOverflow).toBe('clip')
+  })
+
+  it('restores the resting ellipsis once the pointer leaves', () => {
+    const { outer, inner } = renderAndGetSpans('A question long enough to overflow its own box')
+    mockOverflow(outer, inner, { scrollWidth: 600, clientWidth: 200 })
+
+    fireEvent.mouseEnter(outer)
+    fireEvent.mouseLeave(outer)
+
+    expect(inner.style.textOverflow).toBe('ellipsis')
+    expect(inner.style.maxWidth).toBe('100%')
+  })
+
+  it('keeps the resting ellipsis properties even for text that does not overflow', () => {
+    // A harmless no-op in that case -- the browser renders no ellipsis when
+    // there is nothing to clip. Applying them unconditionally at rest
+    // avoids depending on a measurement that is not available until after
+    // the first paint.
+    const { inner } = renderAndGetSpans('Short')
+    expect(inner.style.textOverflow).toBe('ellipsis')
+    expect(inner.style.maxWidth).toBe('100%')
+  })
 })

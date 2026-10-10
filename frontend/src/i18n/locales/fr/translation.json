@@ -133,6 +133,7 @@
   },
   "questionNavigator": {
     "label": "Questions",
+    "itemLabel": "Aller a la question : {{question}}",
     "toggleLabel": "Afficher/masquer la liste des questions",
     "closeLabel": "Fermer la liste des questions"
   },

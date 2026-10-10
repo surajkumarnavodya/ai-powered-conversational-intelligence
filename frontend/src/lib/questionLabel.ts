@@ -21,7 +21,15 @@ export function collapseQuestionWhitespace(question: string): string {
 
 /** Collapses a question to one line of plain text and shortens it to a
  * single short label, breaking at a word boundary (never mid-word) and
- * appending "…". Returns the question unchanged if it already fits. */
+ * appending "…". Returns the question unchanged if it already fits.
+ *
+ * **Currently unused by any component** -- the Question Navigator it was
+ * written for now clips its labels at the real rendered width instead
+ * (`ScrollingText`: one line, CSS ellipsis at rest, hover/focus to reveal
+ * the rest), which a fixed character budget cannot do responsively. Kept
+ * because a character-budgeted label is still the right tool anywhere the
+ * rendered width is not measurable at the point of truncation -- but treat
+ * it as available, not as live behaviour. */
 export function shortenQuestion(question: string, maxChars: number = QUESTION_LABEL_MAX_CHARS): string {
   const collapsed = collapseQuestionWhitespace(question)
   if (collapsed.length <= maxChars) return collapsed

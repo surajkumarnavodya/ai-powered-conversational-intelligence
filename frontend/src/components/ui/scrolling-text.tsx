@@ -19,9 +19,20 @@ const RESET_DURATION_MS = 200
  * is for a multi-line paragraph, not a single compact label).
  *
  * The full `text` is always in the DOM -- that's what makes the reveal
- * possible at all -- and only ever visually clipped via `overflow-hidden`
- * on the wrapping box; nothing here shortens or hides characters the way
- * `shortenQuestion` does for a *non-hovered* label elsewhere.
+ * possible at all -- and only ever visually clipped (see the ellipsis note
+ * below); this component never shortens `text` itself, the way a
+ * character-count helper such as `lib/questionLabel.ts`'s `shortenQuestion`
+ * would. Clipping at the real rendered width is the point: a character
+ * count cannot know how wide the box actually is at this viewport.
+ *
+ * At rest the inner text box is additionally capped to the container's
+ * own width with `text-overflow: ellipsis`, so a clipped label ends in a
+ * visible "..." rather than a hard cut mid-character -- the reader can
+ * tell at a glance that there is more to read (and therefore that
+ * hovering/focusing will reveal it). Those three resting-only properties
+ * are dropped while actively scrolling: an inner box still capped to the
+ * container's width would simply translate its own ellipsis sideways and
+ * never reveal anything.
  *
  * A no-op (no transform, ever) when `text` already fits -- measured via
  * `scrollWidth` vs `clientWidth` on mount and on window resize, the exact
@@ -72,6 +83,13 @@ export function ScrollingText({ text, className }: { text: string; className?: s
           transition: isActive
             ? `transform ${scrollDurationMs}ms linear`
             : `transform ${RESET_DURATION_MS}ms ease-out`,
+          // `text-overflow` only takes effect on a box that is itself both
+          // width-constrained and overflow-hidden -- the wrapper's own
+          // `overflow-hidden` clips this span but cannot put an ellipsis
+          // on it, which is why the cap lives here and not there.
+          maxWidth: isActive ? 'none' : '100%',
+          overflow: isActive ? 'visible' : 'hidden',
+          textOverflow: isActive ? 'clip' : 'ellipsis',
         }}
       >
         {text}

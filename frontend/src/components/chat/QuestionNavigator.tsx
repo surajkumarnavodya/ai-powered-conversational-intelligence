@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent, RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ScrollingText } from '@/components/ui/scrolling-text'
@@ -58,12 +58,21 @@ import { cn } from '@/lib/utils'
  *
  * Each item's label is the *full* question (whitespace-collapsed, never
  * pre-shortened), rendered through `ScrollingText` -- clipped to one line
- * at rest, scrolling left on hover/focus to reveal the rest once it's
- * actually long enough to overflow (Perplexity's own treatment for a
- * long history-list title). The accessible tooltip below is independent
- * of this and unchanged: a screen reader or a sighted keyboard user who
- * never triggers the hover animation still gets the complete question
- * through it.
+ * with a trailing ellipsis at rest, scrolling left on hover/focus to
+ * reveal the rest once it's actually long enough to overflow
+ * (Perplexity's own treatment for a long history-list title). The
+ * accessible tooltip below is independent of this and unchanged: a screen
+ * reader or a sighted keyboard user who never triggers the hover
+ * animation still gets the complete question through it.
+ *
+ * Each item also carries an explicit `aria-label` ("Navigate to question:
+ * ...") rather than letting its accessible name fall out of its own
+ * rendered text. Two reasons: the rendered text begins with the item's
+ * decorative position number, which a screen reader would otherwise
+ * announce as a bare, contextless "1"; and the name should say what
+ * activating the item *does*, not merely restate the question. The
+ * position number is therefore `aria-hidden` -- it orients a sighted
+ * reader scanning the list and carries nothing for anyone else.
  */
 export function QuestionNavigator({
   entries,
@@ -75,8 +84,18 @@ export function QuestionNavigator({
   const { t } = useTranslation()
   // A question that never actually resolved to real text (an empty/invalid
   // reconstructed entry) has nothing meaningful to show or jump to.
-  const navigable = entries.filter((entry) => entry.question.trim() !== '')
-  const domIds = navigable.map((entry) => `turn-${entry.entryId}`)
+  //
+  // Memoized on `entries` alone: this component re-renders on *any*
+  // `queryHistory` change -- a turn's SQL being edited, a chart option
+  // being tweaked -- and in a 100+ question conversation re-deriving both
+  // lists each time is pure waste. It also keeps `domIds` referentially
+  // stable, which is what lets `useActiveElementId` skip re-subscribing
+  // its observer on those unrelated renders.
+  const navigable = useMemo(
+    () => entries.filter((entry) => entry.question.trim() !== ''),
+    [entries],
+  )
+  const domIds = useMemo(() => navigable.map((entry) => `turn-${entry.entryId}`), [navigable])
   const activeDomId = useActiveElementId(domIds, scrollContainerRef)
 
   const [isOpen, setIsOpen] = useState(false)
@@ -94,10 +113,18 @@ export function QuestionNavigator({
   // anything) when the item is already fully visible -- the browser itself
   // enforces "only scroll when necessary," not a hand-rolled visibility
   // check here.
+  //
+  // `isOpen` is a real dependency, not defensive padding: the items only
+  // exist (and therefore only register in `itemRefs`) while the panel is
+  // open, so an active id that settled *before* the panel was opened --
+  // a reader scrolls down to question 40, then opens the list -- never
+  // changes afterward, and keying this effect on `activeDomId` alone left
+  // the list opening scrolled to the top with the active item far out of
+  // view. Re-running on open is what reveals it.
   useEffect(() => {
-    if (!activeDomId) return
+    if (!isOpen || !activeDomId) return
     itemRefs.current.get(activeDomId)?.scrollIntoView({ block: 'nearest' })
-  }, [activeDomId])
+  }, [activeDomId, isOpen])
 
   if (navigable.length < 2) return null
 
@@ -213,6 +240,7 @@ export function QuestionNavigator({
               {navigable.map((entry, index) => {
                 const domId = `turn-${entry.entryId}`
                 const isActive = activeDomId === domId
+                const oneLineQuestion = collapseQuestionWhitespace(entry.question)
                 return (
                   <li key={entry.entryId}>
                     <Tooltip>
@@ -225,6 +253,9 @@ export function QuestionNavigator({
                           type="button"
                           onClick={() => handleSelect(entry.entryId)}
                           aria-current={isActive ? 'true' : undefined}
+                          aria-label={t('questionNavigator.itemLabel', {
+                            question: oneLineQuestion,
+                          })}
                           className={cn(
                             'flex w-full items-center gap-2 border-l-2 px-3 py-1.5 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-inset',
                             isActive
@@ -232,13 +263,13 @@ export function QuestionNavigator({
                               : 'border-transparent text-[var(--muted-foreground)] hover:bg-[var(--muted)] hover:text-[var(--foreground)]',
                           )}
                         >
-                          <span className="shrink-0 tabular-nums text-[10px] text-[var(--muted-foreground)]">
+                          <span
+                            aria-hidden="true"
+                            className="shrink-0 tabular-nums text-[10px] text-[var(--muted-foreground)]"
+                          >
                             {index + 1}
                           </span>
-                          <ScrollingText
-                            text={collapseQuestionWhitespace(entry.question)}
-                            className="flex-1"
-                          />
+                          <ScrollingText text={oneLineQuestion} className="flex-1" />
                         </button>
                       </TooltipTrigger>
                       <TooltipContent side="left">{entry.question}</TooltipContent>
