@@ -69,6 +69,15 @@ interface ChatState {
   confirmingEntryId: string | null
   confirmingGenerationEntryId: string | null
   goldenFeedbackGiven: Set<string>
+  /** Turns the user pinned into the analysis artifact workspace, by
+   * `entryId`.
+   *
+   * A set of ids, never copies of the results: an artifact *references*
+   * a turn, so pinning cannot duplicate (or stale-copy) the rows, the
+   * chart or the insight. Session-scoped like the rest of this store --
+   * a reload clears it, the same disclosed behaviour `queryHistory`
+   * already has. */
+  pinnedEntryIds: Set<string>
   /** Last like/dislike rating submitted per entry (see
    * ResponseFeedbackWidget.tsx) -- a Map, not a Set, since (unlike
    * goldenFeedbackGiven above) a rating can be changed after the fact, and
@@ -102,6 +111,9 @@ interface ChatState {
    * user-built chart -- see ChartSection.tsx. Purely local/session state,
    * like confirmedColumns/confirmedRows themselves. */
   setChartOptions: (entryId: string, chartOptions: ChartOptions | null) => void
+  /** Pins or unpins one turn in the artifact workspace. Idempotent per
+   * call: calling it twice on the same id returns to the start state. */
+  togglePinned: (entryId: string) => void
   /** Detects a lightweight NL follow-up asking to switch the *most recent*
    * chartable turn's chart type ("show this as a pie chart", "switch to
    * line", "bar chart instead") and, if the requested type is genuinely
@@ -285,6 +297,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   confirmingEntryId: null,
   confirmingGenerationEntryId: null,
   goldenFeedbackGiven: new Set(),
+  pinnedEntryIds: new Set(),
   messageFeedbackGiven: new Map(),
   enableInsight: true,
   nlQuestionCache: new Map(),
@@ -313,6 +326,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ),
       ),
     ),
+
+  togglePinned: (entryId) =>
+    set((state) => {
+      const next = new Set(state.pinnedEntryIds)
+      if (next.has(entryId)) next.delete(entryId)
+      else next.add(entryId)
+      return { pinnedEntryIds: next }
+    }),
 
   tryApplyChartTypeFollowup: (text) => {
     const requestedType = detectChartTypeSwitchRequest(text)
@@ -731,6 +752,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       historyError: null,
       nlQuestionCache: new Map(),
       goldenFeedbackGiven: new Set(),
+  pinnedEntryIds: new Set(),
       messageFeedbackGiven: new Map(),
     }),
 }))

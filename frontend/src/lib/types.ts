@@ -26,6 +26,18 @@ export interface ConversationExchange {
   status: AgentStatus
 }
 
+/** Mirrors `api.schemas.StageTimingOut` -- one graph node call's duration.
+ *
+ * One entry per node *call*, not per attempt, so a retried question has
+ * several entries for the same `stage`. `stage` is a fixed node name from
+ * the server's own graph, never free text.
+ */
+export interface StageTiming {
+  stage: string
+  attempt: number
+  duration_ms: number
+}
+
 export interface AttemptRecord {
   attempt: number
   sql: string | null
@@ -547,6 +559,11 @@ export interface AskResponse {
   row_count: number | null
   retry_count: number
   attempt_history: AttemptRecord[]
+  /** Per-node wall-clock timings for this run, in the order the nodes
+   * ran, including a retried attempt's extra entries. Optional so an
+   * older persisted turn (or a rejected question, which records none)
+   * stays valid. Rendered by AgentExecutionTimeline. */
+  stage_timings?: StageTiming[]
   insight: string | null
   cost_notice: string | null
   low_confidence_notice: string | null

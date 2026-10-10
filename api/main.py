@@ -143,6 +143,7 @@ from api.schemas import (
     SchemaTableOut,
     SourceAnswerOut,
     StageMetricOut,
+    StageTimingOut,
     TableOut,
     TablesResponse,
     VisualizationSpecOut,
@@ -694,6 +695,30 @@ def _attempt_records_out(state: Mapping[str, Any]) -> list[AttemptRecordOut]:
     ]
 
 
+def _stage_timings_out(state: Mapping[str, Any]) -> list[StageTimingOut]:
+    """Per-node timings for this run, in the order the nodes ran.
+
+    A defensive `.get` per field rather than indexing: `stage_timings` is
+    an `operator.add` reducer channel, so a malformed entry from a future
+    node would otherwise raise here on an otherwise-successful answer --
+    the same tolerance `observability.metrics.record_run` already applies
+    to the same list.
+    """
+    timings: list[StageTimingOut] = []
+    for record in state.get("stage_timings", []) or []:
+        stage = record.get("stage") if isinstance(record, Mapping) else None
+        if not stage:
+            continue
+        timings.append(
+            StageTimingOut(
+                stage=str(stage),
+                attempt=int(record.get("attempt", 1) or 1),
+                duration_ms=float(record.get("duration_ms", 0.0) or 0.0),
+            )
+        )
+    return timings
+
+
 def _json_safe_cell(value: Any) -> Any:
     """Replaces a raw binary value with a short, readable placeholder.
 
@@ -925,6 +950,7 @@ def _ask_response_from_state(
         row_count=state.get("row_count"),
         retry_count=state.get("retry_count", 0),
         attempt_history=_attempt_records_out(state),
+        stage_timings=_stage_timings_out(state),
         insight=_redact_text(state.get("insight"), settings),
         analytical_result=state.get("analytical_result"),
         forecast_result=_forecast_result_out(state.get("forecast_result")),

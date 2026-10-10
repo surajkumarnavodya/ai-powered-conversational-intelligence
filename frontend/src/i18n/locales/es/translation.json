@@ -153,7 +153,12 @@
     "confirmAndRun": "Confirmar y ejecutar",
     "retryTimeline": "Cronología de reintentos",
     "schemaContext": "Contexto de esquema recuperado",
-    "queryPlan": "Plan de consulta"
+    "queryPlan": "Plan de consulta",
+    "executionTimeline": "Cronología de ejecución del agente",
+    "stage": "etapa",
+    "stages": "etapas",
+    "stageCalls": "{{count}} llamadas",
+    "executionTimelineHint": "Tiempo real por etapa del proceso, incluidos los reintentos. La inferencia del modelo local suele ser la mayor parte."
   },
   "results": {
     "title": "Resultados",
@@ -304,5 +309,48 @@
     "lowerIsBetter": "Más bajo es mejor",
     "loading": "Cargando el informe...",
     "loadFailed": "No se pudo cargar el informe."
+  },
+  "status": {
+    "title": "Estado de la consulta",
+    "validated": "Validada",
+    "validatedDetail": "El servidor analizó y validó este SQL antes de mostrarlo: una sola instrucción de solo lectura, sin columnas restringidas ni catálogos del sistema.",
+    "blocked": "Bloqueada",
+    "attempts": "{{count}} intentos",
+    "costFlagged": "Coste señalado",
+    "executionFailed": "Ejecución fallida",
+    "rows": "{{count}} filas",
+    "truncated": "Truncada",
+    "truncatedDetail": "El resultado alcanzó el límite de filas configurado, por lo que es solo una parte del resultado completo.",
+    "durationDetail": "Tiempo de ejecución en el servidor.",
+    "cacheHit": "En caché",
+    "cacheMiss": "Reciente",
+    "cacheDetail": "Si este resultado vino de la caché de corta duración o de una ejecución nueva.",
+    "governed": "Con gobernanza"
+  },
+  "followUps": {
+    "title": "Preguntar a continuación",
+    "hint": "Sugerido por el motor de recomendaciones a partir de este resultado. Cada una es una estimación de IA."
+  },
+  "sqlIntelligence": {
+    "title": "Inteligencia SQL",
+    "governedMetrics": "Métricas gobernadas aplicadas",
+    "governedMetricsHint": "Definiciones aprobadas que el SQL generado debía usar.",
+    "schemaHint": "Las tablas recuperadas para esta pregunta, con la puntuación de similitud que las seleccionó.",
+    "openLineage": "Abrir el explorador de linaje"
+  },
+  "context": {
+    "title": "Contexto incluido: {{count}} de {{max}} turnos",
+    "hint": "Tu próxima pregunta se resuelve con estos turnos anteriores. Solo se incluyen los turnos que tuvieron éxito, y solo los más recientes.",
+    "carriedLabel": "Turnos incluidos como contexto",
+    "tables": "Tablas en contexto",
+    "skipped": "{{count}} turno(s) anterior(es) no se incluyen."
+  },
+  "artifacts": {
+    "title": "Análisis fijados",
+    "rows": "{{count}} filas",
+    "pin": "Fijar \"{{question}}\" al espacio de trabajo",
+    "unpin": "Quitar \"{{question}}\"",
+    "pinHint": "Fijar este análisis al espacio de trabajo",
+    "unpinHint": "Quitar del espacio de trabajo"
   }
 }

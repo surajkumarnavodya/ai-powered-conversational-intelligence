@@ -5549,6 +5549,93 @@ requirements have been implemented, and that formal regulatory compliance
 requires organizational, legal, contractual, administrative and technical
 assessment -- no compliance with any named regime is claimed.
 
+### Conversational Intelligence UI (chat workspace, 2026-10)
+
+Ten UI capabilities were requested for the chat workspace. The audit
+found **four already complete** (`QuestionNavigator`, the analytics
+workspace, the evidence panel, and the conversation list/search half of
+context management) and three more existing in parts. This pass added
+what was missing and consolidated what was scattered -- nothing that
+already worked was rebuilt.
+
+**The one genuinely missing piece of data:** `agent.nodes._timed_node`
+has always recorded a per-node `StageTiming` into
+`AgentState["stage_timings"]`, and `observability/metrics.py` aggregates
+it -- but it was never exposed, so the UI could show retry *outcomes*
+(`RetryTimeline`) and never where the time went. `AskResponse
+.stage_timings` now carries it (new `StageTimingOut`, additive and
+optional, defaulting to `[]`), feeding
+`chat/AgentExecutionTimeline.tsx`. No new instrumentation: the data was
+being discarded.
+
+**New components:** `chat/AgentExecutionTimeline.tsx` (per-stage
+durations, aggregated across retried calls, in pipeline order),
+`sql/ExecutionStatusBar.tsx` (one scannable badge row for validation /
+retries / cost / rows / truncation / duration / cache / governance),
+`sql/SqlIntelligencePanel.tsx` (one expander replacing four siblings),
+`chat/FollowUpSuggestions.tsx`, `chat/ConversationContextPanel.tsx`,
+`chat/ArtifactWorkspace.tsx` + `PinTurnButton`.
+
+**Invariants that must not regress:**
+- **The status bar re-judges nothing.** Every badge reads a field the
+  server already returned -- validation from `attempt_history`, cost from
+  `cost_notice`, governance from `restricted_field_notice`. A
+  client-side opinion about whether SQL is safe or a value may be shown
+  would be a duplicated, drift-prone security decision; there is none.
+- **Exactly one renderer per affordance.** `next_question`
+  recommendations render only in `FollowUpSuggestions` (they were inside
+  `EvidencePanel`, lazy-loaded behind the analytics expander and only
+  reachable after Confirm and Run); `AnalyticsSummary.test.tsx` asserts
+  their *absence* there so the two-renderer state cannot come back.
+  Likewise `QueryPlanContent`/`SchemaContextContent` were extracted so
+  `SqlIntelligencePanel` composes the existing panels rather than
+  re-rendering their content.
+- **An artifact is a reference, never a copy.** `pinnedEntryIds` is a
+  `Set<string>` of `entryId`s on the existing `chatStore` (mirroring
+  `goldenFeedbackGiven`), so pinning cannot duplicate rows or create a
+  snapshot that disagrees with the turn it points at. Jumping reuses the
+  `turn-${entryId}` anchor `QuestionNavigator` already relies on -- one
+  scroll mechanism in the chat column, not two.
+- **The context panel calls the request builder.**
+  `ConversationContextPanel` renders `buildConversationHistory(entries)`
+  -- the exact function that builds the `conversation_history` sent with
+  every `/ask` -- so what it shows cannot drift from what is sent. A test
+  asserts the rendered list equals that function's output.
+- **`stage_timings` can never fail an answer.**
+  `api.main._stage_timings_out` skips a malformed entry rather than
+  raising, because that is an `operator.add` reducer channel a future
+  node could append to. Pinned by a test.
+- **Nothing new is exposed.** Node names and durations, plan steps,
+  retrieved DDL, the chosen database/model, governed metric names -- all
+  already in `AskResponse`. Tests assert the absence of prompt,
+  reasoning and credential-shaped strings in the new panels.
+- **Database-derived text stays untrusted.** Follow-up labels go through
+  `sanitizeLabel` on display *and* on the way back into `onAsk`; a
+  clicked chip re-enters the normal `/ask` path, so the input guard, the
+  governance request policy and the SQL validator all apply to it.
+
+**A pre-existing flake fixed in passing:**
+`TurnCard.analytics.test.tsx` races the lazily-loaded analysis section
+because CodeMirror throws while measuring in jsdom
+(`textRange(...).getClientRects is not a function`). It failed
+intermittently before this pass too -- verified by stashing the changes
+and reproducing -- and a heavier `TurnCard` made it trip more often. The
+editor is now stubbed in that one file, which tests the analysis section,
+not the editor. **A second flake remains open and is not mine:**
+`src/pages/TenantAdmin.test.tsx` fails intermittently under full-suite
+parallel load while passing 3/3 standalone; that file and its page were
+untouched.
+
+**Known limitations:** pinned artifacts and the context panel are
+session-scoped like `queryHistory` itself (persisting artifacts would
+need a server-side artifact store); the lineage link opens the explorer
+without pre-seeding a database, because that page resolves its own
+selection.
+
+**Read [`docs/conversational-intelligence-ui.md`](docs/conversational-intelligence-ui.md)**
+for the feature-by-feature audit table, the API change, the
+accessibility/performance/security review and the full test counts.
+
 ## How to run
 
 See `README.md` for full setup. Short version:

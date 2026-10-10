@@ -143,6 +143,78 @@ class TestAsk:
         assert body["attempt_history"][0]["outcome"] == "succeeded"
         assert "X-Correlation-ID" in response.headers
 
+    def test_stage_timings_are_exposed_for_the_execution_timeline(self, monkeypatch, client):
+        """`agent.nodes._timed_node` already records a timing per node
+        call; this pins that they reach the client, including the extra
+        entries a retried attempt produces."""
+        final_state: AgentState = {
+            "status": "succeeded",
+            "sql": "SELECT 1",
+            "result_columns": ["c"],
+            "result_rows": [(1,)],
+            "row_count": 1,
+            "retry_count": 1,
+            "attempt_history": [],
+            "error_history": [],
+            "stage_timings": [
+                {"stage": "retrieve_schema", "attempt": 1, "duration_ms": 120.5},
+                {"stage": "generate_sql", "attempt": 1, "duration_ms": 3400.0},
+                {"stage": "validate_sql", "attempt": 1, "duration_ms": 8.2},
+                {"stage": "generate_sql", "attempt": 2, "duration_ms": 2900.0},
+                {"stage": "execute_sql", "attempt": 2, "duration_ms": 45.0},
+            ],
+        }
+        monkeypatch.setattr("api.main.run_orchestrated", lambda *a, **k: final_state)
+
+        body = client.post("/ask", json={"question": "How many rows?"}).json()
+
+        assert [t["stage"] for t in body["stage_timings"]] == [
+            "retrieve_schema",
+            "generate_sql",
+            "validate_sql",
+            "generate_sql",
+            "execute_sql",
+        ]
+        # Both attempts of the retried stage survive -- the timeline needs
+        # the per-call entries, not a collapsed per-stage total.
+        generate = [t for t in body["stage_timings"] if t["stage"] == "generate_sql"]
+        assert [t["attempt"] for t in generate] == [1, 2]
+        assert generate[0]["duration_ms"] == 3400.0
+
+    def test_stage_timings_default_to_empty_for_an_existing_client(self, monkeypatch, client):
+        """Additive and optional: a run that recorded none (e.g. a
+        rejected question) still answers, with an empty list rather than
+        a missing key."""
+        monkeypatch.setattr(
+            "api.main.run_orchestrated",
+            lambda *a, **k: {"status": "succeeded", "attempt_history": [], "error_history": []},
+        )
+        body = client.post("/ask", json={"question": "hi there, how many rows?"}).json()
+        assert body["stage_timings"] == []
+
+    def test_a_malformed_timing_entry_never_fails_the_answer(self, monkeypatch, client):
+        """`stage_timings` is an `operator.add` reducer channel, so a
+        future node could append something unexpected. A successful
+        answer must not turn into a 500 over a profiling field."""
+        monkeypatch.setattr(
+            "api.main.run_orchestrated",
+            lambda *a, **k: {
+                "status": "succeeded",
+                "attempt_history": [],
+                "error_history": [],
+                "stage_timings": [
+                    {"no_stage_key": True},
+                    {"stage": "execute_sql"},
+                    {"stage": "generate_sql", "attempt": 1, "duration_ms": 10.0},
+                ],
+            },
+        )
+        body = client.post("/ask", json={"question": "How many rows are there?"}).json()
+        assert body["status"] == "succeeded"
+        assert [t["stage"] for t in body["stage_timings"]] == ["execute_sql", "generate_sql"]
+        assert body["stage_timings"][0]["attempt"] == 1
+        assert body["stage_timings"][0]["duration_ms"] == 0.0
+
     def test_configured_secret_in_llm_response_text_is_redacted(self, monkeypatch, client):
         """Defense-in-depth regression: if a real configured secret ever
         ended up in LLM-generated response text (insight/failure_explanation/

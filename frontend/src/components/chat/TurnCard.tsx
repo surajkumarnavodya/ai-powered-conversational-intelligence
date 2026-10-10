@@ -1,10 +1,11 @@
 import { AlertTriangle, Loader2, Play, ShieldAlert, Sparkles } from 'lucide-react'
 import { lazy, Suspense } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ExecutionStatusBar } from '@/components/sql/ExecutionStatusBar'
+import { SqlIntelligencePanel } from '@/components/sql/SqlIntelligencePanel'
 import { GoldenFeedbackWidget } from '@/components/sql/GoldenFeedbackWidget'
 import { ResultsTable } from '@/components/sql/ResultsTable'
 import { SqlEditor } from '@/components/sql/SqlEditor'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Expander } from '@/components/ui/expander'
 import { Markdown } from '@/components/ui/markdown'
@@ -15,11 +16,12 @@ import { useSettingsStore } from '@/store/settingsStore'
 import { ChatMessage } from './ChatMessage'
 import { CopyAnswerButton } from './CopyAnswerButton'
 import { DownloadAnswerButton } from './DownloadAnswerButton'
-import { QueryPlanPanel } from './QueryPlanPanel'
+import { AgentExecutionTimeline } from './AgentExecutionTimeline'
+import { PinTurnButton } from './ArtifactWorkspace'
+import { FollowUpSuggestions } from './FollowUpSuggestions'
 import { ReadAloudButton } from './ReadAloudButton'
 import { ResponseFeedbackWidget } from './ResponseFeedbackWidget'
 import { RetryTimeline } from './RetryTimeline'
-import { SchemaContextPanel } from './SchemaContextPanel'
 import { SentAttachmentsPreview } from './SentAttachmentsPreview'
 import { SourcesUsedPanel } from './SourcesUsedPanel'
 import { TimingBadge } from './TimingBadge'
@@ -77,6 +79,9 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
   const confirmingEntryId = useChatStore((state) => state.confirmingEntryId)
   const setChartOptions = useChatStore((state) => state.setChartOptions)
   const askQuestion = useChatStore((state) => state.askQuestion)
+  // A follow-up chip is disabled while another question is in flight,
+  // so a click cannot queue a second run behind the first.
+  const pendingQuestion = useChatStore((state) => state.pendingQuestion)
   // Same two-flag gate ChatInput.tsx's own mic button already uses --
   // the server's infra flag (GET /health) and the user's own per-device
   // opt-in. Read Aloud is a manual, on-demand TTS call (never automatic),
@@ -121,6 +126,7 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
             <>
               <CopyAnswerButton answer={answerMarkdown} />
               <DownloadAnswerButton question={entry.question} answer={answerMarkdown} />
+              <PinTurnButton entryId={entry.entryId} question={entry.question} />
               <ResponseFeedbackWidget entryId={entry.entryId} />
               {showReadAloud && <ReadAloudButton text={buildSpokenAnswerText(entry)} />}
             </>
@@ -194,27 +200,22 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
           </div>
         )}
 
+        {showSqlPanel && <ExecutionStatusBar entry={entry} />}
+        <FollowUpSuggestions
+          recommendations={state.recommendations}
+          onAsk={(question) => void askQuestion(question)}
+          disabled={pendingQuestion !== null}
+        />
         {state.attempt_history.length > 0 && <RetryTimeline attempts={state.attempt_history} />}
+        <AgentExecutionTimeline timings={state.stage_timings ?? []} />
         <SourcesUsedPanel state={state} entryId={entry.entryId} />
-        {showSqlPanel && ((isMultiDb && state.database) || state.model) && (
-          <Expander title={t('details.title')}>
-            {isMultiDb && state.database && (
-              <p className="text-xs text-[var(--muted-foreground)]">
-                {t('details.database')}: <strong>{state.database}</strong>
-              </p>
-            )}
-            {state.model && (
-              <p className="text-xs text-[var(--muted-foreground)]">
-                {t('details.model')}: <strong>{state.model}</strong>
-              </p>
-            )}
-          </Expander>
-        )}
-
         {showSqlPanel && (
           <>
-            <SchemaContextPanel tables={state.schema_tables} />
-            <QueryPlanPanel plan={state.query_plan} />
+            {/* One consolidated panel in place of the three sibling
+                expanders this used to render (query information, schema
+                context, query plan). Same information, same components --
+                see SqlIntelligencePanel's own docstring. */}
+            <SqlIntelligencePanel state={state} showDatabase={isMultiDb} />
 
             {showSqlEditor && (
               <Expander title={t('sql.title')} defaultOpen>
@@ -250,11 +251,6 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
 
             {entry.confirmedColumns && entry.confirmedRows && (
               <div className="flex flex-col gap-4">
-                {entry.confirmedDurationMs !== null && (
-                  <Badge tone="neutral" className="w-fit">
-                    {(entry.confirmedDurationMs / 1000).toFixed(2)}s
-                  </Badge>
-                )}
                 <GoldenFeedbackWidget entryId={entry.entryId} />
                 {state.low_confidence_notice && entry.editableSql === state.sql && (
                   <p className="flex items-center gap-1.5 text-xs text-[var(--warning)]">

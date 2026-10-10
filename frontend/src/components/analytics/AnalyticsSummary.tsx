@@ -118,7 +118,7 @@ export function AnalyticsSummary({
 
       <GoverningMetricsPanel metrics={state.governing_metrics} />
 
-      <EvidencePanel recommendations={state.recommendations} onAsk={onAsk} />
+      <EvidencePanel recommendations={state.recommendations} />
 
       <QueryScopePanel plan={state.analytical_plan} intent={state.analytical_intent} />
     </section>

@@ -1,16 +1,35 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { MemoryRouter } from 'react-router-dom'
+
+// The SQL editor is CodeMirror, which throws inside jsdom while measuring
+// (`textRange(...).getClientRects is not a function`) and makes mounting a
+// turn slow enough to race this file's `findByRole` on the lazily-loaded
+// analysis section. That was already an intermittent failure before this
+// file grew; stubbing the editor removes both the noise and the race. This
+// file is about the analysis section, not the editor -- TurnCard.test.tsx
+// is what covers the editor's own gating.
+vi.mock('@/components/sql/SqlEditor', () => ({
+  SqlEditor: () => <div data-testid="sql-editor-stub" />,
+}))
+import { describe, expect, it, vi } from 'vitest'
 import { newHistoryEntry, withConfirmedResult } from '@/lib/history'
 import { askState, rankingResult } from '@/test/analyticsFixtures'
 import { TurnCard } from './TurnCard'
 
+// TurnCard renders a react-router <Link> (the lineage link inside
+// SqlIntelligencePanel), so the component needs router context -- which it
+// has in the real app, where it is rendered under a route. MemoryRouter is
+// the convention the rest of this suite already uses (App.routes.test.tsx,
+// AppShell.test.tsx).
 function renderTurn(entry: ReturnType<typeof newHistoryEntry>) {
   const queryClient = new QueryClient()
   return render(
-    <QueryClientProvider client={queryClient}>
-      <TurnCard entry={entry} isMultiDb={false} />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <TurnCard entry={entry} isMultiDb={false} />
+      </QueryClientProvider>
+    </MemoryRouter>,
   )
 }
 

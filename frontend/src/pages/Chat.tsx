@@ -1,4 +1,6 @@
 import { ChatInput } from '@/components/chat/ChatInput'
+import { ArtifactWorkspace } from '@/components/chat/ArtifactWorkspace'
+import { ConversationContextPanel } from '@/components/chat/ConversationContextPanel'
 import { ChatLiveRegion } from '@/components/chat/ChatLiveRegion'
 import { PendingTurn } from '@/components/chat/PendingTurn'
 import { QuestionNavigator } from '@/components/chat/QuestionNavigator'
@@ -112,6 +114,14 @@ export function Chat() {
               the same left edge even though both already share the same
               max-w-4xl/px-4 container and therefore the same right edge. */}
           <div ref={composerRef} className="sticky bottom-0 mt-auto bg-[var(--background)] pb-4 pt-2 pl-10">
+            {/* Above the composer on purpose: it describes what the
+                *next* question will carry, so it belongs with the input
+                rather than with any one answer. Collapsed by default --
+                it answers a question the reader only sometimes has. */}
+            {/* The pinned worklist sits with the composer: it is a
+                place to return to, not part of any one answer. */}
+            <ArtifactWorkspace entries={queryHistory} />
+            <ConversationContextPanel entries={queryHistory} />
             <ChatInput />
           </div>
         </div>

@@ -174,7 +174,12 @@
     "confirmAndRun": "Confirm and Run",
     "retryTimeline": "Retry timeline",
     "schemaContext": "Retrieved schema context",
-    "queryPlan": "Query plan"
+    "queryPlan": "Query plan",
+    "executionTimeline": "Agent execution timeline",
+    "stage": "stage",
+    "stages": "stages",
+    "stageCalls": "{{count}} calls",
+    "executionTimelineHint": "Wall-clock time per pipeline stage, including retried attempts. Local model inference is usually the largest share."
   },
   "results": {
     "title": "Results",
@@ -519,5 +524,48 @@
     "lowerIsBetter": "Lower is better",
     "loading": "Loading the briefing...",
     "loadFailed": "The briefing could not be loaded."
+  },
+  "status": {
+    "title": "Query status",
+    "validated": "Validated",
+    "validatedDetail": "The server parsed and validated this SQL before showing it: a single read-only statement, no restricted columns, no system catalogs.",
+    "blocked": "Blocked",
+    "attempts": "{{count}} attempts",
+    "costFlagged": "Cost flagged",
+    "executionFailed": "Execution failed",
+    "rows": "{{count}} rows",
+    "truncated": "Truncated",
+    "truncatedDetail": "The result hit the configured row cap, so this is a prefix of the full result.",
+    "durationDetail": "Server-side execution time.",
+    "cacheHit": "Cached",
+    "cacheMiss": "Fresh",
+    "cacheDetail": "Whether this result came from the short-lived result cache or a fresh execution.",
+    "governed": "Governed"
+  },
+  "followUps": {
+    "title": "Ask next",
+    "hint": "Suggested by the recommendation engine from this result. Each is an AI estimate."
+  },
+  "sqlIntelligence": {
+    "title": "SQL intelligence",
+    "governedMetrics": "Governed metrics applied",
+    "governedMetricsHint": "Approved definitions the generated SQL was required to use.",
+    "schemaHint": "The tables retrieved for this question, with the similarity score that selected them.",
+    "openLineage": "Open the lineage explorer"
+  },
+  "context": {
+    "title": "Context carried: {{count}} of {{max}} turns",
+    "hint": "Your next question is resolved against these earlier turns. Only turns that succeeded are carried, and only the most recent few.",
+    "carriedLabel": "Turns carried as context",
+    "tables": "Tables in context",
+    "skipped": "{{count}} earlier turn(s) are not carried."
+  },
+  "artifacts": {
+    "title": "Pinned analyses",
+    "rows": "{{count}} rows",
+    "pin": "Pin \"{{question}}\" to the workspace",
+    "unpin": "Unpin \"{{question}}\"",
+    "pinHint": "Pin this analysis to the workspace",
+    "unpinHint": "Remove from the workspace"
   }
 }

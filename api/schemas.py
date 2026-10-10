@@ -126,6 +126,29 @@ class AttemptRecordOut(BaseModel):
     will_retry: bool = False
 
 
+class StageTimingOut(BaseModel):
+    """One graph node call's wall-clock duration -- mirrors
+    `agent.state.StageTiming`.
+
+    One entry per node *call*, not per attempt: a question that retried
+    twice produces two `generate_sql`/`validate_sql`/`execute_sql`
+    entries, which is what lets the UI show total time spent in a stage
+    across the whole run rather than only the last attempt's cost (see
+    `agent.state.StageTiming`'s own docstring).
+
+    Already recorded by `agent.nodes._timed_node` for every node; this
+    exposes it, and adds no instrumentation. `stage` is a fixed node name
+    from this application's own graph -- never a free-text label, and
+    never anything derived from the question or the data.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    stage: str
+    attempt: int
+    duration_ms: float
+
+
 class SchemaTableOut(BaseModel):
     """One retrieved-schema table entry -- mirrors `agent.state.TableSchema`,
     used by the dashboard's "Retrieved schema context" expander."""
@@ -847,6 +870,16 @@ class AskResponse(BaseModel):
         description="Ordered plan steps for a complexity-flagged question; None if planning was skipped.",
     )
     schema_tables: list[SchemaTableOut] = Field(default_factory=list)
+    stage_timings: list[StageTimingOut] = Field(
+        default_factory=list,
+        description=(
+            "Per-node wall-clock timings for this run, in the order the "
+            "nodes ran, including retried attempts. Additive and optional "
+            "-- an existing client that ignores it is unaffected. Powers "
+            "the dashboard's agent execution timeline; already recorded by "
+            "`agent.nodes._timed_node`, so exposing it costs nothing."
+        ),
+    )
     followup_classification: Literal["standalone", "followup", "ambiguous"] | None = None
     followup_resolved_against: ConversationExchangeOut | None = None
     permission_denied_notice: str | None = Field(

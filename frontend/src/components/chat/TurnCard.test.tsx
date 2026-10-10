@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it } from 'vitest'
 import { isSqlResult, newHistoryEntry } from '@/lib/history'
 import type { AskResponse } from '@/lib/types'
@@ -9,12 +10,19 @@ import { TurnCard } from './TurnCard'
 // reads schema-table metadata via react-query's useSchemaTables() -- a real
 // QueryClientProvider is required for any render path that can reach it,
 // same convention ChatInput.test.tsx already uses.
+// TurnCard renders a react-router <Link> (the lineage link inside
+// SqlIntelligencePanel), so the component needs router context -- which it
+// has in the real app, where it is rendered under a route. MemoryRouter is
+// the convention the rest of this suite already uses (App.routes.test.tsx,
+// AppShell.test.tsx).
 function renderTurnCard(props: React.ComponentProps<typeof TurnCard>) {
   const queryClient = new QueryClient()
   return render(
-    <QueryClientProvider client={queryClient}>
-      <TurnCard {...props} />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <TurnCard {...props} />
+      </QueryClientProvider>
+    </MemoryRouter>,
   )
 }
 

@@ -105,19 +105,24 @@ describe('AnalyticsSummary -- real analytics data', () => {
     expect(screen.getByText('1. Bikes')).toBeInTheDocument()
   })
 
-  it('submits a next-question recommendation as a one-click related question', () => {
-    const onAsk = vi.fn()
+  it('no longer renders next-question chips -- they moved under the answer', () => {
+    // The one-click related-question behaviour still exists and is still
+    // tested, in components/chat/FollowUpSuggestions.test.tsx. It moved
+    // because this panel is lazy-loaded inside the analytics expander and
+    // only reachable after Confirm and Run, which is the wrong place for a
+    // follow-up suggestion. Asserting its absence here keeps the "exactly
+    // one renderer" rule from silently regressing back to two.
     render(
       <AnalyticsSummary
         state={askState({ recommendations: [nextQuestionRec] })}
         cacheStatus={null}
-        onAsk={onAsk}
+        onAsk={vi.fn()}
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'What drove the 2023 dip in sales?' }))
-
-    expect(onAsk).toHaveBeenCalledWith('What drove the 2023 dip in sales?')
+    expect(
+      screen.queryByRole('button', { name: 'What drove the 2023 dip in sales?' }),
+    ).not.toBeInTheDocument()
   })
 
   it('labels every recommendation as an AI estimate and shows each piece of evidence with its own truth level', () => {

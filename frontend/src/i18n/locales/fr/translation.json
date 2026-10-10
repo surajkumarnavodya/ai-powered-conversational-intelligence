@@ -153,7 +153,12 @@
     "confirmAndRun": "Confirmer et exécuter",
     "retryTimeline": "Chronologie des tentatives",
     "schemaContext": "Contexte de schéma récupéré",
-    "queryPlan": "Plan de requête"
+    "queryPlan": "Plan de requête",
+    "executionTimeline": "Chronologie d'exécution de l'agent",
+    "stage": "étape",
+    "stages": "étapes",
+    "stageCalls": "{{count}} appels",
+    "executionTimelineHint": "Temps réel par étape du pipeline, y compris les tentatives répétées. L'inférence du modèle local en représente généralement la plus grande part."
   },
   "results": {
     "title": "Résultats",
@@ -304,5 +309,48 @@
     "lowerIsBetter": "Plus bas est mieux",
     "loading": "Chargement du rapport...",
     "loadFailed": "Le rapport n'a pas pu être chargé."
+  },
+  "status": {
+    "title": "Statut de la requête",
+    "validated": "Validée",
+    "validatedDetail": "Le serveur a analysé et validé ce SQL avant de l'afficher : une seule instruction en lecture seule, sans colonnes restreintes ni catalogues système.",
+    "blocked": "Bloquée",
+    "attempts": "{{count}} tentatives",
+    "costFlagged": "Coût signalé",
+    "executionFailed": "Échec de l'exécution",
+    "rows": "{{count}} lignes",
+    "truncated": "Tronquée",
+    "truncatedDetail": "Le résultat a atteint la limite de lignes configurée ; il ne s'agit donc que d'une partie du résultat complet.",
+    "durationDetail": "Temps d'exécution côté serveur.",
+    "cacheHit": "En cache",
+    "cacheMiss": "Récent",
+    "cacheDetail": "Indique si ce résultat provient du cache de courte durée ou d'une nouvelle exécution.",
+    "governed": "Encadrée"
+  },
+  "followUps": {
+    "title": "Question suivante",
+    "hint": "Suggéré par le moteur de recommandations à partir de ce résultat. Chacune est une estimation de l'IA."
+  },
+  "sqlIntelligence": {
+    "title": "Intelligence SQL",
+    "governedMetrics": "Métriques encadrées appliquées",
+    "governedMetricsHint": "Définitions approuvées que le SQL généré devait utiliser.",
+    "schemaHint": "Les tables récupérées pour cette question, avec le score de similarité qui les a sélectionnées.",
+    "openLineage": "Ouvrir l'explorateur de lignage"
+  },
+  "context": {
+    "title": "Contexte conservé : {{count}} tours sur {{max}}",
+    "hint": "Votre prochaine question est résolue à partir de ces tours précédents. Seuls les tours réussis sont conservés, et uniquement les plus récents.",
+    "carriedLabel": "Tours conservés comme contexte",
+    "tables": "Tables dans le contexte",
+    "skipped": "{{count}} tour(s) précédent(s) ne sont pas conservés."
+  },
+  "artifacts": {
+    "title": "Analyses épinglées",
+    "rows": "{{count}} lignes",
+    "pin": "Épingler « {{question}} » à l'espace de travail",
+    "unpin": "Détacher « {{question}} »",
+    "pinHint": "Épingler cette analyse à l'espace de travail",
+    "unpinHint": "Retirer de l'espace de travail"
   }
 }
