@@ -73,6 +73,7 @@ from agent.sql_validator import (
     enforce_row_limit,
     find_unexpected_table_references,
     qualify_table_schema,
+    summarize_sql,
     validate_sql,
 )
 from agent.state import ConversationExchange
@@ -142,6 +143,7 @@ from api.schemas import (
     SchemaRefreshResult,
     SchemaTableOut,
     SourceAnswerOut,
+    SqlSummaryOut,
     StageMetricOut,
     StageTimingOut,
     TableOut,
@@ -157,6 +159,7 @@ from api.workflow import router as workflow_router
 from config.settings import ConfigurationError, Settings, configure_logging, get_settings
 from db.connection import (
     check_write_privileges,
+    get_connection,
     get_read_only_engine,
     get_sqlglot_dialect,
     test_connection,
@@ -695,6 +698,44 @@ def _attempt_records_out(state: Mapping[str, Any]) -> list[AttemptRecordOut]:
     ]
 
 
+def _sql_summary_out(state: Mapping[str, Any], settings: Settings) -> SqlSummaryOut | None:
+    """Describes the final SQL for the dashboard's SQL panel.
+
+    Parsed in the dialect of the database this question was actually
+    routed to (`AgentState["selected_database"]`), never a global default
+    -- the same per-request dialect resolution `validate_sql_node` and
+    `POST /execute` already perform. Returns `None` for a question that
+    produced no SQL, or SQL that does not parse, so the panel shows
+    nothing rather than a guess.
+    """
+    sql = state.get("sql")
+    if not sql:
+        return None
+
+    # Resolve the dialect only when a database was actually selected.
+    # `get_connection` raises for an unknown/absent name rather than
+    # falling back, and a question that produced SQL without routing (a
+    # non-SQL answer path, or a reconstructed state) is a normal case --
+    # so fall back to `summarize_sql`'s own default dialect instead of
+    # losing the summary.
+    dialect: str | None = None
+    database = state.get("selected_database")
+    if database:
+        try:
+            dialect = get_sqlglot_dialect(get_connection(settings, database).db_type)
+        except Exception:  # noqa: BLE001 - a presentation field never fails the answer
+            dialect = None
+
+    try:
+        summary = summarize_sql(sql) if dialect is None else summarize_sql(sql, dialect)
+    except Exception:  # noqa: BLE001 - a presentation field never fails the answer
+        return None
+    if summary is None:
+        return None
+    statement_type, referenced_tables = summary
+    return SqlSummaryOut(statement_type=statement_type, referenced_tables=referenced_tables)
+
+
 def _stage_timings_out(state: Mapping[str, Any]) -> list[StageTimingOut]:
     """Per-node timings for this run, in the order the nodes ran.
 
@@ -950,6 +991,7 @@ def _ask_response_from_state(
         row_count=state.get("row_count"),
         retry_count=state.get("retry_count", 0),
         attempt_history=_attempt_records_out(state),
+        sql_summary=_sql_summary_out(state, settings),
         stage_timings=_stage_timings_out(state),
         insight=_redact_text(state.get("insight"), settings),
         analytical_result=state.get("analytical_result"),

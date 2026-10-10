@@ -143,6 +143,96 @@ class TestAsk:
         assert body["attempt_history"][0]["outcome"] == "succeeded"
         assert "X-Correlation-ID" in response.headers
 
+    def test_sql_summary_reports_the_statement_type_and_referenced_tables(
+        self, monkeypatch, client
+    ):
+        """The SQL panel needs the tables the query *references*, which are
+        not the tables retrieval offered."""
+        monkeypatch.setattr(
+            "api.main.run_orchestrated",
+            lambda *a, **k: {
+                "status": "succeeded",
+                "sql": "SELECT a FROM sales JOIN product p ON p.id = sales.pid",
+                "attempt_history": [],
+                "error_history": [],
+                # Retrieval offered three tables; the query uses two of them.
+                "schema_tables": [
+                    {
+                        "table_name": "sales",
+                        "ddl": "CREATE TABLE sales ()",
+                        "similarity_score": 0.9,
+                    },
+                    {
+                        "table_name": "product",
+                        "ddl": "CREATE TABLE product ()",
+                        "similarity_score": 0.8,
+                    },
+                    {
+                        "table_name": "unused",
+                        "ddl": "CREATE TABLE unused ()",
+                        "similarity_score": 0.7,
+                    },
+                ],
+            },
+        )
+        body = client.post("/ask", json={"question": "How many rows are there?"}).json()
+
+        assert body["sql_summary"]["statement_type"] == "SELECT"
+        assert body["sql_summary"]["referenced_tables"] == ["product", "sales"]
+        # The retrieved-but-unused table is not reported as referenced.
+        assert "unused" not in body["sql_summary"]["referenced_tables"]
+
+    def test_sql_summary_parses_in_the_routed_database_s_own_dialect(self, monkeypatch, client):
+        """A real bug this pins: passing the connection config instead of
+        its `db_type` made the dialect resolve to `None`, and T-SQL does
+        not parse under sqlglot's generic dialect -- so every SQL Server
+        query returned a null summary. Caught by mypy, not by a test,
+        because the generic dialect still parses ordinary ANSI SELECTs."""
+        # `databases=[]` so Settings' own validator rebuilds the single
+        # default connection from the new db_type. Copying _BASE_SETTINGS'
+        # already-built `databases` list would keep the postgresql entry,
+        # and `get_connection` reads that, not the top-level field.
+        mssql_settings = _settings(db_type="mssql", db_port=1433, databases=[])
+        monkeypatch.setattr("api.main.get_settings", lambda: mssql_settings)
+        monkeypatch.setattr(
+            "api.main.run_orchestrated",
+            lambda *a, **k: {
+                "status": "succeeded",
+                # TOP + bracket identifiers: T-SQL only.
+                "sql": "SELECT TOP 10 name FROM [dbo].[Employee]",
+                "selected_database": "default",
+                "attempt_history": [],
+                "error_history": [],
+            },
+        )
+        body = client.post("/ask", json={"question": "Who are the first ten employees?"}).json()
+
+        assert body["sql_summary"] is not None, "T-SQL must parse in the tsql dialect"
+        assert body["sql_summary"]["statement_type"] == "SELECT"
+        assert body["sql_summary"]["referenced_tables"] == ["Employee"]
+
+    def test_sql_summary_is_absent_when_no_sql_was_generated(self, monkeypatch, client):
+        monkeypatch.setattr(
+            "api.main.run_orchestrated",
+            lambda *a, **k: {"status": "succeeded", "attempt_history": [], "error_history": []},
+        )
+        body = client.post("/ask", json={"question": "How many rows are there?"}).json()
+        assert body["sql_summary"] is None
+
+    def test_unparseable_sql_yields_no_summary_rather_than_a_guess(self, monkeypatch, client):
+        monkeypatch.setattr(
+            "api.main.run_orchestrated",
+            lambda *a, **k: {
+                "status": "succeeded",
+                "sql": "this is not sql ((",
+                "attempt_history": [],
+                "error_history": [],
+            },
+        )
+        body = client.post("/ask", json={"question": "How many rows are there?"}).json()
+        assert body["status"] == "succeeded"
+        assert body["sql_summary"] is None
+
     def test_stage_timings_are_exposed_for_the_execution_timeline(self, monkeypatch, client):
         """`agent.nodes._timed_node` already records a timing per node
         call; this pins that they reach the client, including the extra

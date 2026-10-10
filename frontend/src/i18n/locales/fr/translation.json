@@ -336,7 +336,15 @@
     "governedMetrics": "Métriques encadrées appliquées",
     "governedMetricsHint": "Définitions approuvées que le SQL généré devait utiliser.",
     "schemaHint": "Les tables récupérées pour cette question, avec le score de similarité qui les a sélectionnées.",
-    "openLineage": "Ouvrir l'explorateur de lignage"
+    "openLineage": "Ouvrir l'explorateur de lignage",
+    "sqlLabel": "SQL",
+    "notRun": "non exécutée",
+    "metadata": "Métadonnées de la requête",
+    "statementType": "Type d'instruction",
+    "referencedTables": "Tables référencées",
+    "attempts": "Tentatives",
+    "rowCount": "Lignes renvoyées",
+    "duration": "Temps d'exécution"
   },
   "context": {
     "title": "Contexte conservé : {{count}} tours sur {{max}}",

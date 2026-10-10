@@ -1,13 +1,10 @@
-import { AlertTriangle, Loader2, Play, ShieldAlert, Sparkles } from 'lucide-react'
+import { AlertTriangle, ShieldAlert, Sparkles } from 'lucide-react'
 import { lazy, Suspense } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ExecutionStatusBar } from '@/components/sql/ExecutionStatusBar'
 import { SqlIntelligencePanel } from '@/components/sql/SqlIntelligencePanel'
 import { GoldenFeedbackWidget } from '@/components/sql/GoldenFeedbackWidget'
 import { ResultsTable } from '@/components/sql/ResultsTable'
-import { SqlEditor } from '@/components/sql/SqlEditor'
-import { Button } from '@/components/ui/button'
-import { Expander } from '@/components/ui/expander'
 import { Markdown } from '@/components/ui/markdown'
 import { useHealth } from '@/hooks/queries'
 import { buildAnswerMarkdown, buildSpokenAnswerText, isSqlResult, type QueryHistoryEntry } from '@/lib/history'
@@ -211,37 +208,20 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
         <SourcesUsedPanel state={state} entryId={entry.entryId} />
         {showSqlPanel && (
           <>
-            {/* One consolidated panel in place of the three sibling
-                expanders this used to render (query information, schema
-                context, query plan). Same information, same components --
-                see SqlIntelligencePanel's own docstring. */}
-            <SqlIntelligencePanel state={state} showDatabase={isMultiDb} />
-
-            {showSqlEditor && (
-              <Expander title={t('sql.title')} defaultOpen>
-                <div className="flex flex-col gap-2">
-                  <p className="text-xs text-[var(--muted-foreground)]">{t('sql.hint')}</p>
-                  <SqlEditor value={entry.editableSql} onChange={(sql) => setEditableSql(entry.entryId, sql)} />
-                  {state.cost_notice && entry.editableSql === state.sql && (
-                    <p className="text-xs text-[var(--warning)]">{state.cost_notice}</p>
-                  )}
-                  <div>
-                    <Button
-                      variant="primary"
-                      onClick={() => void confirmAndRun(entry.entryId)}
-                      disabled={isConfirming}
-                    >
-                      {isConfirming ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Play className="h-4 w-4" />
-                      )}
-                      {t('sql.confirmAndRun')}
-                    </Button>
-                  </div>
-                </div>
-              </Expander>
-            )}
+            {/* One panel for everything about this SQL: the collapsed
+                title is the status line, and the editor, Confirm and Run,
+                metadata, plan and schema sit inside. It replaces the four
+                sibling expanders this used to render (query information,
+                schema context, query plan, SQL) -- same components, one
+                disclosure. See SqlIntelligencePanel's own docstring. */}
+            <SqlIntelligencePanel
+              entry={entry}
+              showDatabase={isMultiDb}
+              onSqlChange={(sql) => setEditableSql(entry.entryId, sql)}
+              onConfirmAndRun={() => void confirmAndRun(entry.entryId)}
+              isConfirming={isConfirming}
+              showEditor={showSqlEditor}
+            />
 
             {entry.confirmedError && (
               <p className="rounded-md border border-[var(--danger)]/30 bg-[var(--danger)]/10 p-3 text-sm text-[var(--danger)]">

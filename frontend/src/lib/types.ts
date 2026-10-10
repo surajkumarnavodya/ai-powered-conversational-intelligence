@@ -32,6 +32,17 @@ export interface ConversationExchange {
  * several entries for the same `stage`. `stage` is a fixed node name from
  * the server's own graph, never free text.
  */
+/** Mirrors `api.schemas.SqlSummaryOut` -- what the generated SQL is.
+ *
+ * `referenced_tables` are the tables the query actually uses, which are
+ * not the same as `AgentStateView.schema_tables` (those are the top-k
+ * candidates retrieval offered). Server-derived from the parsed AST, so
+ * the browser never re-parses SQL to label it. */
+export interface SqlSummary {
+  statement_type: string
+  referenced_tables: string[]
+}
+
 export interface StageTiming {
   stage: string
   attempt: number
@@ -563,6 +574,10 @@ export interface AskResponse {
    * ran, including a retried attempt's extra entries. Optional so an
    * older persisted turn (or a rejected question, which records none)
    * stays valid. Rendered by AgentExecutionTimeline. */
+  /** Statement type and referenced tables for `sql`. Optional: absent for
+   * a turn that produced no SQL, SQL that did not parse, or a turn
+   * persisted before this field existed. */
+  sql_summary?: SqlSummary | null
   stage_timings?: StageTiming[]
   insight: string | null
   cost_notice: string | null

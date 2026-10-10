@@ -551,7 +551,15 @@
     "governedMetrics": "Governed metrics applied",
     "governedMetricsHint": "Approved definitions the generated SQL was required to use.",
     "schemaHint": "The tables retrieved for this question, with the similarity score that selected them.",
-    "openLineage": "Open the lineage explorer"
+    "openLineage": "Open the lineage explorer",
+    "sqlLabel": "SQL",
+    "notRun": "not run",
+    "metadata": "Query metadata",
+    "statementType": "Statement type",
+    "referencedTables": "Tables referenced",
+    "attempts": "Attempts",
+    "rowCount": "Rows returned",
+    "duration": "Execution time"
   },
   "context": {
     "title": "Context carried: {{count}} of {{max}} turns",

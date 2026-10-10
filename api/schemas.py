@@ -126,6 +126,27 @@ class AttemptRecordOut(BaseModel):
     will_retry: bool = False
 
 
+class SqlSummaryOut(BaseModel):
+    """What the generated SQL *is* -- its statement shape and the tables it
+    actually references.
+
+    From `agent.sql_validator.summarize_sql`, which reads the already-
+    parsed AST. Two reasons this is server-side rather than derived in the
+    browser: the tables a query references are not the tables retrieval
+    offered (retrieval returns top-k candidates, a query commonly uses
+    one), and the statement type read from the AST cannot be fooled by a
+    leading comment or a CTE prefix the way a text match could.
+
+    Purely descriptive. It gates nothing -- `validate_sql` remains the
+    only thing that decides whether SQL may run.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    statement_type: str
+    referenced_tables: list[str] = Field(default_factory=list)
+
+
 class StageTimingOut(BaseModel):
     """One graph node call's wall-clock duration -- mirrors
     `agent.state.StageTiming`.
@@ -870,6 +891,15 @@ class AskResponse(BaseModel):
         description="Ordered plan steps for a complexity-flagged question; None if planning was skipped.",
     )
     schema_tables: list[SchemaTableOut] = Field(default_factory=list)
+    sql_summary: SqlSummaryOut | None = Field(
+        default=None,
+        description=(
+            "The generated SQL's statement type and the tables it actually "
+            "references. `None` when no SQL was generated, or when it did "
+            "not parse. Additive and optional -- an existing client that "
+            "ignores it is unaffected."
+        ),
+    )
     stage_timings: list[StageTimingOut] = Field(
         default_factory=list,
         description=(

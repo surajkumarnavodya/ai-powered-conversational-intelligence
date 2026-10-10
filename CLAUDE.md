@@ -5632,6 +5632,72 @@ need a server-side artifact store); the lineage link opens the explorer
 without pre-seeding a database, because that page resolves its own
 selection.
 
+**SQL Intelligence Panel refinement (same pass).** The panel now owns
+*everything* about a turn's SQL behind one progressive disclosure:
+collapsed it reads `SQL • Validated • 42 rows`; expanded it holds the SQL
+itself, Confirm and Run, a metadata grid (statement type, tables
+referenced, database, model, attempts, rows, duration), the plan,
+governed metrics, retrieved schema and the lineage link. It replaced five
+sibling expanders.
+
+**Already present, so deliberately not rebuilt:** CodeMirror with
+`@codemirror/lang-sql` gives `SqlEditor` syntax highlighting; `ui/CopyButton`
+inside it already provides Copy SQL (`navigator.clipboard.writeText`
+only); and `EditorView.lineWrapping` already keeps long SQL usable. No
+highlighter, clipboard helper or second code-presentation mechanism was
+added.
+
+**New: `AskResponse.sql_summary`** (optional, `null` when absent) from a
+new pure `agent.sql_validator.summarize_sql`, carrying `statement_type`
+and `referenced_tables`. Those are the two facts the UI had no accurate
+source for: the statement type is read from the parsed AST (a leading
+comment or a `WITH` prefix cannot mislabel it), and the **referenced**
+tables are not `schema_tables` -- those are the top-k candidates
+*retrieval offered*, commonly a superset of what the query uses, so
+labelling them "tables referenced" would be wrong. It reuses the same
+parse and the same CTE-aware filtering
+`find_unexpected_table_references` already performs, and gates nothing.
+
+**Invariants that must not regress:**
+- **The panel has no execution path.** Its only action calls the caller's
+  `onConfirmAndRun` -> `POST /execute`, which re-validates and
+  re-executes the *current* text server-side every time. An edit in the
+  box is therefore exactly as untrusted as the original generation, and
+  the panel cannot bypass validation. A test asserts clicking Copy does
+  not invoke the run handler.
+- **The SQL shown is the server's.** `entry.editableSql` is seeded from
+  `state.sql`; nothing generates, rewrites or reformats SQL client-side.
+- **A failed validation reads `SQL • Blocked • ...`, never "Validated".**
+- **The cost notice is withheld once the SQL is edited**, because it
+  describes the server's own query, not the edit.
+- **Open until the turn has a result, collapsed after.** Burying the
+  primary action behind a collapse would make the main path harder to
+  reach; afterwards the summary line is the useful state.
+- **No fact is stated twice.** The panel owns validation state, rows,
+  duration, attempts and cost; `ExecutionStatusBar` was rescoped to the
+  result-trust flags that must *not* hide behind a collapse (execution
+  failure, truncation, cache freshness, governance). Both surfaces are
+  visible at once, and `ExecutionStatusBar.test.tsx` asserts the moved
+  facts are absent there so the duplication cannot creep back.
+
+**A real bug mypy caught that the tests did not:**
+`_sql_summary_out` passed the whole `DatabaseConnectionConfig` to
+`get_sqlglot_dialect`, which takes `db_type: str`. At runtime that
+returns `None` -- sqlglot's generic dialect -- and **T-SQL does not parse
+under the generic dialect**, so every SQL Server query (all four
+configured databases here) would have returned `sql_summary: null`. The
+existing tests passed because an ordinary ANSI `SELECT` parses either
+way. Fixed, and pinned by a mutation-tested regression
+(`SELECT TOP 10 name FROM [dbo].[Employee]`). Worth remembering when
+resolving a dialect anywhere: pass `config.db_type`, not the config.
+
+**Known caveat at the time of writing:** `npm run build` (`tsc -b && vite
+build`) fails on `src/components/chat/QuestionNavigator.test.tsx`, which
+carries an unused variable from another session's in-progress edit in the
+same working tree. That file was left untouched rather than fixed
+mid-edit. `npx vite build` succeeds and `tsc` is clean across every file
+this work changed.
+
 **Read [`docs/conversational-intelligence-ui.md`](docs/conversational-intelligence-ui.md)**
 for the feature-by-feature audit table, the API change, the
 accessibility/performance/security review and the full test counts.

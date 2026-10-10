@@ -1,54 +1,218 @@
-import { ExternalLink } from 'lucide-react'
+import { AlertTriangle, ExternalLink, Loader2, Play } from 'lucide-react'
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { QueryPlanContent } from '@/components/chat/QueryPlanPanel'
 import { SchemaContextContent } from '@/components/chat/SchemaContextPanel'
+import { SqlEditor } from '@/components/sql/SqlEditor'
+import { Button } from '@/components/ui/button'
 import { Expander } from '@/components/ui/expander'
-import type { AskResponse } from '@/lib/types'
+import type { QueryHistoryEntry } from '@/lib/history'
 
-/** One expander answering "how did the agent arrive at this SQL, and
- * against what".
+/** Everything about *this* turn's SQL, behind one progressive disclosure.
  *
- * **A composition, not new rendering.** Every section below delegates to
- * the component that already owned it (`QueryPlanContent`,
- * `SchemaContextContent`); this adds the grouping and the lineage link.
- * Before, the same information sat in three or four sibling expanders
- * stacked under the answer, so a reader had to open each in turn to
- * assemble one picture, and a long conversation became a wall of
- * collapsed rows.
+ * Collapsed it reads as a status line -- `SQL • Validated • 42 rows` --
+ * so a long conversation stays scannable. Expanded it holds the SQL
+ * itself, the Confirm and Run control, and the metadata that describes
+ * it: statement type, referenced tables, database, retries, duration.
  *
- * The SQL *editor* deliberately stays outside this panel. It is an
- * action, not an explanation, and burying the Confirm-and-Run control
- * one expander deeper would make the main path harder to reach.
+ * **It composes; it does not re-derive.** The SQL viewer is the existing
+ * `SqlEditor` (CodeMirror with `@codemirror/lang-sql`, so syntax
+ * highlighting and Copy SQL already come with it -- no new dependency and
+ * no second code-presentation mechanism). The plan and schema sections
+ * delegate to `QueryPlanContent`/`SchemaContextContent`. Statement type
+ * and referenced tables come from `AskResponse.sql_summary`, parsed
+ * server-side from the AST.
  *
- * **Shows only what the server returned.** The plan steps, the retrieved
- * table DDL, the chosen database and model, and the governing metric
- * names are all `AskResponse` fields. No prompt text, no model
- * reasoning, no intermediate generation.
+ * **Safety properties, all structural rather than conventional:**
+ * - The SQL shown is `entry.editableSql`, seeded from the server's own
+ *   `state.sql`. Nothing here generates or rewrites SQL.
+ * - Nothing here executes anything. The only action is Confirm and Run,
+ *   which calls the store's `confirmAndRun`, which posts to
+ *   `POST /execute` -- and that route re-validates and re-executes the
+ *   *current* text server-side every time. An edit in this box is
+ *   therefore exactly as untrusted as the original generation, and the
+ *   panel cannot bypass validation.
+ * - Copying is `navigator.clipboard.writeText` via the shared
+ *   `CopyButton`; it never runs the query.
+ * - Only server-returned fields are rendered. No prompt text, no model
+ *   reasoning, no intermediate generation.
+ *
+ * **Open by default until the turn has a result**, collapsed afterwards.
+ * Burying the primary action behind a collapse would make the main path
+ * harder to reach; once a result exists, the summary line is the useful
+ * state and the SQL is reference material.
  */
+
+/** The collapsed summary: validation state and what the run produced. */
+export function buildSqlSummaryLine(
+  entry: QueryHistoryEntry,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string {
+  const state = entry.finalState
+  const parts: string[] = [t('sqlIntelligence.sqlLabel')]
+
+  // Validation: a final non-succeeded attempt means the server stopped
+  // this SQL. Anything else that produced SQL passed the validator
+  // before it was ever shown.
+  const blocked = state.attempt_history.find(
+    (attempt) => attempt.outcome !== 'succeeded' && !attempt.will_retry,
+  )
+  parts.push(blocked ? t('status.blocked') : t('status.validated'))
+
+  if (entry.confirmedError) parts.push(t('status.executionFailed'))
+  else if (entry.confirmedRows) parts.push(t('status.rows', { count: entry.confirmedRows.length }))
+  else parts.push(t('sqlIntelligence.notRun'))
+
+  return parts.join(' • ')
+}
+
+interface MetadataRow {
+  key: string
+  label: string
+  value: string
+}
+
+/** The metadata grid. Every value is a server-returned field. */
+export function buildSqlMetadata(
+  entry: QueryHistoryEntry,
+  showDatabase: boolean,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): MetadataRow[] {
+  const state = entry.finalState
+  const rows: MetadataRow[] = []
+
+  if (state.sql_summary) {
+    rows.push({
+      key: 'statementType',
+      label: t('sqlIntelligence.statementType'),
+      value: state.sql_summary.statement_type,
+    })
+    if (state.sql_summary.referenced_tables.length > 0) {
+      rows.push({
+        key: 'referencedTables',
+        label: t('sqlIntelligence.referencedTables'),
+        value: state.sql_summary.referenced_tables.join(', '),
+      })
+    }
+  }
+  if (showDatabase && state.database) {
+    rows.push({ key: 'database', label: t('details.database'), value: state.database })
+  }
+  if (state.model) {
+    rows.push({ key: 'model', label: t('details.model'), value: state.model })
+  }
+  if (state.attempt_history.length > 1) {
+    rows.push({
+      key: 'attempts',
+      label: t('sqlIntelligence.attempts'),
+      value: String(state.attempt_history.length),
+    })
+  }
+  if (entry.confirmedRows) {
+    rows.push({
+      key: 'rowCount',
+      label: t('sqlIntelligence.rowCount'),
+      value: String(entry.confirmedRows.length),
+    })
+  }
+  if (entry.confirmedDurationMs !== null) {
+    rows.push({
+      key: 'duration',
+      label: t('sqlIntelligence.duration'),
+      value:
+        entry.confirmedDurationMs < 1000
+          ? `${Math.round(entry.confirmedDurationMs)}ms`
+          : `${(entry.confirmedDurationMs / 1000).toFixed(2)}s`,
+    })
+  }
+  return rows
+}
+
 export function SqlIntelligencePanel({
-  state,
+  entry,
   showDatabase,
+  onSqlChange,
+  onConfirmAndRun,
+  isConfirming = false,
+  showEditor = true,
 }: {
-  state: AskResponse
+  entry: QueryHistoryEntry
   /** True only when more than one database is configured -- naming the
    * database is noise in a single-database deployment. */
   showDatabase: boolean
+  onSqlChange: (sql: string) => void
+  onConfirmAndRun: () => void
+  isConfirming?: boolean
+  /** False for a turn whose SQL cannot be re-run (no live handler), so the
+   * SQL is still inspectable without offering a dead action. */
+  showEditor?: boolean
 }) {
   const { t } = useTranslation()
+  const state = entry.finalState
+
+  const summaryLine = useMemo(() => buildSqlSummaryLine(entry, t), [entry, t])
+  const metadata = useMemo(() => buildSqlMetadata(entry, showDatabase, t), [entry, showDatabase, t])
 
   const hasPlan = (state.query_plan?.length ?? 0) > 0
   const hasSchema = state.schema_tables.length > 0
   const hasMetrics = state.governing_metrics.length > 0
-  const hasDetails = (showDatabase && Boolean(state.database)) || Boolean(state.model)
+  const hasSql = Boolean(entry.editableSql || state.sql)
 
-  if (!hasPlan && !hasSchema && !hasMetrics && !hasDetails) return null
+  if (!hasSql && !hasPlan && !hasSchema && !hasMetrics && metadata.length === 0) return null
 
-  const sectionCount = [hasPlan, hasSchema, hasMetrics, hasDetails].filter(Boolean).length
+  const hasResult = Boolean(entry.confirmedRows) || Boolean(entry.confirmedError)
+  // The SQL text is pristine only while the user has not edited it; a
+  // cost or confidence notice describes the SQL the server produced, so
+  // it is withheld once that text changes.
+  const sqlIsServerSql = entry.editableSql === state.sql
 
   return (
-    <Expander title={`🧠 ${t('sqlIntelligence.title')} (${sectionCount})`}>
+    <Expander title={`🧠 ${summaryLine}`} defaultOpen={!hasResult}>
       <div className="flex flex-col gap-4">
+        {hasSql && showEditor && (
+          <section className="flex flex-col gap-2">
+            <p className="text-xs text-[var(--muted-foreground)]">{t('sql.hint')}</p>
+            <SqlEditor value={entry.editableSql} onChange={onSqlChange} />
+            {state.cost_notice && sqlIsServerSql && (
+              <p className="flex items-center gap-1.5 text-xs text-[var(--warning)]">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                {state.cost_notice}
+              </p>
+            )}
+            <div>
+              <Button variant="primary" onClick={onConfirmAndRun} disabled={isConfirming}>
+                {isConfirming ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Play className="h-4 w-4" />
+                )}
+                {t('sql.confirmAndRun')}
+              </Button>
+            </div>
+          </section>
+        )}
+
+        {hasSql && !showEditor && (
+          <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded bg-[var(--muted)] p-2 font-mono text-xs">
+            {entry.editableSql || state.sql}
+          </pre>
+        )}
+
+        {metadata.length > 0 && (
+          <section>
+            <h4 className="mb-1.5 text-xs font-semibold">{t('sqlIntelligence.metadata')}</h4>
+            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+              {metadata.map((row) => (
+                <div key={row.key} className="col-span-2 grid grid-cols-subgrid">
+                  <dt className="text-[var(--muted-foreground)]">{row.label}</dt>
+                  <dd className="min-w-0 break-words font-mono">{row.value}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        )}
+
         {hasPlan && (
           <section className="flex flex-col gap-1.5">
             <h4 className="text-xs font-semibold">{t('sql.queryPlan')}</h4>
@@ -86,27 +250,11 @@ export function SqlIntelligencePanel({
           </section>
         )}
 
-        {hasDetails && (
-          <section className="flex flex-col gap-1">
-            <h4 className="text-xs font-semibold">{t('details.title')}</h4>
-            {showDatabase && state.database && (
-              <p className="text-xs text-[var(--muted-foreground)]">
-                {t('details.database')}: <strong>{state.database}</strong>
-              </p>
-            )}
-            {state.model && (
-              <p className="text-xs text-[var(--muted-foreground)]">
-                {t('details.model')}: <strong>{state.model}</strong>
-              </p>
-            )}
-          </section>
-        )}
-
         {/* The lineage explorer is a separate, permission-gated screen
-            (its own route re-checks access server-side). This is a plain
-            link, not a deep link: that page resolves its own database
-            selection, so pre-seeding it from here would imply state it
-            does not read. */}
+            whose own route re-checks access server-side. A plain link,
+            not a deep link: that page resolves its own database
+            selection, so pre-seeding it would imply state it does not
+            read. */}
         <Link
           to="/data-lineage"
           className="inline-flex w-fit items-center gap-1.5 text-xs text-[var(--accent)] hover:underline"

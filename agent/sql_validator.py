@@ -695,6 +695,55 @@ def find_unexpected_table_references(
     return sorted(name for name in referenced if name.lower() not in known_lower)
 
 
+def summarize_sql(sql: str, dialect: str | None = DEFAULT_DIALECT) -> tuple[str, list[str]] | None:
+    """The statement's shape and the real tables it references.
+
+    Two presentation facts the dashboard's SQL panel needs and had no
+    accurate source for: the *statement type*, and the tables the SQL
+    actually references -- not the tables retrieval happened to offer.
+    Those differ routinely: schema retrieval returns the top-k candidate
+    tables, and a generated query commonly uses one of them, so labelling
+    the retrieved set as "tables referenced" would be wrong.
+
+    Derived from the same parse and the same CTE-aware filtering
+    `find_unexpected_table_references` above already performs (a CTE's own
+    name is a reference, not a base table), rather than a second
+    extraction. Nothing here validates or gates: `validate_sql` remains
+    the only thing that decides whether SQL may run.
+
+    Args:
+        sql: SQL to describe. Usually already validated, but a parse
+            failure is a normal outcome here, not an error.
+        dialect: sqlglot dialect to parse with.
+
+    Returns:
+        `(statement_type, referenced_tables)` -- the root node's SQL
+        keyword (e.g. `"SELECT"`, `"UNION"`) and the sorted distinct base
+        tables. `None` when `sql` does not parse, so a caller shows
+        nothing rather than guessing.
+    """
+    try:
+        statement = sqlglot.parse_one(sql, read=dialect)
+    except SqlglotError:
+        return None
+    if statement is None:
+        return None
+
+    cte_refs = _cte_reference_table_ids(statement)
+    tables = sorted(
+        {
+            table.name
+            for table in statement.find_all(exp.Table)
+            if table.name and id(table) not in cte_refs
+        }
+    )
+    # `key` is sqlglot's own lowercase node name ("select", "union",
+    # "except", "intersect") -- read from the parsed AST rather than
+    # matched against the SQL text, so a leading comment or a CTE prefix
+    # cannot mislabel it.
+    return statement.key.upper(), tables
+
+
 def references_multiple_tables(sql: str, dialect: str | None = DEFAULT_DIALECT) -> bool:
     """Whether `sql` references two or more distinct tables (i.e. involves a join).
 

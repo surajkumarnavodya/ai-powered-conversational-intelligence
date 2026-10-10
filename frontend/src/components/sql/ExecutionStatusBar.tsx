@@ -1,9 +1,8 @@
-import { AlertTriangle, CheckCircle2, Clock, Database, ShieldCheck, XCircle } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Database, ShieldCheck, XCircle } from 'lucide-react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
 import type { QueryHistoryEntry } from '@/lib/history'
-import type { AttemptRecord } from '@/lib/types'
 
 /** One compact row telling the reader where this query stands.
  *
@@ -24,6 +23,16 @@ import type { AttemptRecord } from '@/lib/types'
  * The longer prose (`cost_notice`, `low_confidence_notice`,
  * `restricted_field_notice`) stays where it already is, in context next
  * to the control it is about.
+ *
+ * **Scope is a deliberate split with `SqlIntelligencePanel`.** That
+ * panel's collapsed title is itself a status line
+ * (`SQL • Validated • 42 rows`) and its metadata grid carries the
+ * statement's identity, attempts and duration. Those facts are therefore
+ * *not* repeated here -- both surfaces are visible at once, so stating
+ * the same thing twice would be noise. What stays here is the set of
+ * always-visible flags about whether the *result* can be relied on:
+ * execution failure, truncation, cache freshness, and governance having
+ * altered values. Those must not be hidden behind a collapse.
  */
 
 type StatusTone = 'neutral' | 'success' | 'warning' | 'danger' | 'accent'
@@ -34,7 +43,7 @@ interface StatusItem {
   label: string
   /** Rendered as the badge's title, for the detail a label cannot carry. */
   detail?: string
-  icon: 'validated' | 'blocked' | 'ok' | 'warn' | 'time' | 'db'
+  icon: 'validated' | 'blocked' | 'ok' | 'warn' | 'db'
 }
 
 const ICONS = {
@@ -42,13 +51,8 @@ const ICONS = {
   blocked: XCircle,
   ok: CheckCircle2,
   warn: AlertTriangle,
-  time: Clock,
   db: Database,
 } as const
-
-function formatDuration(ms: number): string {
-  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(2)}s`
-}
 
 /** Derives the status items from fields the server already returned.
  *
@@ -62,52 +66,9 @@ export function deriveStatusItems(
   const state = entry.finalState
   const items: StatusItem[] = []
 
-  // 1. Validation. The server rejected or accepted the SQL before this
-  // UI ever saw it; `attempt_history` records which.
-  const blocked = state.attempt_history.find(
-    (attempt: AttemptRecord) => attempt.outcome !== 'succeeded' && !attempt.will_retry,
-  )
-  const attempts = state.attempt_history.length
-  if (blocked) {
-    items.push({
-      key: 'validation',
-      tone: 'danger',
-      icon: 'blocked',
-      label: t('status.blocked'),
-      detail: blocked.outcome,
-    })
-  } else if (state.sql) {
-    items.push({
-      key: 'validation',
-      tone: 'success',
-      icon: 'validated',
-      label: t('status.validated'),
-      detail: t('status.validatedDetail'),
-    })
-  }
-
-  // 2. Retries, only when there were any -- "1 attempt" is noise.
-  if (attempts > 1) {
-    items.push({
-      key: 'attempts',
-      tone: 'warning',
-      icon: 'warn',
-      label: t('status.attempts', { count: attempts }),
-    })
-  }
-
-  // 3. Cost, when the server flagged it.
-  if (state.cost_notice) {
-    items.push({
-      key: 'cost',
-      tone: 'warning',
-      icon: 'warn',
-      label: t('status.costFlagged'),
-      detail: state.cost_notice,
-    })
-  }
-
-  // 4. Execution outcome. Only meaningful once Confirm and Run happened.
+  // 1. Execution outcome. Only meaningful once Confirm and Run happened.
+  // The row count, duration, validation state and attempt count all live
+  // in `SqlIntelligencePanel` -- see this module's own docstring.
   if (entry.confirmedError) {
     items.push({
       key: 'execution',
@@ -117,12 +78,6 @@ export function deriveStatusItems(
       detail: entry.confirmedError,
     })
   } else if (entry.confirmedRows) {
-    items.push({
-      key: 'execution',
-      tone: 'success',
-      icon: 'ok',
-      label: t('status.rows', { count: entry.confirmedRows.length }),
-    })
     if (entry.confirmedTruncated) {
       items.push({
         key: 'truncated',
@@ -130,15 +85,6 @@ export function deriveStatusItems(
         icon: 'warn',
         label: t('status.truncated'),
         detail: t('status.truncatedDetail'),
-      })
-    }
-    if (entry.confirmedDurationMs !== null) {
-      items.push({
-        key: 'duration',
-        tone: 'neutral',
-        icon: 'time',
-        label: formatDuration(entry.confirmedDurationMs),
-        detail: t('status.durationDetail'),
       })
     }
     if (entry.confirmedCacheStatus) {
@@ -153,7 +99,7 @@ export function deriveStatusItems(
     }
   }
 
-  // 5. Governance. The server protected values before this UI saw them.
+  // 2. Governance. The server protected values before this UI saw them.
   if (state.restricted_field_notice) {
     items.push({
       key: 'governed',

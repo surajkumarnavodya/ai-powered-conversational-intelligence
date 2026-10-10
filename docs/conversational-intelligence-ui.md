@@ -10,7 +10,7 @@ was scattered. Nothing was rebuilt that already worked.
 | # | Capability | Status | What existed | What changed |
 |---|---|---|---|---|
 | 1 | Question Navigator | **Already complete** | `chat/QuestionNavigator.tsx` + tests, wired in `Chat.tsx` | Nothing |
-| 2 | AI SQL Intelligence Panel | **Consolidated** | `QueryPlanPanel`, `SchemaContextPanel`, `GoverningMetricsPanel`, a "Query information" expander — four sibling expanders | New `sql/SqlIntelligencePanel.tsx` groups them into one; the two panels' bodies were extracted (`QueryPlanContent`, `SchemaContextContent`) so nothing is re-rendered or duplicated |
+| 2 | AI SQL Intelligence Panel | **Consolidated, then completed** | `QueryPlanPanel`, `SchemaContextPanel`, `GoverningMetricsPanel`, a "Query information" expander, a separate SQL editor expander — five siblings. CodeMirror SQL highlighting and Copy SQL already existed inside `SqlEditor` | `sql/SqlIntelligencePanel.tsx` now owns all of it behind one progressive disclosure — see the section below |
 | 3 | Query Validation & Execution Status | **Added** | `cost_notice`, `RetryTimeline`, a duration badge, a truncation flag — each in a different place | New `sql/ExecutionStatusBar.tsx`: one scannable badge row. The duplicate duration badge was removed from the results area |
 | 4 | Interactive Analytics Workspace | **Already complete** | `analytics/AnalyticsSummary.tsx` + 12 panels + `ChartSection` | Nothing |
 | 5 | Data Source & Lineage Panel | **Linked** | `SchemaContextPanel`, `SourcesUsedPanel`, a separate `/data-lineage` page | A link from the SQL intelligence panel to the lineage explorer |
@@ -20,9 +20,97 @@ was scattered. Nothing was rebuilt that already worked.
 | 9 | Agent Execution Timeline | **Added (needed backend)** | `RetryTimeline` (attempt outcomes only); `stage_timings` was recorded server-side but never exposed | `StageTimingOut` + `AskResponse.stage_timings`; new `chat/AgentExecutionTimeline.tsx` |
 | 10 | Intelligent Follow-up Recommendations | **Surfaced** | `next_question` recommendations rendered inside `EvidencePanel` — lazy-loaded, nested in the analytics expander, only after Confirm and Run | New `chat/FollowUpSuggestions.tsx` renders them directly under the answer. **One renderer, not two**: removed from `EvidencePanel` |
 
+## The SQL Intelligence Panel in detail
+
+One expander holds everything about a turn's SQL. Collapsed it reads as a
+status line; expanded it holds the SQL and its metadata.
+
+```
+Collapsed:  🧠 SQL • Validated • 42 rows
+Expanded:   the SQL (CodeMirror, highlighted, with Copy)
+            Confirm and Run + any cost notice
+            Query metadata: statement type, tables referenced,
+                            database, model, attempts, rows, duration
+            Query plan · Governed metrics · Retrieved schema
+            → Open the lineage explorer
+```
+
+**Open by default until the turn has a result, collapsed afterwards.**
+Burying the primary action behind a collapse would make the main path
+harder to reach; once a result exists the summary line is the useful
+state and the SQL becomes reference material.
+
+### Already present, so not rebuilt
+
+- **Syntax highlighting** — `SqlEditor` already uses CodeMirror with
+  `@codemirror/lang-sql`. The prompt's "only if the project already has a
+  suitable dependency" condition was already met, so no highlighter was
+  added and there is no second code-presentation mechanism.
+- **Copy SQL** — `ui/CopyButton` already sits inside `SqlEditor`, copying
+  via `navigator.clipboard.writeText` only.
+- **Long SQL** — `SqlEditor` already passes `EditorView.lineWrapping`, so
+  a long query wraps inside the box instead of scrolling horizontally.
+
+### Two facts the server had no accurate source for
+
+`AskResponse.sql_summary` (new, optional, `null` when absent):
+
+| Field | Why server-side |
+|---|---|
+| `statement_type` | Read from the parsed AST (`statement.key`), so a leading comment or a `WITH` prefix cannot mislabel it the way a text match could |
+| `referenced_tables` | The tables the query **actually uses**. `schema_tables` holds the top-k candidates *retrieval offered* — commonly a superset — so labelling those "tables referenced" would be wrong |
+
+Both come from one new pure function,
+`agent.sql_validator.summarize_sql`, which reuses the same parse and the
+same CTE-aware filtering `find_unexpected_table_references` already
+performs (a CTE's own name is a reference, not a base table). It
+validates and gates nothing — `validate_sql` remains the only thing that
+decides whether SQL may run.
+
+### Ownership split with the status bar
+
+Both surfaces are visible at once, so no fact is stated twice:
+
+| Surface | Owns |
+|---|---|
+| SQL panel (collapsed title + metadata) | validation state, row count, duration, attempts, statement type, referenced tables, database, model, cost notice |
+| `ExecutionStatusBar` (always visible) | the result-trust flags that must not hide behind a collapse: execution failure, truncation, cache freshness, governance having altered values |
+
+`ExecutionStatusBar.test.tsx` asserts the moved facts are **absent**
+there, so the duplication cannot creep back.
+
+### Safety
+
+- The SQL rendered is `entry.editableSql`, seeded from the server's
+  `state.sql`. Nothing in the panel generates, rewrites or formats SQL.
+- The panel contains **no execution path**. Its only action calls the
+  caller's `onConfirmAndRun`, which goes to `POST /execute` — and that
+  route re-validates and re-executes the *current* text server-side every
+  time, so an edit in the box is exactly as untrusted as the original
+  generation. The panel cannot bypass validation.
+- Copying is clipboard-only; a test asserts clicking copy does not invoke
+  the run handler.
+- A failed validation renders as `SQL • Blocked • …`, never as
+  "Validated".
+- The cost notice is withheld once the user edits the SQL, because it
+  describes the server's own query, not the edit.
+
+### A real bug mypy caught that the tests did not
+
+`_sql_summary_out` first passed the whole `DatabaseConnectionConfig` to
+`get_sqlglot_dialect`, which expects `db_type: str`. At runtime that
+returns `None` — sqlglot's generic dialect — and **T-SQL does not parse
+under the generic dialect**. Every SQL Server query (all four configured
+databases here) would have returned `sql_summary: null`. The existing
+tests passed because an ordinary ANSI `SELECT` parses either way;
+`mypy` flagged the argument type. Fixed, and pinned by
+`test_sql_summary_parses_in_the_routed_database_s_own_dialect`
+(`SELECT TOP 10 name FROM [dbo].[Employee]`), which was mutation-tested:
+reintroducing the bug fails it.
+
 ## API / schema changes
 
-One addition, additive and optional:
+Two additions, both additive and optional:
 
 - `api/schemas.py`: new `StageTimingOut` (`stage`, `attempt`,
   `duration_ms`), mirroring `agent.state.StageTiming`.
@@ -38,6 +126,12 @@ One addition, additive and optional:
 Defensive by design: a malformed entry in that `operator.add` reducer
 channel is skipped rather than raising, so a profiling field can never
 turn a successful answer into a 500 (pinned by a test).
+
+- `api/schemas.py`: new `SqlSummaryOut` (`statement_type`,
+  `referenced_tables`) and `AskResponse.sql_summary`, defaulting to
+  `None`. Populated by `api.main._sql_summary_out` from
+  `agent.sql_validator.summarize_sql`, parsed in the dialect of the
+  database the question was actually routed to.
 
 No database change, no migration, no new endpoint, no new permission.
 
@@ -103,16 +197,23 @@ No new state library, no new chart engine, no new dependency.
 | Suite | Cases |
 |---|---|
 | `AgentExecutionTimeline.test.tsx` | 14 |
-| `ExecutionStatusBar.test.tsx` | 16 |
+| `ExecutionStatusBar.test.tsx` | 13 (rescoped) |
 | `FollowUpSuggestions.test.tsx` | 14 |
-| `SqlIntelligencePanel.test.tsx` | 8 |
+| `SqlIntelligencePanel.test.tsx` | 25 |
 | `ConversationContextPanel.test.tsx` | 9 |
 | `ArtifactWorkspace.test.tsx` | 12 |
-| `tests/test_api_ask.py` (backend) | 3 |
-| **New total** | **76** |
+| `tests/test_api_ask.py` (backend) | 7 |
+| **New total** | **94** |
 
-Frontend: **654 passed**. Backend: **5483 passed**. Lint exit 0,
-typecheck exit 0, production build clean.
+Frontend: **666 passed** (68 files). Backend: **5487 passed**. Lint exit
+0; `tsc` clean across every file this work touched.
+
+**One caveat, honestly stated:** `npm run build` (`tsc -b && vite build`)
+currently fails on `src/components/chat/QuestionNavigator.test.tsx`,
+which has an unused variable from another session's in-progress edit in
+this same working tree. That file is untouched by this work and was left
+alone rather than fixed mid-edit. `npx vite build` succeeds (2749 modules
+transformed), and `tsc` reports no error in any file this pass changed.
 
 ## Notes and deferred work
 

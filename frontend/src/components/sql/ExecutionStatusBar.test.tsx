@@ -1,13 +1,13 @@
 import { render, screen, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { newHistoryEntry, type QueryHistoryEntry } from '@/lib/history'
-import { askState } from '@/test/analyticsFixtures'
 import type { AskResponse } from '@/lib/types'
+import { askState } from '@/test/analyticsFixtures'
 import { ExecutionStatusBar, deriveStatusItems } from './ExecutionStatusBar'
 
 /** i18next is configured in the test setup, so `t` returns the real
- * English strings; this stand-in keeps `deriveStatusItems`' unit tests
- * independent of that and asserts on the key, which is what matters. */
+ * English strings; this stand-in keeps the unit tests independent of that
+ * and asserts on the key, which is what matters here. */
 const tKey = (key: string, options?: Record<string, unknown>) =>
   options && 'count' in options ? `${key}:${options.count}` : key
 
@@ -23,112 +23,49 @@ function labels(items: ReturnType<typeof deriveStatusItems>) {
   return items.map((item) => item.label)
 }
 
-describe('deriveStatusItems', () => {
-  it('reports validated once the server returned SQL', () => {
-    expect(labels(deriveStatusItems(entry(), tKey))).toContain('status.validated')
+describe('deriveStatusItems -- result-trust flags only', () => {
+  it('reports nothing for an ordinary, un-run query', () => {
+    // Validation state and "not run" belong to SqlIntelligencePanel's
+    // collapsed title; this bar is only for flags about whether a
+    // *result* can be relied on.
+    expect(deriveStatusItems(entry(), tKey)).toEqual([])
   })
 
-  it('reports nothing at all when there is no SQL and no result', () => {
-    // A pure document/web answer has no query status to show.
-    const items = deriveStatusItems(entry({ sql: null }), tKey)
+  it('reports nothing for a clean, fresh, untruncated result', () => {
+    const items = deriveStatusItems(
+      entry({}, { confirmedColumns: ['c'], confirmedRows: [[1], [2]] }),
+      tKey,
+    )
     expect(items).toEqual([])
   })
 
-  it('reports blocked when an attempt failed without retrying', () => {
-    const items = deriveStatusItems(
-      entry({
-        attempt_history: [
-          { attempt: 1, sql: 'DROP TABLE t', outcome: 'safety_violation', error: 'no', will_retry: false },
-        ],
-      }),
-      tKey,
-    )
-    expect(labels(items)).toContain('status.blocked')
-    expect(labels(items)).not.toContain('status.validated')
-  })
-
-  it('does not report blocked for a failure that was retried and then succeeded', () => {
-    const items = deriveStatusItems(
-      entry({
-        attempt_history: [
-          { attempt: 1, sql: 'SELECT x', outcome: 'invalid_column', error: 'bad', will_retry: true },
-          { attempt: 2, sql: 'SELECT 1', outcome: 'succeeded', error: null, will_retry: false },
-        ],
-      }),
-      tKey,
-    )
-    expect(labels(items)).toContain('status.validated')
-    expect(labels(items)).toContain('status.attempts:2')
-  })
-
-  it('stays quiet about attempts when there was only one', () => {
-    const items = deriveStatusItems(
-      entry({
-        attempt_history: [
-          { attempt: 1, sql: 'SELECT 1', outcome: 'succeeded', error: null, will_retry: false },
-        ],
-      }),
-      tKey,
-    )
-    // "1 attempt" is noise.
-    expect(labels(items).some((label) => label.startsWith('status.attempts'))).toBe(false)
-  })
-
-  it('surfaces a server cost flag', () => {
-    const items = deriveStatusItems(entry({ cost_notice: 'This scan is large.' }), tKey)
-    const cost = items.find((item) => item.key === 'cost')
-    expect(cost?.label).toBe('status.costFlagged')
-    // The server's own wording is carried as the detail, never re-judged
-    // on the client.
-    expect(cost?.detail).toBe('This scan is large.')
-  })
-
-  it('reports the row count, duration and cache state after execution', () => {
-    const items = deriveStatusItems(
-      entry({}, {
-        confirmedColumns: ['c'],
-        confirmedRows: [[1], [2], [3]],
-        confirmedDurationMs: 2500,
-        confirmedCacheStatus: 'hit',
-      }),
-      tKey,
-    )
-    expect(labels(items)).toContain('status.rows:3')
-    expect(labels(items)).toContain('2.50s')
-    expect(labels(items)).toContain('status.cacheHit')
-  })
-
-  it('distinguishes a fresh execution from a cached one', () => {
-    const items = deriveStatusItems(
-      entry({}, {
-        confirmedColumns: ['c'],
-        confirmedRows: [[1]],
-        confirmedCacheStatus: 'miss',
-      }),
-      tKey,
-    )
-    expect(labels(items)).toContain('status.cacheMiss')
-  })
-
-  it('reports an execution failure instead of a row count', () => {
-    const items = deriveStatusItems(
-      entry({}, { confirmedError: 'Invalid object name' }),
-      tKey,
-    )
-    expect(labels(items)).toContain('status.executionFailed')
-    expect(labels(items).some((label) => label.startsWith('status.rows'))).toBe(false)
+  it('reports an execution failure, which must stay visible', () => {
+    const items = deriveStatusItems(entry({}, { confirmedError: 'Invalid object name' }), tKey)
+    const failure = items.find((item) => item.key === 'execution')
+    expect(failure?.label).toBe('status.executionFailed')
+    expect(failure?.detail).toBe('Invalid object name')
   })
 
   it('flags a truncated result', () => {
     const items = deriveStatusItems(
-      entry({}, {
-        confirmedColumns: ['c'],
-        confirmedRows: [[1]],
-        confirmedTruncated: true,
-      }),
+      entry({}, { confirmedColumns: ['c'], confirmedRows: [[1]], confirmedTruncated: true }),
       tKey,
     )
     expect(labels(items)).toContain('status.truncated')
+  })
+
+  it('distinguishes a cached result from a fresh one', () => {
+    const cached = deriveStatusItems(
+      entry({}, { confirmedColumns: ['c'], confirmedRows: [[1]], confirmedCacheStatus: 'hit' }),
+      tKey,
+    )
+    expect(labels(cached)).toContain('status.cacheHit')
+
+    const fresh = deriveStatusItems(
+      entry({}, { confirmedColumns: ['c'], confirmedRows: [[1]], confirmedCacheStatus: 'miss' }),
+      tKey,
+    )
+    expect(labels(fresh)).toContain('status.cacheMiss')
   })
 
   it('surfaces the server governance notice', () => {
@@ -141,49 +78,72 @@ describe('deriveStatusItems', () => {
     expect(governed?.detail).toBe('Some values were masked.')
   })
 
-  it('formats a sub-second duration in milliseconds', () => {
+  it('does not repeat what the SQL panel already states', () => {
+    // Both surfaces are visible at once, so stating the same fact twice
+    // would be noise. Validation state, row count, duration, attempts and
+    // the cost flag all live in SqlIntelligencePanel -- its own test file
+    // asserts them there. This pins that they have not crept back.
     const items = deriveStatusItems(
-      entry({}, { confirmedColumns: ['c'], confirmedRows: [[1]], confirmedDurationMs: 42 }),
+      entry(
+        {
+          cost_notice: 'This query scans a large table.',
+          attempt_history: [
+            { attempt: 1, sql: 'SELECT x', outcome: 'invalid_column', error: 'b', will_retry: true },
+            { attempt: 2, sql: 'SELECT 1', outcome: 'succeeded', error: null, will_retry: false },
+          ],
+        },
+        {
+          confirmedColumns: ['c'],
+          confirmedRows: [[1], [2], [3]],
+          confirmedDurationMs: 2500,
+        },
+      ),
       tKey,
     )
-    expect(labels(items)).toContain('42ms')
+    const shown = labels(items)
+    expect(shown).not.toContain('status.validated')
+    expect(shown).not.toContain('status.blocked')
+    expect(shown).not.toContain('status.costFlagged')
+    expect(shown.some((label) => label.startsWith('status.rows'))).toBe(false)
+    expect(shown.some((label) => label.startsWith('status.attempts'))).toBe(false)
+    expect(shown).not.toContain('2.50s')
   })
 })
 
 describe('ExecutionStatusBar', () => {
-  it('renders nothing when there is no status to report', () => {
-    const { container } = render(<ExecutionStatusBar entry={entry({ sql: null })} />)
+  it('renders nothing when there is no trust flag to report', () => {
+    const { container } = render(<ExecutionStatusBar entry={entry()} />)
     expect(container).toBeEmptyDOMElement()
   })
 
-  it('renders each status as a list item under a labelled list', () => {
+  it('renders each flag as a list item under a labelled list', () => {
     render(
       <ExecutionStatusBar
-        entry={entry({}, { confirmedColumns: ['c'], confirmedRows: [[1], [2]] })}
+        entry={entry({ restricted_field_notice: 'Some values were masked.' }, {
+          confirmedColumns: ['c'],
+          confirmedRows: [[1]],
+          confirmedTruncated: true,
+        })}
       />,
     )
     const list = screen.getByRole('list', { name: 'Query status' })
-    expect(within(list).getAllByRole('listitem').length).toBeGreaterThanOrEqual(2)
-    expect(within(list).getByText('Validated')).toBeInTheDocument()
-    expect(within(list).getByText('2 rows')).toBeInTheDocument()
+    expect(within(list).getAllByRole('listitem')).toHaveLength(2)
+    expect(within(list).getByText('Truncated')).toBeInTheDocument()
+    expect(within(list).getByText('Governed')).toBeInTheDocument()
   })
 
   it('keeps the icons out of the accessibility tree', () => {
     // The label beside each icon carries the meaning.
-    const { container } = render(<ExecutionStatusBar entry={entry()} />)
+    const { container } = render(
+      <ExecutionStatusBar entry={entry({}, { confirmedError: 'boom' })} />,
+    )
     expect(container.querySelectorAll('svg[aria-hidden="true"]').length).toBeGreaterThan(0)
   })
 
   it('never shows a credential or connection detail', () => {
-    // Only fields the server already returned reach this component, and
-    // the server redacts those; this pins that nothing here re-introduces
-    // raw detail.
     const { container } = render(
-      <ExecutionStatusBar
-        entry={entry({ cost_notice: 'Large scan' }, { confirmedError: 'Invalid object name' })}
-      />,
+      <ExecutionStatusBar entry={entry({}, { confirmedError: 'Invalid object name' })} />,
     )
-    const text = container.textContent ?? ''
-    expect(text).not.toMatch(/password|Server=|connection string/i)
+    expect(container.textContent ?? '').not.toMatch(/password|Server=|connection string/i)
   })
 })

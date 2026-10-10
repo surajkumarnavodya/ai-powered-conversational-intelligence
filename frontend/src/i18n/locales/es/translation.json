@@ -336,7 +336,15 @@
     "governedMetrics": "Métricas gobernadas aplicadas",
     "governedMetricsHint": "Definiciones aprobadas que el SQL generado debía usar.",
     "schemaHint": "Las tablas recuperadas para esta pregunta, con la puntuación de similitud que las seleccionó.",
-    "openLineage": "Abrir el explorador de linaje"
+    "openLineage": "Abrir el explorador de linaje",
+    "sqlLabel": "SQL",
+    "notRun": "no ejecutada",
+    "metadata": "Metadatos de la consulta",
+    "statementType": "Tipo de instrucción",
+    "referencedTables": "Tablas referenciadas",
+    "attempts": "Intentos",
+    "rowCount": "Filas devueltas",
+    "duration": "Tiempo de ejecución"
   },
   "context": {
     "title": "Contexto incluido: {{count}} de {{max}} turnos",
