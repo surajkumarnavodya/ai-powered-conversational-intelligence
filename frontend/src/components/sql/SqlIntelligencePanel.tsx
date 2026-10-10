@@ -44,25 +44,24 @@ import type { QueryHistoryEntry } from '@/lib/history'
  * state and the SQL is reference material.
  */
 
-/** The collapsed summary: validation state and what the run produced. */
+/** The collapsed summary: what this SQL produced, if anything yet.
+ *
+ * Deliberately not validation state or the failing stage -- those are
+ * `QueryLifecycle`'s, rendered unconditionally above this panel.
+ */
 export function buildSqlSummaryLine(
   entry: QueryHistoryEntry,
   t: (key: string, options?: Record<string, unknown>) => string,
 ): string {
-  const state = entry.finalState
   const parts: string[] = [t('sqlIntelligence.sqlLabel')]
 
-  // Validation: a final non-succeeded attempt means the server stopped
-  // this SQL. Anything else that produced SQL passed the validator
-  // before it was ever shown.
-  const blocked = state.attempt_history.find(
-    (attempt) => attempt.outcome !== 'succeeded' && !attempt.will_retry,
-  )
-  parts.push(blocked ? t('status.blocked') : t('status.validated'))
-
-  if (entry.confirmedError) parts.push(t('status.executionFailed'))
-  else if (entry.confirmedRows) parts.push(t('status.rows', { count: entry.confirmedRows.length }))
-  else parts.push(t('sqlIntelligence.notRun'))
+  // Validation state, the stage this query stopped at, and whether the
+  // confirmed run failed are all `QueryLifecycle`'s -- it is rendered
+  // just above this panel and is always visible, so repeating any of it
+  // here would state the same fact twice. What stays is the artifact
+  // itself: how much this SQL returned, or that it has not run yet.
+  if (entry.confirmedRows) parts.push(t('status.rows', { count: entry.confirmedRows.length }))
+  else if (!entry.confirmedError) parts.push(t('sqlIntelligence.notRun'))
 
   return parts.join(' • ')
 }

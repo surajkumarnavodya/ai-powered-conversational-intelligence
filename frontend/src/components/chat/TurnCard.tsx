@@ -2,6 +2,7 @@ import { AlertTriangle, ShieldAlert, Sparkles } from 'lucide-react'
 import { lazy, Suspense } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ExecutionStatusBar } from '@/components/sql/ExecutionStatusBar'
+import { QueryLifecycle } from '@/components/sql/QueryLifecycle'
 import { SqlIntelligencePanel } from '@/components/sql/SqlIntelligencePanel'
 import { GoldenFeedbackWidget } from '@/components/sql/GoldenFeedbackWidget'
 import { ResultsTable } from '@/components/sql/ResultsTable'
@@ -197,6 +198,9 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
           </div>
         )}
 
+        {isSqlResult(state.sources_used) && (
+          <QueryLifecycle entry={entry} isConfirming={isConfirming} />
+        )}
         {showSqlPanel && <ExecutionStatusBar entry={entry} />}
         <FollowUpSuggestions
           recommendations={state.recommendations}

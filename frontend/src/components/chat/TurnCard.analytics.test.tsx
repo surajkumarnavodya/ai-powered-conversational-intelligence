@@ -17,6 +17,11 @@ import { newHistoryEntry, withConfirmedResult } from '@/lib/history'
 import { askState, rankingResult } from '@/test/analyticsFixtures'
 import { TurnCard } from './TurnCard'
 
+/** Budget for a lazily-imported section to mount. Generous on purpose:
+ * this waits on a genuine dynamic import, which competes with every other
+ * worker when the full suite runs in parallel. */
+const LAZY_IMPORT_TIMEOUT_MS = 10_000
+
 // TurnCard renders a react-router <Link> (the lineage link inside
 // SqlIntelligencePanel), so the component needs router context -- which it
 // has in the real app, where it is rendered under a route. MemoryRouter is
@@ -71,9 +76,21 @@ describe('TurnCard -- analysis section (Prompt 30)', () => {
     renderTurn(confirmed)
 
     // The analysis section is lazy-loaded (see TurnCard.tsx), so it resolves after mount.
-    const analysis = await screen.findByRole('region', { name: 'Analysis' })
+    // `AnalyticsSummary` is behind a real `lazy()` dynamic import (so
+    // Chart.js stays out of the main bundle), and resolving that import
+    // can exceed testing-library's 1s default when the whole suite runs in
+    // parallel. This waits on the real boundary rather than masking a
+    // failure: the assertions below are unchanged, and the file still
+    // passes in well under a second on its own.
+    const analysis = await screen.findByRole(
+      'region',
+      { name: 'Analysis' },
+      { timeout: LAZY_IMPORT_TIMEOUT_MS },
+    )
     expect(analysis).toHaveTextContent('Served from a recent cached result')
-    expect(await screen.findByRole('list', { name: 'Key figures' })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('list', { name: 'Key figures' }, { timeout: LAZY_IMPORT_TIMEOUT_MS }),
+    ).toBeInTheDocument()
   })
 
   it('does not show the analysis when the user has edited the SQL away from what produced it', () => {

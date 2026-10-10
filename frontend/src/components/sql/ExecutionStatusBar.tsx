@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, Database, ShieldCheck, XCircle } from 'lucide-react'
+import { AlertTriangle, Database, ShieldCheck } from 'lucide-react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
@@ -25,14 +25,18 @@ import type { QueryHistoryEntry } from '@/lib/history'
  * to the control it is about.
  *
  * **Scope is a deliberate split with `SqlIntelligencePanel`.** That
- * panel's collapsed title is itself a status line
- * (`SQL • Validated • 42 rows`) and its metadata grid carries the
- * statement's identity, attempts and duration. Those facts are therefore
- * *not* repeated here -- both surfaces are visible at once, so stating
- * the same thing twice would be noise. What stays here is the set of
- * always-visible flags about whether the *result* can be relied on:
- * execution failure, truncation, cache freshness, and governance having
- * altered values. Those must not be hidden behind a collapse.
+ * panel's collapsed title is itself a status line (`SQL • 42 rows`) and
+ * its metadata grid carries the statement's identity, attempts and
+ * duration. Those facts are therefore *not* repeated here -- both
+ * surfaces are visible at once, so stating the same thing twice would be
+ * noise. What stays here is the set of always-visible flags about whether
+ * the *result* can be relied on: truncation, cache freshness, and
+ * governance having altered values. Those must not be hidden behind a
+ * collapse.
+ *
+ * Whether the confirmed run succeeded at all is deliberately not here
+ * either: `QueryLifecycle`'s `executed` stage owns it, is rendered
+ * directly above this bar, and is equally always visible.
  */
 
 type StatusTone = 'neutral' | 'success' | 'warning' | 'danger' | 'accent'
@@ -43,13 +47,11 @@ interface StatusItem {
   label: string
   /** Rendered as the badge's title, for the detail a label cannot carry. */
   detail?: string
-  icon: 'validated' | 'blocked' | 'ok' | 'warn' | 'db'
+  icon: 'validated' | 'warn' | 'db'
 }
 
 const ICONS = {
   validated: ShieldCheck,
-  blocked: XCircle,
-  ok: CheckCircle2,
   warn: AlertTriangle,
   db: Database,
 } as const
@@ -66,18 +68,11 @@ export function deriveStatusItems(
   const state = entry.finalState
   const items: StatusItem[] = []
 
-  // 1. Execution outcome. Only meaningful once Confirm and Run happened.
-  // The row count, duration, validation state and attempt count all live
-  // in `SqlIntelligencePanel` -- see this module's own docstring.
-  if (entry.confirmedError) {
-    items.push({
-      key: 'execution',
-      tone: 'danger',
-      icon: 'blocked',
-      label: t('status.executionFailed'),
-      detail: entry.confirmedError,
-    })
-  } else if (entry.confirmedRows) {
+  // 1. Result-trust flags, only meaningful once Confirm and Run produced
+  // rows. Whether that run failed at all is `QueryLifecycle`'s `executed`
+  // stage; the row count, duration, validation state and attempt count
+  // live in `SqlIntelligencePanel` -- see this module's own docstring.
+  if (entry.confirmedRows) {
     if (entry.confirmedTruncated) {
       items.push({
         key: 'truncated',

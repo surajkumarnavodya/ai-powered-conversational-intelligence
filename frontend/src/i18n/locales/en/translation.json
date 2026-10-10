@@ -576,5 +576,48 @@
     "unpin": "Unpin \"{{question}}\"",
     "pinHint": "Pin this analysis to the workspace",
     "unpinHint": "Remove from the workspace"
+  },
+  "lifecycle": {
+    "title": "Query lifecycle",
+    "stage": {
+      "understanding": "Understanding",
+      "schema": "Schema",
+      "sql": "SQL",
+      "validation": "Validation",
+      "cost": "Cost check",
+      "ready": "Ready to run",
+      "executed": "Execution"
+    },
+    "status": {
+      "pending": "not started",
+      "running": "running",
+      "done": "completed",
+      "failed": "failed",
+      "blocked": "blocked",
+      "awaiting": "awaiting your confirmation"
+    },
+    "retries": "{{count}} retries",
+    "retriesDetail": "The agent corrected itself and tried this stage again.",
+    "confirmHint": "Nothing has run for you yet. Review the SQL below, then choose Confirm and Run.",
+    "reason": {
+      "offTopic": "This question was not answerable from the connected data, so no query was generated.",
+      "rateLimited": "Too many questions in a short time, so this one was not started.",
+      "refusedInput": "This question was refused before any query was generated.",
+      "invalidInput": "This question could not be read as a question.",
+      "clarification": "This question needs clarifying before a query can be written.",
+      "schema": "The relevant tables could not be retrieved.",
+      "llm": "The model could not be reached to write a query.",
+      "planMismatch": "The generated query did not match the plan for this question.",
+      "metric": "The generated query did not use the approved definition for this metric.",
+      "safety": "The SQL safety validator refused this query. Only read-only queries are allowed.",
+      "restricted": "This query referenced a field your role may not read.",
+      "cost": "This query was estimated to be too expensive to run.",
+      "busy": "The database was at its connection limit, so this query was not run.",
+      "timeout": "The query took longer than the allowed time.",
+      "missingReference": "The query referenced a table or column that does not exist.",
+      "sqlError": "The database rejected the query.",
+      "unknown": "The agent could not produce a working query.",
+      "executionFailed": "The query you confirmed did not run successfully."
+    }
   }
 }

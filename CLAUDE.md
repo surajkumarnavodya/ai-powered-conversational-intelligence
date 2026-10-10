@@ -5691,12 +5691,83 @@ way. Fixed, and pinned by a mutation-tested regression
 (`SELECT TOP 10 name FROM [dbo].[Employee]`). Worth remembering when
 resolving a dialect anywhere: pass `config.db_type`, not the config.
 
-**Known caveat at the time of writing:** `npm run build` (`tsc -b && vite
-build`) fails on `src/components/chat/QuestionNavigator.test.tsx`, which
-carries an unused variable from another session's in-progress edit in the
-same working tree. That file was left untouched rather than fixed
-mid-edit. `npx vite build` succeeds and `tsc` is clean across every file
-this work changed.
+**A caveat recorded here earlier has since resolved:** at the time of the
+SQL-panel commit, `npm run build` (`tsc -b && vite build`) failed on
+`src/components/chat/QuestionNavigator.test.tsx`, which carried an unused
+variable from a parallel session's in-progress edit in the same working
+tree (left untouched rather than fixed mid-edit; `npx vite build` was
+used instead). That edit has since been completed and the full
+`npm run build` now passes.
+
+**Query lifecycle rail (same pass).** `sql/QueryLifecycle.tsx` is one
+compact row saying how far a question got and where it stopped:
+`✓ Understanding  ✓ Schema  ✓ SQL  ✓ Validation  ✓ Cost check  ● Ready to
+run  ○ Execution`. Three run-related surfaces already existed and none
+answered that question -- `RetryTimeline` answers "what happened on each
+attempt", `AgentExecutionTimeline` "which stage was slow",
+`ExecutionStatusBar` "can the result be trusted".
+
+**Invariants that must not regress:**
+- **A stage reads as reached only because `stage_timings` holds a real
+  call to one of its nodes.** The rail is withheld entirely when
+  `stage_timings` is empty (every turn reconstructed from saved chat
+  history), rather than guessing a plausible rail. Nothing infers a
+  success from the absence of an error.
+- **`KNOWN_NODES` must equal the graph's real node set.** `STAGE_NODES`
+  plus `POST_RESULT_NODES` enumerate Python node names, so a node added
+  to `agent/graph.py` and classified in neither reads as a stage that
+  never started -- silently, forever.
+  `tests/test_sql_agent_integration.py::test_existing_nodes_are_all_still_present`
+  pins that set server-side and its docstring points at the rail;
+  `QueryLifecycle.test.tsx` asserts the two lists together cover it
+  (mutation-tested: a renamed node fails 6 cases).
+- **Stage grouping follows real execution order.** `retrieve_schema` runs
+  *before* the golden-example/business-context/intent/plan nodes, so
+  "Understanding" is only `sanitize_input`+`classify_followup` and the
+  post-schema comprehension nodes group with `SQL`. The four
+  post-execution analysis nodes are listed in `POST_RESULT_NODES` and
+  shown as no stage -- their output is already rendered elsewhere.
+- **"Ready to run" is the agent's own verification; "Execution" is the
+  user's.** The graph executes candidates internally to self-correct, and
+  that result is never rendered, so `ready` is the
+  requires-confirmation state and `executed` reflects only Confirm and
+  Run. Calling the internal run "Executed" would claim the user had seen
+  a result they had not.
+- **`blocked` (a deterministic gate refused) and `failed` (a stage could
+  not finish) stay distinct**, read from the outcome name the server
+  already recorded. `validate_sql_node` emits the single fixed
+  `safety_violation` for its fail-closed class and the category only for
+  retryable ones, so **no copy of `SAFETY_VIOLATION_TYPES` lives on the
+  client**. An unmapped outcome falls back to the last stage that ran.
+- **Stop reasons are fixed strings chosen by outcome class** -- never the
+  server's raw error text, never the validator rule that fired
+  (`system_catalog_access` and friends stay out of this always-visible
+  rail; a test asserts it).
+- **Renders for blocked/failed turns too**, gated only on it being a
+  SQL-path turn -- deliberately not on `BLOCKED_STATUSES` like
+  `showSqlPanel`. A refused run is when "where did this stop" matters
+  most, and the rail carries no editor and no run control.
+- **Stage labels are nouns, not past participles.** One label renders
+  under all six statuses, so `Validation: blocked` is coherent where
+  `Validated: blocked` has the label contradicting its status. Each
+  status is carried as `sr-only` text, never by colour or icon alone.
+- **No fact is stated twice.** Adding a fourth status surface meant
+  re-cutting the split: the execution-failure badge left
+  `ExecutionStatusBar` and validation state left `SqlIntelligencePanel`'s
+  summary line (now just `SQL • 42 rows`). Both of those tests now assert
+  the *absence* of the moved fact, and the behaviour is asserted in
+  `QueryLifecycle.test.tsx` instead.
+
+**There is no streaming, so this is final-state rendering.** `POST /ask`
+is a single request returning once the graph has finished; there is no
+SSE/WebSocket endpoint anywhere in `api/`, so no "currently on stage N"
+signal exists mid-run. `running` is used only where genuinely
+observable: the user's own Confirm and Run. `deriveLifecycle` takes
+exactly one required argument -- the completed response -- which is the
+structural form of that statement. The in-flight `/ask` phase keeps
+`PendingTurn`'s "Thinking Ns…" badge; a rail with a guessed active stage
+was considered and rejected. **Zero backend changes were needed** --
+`stage_timings` and `attempt_history` already carried everything.
 
 **Read [`docs/conversational-intelligence-ui.md`](docs/conversational-intelligence-ui.md)**
 for the feature-by-feature audit table, the API change, the

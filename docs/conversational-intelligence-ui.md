@@ -11,7 +11,7 @@ was scattered. Nothing was rebuilt that already worked.
 |---|---|---|---|---|
 | 1 | Question Navigator | **Already complete** | `chat/QuestionNavigator.tsx` + tests, wired in `Chat.tsx` | Nothing |
 | 2 | AI SQL Intelligence Panel | **Consolidated, then completed** | `QueryPlanPanel`, `SchemaContextPanel`, `GoverningMetricsPanel`, a "Query information" expander, a separate SQL editor expander — five siblings. CodeMirror SQL highlighting and Copy SQL already existed inside `SqlEditor` | `sql/SqlIntelligencePanel.tsx` now owns all of it behind one progressive disclosure — see the section below |
-| 3 | Query Validation & Execution Status | **Added** | `cost_notice`, `RetryTimeline`, a duration badge, a truncation flag — each in a different place | New `sql/ExecutionStatusBar.tsx`: one scannable badge row. The duplicate duration badge was removed from the results area |
+| 3 | Query Validation & Execution Status | **Added, then completed** | `cost_notice`, `RetryTimeline`, a duration badge, a truncation flag — each in a different place | First `sql/ExecutionStatusBar.tsx` (one scannable badge row). Then `sql/QueryLifecycle.tsx`, the stage rail none of them provided — see the section below |
 | 4 | Interactive Analytics Workspace | **Already complete** | `analytics/AnalyticsSummary.tsx` + 12 panels + `ChartSection` | Nothing |
 | 5 | Data Source & Lineage Panel | **Linked** | `SchemaContextPanel`, `SourcesUsedPanel`, a separate `/data-lineage` page | A link from the SQL intelligence panel to the lineage explorer |
 | 6 | Grounded Insight / Evidence Panel | **Already complete** | `analytics/EvidencePanel.tsx`, `TruthLevelBadge` | Scoped to its name: the follow-up chips moved out (see #10) |
@@ -108,6 +108,158 @@ tests passed because an ordinary ANSI `SELECT` parses either way;
 (`SELECT TOP 10 name FROM [dbo].[Employee]`), which was mutation-tested:
 reintroducing the bug fails it.
 
+## The query lifecycle rail in detail
+
+`sql/QueryLifecycle.tsx`. One compact row saying how far a question got
+through the safe execution lifecycle and where it stopped:
+
+```
+✓ Understanding  ✓ Schema  ✓ SQL  ✓ Validation  ✓ Cost check  ● Ready to run  ○ Execution
+```
+
+### Why this, when three run-related surfaces already existed
+
+| Surface | Answers |
+|---|---|
+| `RetryTimeline` | what happened on each attempt (outcome, SQL, error) |
+| `AgentExecutionTimeline` | which stage was slow |
+| `ExecutionStatusBar` | whether the *result* can be trusted |
+| **`QueryLifecycle`** (new) | **how far it got, and where it stopped** |
+
+None of the first three answered the last question. A reader wanting "it
+reached validation and was refused there" had to infer it from an attempt
+outcome code in a collapsed expander.
+
+### Every stage is evidence-backed
+
+A stage reads as reached only because `AskResponse.stage_timings`
+contains a real call to one of its nodes. `agent.nodes._timed_node` wraps
+every node in the graph and appends one entry per call, so the set of
+stages present is exactly how far the pipeline actually got — and the
+rail is **withheld entirely** (`deriveLifecycle` returns `[]`) when
+`stage_timings` is empty, which is the case for a turn reconstructed from
+saved chat history. Nothing infers a success from the absence of an
+error, and nothing invents a plausible rail where there is no evidence.
+
+### Stage grouping follows real execution order
+
+`retrieve_schema` runs *before* the golden-example, business-context,
+intent, analytical-plan and plan nodes. So "Understanding" covers only
+the two pre-schema gates (`sanitize_input`, `classify_followup`), and the
+comprehension nodes that run after schema retrieval group with `SQL`,
+which they immediately feed. Grouping them all under a single leading
+"Understanding" chip would have put the rail out of order with the
+pipeline it describes.
+
+The four post-execution analysis nodes (`compute_analytics`,
+`generate_forecast`, `generate_recommendations`, `generate_insight`) are
+listed in `POST_RESULT_NODES` and deliberately shown as no stage: they
+run after a result exists and their output is already rendered by
+`AnalyticsSummary`, the insight block and the follow-up chips. Listing
+rather than omitting them keeps the exclusion a decision, and
+`KNOWN_NODES` must equal the graph's real node set — pinned by a test on
+both sides (see Tests below).
+
+### "Ready to run" is the agent's verification; "Execution" is the user's
+
+The graph executes candidate SQL internally to detect and self-correct
+runtime errors, but that result is never rendered (CLAUDE.md, "SQL is
+untrusted output, always"). So:
+
+- `ready` = the agent has a query it got to run, awaiting your
+  confirmation. This is the **requires-confirmation** state.
+- `executed` = only the user's own Confirm and Run.
+
+Labelling the agent's internal run as "Executed" would claim the user had
+seen a result they had not.
+
+### `blocked` and `failed` are different claims
+
+| Status | Meaning | Examples |
+|---|---|---|
+| `blocked` | a deterministic gate refused | SQL safety validator, restricted column, cost ceiling, input guard, rate/concurrency limit |
+| `failed` | a stage tried and could not finish | schema retrieval, LLM unreachable, syntax error, timeout |
+
+The split is read from the outcome name the server already recorded.
+`validate_sql_node` records the single fixed name `safety_violation` for
+its fail-closed class and the specific category only for retryable ones,
+so **no copy of `SAFETY_VIOLATION_TYPES` lives on the client** to drift
+out of sync.
+
+An outcome absent from `OUTCOME_STAGES` is attributed to the last stage
+that ran, as `failed`. That fallback is correct rather than lazy: the
+unmapped names are the validator's retryable categories, and a run that
+ended there never reached `estimate_cost`, so "the last stage that ran"
+is `validation` by construction.
+
+### Streaming
+
+**There is none, so this is final-state rendering.** `POST /ask` is a
+single request that returns once the graph has finished; there is no SSE
+or WebSocket endpoint anywhere in `api/`, and therefore no observable
+"currently on stage N" signal mid-run. `running` is used only where it is
+genuinely observable: the user's own Confirm and Run, which the client
+itself initiated. `deriveLifecycle` takes exactly one required argument —
+the completed response — which is the structural form of that statement,
+and a test pins it.
+
+The in-flight `/ask` phase keeps `PendingTurn`'s existing "Thinking Ns…"
+badge. A rail with a guessed active stage was considered and rejected: it
+would be the one thing this feature must not do.
+
+### Labels are nouns, not past participles
+
+One label is rendered under all six statuses, so `Validation: blocked` is
+coherent where `Validated: blocked` would have the stage name
+contradicting its own status. Caught by reading the blocked rendering of
+an early version, and now pinned by a test asserting the word "Validated"
+appears nowhere on a rail whose query was refused.
+
+### Ownership, re-split
+
+Adding a fourth status surface meant re-cutting the split so no fact is
+stated twice. Both the rail and the bar are always visible; the panel's
+collapsed title is visible whether or not it is expanded.
+
+| Surface | Owns |
+|---|---|
+| `QueryLifecycle` | stage progression, per-stage status (running/completed/failed/blocked/requires-confirmation/not-started), per-stage retry count, a concise stop reason |
+| `ExecutionStatusBar` | result-trust flags only: truncation, cache freshness, governance having altered values |
+| `SqlIntelligencePanel` (collapsed title) | the artifact: `SQL • 42 rows`, or that it has not run |
+| `RetryTimeline` / `AgentExecutionTimeline` | per-attempt detail and per-stage duration, both behind their own expanders |
+
+Two assertions were therefore **moved, not deleted**: the execution-failure
+badge left `ExecutionStatusBar` (its test now asserts its absence) and
+validation state left the SQL panel's summary line (same). Each
+corresponding behaviour is now asserted in `QueryLifecycle.test.tsx`.
+
+### Safety
+
+- **No new data and no new decision.** Every status is derived from
+  `stage_timings`, `attempt_history`, `rejection_reason`, `agentStatus`
+  and the client's own confirm-in-flight flag. The rail never
+  re-validates SQL, re-judges cost, or re-decides authorization.
+- **Stop reasons are fixed strings chosen by outcome class** — never the
+  server's raw error text, and never the specific validator rule that
+  fired. A `safety_violation` reads "The SQL safety validator refused
+  this query. Only read-only queries are allowed." The violation type
+  (`system_catalog_access`, …) stays out of this always-visible rail; a
+  test asserts it.
+- **Renders for blocked and failed turns too**, gated only on this being
+  a SQL-path turn — deliberately *not* on `BLOCKED_STATUSES` the way
+  `showSqlPanel` is. A refused run is exactly when "where did this stop"
+  matters most, and the rail carries no editor and no run control, so
+  there is nothing unsafe to offer there.
+
+### Accessibility
+
+Rendered as an `<ol>` labelled "Query lifecycle", one `<li>` per stage.
+Each stage's status is carried **as text** (`sr-only`), not by colour or
+icon alone, so the rail survives a screen reader and a monochrome or
+colour-blind reading. The stage being waited on carries
+`aria-current="step"` (exactly one, asserted). Icons are
+`aria-hidden="true"`.
+
 ## API / schema changes
 
 Two additions, both additive and optional:
@@ -197,23 +349,63 @@ No new state library, no new chart engine, no new dependency.
 | Suite | Cases |
 |---|---|
 | `AgentExecutionTimeline.test.tsx` | 14 |
-| `ExecutionStatusBar.test.tsx` | 13 (rescoped) |
+| `QueryLifecycle.test.tsx` | 43 |
+| `ExecutionStatusBar.test.tsx` | 13 (rescoped twice) |
 | `FollowUpSuggestions.test.tsx` | 14 |
-| `SqlIntelligencePanel.test.tsx` | 25 |
+| `SqlIntelligencePanel.test.tsx` | 23 (rescoped) |
 | `ConversationContextPanel.test.tsx` | 9 |
 | `ArtifactWorkspace.test.tsx` | 12 |
 | `tests/test_api_ask.py` (backend) | 7 |
-| **New total** | **94** |
+| **New total** | **135** |
 
-Frontend: **666 passed** (68 files). Backend: **5487 passed**. Lint exit
-0; `tsc` clean across every file this work touched.
+`QueryLifecycle.test.tsx` covers each scenario the lifecycle work was
+asked to cover: success, validation failure, execution failure, timeout,
+retry, confirmation-required, and the non-streaming fallback — plus a
+refusal before any SQL exists (rejected / rate-limited /
+needs-clarification), the blocked-vs-failed distinction, and the
+unmapped-outcome fallback.
 
-**One caveat, honestly stated:** `npm run build` (`tsc -b && vite build`)
-currently fails on `src/components/chat/QuestionNavigator.test.tsx`,
-which has an unused variable from another session's in-progress edit in
-this same working tree. That file is untouched by this work and was left
-alone rather than fixed mid-edit. `npx vite build` succeeds (2749 modules
-transformed), and `tsc` reports no error in any file this pass changed.
+Two guards there are deliberately cross-language, because the rail
+enumerates Python node names:
+
+- `KNOWN_NODES` must equal the graph's real node set. **Mutation-tested**:
+  renaming `validate_sql` to `validate_sqll` in `STAGE_NODES` fails 6
+  cases, so the guard is not vacuous.
+- `tests/test_sql_agent_integration.py::test_existing_nodes_are_all_still_present`
+  already pins that node set exhaustively server-side; its docstring now
+  points here, so a node added to the graph has to be classified in the
+  rail too rather than silently reading as a stage that never started.
+
+Full suites after this work: **frontend 806 passed (72 files)**;
+**backend 5487 passed**. `npm run lint` exit 0, `tsc --noEmit` clean,
+`npm run build` succeeds. The frontend total moved during this work
+(724 → 806) because a parallel session was adding tests to the same
+working tree; the contribution from this change is the 43 cases in
+`QueryLifecycle.test.tsx` plus the rescoping of two existing files.
+
+A pre-existing flake was also fixed: `TurnCard.analytics.test.tsx` waits
+on a genuine `lazy()` dynamic import, which can exceed
+testing-library's 1s default when the whole suite runs in parallel (it
+passed 5/5 in isolation but tripped under load). Those two `findByRole`
+calls now carry a real 10s budget. Separately, the Copy-SQL test in
+`SqlIntelligencePanel.test.tsx` leaked an unhandled rejection — jsdom
+provides no `navigator.clipboard` — which vitest warns can cause false
+positives elsewhere; it now stubs the clipboard and asserts
+`writeText` received the SQL, so it also tests more than it did before.
+
+Frontend: **806 passed** (72 files). Backend: **5487 passed**.
+`npm run lint` exit 0, `tsc --noEmit` clean, `npm run build` succeeds.
+(The frontend total includes concurrent additions by a parallel session
+in the same working tree, so it is a point-in-time figure.)
+
+**A caveat recorded here earlier has since resolved.** At the time of the
+SQL-panel work, `npm run build` (`tsc -b && vite build`) failed on
+`src/components/chat/QuestionNavigator.test.tsx`, which carried an unused
+variable from a parallel session's in-progress edit in the same working
+tree; that file was left alone rather than fixed mid-edit, and
+`npx vite build` was used instead. That edit has since been completed, so
+the full `npm run build` now passes. Kept as a note rather than deleted,
+because the earlier commit was made under that condition.
 
 ## Notes and deferred work
 

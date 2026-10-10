@@ -361,5 +361,48 @@
     "unpin": "Quitar \"{{question}}\"",
     "pinHint": "Fijar este análisis al espacio de trabajo",
     "unpinHint": "Quitar del espacio de trabajo"
+  },
+  "lifecycle": {
+    "title": "Ciclo de la consulta",
+    "stage": {
+      "understanding": "Comprensión",
+      "schema": "Esquema",
+      "sql": "SQL",
+      "validation": "Validación",
+      "cost": "Control de coste",
+      "ready": "Listo para ejecutar",
+      "executed": "Ejecución"
+    },
+    "status": {
+      "pending": "sin iniciar",
+      "running": "en curso",
+      "done": "completado",
+      "failed": "fallido",
+      "blocked": "bloqueado",
+      "awaiting": "esperando tu confirmación"
+    },
+    "retries": "{{count}} reintentos",
+    "retriesDetail": "El agente se corrigió y volvió a intentar esta etapa.",
+    "confirmHint": "Todavía no se ha ejecutado nada. Revisa el SQL de abajo y elige Confirmar y ejecutar.",
+    "reason": {
+      "offTopic": "Esta pregunta no se podía responder con los datos conectados, así que no se generó ninguna consulta.",
+      "rateLimited": "Demasiadas preguntas en poco tiempo, así que esta no se inició.",
+      "refusedInput": "Esta pregunta se rechazó antes de generar ninguna consulta.",
+      "invalidInput": "Esta pregunta no se pudo interpretar como una pregunta.",
+      "clarification": "Esta pregunta necesita aclararse antes de poder escribir una consulta.",
+      "schema": "No se pudieron recuperar las tablas relevantes.",
+      "llm": "No se pudo contactar con el modelo para escribir una consulta.",
+      "planMismatch": "La consulta generada no coincidía con el plan de esta pregunta.",
+      "metric": "La consulta generada no usó la definición aprobada de esta métrica.",
+      "safety": "El validador de seguridad SQL rechazó esta consulta. Solo se permiten consultas de solo lectura.",
+      "restricted": "Esta consulta hacía referencia a un campo que tu rol no puede leer.",
+      "cost": "Se estimó que esta consulta era demasiado costosa para ejecutarse.",
+      "busy": "La base de datos estaba en su límite de conexiones, así que no se ejecutó.",
+      "timeout": "La consulta tardó más del tiempo permitido.",
+      "missingReference": "La consulta hacía referencia a una tabla o columna que no existe.",
+      "sqlError": "La base de datos rechazó la consulta.",
+      "unknown": "El agente no pudo producir una consulta funcional.",
+      "executionFailed": "La consulta que confirmaste no se ejecutó correctamente."
+    }
   }
 }

@@ -47,20 +47,25 @@ function renderPanel(
 }
 
 describe('buildSqlSummaryLine -- the collapsed progressive-disclosure line', () => {
-  it('reads SQL • Validated • n rows once a result exists', () => {
+  it('reads SQL • n rows once a result exists', () => {
     const line = buildSqlSummaryLine(
       entry({}, { confirmedColumns: ['c'], confirmedRows: [[1], [2]] }),
       tKey,
     )
-    expect(line).toBe('sqlIntelligence.sqlLabel • status.validated • status.rows:2')
+    expect(line).toBe('sqlIntelligence.sqlLabel • status.rows:2')
   })
 
   it('says the query has not been run before Confirm and Run', () => {
     expect(buildSqlSummaryLine(entry(), tKey)).toContain('sqlIntelligence.notRun')
   })
 
-  it('represents a failed validation clearly rather than claiming validated', () => {
-    const line = buildSqlSummaryLine(
+  it('leaves validation state and the execution outcome to the lifecycle rail', () => {
+    // `QueryLifecycle` is rendered unconditionally above this panel and
+    // owns "Validated"/"Blocked"/"Executed failed" -- see
+    // QueryLifecycle.test.tsx. Repeating any of it in this collapsed
+    // title would state the same fact twice, which is the duplication
+    // this split exists to prevent.
+    const blockedLine = buildSqlSummaryLine(
       entry({
         attempt_history: [
           {
@@ -74,27 +79,14 @@ describe('buildSqlSummaryLine -- the collapsed progressive-disclosure line', () 
       }),
       tKey,
     )
-    expect(line).toContain('status.blocked')
-    expect(line).not.toContain('status.validated')
-  })
+    expect(blockedLine).not.toContain('status.blocked')
+    expect(blockedLine).not.toContain('status.validated')
 
-  it('still reads validated when a failure was retried and then succeeded', () => {
-    const line = buildSqlSummaryLine(
-      entry({
-        attempt_history: [
-          { attempt: 1, sql: 'SELECT x', outcome: 'invalid_column', error: 'bad', will_retry: true },
-          { attempt: 2, sql: SQL, outcome: 'succeeded', error: null, will_retry: false },
-        ],
-      }),
-      tKey,
-    )
-    expect(line).toContain('status.validated')
-  })
-
-  it('reports an execution failure in place of a row count', () => {
-    const line = buildSqlSummaryLine(entry({}, { confirmedError: 'Invalid object name' }), tKey)
-    expect(line).toContain('status.executionFailed')
-    expect(line).not.toContain('status.rows')
+    const failedLine = buildSqlSummaryLine(entry({}, { confirmedError: 'Invalid object name' }), tKey)
+    expect(failedLine).not.toContain('status.executionFailed')
+    // Nor does it fall back to claiming the query was never run.
+    expect(failedLine).not.toContain('sqlIntelligence.notRun')
+    expect(failedLine).toBe('sqlIntelligence.sqlLabel')
   })
 })
 
@@ -193,15 +185,32 @@ describe('SqlIntelligencePanel', () => {
       entry({}, { confirmedColumns: ['c'], confirmedRows: [[1]] }),
     )
     expect(container.querySelector('details')).not.toHaveAttribute('open')
-    expect(screen.getByText(/SQL • Validated • 1 rows/)).toBeInTheDocument()
+    expect(screen.getByText(/SQL • 1 rows/)).toBeInTheDocument()
   })
 
-  it('offers a copy control that does not execute the query', () => {
-    // CopyButton is clipboard-only (`navigator.clipboard.writeText`).
-    const { onConfirmAndRun } = renderPanel(entry())
-    const copy = screen.getByRole('button', { name: /copy/i })
-    fireEvent.click(copy)
-    expect(onConfirmAndRun).not.toHaveBeenCalled()
+  it('offers a copy control that does not execute the query', async () => {
+    // CopyButton is clipboard-only. jsdom provides no `navigator.clipboard`
+    // at all, so without this stub the click leaks an unhandled rejection
+    // that vitest (rightly) warns can cause false positives elsewhere in
+    // the run -- and the assertion below would pass for the wrong reason.
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    const original = navigator.clipboard
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    })
+    try {
+      const { onConfirmAndRun } = renderPanel(entry())
+      fireEvent.click(screen.getByRole('button', { name: /copy/i }))
+      // Copying reached the clipboard and nothing else.
+      expect(writeText).toHaveBeenCalledWith(SQL)
+      expect(onConfirmAndRun).not.toHaveBeenCalled()
+    } finally {
+      Object.defineProperty(navigator, 'clipboard', {
+        value: original,
+        configurable: true,
+      })
+    }
   })
 
   it('reports an edit upward rather than re-running anything itself', () => {

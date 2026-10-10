@@ -206,6 +206,14 @@ class TestGraphStructure:
         against an exhaustive equality, not just a subset containment, so
         this can't silently drift again -- a future added/removed node
         must touch this test too.
+
+        When it does, also classify the new node in the frontend's own
+        `frontend/src/components/sql/QueryLifecycle.tsx` -- its
+        `STAGE_NODES`/`POST_RESULT_NODES` enumerate these same names to
+        decide which lifecycle stage a run reached, and a node missing
+        from both reads as a stage that never started rather than as an
+        error. `QueryLifecycle.test.tsx` asserts those two lists together
+        cover exactly the set asserted here.
         """
         graph = build_graph()
         node_names = set(graph.get_graph().nodes.keys())

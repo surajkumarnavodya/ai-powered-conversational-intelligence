@@ -39,11 +39,13 @@ describe('deriveStatusItems -- result-trust flags only', () => {
     expect(items).toEqual([])
   })
 
-  it('reports an execution failure, which must stay visible', () => {
+  it('leaves the execution outcome to the lifecycle rail', () => {
+    // `QueryLifecycle`'s `executed` stage owns whether the confirmed run
+    // succeeded, and is equally always visible -- see
+    // QueryLifecycle.test.tsx's own "reports a confirmed run that failed"
+    // case. Reporting it here too would state the same fact twice.
     const items = deriveStatusItems(entry({}, { confirmedError: 'Invalid object name' }), tKey)
-    const failure = items.find((item) => item.key === 'execution')
-    expect(failure?.label).toBe('status.executionFailed')
-    expect(failure?.detail).toBe('Invalid object name')
+    expect(items).toEqual([])
   })
 
   it('flags a truncated result', () => {
@@ -101,6 +103,7 @@ describe('deriveStatusItems -- result-trust flags only', () => {
       tKey,
     )
     const shown = labels(items)
+    expect(shown).not.toContain('status.executionFailed')
     expect(shown).not.toContain('status.validated')
     expect(shown).not.toContain('status.blocked')
     expect(shown).not.toContain('status.costFlagged')
@@ -135,14 +138,22 @@ describe('ExecutionStatusBar', () => {
   it('keeps the icons out of the accessibility tree', () => {
     // The label beside each icon carries the meaning.
     const { container } = render(
-      <ExecutionStatusBar entry={entry({}, { confirmedError: 'boom' })} />,
+      <ExecutionStatusBar
+        entry={entry({}, { confirmedColumns: ['c'], confirmedRows: [[1]], confirmedTruncated: true })}
+      />,
     )
     expect(container.querySelectorAll('svg[aria-hidden="true"]').length).toBeGreaterThan(0)
   })
 
   it('never shows a credential or connection detail', () => {
     const { container } = render(
-      <ExecutionStatusBar entry={entry({}, { confirmedError: 'Invalid object name' })} />,
+      <ExecutionStatusBar
+        entry={entry({ restricted_field_notice: 'Some values were masked.' }, {
+          confirmedColumns: ['c'],
+          confirmedRows: [[1]],
+          confirmedTruncated: true,
+        })}
+      />,
     )
     expect(container.textContent ?? '').not.toMatch(/password|Server=|connection string/i)
   })

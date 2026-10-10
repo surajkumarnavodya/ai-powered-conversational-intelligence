@@ -361,5 +361,48 @@
     "unpin": "Détacher « {{question}} »",
     "pinHint": "Épingler cette analyse à l'espace de travail",
     "unpinHint": "Retirer de l'espace de travail"
+  },
+  "lifecycle": {
+    "title": "Cycle de la requête",
+    "stage": {
+      "understanding": "Compréhension",
+      "schema": "Schéma",
+      "sql": "SQL",
+      "validation": "Validation",
+      "cost": "Contrôle du coût",
+      "ready": "Prêt à exécuter",
+      "executed": "Exécution"
+    },
+    "status": {
+      "pending": "non démarré",
+      "running": "en cours",
+      "done": "terminé",
+      "failed": "échoué",
+      "blocked": "bloqué",
+      "awaiting": "en attente de votre confirmation"
+    },
+    "retries": "{{count}} nouvelles tentatives",
+    "retriesDetail": "L’agent s’est corrigé et a réessayé cette étape.",
+    "confirmHint": "Rien n’a encore été exécuté pour vous. Vérifiez le SQL ci-dessous, puis choisissez Confirmer et exécuter.",
+    "reason": {
+      "offTopic": "Cette question ne pouvait pas être traitée avec les données connectées, aucune requête n’a donc été générée.",
+      "rateLimited": "Trop de questions en peu de temps, celle-ci n’a donc pas été lancée.",
+      "refusedInput": "Cette question a été refusée avant toute génération de requête.",
+      "invalidInput": "Cette question n’a pas pu être lue comme une question.",
+      "clarification": "Cette question doit être précisée avant qu’une requête puisse être écrite.",
+      "schema": "Les tables pertinentes n’ont pas pu être récupérées.",
+      "llm": "Le modèle n’a pas pu être joint pour écrire une requête.",
+      "planMismatch": "La requête générée ne correspondait pas au plan de cette question.",
+      "metric": "La requête générée n’a pas utilisé la définition approuvée de cette métrique.",
+      "safety": "Le validateur de sécurité SQL a refusé cette requête. Seules les requêtes en lecture seule sont autorisées.",
+      "restricted": "Cette requête faisait référence à un champ que votre rôle ne peut pas lire.",
+      "cost": "Cette requête a été estimée trop coûteuse à exécuter.",
+      "busy": "La base de données avait atteint sa limite de connexions, la requête n’a pas été exécutée.",
+      "timeout": "La requête a dépassé le temps autorisé.",
+      "missingReference": "La requête faisait référence à une table ou une colonne inexistante.",
+      "sqlError": "La base de données a rejeté la requête.",
+      "unknown": "L’agent n’a pas pu produire une requête fonctionnelle.",
+      "executionFailed": "La requête que vous avez confirmée n’a pas abouti."
+    }
   }
 }
