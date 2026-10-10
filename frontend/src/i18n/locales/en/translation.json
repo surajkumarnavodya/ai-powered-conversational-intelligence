@@ -625,5 +625,60 @@
       "unknown": "The agent could not produce a working query.",
       "executionFailed": "The query you confirmed did not run successfully."
     }
+  },
+  "lineage": {
+    "collapsedTitle": "Sources ({{count}})",
+    "chainLabel": "How this answer was produced",
+    "withheld": "Some fields or sources were withheld for your role — see the notice above.",
+    "step": {
+      "question": "Question",
+      "source": "Source",
+      "tables": "Tables",
+      "query": "Query",
+      "result": "Result",
+      "insight": "Insight"
+    },
+    "state": {
+      "absent": "not produced",
+      "not_applicable": "not applicable to this answer"
+    },
+    "source": {
+      "database": "Database",
+      "schema_index": "Schema index",
+      "business_glossary": "Business glossary",
+      "documents": "Documents",
+      "policy": "Policy",
+      "web": "Web",
+      "media_library": "Media library",
+      "generated_media": "Generated media",
+      "attachments": "Attached files"
+    },
+    "retrieval": {
+      "direct_query": "read-only SQL query",
+      "vector_similarity": "similarity search",
+      "approved_definition": "approved definition",
+      "graded_retrieval": "retrieved and graded",
+      "live_web_search": "live web search",
+      "media_index": "media index",
+      "user_upload": "you attached it",
+      "generated": "generated for this question"
+    },
+    "detail": {
+      "statementType": "Statement",
+      "tablesUsed": "Tables used",
+      "tablesRetrieved": "Tables retrieved",
+      "columnsReturned": "Columns returned",
+      "rowCount": "Rows",
+      "metric": "Metric",
+      "citations": "Documents cited",
+      "pages": "Pages cited",
+      "matches": "Matches",
+      "mediaType": "Media type",
+      "providerModel": "Provider model",
+      "fileCount": "Files used",
+      "model": "Model",
+      "duration": "Answered in",
+      "analyticsEngineVersion": "Analytics engine"
+    }
   }
 }

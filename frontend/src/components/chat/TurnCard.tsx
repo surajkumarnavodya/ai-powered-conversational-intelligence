@@ -21,6 +21,7 @@ import { ReadAloudButton } from './ReadAloudButton'
 import { ResponseFeedbackWidget } from './ResponseFeedbackWidget'
 import { RetryTimeline } from './RetryTimeline'
 import { SentAttachmentsPreview } from './SentAttachmentsPreview'
+import { SourceLineagePanel } from './SourceLineagePanel'
 import { SourcesUsedPanel } from './SourcesUsedPanel'
 import { TimingBadge } from './TimingBadge'
 
@@ -210,6 +211,11 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
         {state.attempt_history.length > 0 && <RetryTimeline attempts={state.attempt_history} />}
         <AgentExecutionTimeline timings={state.stage_timings ?? []} />
         <SourcesUsedPanel state={state} entryId={entry.entryId} />
+        {/* Cross-source provenance for this answer. Sits after the
+            answer body and before the SQL-specific panel, because it
+            describes every source -- not just the SQL path -- and is
+            the only provenance view a document/web/media answer has. */}
+        <SourceLineagePanel state={state} />
         {showSqlPanel && (
           <>
             {/* One panel for everything about this SQL: the collapsed
