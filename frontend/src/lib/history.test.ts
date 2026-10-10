@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { serverMessagesToQueryHistory } from './history'
-import type { ServerMessage, ServerMessageMetadata } from './types'
+import { askState } from '@/test/analyticsFixtures'
+import {
+  buildConversationHistory,
+  MAX_FOLLOWUP_EXCHANGES,
+  newHistoryEntry,
+  nlCacheKey,
+  serverMessagesToQueryHistory,
+  type QueryHistoryEntry,
+} from './history'
+import type { AgentStatus, ServerMessage, ServerMessageMetadata } from './types'
 
 /** Universal conversation history fix (2026-09-27): these are the direct
  * regression tests for the reported bug ("selecting a previous question
@@ -277,5 +285,113 @@ describe('serverMessagesToQueryHistory -- answer timing and time', () => {
     const rows = [userRow('Old question?'), assistantRow('Old answer.', { schema_version: 2, sources_used: [] })]
     const [entry] = serverMessagesToQueryHistory(rows)
     expect(entry.answerDurationMs).toBeNull()
+  })
+})
+
+function historyEntry(question: string, status: AgentStatus = 'succeeded'): QueryHistoryEntry {
+  const base = newHistoryEntry(question, askState({ status }), 1000)
+  return { ...base, agentStatus: status }
+}
+
+describe('buildConversationHistory context exclusions', () => {
+  it('sends every windowed successful turn when nothing is excluded', () => {
+    // The default path must be unchanged by the exclusion parameter
+    // existing at all -- follow-up behaviour is preserved, not altered.
+    const entries = [historyEntry('One?'), historyEntry('Two?')]
+    expect(buildConversationHistory(entries).map((exchange) => exchange.question)).toEqual([
+      'One?',
+      'Two?',
+    ])
+    expect(buildConversationHistory(entries, MAX_FOLLOWUP_EXCHANGES, new Set())).toEqual(
+      buildConversationHistory(entries),
+    )
+  })
+
+  it('omits an excluded turn', () => {
+    const entries = [historyEntry('Keep?'), historyEntry('Drop?')]
+    const sent = buildConversationHistory(
+      entries,
+      MAX_FOLLOWUP_EXCHANGES,
+      new Set([entries[1].entryId]),
+    )
+    expect(sent.map((exchange) => exchange.question)).toEqual(['Keep?'])
+  })
+
+  it('does not backfill an older turn into the freed slot', () => {
+    // Exclusion is applied after the window slice on purpose: filtering
+    // first would pull an older turn in, silently re-adding context the
+    // person just removed.
+    const entries = Array.from({ length: MAX_FOLLOWUP_EXCHANGES + 1 }, (_, index) =>
+      historyEntry(`Q${index}?`),
+    )
+    const windowed = entries.slice(-MAX_FOLLOWUP_EXCHANGES)
+    const sent = buildConversationHistory(
+      entries,
+      MAX_FOLLOWUP_EXCHANGES,
+      new Set([windowed[0].entryId]),
+    )
+    expect(sent).toHaveLength(MAX_FOLLOWUP_EXCHANGES - 1)
+    expect(sent.map((exchange) => exchange.question)).not.toContain('Q0?')
+  })
+
+  it('can only ever narrow -- never add, edit or reorder a turn', () => {
+    // The authorization-relevant property: whatever the exclusion set
+    // says, the output is always a subsequence of the un-excluded output.
+    const entries = [historyEntry('One?'), historyEntry('Two?'), historyEntry('Three?')]
+    const full = buildConversationHistory(entries)
+    for (const excluded of [
+      new Set<string>(),
+      new Set([entries[0].entryId]),
+      new Set([entries[1].entryId]),
+      new Set(entries.map((entry) => entry.entryId)),
+      new Set(['an-id-from-no-turn-at-all']),
+    ]) {
+      const sent = buildConversationHistory(entries, MAX_FOLLOWUP_EXCHANGES, excluded)
+      expect(sent.length).toBeLessThanOrEqual(full.length)
+      // A subsequence by value (fresh objects each call, so not by
+      // identity): order preserved, and no entry the full output lacked.
+      const remaining = full.map((exchange) => JSON.stringify(exchange))
+      for (const exchange of sent.map((item) => JSON.stringify(item))) {
+        const at = remaining.indexOf(exchange)
+        expect(at).toBeGreaterThanOrEqual(0)
+        remaining.splice(0, at + 1)
+      }
+    }
+  })
+
+  it('excluding an unknown id changes nothing', () => {
+    const entries = [historyEntry('One?')]
+    expect(
+      buildConversationHistory(entries, MAX_FOLLOWUP_EXCHANGES, new Set(['nope'])),
+    ).toEqual(buildConversationHistory(entries))
+  })
+
+  it('excluding everything yields an empty history, so the next ask is standalone', () => {
+    const entries = [historyEntry('One?'), historyEntry('Two?')]
+    expect(
+      buildConversationHistory(
+        entries,
+        MAX_FOLLOWUP_EXCHANGES,
+        new Set(entries.map((entry) => entry.entryId)),
+      ),
+    ).toEqual([])
+  })
+})
+
+describe('nlCacheKey', () => {
+  it('distinguishes two asks of the same question with different exclusions', () => {
+    const withNone = nlCacheKey('revenue?', ['prior?'], true, new Set())
+    const withOne = nlCacheKey('revenue?', ['prior?'], true, new Set(['entry-1']))
+    expect(withOne).not.toBe(withNone)
+  })
+
+  it('is stable regardless of set iteration order', () => {
+    expect(nlCacheKey('q', [], true, new Set(['b', 'a']))).toBe(
+      nlCacheKey('q', [], true, new Set(['a', 'b'])),
+    )
+  })
+
+  it('defaults to no exclusions', () => {
+    expect(nlCacheKey('q', [], true)).toBe(nlCacheKey('q', [], true, new Set()))
   })
 })

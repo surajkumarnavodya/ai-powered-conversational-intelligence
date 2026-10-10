@@ -569,11 +569,46 @@
     "duration": "Execution time"
   },
   "context": {
-    "title": "Context carried: {{count}} of {{max}} turns",
-    "hint": "Your next question is resolved against these earlier turns. Only turns that succeeded are carried, and only the most recent few.",
-    "carriedLabel": "Turns carried as context",
-    "tables": "Tables in context",
-    "skipped": "{{count}} earlier turn(s) are not carried."
+    "title": "Context • {{count}} active item",
+    "title_other": "Context • {{count}} active items",
+    "hint": "What your next question is answered against. Only successful turns are carried, and only the most recent {{max}}.",
+    "provenance": {
+      "user_provided": "From you",
+      "confirmed": "Confirmed",
+      "inferred": "Inferred"
+    },
+    "provenanceHint": {
+      "user_provided": "What you asked or attached.",
+      "confirmed": "Recorded by the server as what it actually used.",
+      "inferred": "Decided by this platform from your question. Treat as an estimate."
+    },
+    "kind": {
+      "question": "Question",
+      "referencedAnswer": "Previous question",
+      "database": "Database",
+      "tables": "Tables",
+      "definition": "Definition",
+      "filter": "Filter",
+      "timeRange": "Time range",
+      "scope": "Scope",
+      "attachment": "Attached file"
+    },
+    "lifetime": {
+      "influencing": "sent, and read",
+      "carried": "sent",
+      "rederived": "re-derived each question"
+    },
+    "removeItem": "Remove from context: {{value}}",
+    "restoreItem": "Restore to context: {{value}}",
+    "restore": "Restore",
+    "removedTitle": "Removed by you ({{count}})",
+    "beyondWindow": "{{count}} earlier successful turn is outside the window.",
+    "beyondWindow_other": "{{count}} earlier successful turns are outside the window.",
+    "unsuccessful": "{{count}} turn did not succeed, so it is not carried.",
+    "unsuccessful_other": "{{count}} turns did not succeed, so they are not carried.",
+    "clear": "Clear context",
+    "startFresh": "Start fresh analysis",
+    "actionsHint": "Clearing context keeps this conversation on screen and asks your next question standalone. Starting fresh opens a new conversation."
   },
   "artifacts": {
     "title": "Pinned analyses",

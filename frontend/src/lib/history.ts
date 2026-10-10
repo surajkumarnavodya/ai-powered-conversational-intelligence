@@ -507,14 +507,26 @@ export function replaceEntry(
 }
 
 /** Only succeeded turns qualify as follow-up context, most recent first N,
- * returned oldest-first -- exactly ui/session_history.py's own contract. */
+ * returned oldest-first -- exactly ui/session_history.py's own contract.
+ *
+ * `excludedEntryIds` are turns the person explicitly removed from the
+ * context window (`chatStore.excludedContextEntryIds`, driven by
+ * `ConversationContextPanel`). Applied **after** the window slice, never
+ * before: filtering first would pull an older turn in to backfill the
+ * freed slot, silently re-adding context the person just removed.
+ * Narrowing only -- this function can never emit a turn that is not a
+ * real, succeeded entry of this conversation, so an exclusion set cannot
+ * add or alter what the server sees. Default empty, so every pre-existing
+ * caller's behaviour is unchanged. */
 export function buildConversationHistory(
   history: QueryHistoryEntry[],
   maxExchanges = MAX_FOLLOWUP_EXCHANGES,
+  excludedEntryIds: ReadonlySet<string> = new Set(),
 ): ConversationExchange[] {
   return history
     .filter((entry) => entry.agentStatus === 'succeeded')
     .slice(-maxExchanges)
+    .filter((entry) => !excludedEntryIds.has(entry.entryId))
     .map((entry) => ({
       question: entry.question,
       sql: entry.sql,
@@ -635,11 +647,30 @@ export function buildSpokenAnswerText(entry: QueryHistoryEntry): string {
   return 'Done.'
 }
 
-/** Same cache-key shape this app's own `/ask` question-deduplication uses. */
+/** Same cache-key shape this app's own `/ask` question-deduplication uses.
+ *
+ * `excludedEntryIds` is part of the key because it changes what the
+ * request actually carries (see `buildConversationHistory`): the same
+ * question asked with a turn removed from context is a different ask and
+ * must not be served from the with-context answer. Sorted, so set
+ * iteration order cannot produce two keys for one state.
+ *
+ * The key gains a fourth element, so it is *not* byte-identical to the
+ * pre-exclusion shape -- which costs nothing: `nlQuestionCache` is an
+ * in-memory, session-only `Map` (see `chatStore`), so there is no
+ * persisted key to invalidate, and every caller moves to the new shape
+ * together. Two un-excluded conversations still agree with each other,
+ * which is all this cache needs. */
 export function nlCacheKey(
   question: string,
   priorQuestions: string[],
   enableInsight: boolean,
+  excludedEntryIds: ReadonlySet<string> = new Set(),
 ): string {
-  return JSON.stringify([question.trim().toLowerCase(), priorQuestions, enableInsight])
+  return JSON.stringify([
+    question.trim().toLowerCase(),
+    priorQuestions,
+    enableInsight,
+    [...excludedEntryIds].sort(),
+  ])
 }

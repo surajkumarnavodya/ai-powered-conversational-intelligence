@@ -13,6 +13,7 @@ import {
   buildConversationHistory,
   buildSpokenAnswerText,
   deriveConversationTitle,
+  MAX_FOLLOWUP_EXCHANGES,
   newHistoryEntry,
   nlCacheKey,
   replaceEntry,
@@ -78,6 +79,24 @@ interface ChatState {
    * a reload clears it, the same disclosed behaviour `queryHistory`
    * already has. */
   pinnedEntryIds: Set<string>
+  /** Turns the person removed from the follow-up context window, by
+   * `entryId` (see `ConversationContextPanel`).
+   *
+   * Read by `buildConversationHistory` when the next `/ask` request is
+   * built, so this **narrows** `conversation_history` and can do nothing
+   * else: it cannot add a turn, edit one, or reorder them. The turn stays
+   * in `queryHistory` and on screen -- this controls what the next
+   * question is resolved against, not what the transcript contains.
+   *
+   * Carries no authorization weight in either direction. The server
+   * re-derives the database, schema, metrics and plan per question, and
+   * every permission check reads the caller's own roles -- never
+   * `conversation_history`, which `agent.input_guard
+   * .sanitize_conversation_history` already treats as untrusted,
+   * caller-resent text. Session-scoped, and reset by
+   * `freshConversationState` so a new conversation never inherits another
+   * one's removals. */
+  excludedContextEntryIds: Set<string>
   /** Last like/dislike rating submitted per entry (see
    * ResponseFeedbackWidget.tsx) -- a Map, not a Set, since (unlike
    * goldenFeedbackGiven above) a rating can be changed after the fact, and
@@ -114,6 +133,19 @@ interface ChatState {
   /** Pins or unpins one turn in the artifact workspace. Idempotent per
    * call: calling it twice on the same id returns to the start state. */
   togglePinned: (entryId: string) => void
+  /** Removes one turn from / restores it to the follow-up context window.
+   * Never touches `queryHistory`, so the turn itself stays on screen. */
+  toggleContextEntryExcluded: (entryId: string) => void
+  /** Drops every turn from the context window, so the next question is
+   * asked standalone -- without discarding the conversation. Distinct from
+   * `startNewChat`, which starts an empty conversation instead.
+   *
+   * Follow-up behaviour is preserved exactly, not bypassed: with an empty
+   * `conversation_history`, `classify_followup_node` sees `has_history=False`
+   * and a question that refers outward ("and by region?") correctly becomes
+   * `ambiguous` and asks for clarification, which is the same thing that
+   * happens on the first question of any conversation. */
+  clearConversationContext: () => void
   /** Detects a lightweight NL follow-up asking to switch the *most recent*
    * chartable turn's chart type ("show this as a pie chart", "switch to
    * line", "bar chart instead") and, if the requested type is genuinely
@@ -217,7 +249,12 @@ function commitQueryHistory(
 
 function freshConversationState(): Pick<
   ChatState,
-  'activeConversationId' | 'queryHistory' | 'pendingQuestion' | 'confirmingEntryId' | 'confirmingGenerationEntryId'
+  | 'activeConversationId'
+  | 'queryHistory'
+  | 'pendingQuestion'
+  | 'confirmingEntryId'
+  | 'confirmingGenerationEntryId'
+  | 'excludedContextEntryIds'
 > {
   return {
     activeConversationId: crypto.randomUUID(),
@@ -225,6 +262,10 @@ function freshConversationState(): Pick<
     pendingQuestion: null,
     confirmingEntryId: null,
     confirmingGenerationEntryId: null,
+    // Context removals belong to the conversation they were made in --
+    // switching or starting a conversation must never carry another
+    // one's removals over onto turns it does not even contain.
+    excludedContextEntryIds: new Set(),
   }
 }
 
@@ -298,6 +339,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   confirmingGenerationEntryId: null,
   goldenFeedbackGiven: new Set(),
   pinnedEntryIds: new Set(),
+  excludedContextEntryIds: new Set(),
   messageFeedbackGiven: new Map(),
   enableInsight: true,
   nlQuestionCache: new Map(),
@@ -334,6 +376,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
       else next.add(entryId)
       return { pinnedEntryIds: next }
     }),
+
+  toggleContextEntryExcluded: (entryId) =>
+    set((state) => {
+      const next = new Set(state.excludedContextEntryIds)
+      if (next.has(entryId)) next.delete(entryId)
+      else next.add(entryId)
+      return { excludedContextEntryIds: next }
+    }),
+
+  clearConversationContext: () =>
+    set((state) => ({
+      excludedContextEntryIds: new Set(state.queryHistory.map((entry) => entry.entryId)),
+      // The cache key folds in every prior question (`nlCacheKey`), so a
+      // cached answer was computed with context this question will not
+      // have. Dropping the cache keeps "asked with no context" from being
+      // answered out of a with-context cache.
+      nlQuestionCache: new Map(),
+    })),
 
   tryApplyChartTypeFollowup: (text) => {
     const requestedType = detectChartTypeSwitchRequest(text)
@@ -377,13 +437,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   askQuestion: async (question, options) => {
-    const { queryHistory, enableInsight, nlQuestionCache, activeConversationId, conversations } = get()
+    const {
+      queryHistory,
+      enableInsight,
+      nlQuestionCache,
+      activeConversationId,
+      conversations,
+      excludedContextEntryIds,
+    } = get()
     const startedAt = performance.now()
     set({ pendingQuestion: { question, startedAt } })
 
     const attachmentIds = options?.attachmentIds ?? []
     const priorQuestions = queryHistory.map((entry) => entry.question)
-    const cacheKey = nlCacheKey(question, priorQuestions, enableInsight)
+    // Folded into the cache key, not just the request: two asks of the
+    // same question with different context removals are genuinely
+    // different asks, and must not share a cached answer. Empty by
+    // default, so an untouched conversation's key is unchanged.
+    const cacheKey = nlCacheKey(question, priorQuestions, enableInsight, excludedContextEntryIds)
     // A cached answer was computed without whatever attachment(s) this call
     // carries -- reusing it would silently ignore the attachment, so the
     // cache is skipped entirely whenever one is present rather than trying
@@ -411,7 +482,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         (await apiAskQuestion(
           {
             question,
-            conversation_history: buildConversationHistory(queryHistory),
+            conversation_history: buildConversationHistory(
+              queryHistory,
+              MAX_FOLLOWUP_EXCHANGES,
+              excludedContextEntryIds,
+            ),
             enable_insight: enableInsight,
             conversation_id: knownServerConversationId,
             attachment_ids: attachmentIds,
@@ -752,7 +827,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       historyError: null,
       nlQuestionCache: new Map(),
       goldenFeedbackGiven: new Set(),
-  pinnedEntryIds: new Set(),
+      pinnedEntryIds: new Set(),
       messageFeedbackGiven: new Map(),
     }),
 }))

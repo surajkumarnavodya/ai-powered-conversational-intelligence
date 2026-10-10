@@ -350,13 +350,6 @@
     "rowCount": "Lignes renvoyées",
     "duration": "Temps d'exécution"
   },
-  "context": {
-    "title": "Contexte conservé : {{count}} tours sur {{max}}",
-    "hint": "Votre prochaine question est résolue à partir de ces tours précédents. Seuls les tours réussis sont conservés, et uniquement les plus récents.",
-    "carriedLabel": "Tours conservés comme contexte",
-    "tables": "Tables dans le contexte",
-    "skipped": "{{count}} tour(s) précédent(s) ne sont pas conservés."
-  },
   "artifacts": {
     "title": "Analyses épinglées",
     "rows": "{{count}} lignes",

@@ -350,13 +350,6 @@
     "rowCount": "Filas devueltas",
     "duration": "Tiempo de ejecución"
   },
-  "context": {
-    "title": "Contexto incluido: {{count}} de {{max}} turnos",
-    "hint": "Tu próxima pregunta se resuelve con estos turnos anteriores. Solo se incluyen los turnos que tuvieron éxito, y solo los más recientes.",
-    "carriedLabel": "Turnos incluidos como contexto",
-    "tables": "Tablas en contexto",
-    "skipped": "{{count}} turno(s) anterior(es) no se incluyen."
-  },
   "artifacts": {
     "title": "Análisis fijados",
     "rows": "{{count}} filas",
