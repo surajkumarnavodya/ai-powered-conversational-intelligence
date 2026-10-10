@@ -407,5 +407,8 @@
       "unknown": "L’agent n’a pas pu produire une requête fonctionnelle.",
       "executionFailed": "La requête que vous avez confirmée n’a pas abouti."
     }
+  },
+  "evidence": {
+    "insightDetail": "Ceci est un résumé rédigé du résultat. Sa formulation est générée ; ses chiffres sont vérifiés par rapport aux données avant son affichage."
   }
 }

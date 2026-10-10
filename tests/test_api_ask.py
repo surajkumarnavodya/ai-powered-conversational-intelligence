@@ -182,6 +182,43 @@ class TestAsk:
         # The retrieved-but-unused table is not reported as referenced.
         assert "unused" not in body["sql_summary"]["referenced_tables"]
 
+    def test_insight_evidence_count_reaches_the_response(self, monkeypatch, client):
+        """The UI labels the insight's evidence from this field, so it has
+        to survive the response boundary -- otherwise the panel falls back
+        to saying nothing about verification at all."""
+        monkeypatch.setattr(
+            "api.main.run_orchestrated",
+            lambda *a, **k: {
+                "status": "succeeded",
+                "sql": "SELECT a FROM sales",
+                "insight": "Australia led at 2300000.0.",
+                "insight_numbers_checked": 1,
+                "attempt_history": [],
+                "error_history": [],
+            },
+        )
+        body = client.post("/ask", json={"question": "Which region led?"}).json()
+
+        assert body["insight_numbers_checked"] == 1
+
+    def test_insight_evidence_count_is_null_when_there_is_no_insight(self, monkeypatch, client):
+        """Absent, not zero: zero means "the summary states no figures",
+        which is a different claim from "no summary was produced"."""
+        monkeypatch.setattr(
+            "api.main.run_orchestrated",
+            lambda *a, **k: {
+                "status": "succeeded",
+                "sql": "SELECT a FROM sales",
+                "insight": None,
+                "attempt_history": [],
+                "error_history": [],
+            },
+        )
+        body = client.post("/ask", json={"question": "Which region led?"}).json()
+
+        assert body["insight"] is None
+        assert body["insight_numbers_checked"] is None
+
     def test_sql_summary_parses_in_the_routed_database_s_own_dialect(self, monkeypatch, client):
         """A real bug this pins: passing the connection config instead of
         its `db_type` made the dialect resolve to `None`, and T-SQL does

@@ -803,6 +803,17 @@ class AskResponse(BaseModel):
     retry_count: int = 0
     attempt_history: list[AttemptRecordOut] = Field(default_factory=list)
     insight: str | None = None
+    insight_numbers_checked: int | None = Field(
+        default=None,
+        description=(
+            "How many numbers in `insight` were verified against the returned "
+            "result by the agent's own grounding check. None when there is no "
+            "insight; 0 for an insight that states no numbers. An insight "
+            "containing an unsupported number is dropped server-side and never "
+            "appears in this response at all, so this reports what was checked "
+            "rather than gating anything."
+        ),
+    )
     analytical_result: dict[str, Any] | None = Field(
         default=None,
         description=(

@@ -1,4 +1,5 @@
 import { Badge } from '@/components/ui/badge'
+import { TruthLevelBadge } from '@/components/analytics/TruthLevelBadge'
 import type { RecommendationRecordOut } from '@/lib/types'
 import {
   CATEGORY_LABELS,
@@ -48,9 +49,9 @@ export function RecommendationList({
               <p className="line-clamp-2 text-sm font-medium">{record.claim_text}</p>
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 <Badge tone={statusTone(record.status)}>{STATUS_LABELS[record.status]}</Badge>
-                <Badge tone="warning" data-truth-level="ai_inference">
-                  AI estimate
-                </Badge>
+                {/* The shared badge, not a third hand-rolled copy of the
+                    same label -- see analytics/EvidenceBadge.tsx. */}
+                <TruthLevelBadge level="ai_inference" />
                 {record.category && (
                   <Badge>{CATEGORY_LABELS[record.category as keyof typeof CATEGORY_LABELS] ?? record.category}</Badge>
                 )}

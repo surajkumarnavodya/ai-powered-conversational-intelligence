@@ -2,6 +2,8 @@ import { AlertTriangle, ShieldAlert, Sparkles } from 'lucide-react'
 import { lazy, Suspense } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ExecutionStatusBar } from '@/components/sql/ExecutionStatusBar'
+import { ClaimEvidence } from '@/components/analytics/ClaimEvidence'
+import { insightEvidenceSummary } from '@/lib/evidence'
 import { QueryLifecycle } from '@/components/sql/QueryLifecycle'
 import { SqlIntelligencePanel } from '@/components/sql/SqlIntelligencePanel'
 import { GoldenFeedbackWidget } from '@/components/sql/GoldenFeedbackWidget'
@@ -249,9 +251,37 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
                   </p>
                 )}
                 {state.insight && entry.editableSql === state.sql && (
-                  <div className="flex gap-2 rounded-lg border-l-4 border-[var(--accent)] bg-[var(--accent-soft)] p-3 text-sm">
-                    <Sparkles className="mt-0.5 h-4 w-4 shrink-0" />
-                    <Markdown className="inline">{state.insight}</Markdown>
+                  <div className="rounded-lg border-l-4 border-[var(--accent)] bg-[var(--accent-soft)] p-3">
+                    {/* The insight is marked `estimate`, not `computed`,
+                        and that is the deliberate conservative call. Every
+                        number in it did pass `agent.insight
+                        .is_insight_grounded` server-side -- an insight with
+                        an unsupported number is dropped and never reaches
+                        here at all -- but the *wording* and any causal or
+                        qualitative framing are the model's. Labelling the
+                        whole sentence "Computed from data" would extend the
+                        numbers' verification to an interpretation nobody
+                        verified. The expandable evidence states what was
+                        actually checked, so the conservative badge costs
+                        the reader nothing. */}
+                    <ClaimEvidence
+                      status="estimate"
+                      claim={
+                        <span className="flex gap-2">
+                          <Sparkles className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                          <Markdown className="inline">{state.insight}</Markdown>
+                        </span>
+                      }
+                      summary={insightEvidenceSummary(
+                        state.insight_numbers_checked ?? null,
+                        entry.confirmedRows?.length ?? state.row_count ?? null,
+                      )}
+                      details={
+                        <p className="text-[var(--muted-foreground)]">
+                          {t('evidence.insightDetail')}
+                        </p>
+                      }
+                    />
                   </div>
                 )}
                 {entry.editableSql === state.sql && (

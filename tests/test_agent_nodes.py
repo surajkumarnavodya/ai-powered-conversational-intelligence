@@ -2593,6 +2593,93 @@ class TestGenerateInsightNode:
         assert result["insight"] == "Australia had the highest sales at 2300000.0."
         assert result["insight_summary"] is not None
 
+    def test_stored_insight_reports_how_many_figures_were_verified(self, monkeypatch):
+        """The count the UI shows as this claim's evidence.
+
+        Every number in a stored insight has already been matched against
+        the result summary by `is_insight_grounded` -- an insight with an
+        unsupported number is dropped below and never stored -- so the
+        count of numbers in the stored text is exactly the count that was
+        verified. Reported explicitly so the UI states it as a fact rather
+        than inferring it from this node's own drop behaviour, which a
+        future change could alter silently.
+        """
+        monkeypatch.setattr(
+            "agent.nodes.generate_insight_from_llm",
+            lambda **kwargs: "Australia led at 2300000.0, ahead of Southwest at 1100000.0.",
+        )
+
+        result = generate_insight_node(self._base_state(enable_insight=True))
+
+        assert result["insight_numbers_checked"] == 2
+
+    def test_insight_stating_no_figures_reports_zero_not_none(self, monkeypatch):
+        """Zero and "not reported" are different, and the UI says different
+        things for each: "states no figures of its own" versus saying
+        nothing about verification at all."""
+        monkeypatch.setattr(
+            "agent.nodes.generate_insight_from_llm",
+            lambda **kwargs: "Sales are concentrated in a single leading territory.",
+        )
+
+        result = generate_insight_node(self._base_state(enable_insight=True))
+
+        assert result["insight"] is not None
+        assert result["insight_numbers_checked"] == 0
+
+    def test_every_non_success_path_clears_the_verified_count(self, monkeypatch):
+        """A stale count surviving from a prior state would have the UI
+        claim a verification that did not happen for this answer.
+
+        Covers *every* route out of this node other than success. The
+        first version of this test checked only four of the five and a
+        mutation that dropped the key from the LLM-failure return passed
+        it -- hence the explicit enumeration below, and the assertion that
+        the key is present rather than merely falsy.
+        """
+
+        def raises(**kwargs):
+            raise OllamaUnavailableError("ollama down")
+
+        cases = {
+            # Toggle off -- no LLM call at all.
+            "disabled": (self._base_state(enable_insight=False), None),
+            # Redundant single-value shape.
+            "redundant": (
+                self._base_state(
+                    enable_insight=True,
+                    result_columns=["CustomerCount"],
+                    result_rows=[(1231,)],
+                ),
+                None,
+            ),
+            # Nothing to narrate.
+            "empty": (
+                self._base_state(enable_insight=True, result_columns=["Region"], result_rows=[]),
+                None,
+            ),
+            # The LLM call itself failed.
+            "llm_error": (self._base_state(enable_insight=True), raises),
+            # The model declined to produce an insight.
+            "declined": (self._base_state(enable_insight=True), lambda **kwargs: None),
+            # The response mentioned a number the result does not support.
+            "ungrounded": (
+                self._base_state(enable_insight=True),
+                lambda **kwargs: "Sales grew 42% year-over-year, driven by demand.",
+            ),
+        }
+
+        for name, (state, llm) in cases.items():
+            if llm is not None:
+                monkeypatch.setattr("agent.nodes.generate_insight_from_llm", llm)
+            result = generate_insight_node(state)
+            assert result["insight"] is None, name
+            # `in` rather than `.get()`: a missing key would let a value
+            # from an earlier state survive the LangGraph state merge,
+            # which is the actual bug this guards against.
+            assert "insight_numbers_checked" in result, name
+            assert result["insight_numbers_checked"] is None, name
+
     def test_ungrounded_response_is_dropped(self, monkeypatch):
         monkeypatch.setattr(
             "agent.nodes.generate_insight_from_llm",

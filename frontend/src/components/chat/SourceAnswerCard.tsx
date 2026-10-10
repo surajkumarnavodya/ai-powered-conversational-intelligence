@@ -1,5 +1,11 @@
 import { Download } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { ClaimEvidence } from '@/components/analytics/ClaimEvidence'
+import {
+  sourceAnswerEvidenceStatus,
+  sourceEvidenceSummary,
+  uniqueCitations,
+} from '@/lib/evidence'
 import { Button } from '@/components/ui/button'
 import { Markdown } from '@/components/ui/markdown'
 import { downloadDocument } from '@/lib/api'
@@ -67,30 +73,41 @@ function SourceLink({ citation }: { citation: Citation }) {
 
 export function SourceAnswerCard({ sourceKey, result }: { sourceKey: string; result: SourceAnswer }) {
   const { t } = useTranslation()
-  const seen = new Set<string>()
-  const uniqueCitations = result.citations.filter((citation) => {
-    const key = citation.document_id || citation.filename
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
-  const downloadable = uniqueCitations.filter((citation) => citation.has_pdf_bytes && !isUrl(citation.filename))
+  const citations = uniqueCitations(result.citations)
+  const downloadable = citations.filter((citation) => citation.has_pdf_bytes && !isUrl(citation.filename))
+  // "Source-backed" only when something is actually cited. An answer with
+  // no citations -- the insufficient-information fallback, or a policy
+  // match whose sensitive material was withheld -- reads "Not available",
+  // because claiming a source for withheld material would turn an access
+  // control into a false endorsement. See lib/evidence.ts.
+  const status = sourceAnswerEvidenceStatus(result)
 
   return (
     <div className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-3 text-sm">
       <p className="mb-1 font-semibold">{SOURCE_LABELS[sourceKey] ?? sourceKey}</p>
-      <Markdown>{result.answer}</Markdown>
-      {uniqueCitations.length > 0 && (
-        <div className="mt-2 text-xs text-[var(--muted-foreground)]">
-          <p>{t('chat.sourcesLabel')}:</p>
-          <ul className="mt-1 flex flex-col gap-1">
-            {uniqueCitations.map((citation) => (
-              <li key={citation.document_id || citation.filename}>
-                <SourceLink citation={citation} />
-              </li>
-            ))}
-          </ul>
-        </div>
+      <ClaimEvidence
+        status={status}
+        claim={<Markdown>{result.answer}</Markdown>}
+        summary={sourceEvidenceSummary(result.citations)}
+        details={
+          citations.length > 0 ? (
+            <ul className="flex flex-col gap-1" aria-label={t('chat.sourcesLabel')}>
+              {citations.map((citation) => (
+                <li key={citation.document_id || citation.filename}>
+                  <SourceLink citation={citation} />
+                </li>
+              ))}
+            </ul>
+          ) : undefined
+        }
+      />
+      {citations.length > 0 && (
+        <p className="mt-2 text-xs text-[var(--muted-foreground)]">
+          {/* The sources themselves live in the evidence disclosure above,
+              so they are listed once, not twice. This keeps the count
+              visible without the list. */}
+          {t('chat.sourcesLabel')}: {citations.length}
+        </p>
       )}
       {downloadable.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-2">

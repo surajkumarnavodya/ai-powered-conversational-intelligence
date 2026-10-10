@@ -609,6 +609,17 @@ class AgentState(TypedDict, total=False):
     # same summary the node itself graded against, rather than recomputing
     # it and risking the two definitions of "grounded" drifting apart.
     insight_summary: ResultSummary | None
+    # How many numbers in `insight` were verified against the result by
+    # `agent.insight.is_insight_grounded`. None whenever there is no
+    # insight at all; 0 for an insight that states no numbers (a real,
+    # ordinary case -- "sales are concentrated in the top category").
+    #
+    # Redundant with the drop behaviour above only in the sense that an
+    # insight which reaches here always passed the check. It exists so the
+    # UI can show what was actually verified as a server-reported fact
+    # instead of asserting it from this node's own control flow, which a
+    # future change could alter without the claim in the UI noticing.
+    insight_numbers_checked: int | None
 
     # Retry bookkeeping, shared across validate_sql / execute_sql
     error_history: Annotated[list[str], operator.add]

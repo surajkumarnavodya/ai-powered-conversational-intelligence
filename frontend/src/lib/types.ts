@@ -581,6 +581,12 @@ export interface AskResponse {
   stage_timings?: StageTiming[]
   insight: string | null
   cost_notice: string | null
+  /** How many figures in `insight` the server verified against the result
+   * (`agent.insight.is_insight_grounded`). Null when there is no insight,
+   * or for a turn reloaded from saved history. An insight containing an
+   * unsupported number is dropped server-side, so this reports what was
+   * checked rather than gating anything. */
+  insight_numbers_checked?: number | null
   low_confidence_notice: string | null
   rejection_reason: string | null
   rejection_message: string | null

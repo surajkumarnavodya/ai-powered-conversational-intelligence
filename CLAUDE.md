@@ -5769,6 +5769,71 @@ structural form of that statement. The in-flight `/ask` phase keeps
 was considered and rejected. **Zero backend changes were needed** --
 `stage_timings` and `attempt_history` already carried everything.
 
+**Evidence status on every claim (same pass).** Three of the five labels
+the brief named already existed in `TruthLevelBadge` (`Computed from
+data`/`Approved definition`/`AI estimate`) and ~12 analytics panels
+already rendered one. Two did not exist at all (`Source-backed`, `Not
+available`), and two prominent claims carried **no label whatsoever**:
+the insight narrative (a sparkle box) and a document/policy/web answer.
+`EvidencePanel` was also, despite its name, a *recommendations* panel.
+
+**Invariants that must not regress:**
+- **`EvidenceStatus` (`analytics/EvidenceBadge.tsx`) is orthogonal to
+  `TruthLevel`, not a replacement** -- the same split `briefing/models.py`'s
+  `ClaimClass` already makes against `agent.provenance.DataTruthLevel`.
+  Two of its five states cannot be a `TruthLevel`: a cited external
+  source is not something this platform computed, and "no evidence" is
+  not a confidence level. `TruthLevel` itself is reused unchanged.
+- **`EvidenceBadge` is the single owner of all five labels and tones.**
+  `TruthLevelBadge` is now a thin adapter over it; two hand-rolled
+  `AI estimate` badges in `recommendations/RecommendationList.tsx` and
+  `RecommendationDetail.tsx` were replaced with the shared one. Four
+  copies of one label became one.
+- **`data-truth-level` is preserved** -- `AnalyticsSummary.test.tsx` and
+  `DecisionCenter.test.tsx` assert on it. Stamped only when the status
+  came from a real server `TruthLevel`; a `source_backed`/`unavailable`
+  badge has none and carries no such attribute. `EvidenceList` therefore
+  takes the `TruthLevel`, not a pre-derived status -- deriving at the
+  call site silently dropped the attribute, which is how that signature
+  was arrived at.
+- **The insight is labelled `AI estimate`, deliberately.** Every number
+  in it passed `agent.insight.is_insight_grounded` server-side (an
+  insight with an unsupported number is *dropped* and never reaches the
+  client, so the brief's "never present an unsupported number as a
+  verified fact" held structurally already) -- but the wording and any
+  causal framing are the model's. Calling the whole sentence "Computed
+  from data" would extend the numbers' verification to an interpretation
+  nobody verified. The expandable evidence states what was actually
+  checked. Contrast the brief's own example: "Revenue increased 18%" *is*
+  `Computed from data`, because that comes from `analytics.engine`'s
+  deterministic `GrowthStat`, not the narrative.
+- **`Source-backed` requires a real citation.** An answer with
+  `citations == []` is `Not available` -- reachable via `rag/graph.py`'s
+  insufficient-information fallback *and* via a withheld
+  `sensitivity_category`/`restricted_roles` match. **Claiming a source
+  for an answer whose supporting material was withheld would turn an
+  access control into a false endorsement**, so this is a security
+  property, mutation-verified.
+- **The claim text and its status badge are visible in every
+  expand/collapse state**, so the status can never be the thing hidden.
+  The open default is the caller's, because it differs by context: the
+  insight starts collapsed (dense answer area), recommendation evidence
+  starts **open** because it was always visible before -- caught by a
+  failing pre-existing test, not by review.
+- **`agent/insight.py` is untouched** -- no change to `summarize_result`,
+  `_INSIGHT_SYSTEM_PROMPT` (benchmark-pinned) or the drop behaviour.
+
+**One additive backend field, `AskResponse.insight_numbers_checked`.**
+The UI could have asserted "numbers verified" from the server's
+drop-if-ungrounded behaviour alone, but that makes the claim an
+assumption about server control flow that a future change would falsify
+silently. `null`/`0`/`n` are three different statements and the UI says
+three different things: nothing about verification / "states no figures
+of its own" / "n figures were checked against the 42 returned rows". The
+count is `len(extract_numbers(text))` taken *after* grounding passed, so
+it is exactly the count verified -- confirmed against the real functions
+(2, 1, 0 for three realistic insights).
+
 **Read [`docs/conversational-intelligence-ui.md`](docs/conversational-intelligence-ui.md)**
 for the feature-by-feature audit table, the API change, the
 accessibility/performance/security review and the full test counts.

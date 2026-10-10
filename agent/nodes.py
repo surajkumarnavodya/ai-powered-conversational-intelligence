@@ -49,7 +49,12 @@ from agent.input_guard import (
     rejection_message,
     sanitize_conversation_history,
 )
-from agent.insight import is_insight_grounded, should_skip_insight, summarize_result
+from agent.insight import (
+    extract_numbers,
+    is_insight_grounded,
+    should_skip_insight,
+    summarize_result,
+)
 from agent.intent import AnalyticalIntentType, intent_implies_planning
 from agent.llm_client import (
     generate_analytical_intent_from_llm,
@@ -2521,7 +2526,7 @@ def generate_insight_node(state: AgentState) -> dict[str, Any]:
     """
     if not state.get("enable_insight", True):
         logger.info("[generate_insight] disabled via enable_insight -- skipping")
-        return {"insight": None, "insight_summary": None}
+        return {"insight": None, "insight_summary": None, "insight_numbers_checked": None}
 
     columns = state.get("result_columns") or []
     rows = state.get("result_rows") or []
@@ -2532,7 +2537,7 @@ def generate_insight_node(state: AgentState) -> dict[str, Any]:
             len(rows),
             len(columns),
         )
-        return {"insight": None, "insight_summary": None}
+        return {"insight": None, "insight_summary": None, "insight_numbers_checked": None}
 
     settings = get_settings()
     summary = summarize_result(columns, rows)
@@ -2553,11 +2558,11 @@ def generate_insight_node(state: AgentState) -> dict[str, Any]:
         )
     except OllamaUnavailableError as exc:
         logger.warning("[generate_insight] LLM call failed, omitting insight: %s", exc)
-        return {"insight": None, "insight_summary": summary}
+        return {"insight": None, "insight_summary": summary, "insight_numbers_checked": None}
 
     if insight_text is None:
         logger.info("[generate_insight] model declined to produce an insight")
-        return {"insight": None, "insight_summary": summary}
+        return {"insight": None, "insight_summary": summary, "insight_numbers_checked": None}
 
     if not is_insight_grounded(insight_text, summary, question=question, sql=sql):
         logger.warning(
@@ -2565,10 +2570,25 @@ def generate_insight_node(state: AgentState) -> dict[str, Any]:
             "supported by the result): %r",
             insight_text,
         )
-        return {"insight": None, "insight_summary": summary}
+        return {"insight": None, "insight_summary": summary, "insight_numbers_checked": None}
 
-    logger.info("[generate_insight] generated: %r", insight_text)
-    return {"insight": insight_text, "insight_summary": summary}
+    # Every number in `insight_text` has just been checked against the
+    # result summary by `is_insight_grounded` above -- an insight with an
+    # unsupported number returned earlier and is never stored. So the count
+    # of numbers in the stored text *is* the count that was verified, which
+    # is what lets the UI state the evidence for this claim as a fact
+    # rather than inferring it from this node's drop behaviour.
+    numbers_checked = len(extract_numbers(insight_text))
+    logger.info(
+        "[generate_insight] generated: %r (%d number(s) verified against the result)",
+        insight_text,
+        numbers_checked,
+    )
+    return {
+        "insight": insight_text,
+        "insight_summary": summary,
+        "insight_numbers_checked": numbers_checked,
+    }
 
 
 def route_after_sanitization(state: AgentState) -> str:

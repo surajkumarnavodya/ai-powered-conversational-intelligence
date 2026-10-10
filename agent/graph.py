@@ -547,6 +547,7 @@ def run_agent(
         "enable_insight": enable_insight,
         "insight": None,
         "insight_summary": None,
+        "insight_numbers_checked": None,
         "schema_anomaly_tables": [],
         "cost_estimate": None,
         "cost_notice": None,

@@ -994,6 +994,7 @@ def _ask_response_from_state(
         sql_summary=_sql_summary_out(state, settings),
         stage_timings=_stage_timings_out(state),
         insight=_redact_text(state.get("insight"), settings),
+        insight_numbers_checked=state.get("insight_numbers_checked"),
         analytical_result=state.get("analytical_result"),
         forecast_result=_forecast_result_out(state.get("forecast_result")),
         recommendations=state.get("recommendations") or [],

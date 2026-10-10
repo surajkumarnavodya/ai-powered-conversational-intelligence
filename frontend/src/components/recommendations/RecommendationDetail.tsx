@@ -1,7 +1,7 @@
 import { AlertTriangle } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
-import { TruthLevelBadge } from '@/components/analytics/TruthLevelBadge'
 import { Badge } from '@/components/ui/badge'
+import { TruthLevelBadge } from '@/components/analytics/TruthLevelBadge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select } from '@/components/ui/select'
@@ -92,9 +92,9 @@ export function RecommendationDetail({
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           <p className="flex items-start gap-2 rounded-md bg-[var(--muted)] p-3 text-sm">
-            <Badge tone="warning" data-truth-level="ai_inference" className="shrink-0">
-              AI estimate
-            </Badge>
+            {/* The shared badge, not a third hand-rolled copy of the
+                same label -- see analytics/EvidenceBadge.tsx. */}
+            <TruthLevelBadge level="ai_inference" className="shrink-0" />
             <span>{AI_ESTIMATE_NOTICE}</span>
           </p>
 

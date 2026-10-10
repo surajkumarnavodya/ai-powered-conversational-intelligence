@@ -680,5 +680,8 @@
       "duration": "Answered in",
       "analyticsEngineVersion": "Analytics engine"
     }
+  },
+  "evidence": {
+    "insightDetail": "This is a written summary of the result. Its wording is generated; its figures are checked against the data before the summary is shown."
   }
 }

@@ -14,7 +14,7 @@ was scattered. Nothing was rebuilt that already worked.
 | 3 | Query Validation & Execution Status | **Added, then completed** | `cost_notice`, `RetryTimeline`, a duration badge, a truncation flag — each in a different place | First `sql/ExecutionStatusBar.tsx` (one scannable badge row). Then `sql/QueryLifecycle.tsx`, the stage rail none of them provided — see the section below |
 | 4 | Interactive Analytics Workspace | **Already complete** | `analytics/AnalyticsSummary.tsx` + 12 panels + `ChartSection` | Nothing |
 | 5 | Data Source & Lineage Panel | **Linked** | `SchemaContextPanel`, `SourcesUsedPanel`, a separate `/data-lineage` page | A link from the SQL intelligence panel to the lineage explorer |
-| 6 | Grounded Insight / Evidence Panel | **Already complete** | `analytics/EvidencePanel.tsx`, `TruthLevelBadge` | Scoped to its name: the follow-up chips moved out (see #10) |
+| 6 | Grounded Insight / Evidence Panel | **Extended** | `analytics/EvidencePanel.tsx` (a recommendations panel, despite the name), `TruthLevelBadge` with 3 of the 5 labels | `EvidenceStatus` + `EvidenceBadge` (all 5 labels, one owner), `ClaimEvidence`, the insight and source answers labelled at last — see the section below |
 | 7 | Analysis Artifact Workspace | **Added** | — | New `chat/ArtifactWorkspace.tsx` + `PinTurnButton`, and `pinnedEntryIds`/`togglePinned` on the existing store |
 | 8 | Conversation Context Manager | **Added** | `ConversationList`, `ConversationSearch` (history navigation) — but nothing showed the follow-up window actually sent | New `chat/ConversationContextPanel.tsx`, calling the same `buildConversationHistory` the request payload uses |
 | 9 | Agent Execution Timeline | **Added (needed backend)** | `RetryTimeline` (attempt outcomes only); `stage_timings` was recorded server-side but never exposed | `StageTimingOut` + `AskResponse.stage_timings`; new `chat/AgentExecutionTimeline.tsx` |
@@ -260,6 +260,179 @@ colour-blind reading. The stage being waited on carries
 `aria-current="step"` (exactly one, asserted). Icons are
 `aria-hidden="true"`.
 
+## The evidence panel in detail
+
+### What the audit found
+
+Three of the five evidence labels already existed, in `TruthLevelBadge`,
+and ~12 analytics panels already rendered one. Two did not exist at all,
+and two prominent claims carried **no evidence label whatsoever**:
+
+| Label | Before |
+|---|---|
+| `Computed from data` | existed (`database_fact`) |
+| `Approved definition` | existed (`confirmed_business_truth`) |
+| `AI estimate` | existed (`ai_inference`) |
+| `Source-backed` | **did not exist** — a document/policy/web answer carried no label |
+| `Not available` | **did not exist** — missing evidence was simply an absent badge |
+
+| Claim | Had a status? |
+|---|---|
+| The insight narrative | **No** — rendered as a sparkle box with no label |
+| A document / policy / web answer | **No** — citations were listed, unlabelled |
+| Analytics findings, forecast, governed metrics, recommendations | Yes, panel-level |
+
+`EvidencePanel` was also, despite its name, a *recommendations* panel: it
+rendered `recommendations.filter(kind === 'action')` and nothing else.
+
+### `EvidenceStatus`, orthogonal to `TruthLevel`
+
+`TruthLevel` is reused unchanged. The new `EvidenceStatus`
+(`analytics/EvidenceBadge.tsx`) sits beside it, exactly the split
+`briefing/models.py`'s `ClaimClass` already makes against
+`agent.provenance.DataTruthLevel` on the server: `TruthLevel` answers
+"how sure are we", `EvidenceStatus` answers "what is behind this claim as
+the reader sees it". Two of its five states cannot be expressed as a
+`TruthLevel` at all — a cited external source is not something this
+platform computed, and "no evidence" is not a confidence level.
+
+`EvidenceBadge` is the **single owner** of all five labels and tones.
+`TruthLevelBadge` became a thin adapter over it rather than keeping a
+second copy of three of them, so "Computed from data" is defined once.
+Two hand-rolled `<Badge tone="warning" data-truth-level="ai_inference">AI
+estimate</Badge>` copies in `recommendations/RecommendationList.tsx` and
+`RecommendationDetail.tsx` were replaced with the shared badge — that was
+a third and fourth copy of the same label.
+
+`data-truth-level` is preserved, because `AnalyticsSummary.test.tsx` and
+`DecisionCenter.test.tsx` assert on it (the latter's comment calls it
+"`TruthLevelBadge`'s own contract"). It is stamped only when the status
+came from a real server `TruthLevel`; a `source_backed`/`unavailable`
+badge has none and correctly carries no such attribute.
+
+### The insight is labelled `AI estimate`, deliberately
+
+This is the judgment call in this work. An insight that reaches the UI
+has already passed `agent.insight.is_insight_grounded` — one that
+mentions an unsupported number is **dropped server-side** and never
+arrives — so requirement 4 ("never present an unsupported number as a
+verified fact") held structurally before this change. But the *wording*,
+and any causal or qualitative framing the model added, are the model's.
+
+Labelling the whole sentence `Computed from data` would extend the
+numbers' verification to an interpretation nobody verified. So the badge
+is the conservative `AI estimate`, and the expandable evidence states
+what was actually checked:
+
+> 2 figures in this summary were checked against the 42 returned rows.
+
+That costs the reader nothing and overstates nothing. Note the contrast
+with the brief's own example: "Revenue increased 18%" *is* `Computed from
+data` — because that claim comes from `analytics.engine`'s deterministic
+`GrowthStat`, not from the narrative, and the trend panel already
+labelled it correctly.
+
+### One additive backend field
+
+`AskResponse.insight_numbers_checked: int | null`.
+
+The UI could have asserted "numbers verified" purely from the server's
+drop-if-ungrounded behaviour, but that makes the claim an assumption
+about server control flow: a future change to that behaviour would make
+the UI lie silently. So the count is reported explicitly, and
+`lib/evidence.ts::insightEvidenceSummary` says nothing about verification
+when it is `null` (an older turn, or one reloaded from saved history).
+
+`null`, `0` and `n` are three different statements and the UI says three
+different things:
+
+| Value | Meaning | Shown as |
+|---|---|---|
+| `null` | no count reported | nothing about verification |
+| `0` | the summary states no figures | "states no figures of its own" |
+| `n` | `n` figures matched the result | "n figures ... were checked against the 42 returned rows" |
+
+The count is exactly `len(extract_numbers(insight_text))` taken *after*
+the grounding check passed — every number in a stored insight was matched
+against the result summary, so the count in the text is the count
+verified. Verified against the real functions: `"Australia had the highest
+sales at 2300000.0, ahead of Southwest at 1100000.0."` → 2;
+`"Bikes account for 50.0% of total revenue."` → 1;
+`"Sales are concentrated in a single leading territory."` → 0. No change
+was made to `agent/insight.py`, the insight prompt text, or the drop
+behaviour — `_INSIGHT_SYSTEM_PROMPT` stays benchmark-pinned per CLAUDE.md.
+
+### `Source-backed` requires a source
+
+`lib/evidence.ts::sourceAnswerEvidenceStatus` returns `source_backed`
+only when there are real citations. An answer with none is
+`Not available`, and that is a reachable case rather than a defensive
+branch:
+
+- `rag/graph.py`'s insufficient-information fallback answers citing
+  nothing.
+- A policy chunk carrying a `sensitivity_category`, or a document whose
+  `restricted_roles` exclude this caller, is never summarized into an
+  answer and yields `citations == []`.
+
+The second is the restricted-field case, and it is why this must not
+default to `source_backed`: **claiming a source for an answer whose
+supporting material was withheld would turn an access control into a
+false endorsement.** Pinned by a test, and mutation-verified (making
+`sourceAnswerEvidenceStatus` return `source_backed` unconditionally fails
+three cases).
+
+### Expand/collapse, with the default set per context
+
+`ClaimEvidence` is one renderer for "claim + status + expandable
+evidence", shared by the insight, source answers and each
+recommendation. The claim text and its status badge stay visible in every
+state, so the status can never be the thing that is hidden.
+
+The open default is the caller's, because the right default differs:
+
+| Surface | Default | Why |
+|---|---|---|
+| Insight | collapsed | dense answer area; readability (requirement 8) |
+| Recommendations | **open** | this evidence was always visible before; collapsing it would hide working behaviour behind a second disclosure |
+
+That second row was found by a failing pre-existing test
+(`AnalyticsSummary.test.tsx` asserted the evidence text was present), not
+by review — the first version collapsed everything. `defaultOpen` was the
+fix.
+
+Details use `useState` + an explicit button with
+`aria-expanded`/`aria-controls`, not the shared `Expander` (`<details>`):
+the summary row here is a claim with a badge beside it, not a title, and
+interactive badge markup inside a `<summary>` is worse for assistive
+technology.
+
+### Multi-source evidence
+
+A single estimate frequently rests on several pieces of evidence at
+different levels — a computed figure plus an approved metric definition.
+`EvidenceList` keeps each item's own badge rather than folding them into
+the claim's single status, because "this estimate rests on an approved
+definition" and "this estimate rests on another estimate" are different
+things to a reader. (The server already refuses to attach `ai_inference`
+evidence at all — see `recommendation/models.py` — so in practice the mix
+is computed and approved.)
+
+`EvidenceList` takes the server's `TruthLevel`, not a pre-derived
+`EvidenceStatus`. Deriving at the call site silently dropped
+`data-truth-level` and broke `AnalyticsSummary.test.tsx`; that failure is
+how the signature was arrived at.
+
+### Security
+
+- Nothing new is exposed. Every rendered string is either a claim the
+  server already returned, a fixed explanation owned by `EvidenceBadge`,
+  or a citation filename already shown. No prompt, no intermediate
+  generation, no chain of thought — asserted across all five statuses.
+- Database-derived evidence text goes through `sanitizeLabel`.
+- The restricted-material case above is a security property, not a
+  cosmetic one.
+
 ## API / schema changes
 
 Two additions, both additive and optional:
@@ -355,8 +528,30 @@ No new state library, no new chart engine, no new dependency.
 | `SqlIntelligencePanel.test.tsx` | 23 (rescoped) |
 | `ConversationContextPanel.test.tsx` | 9 |
 | `ArtifactWorkspace.test.tsx` | 12 |
-| `tests/test_api_ask.py` (backend) | 7 |
-| **New total** | **135** |
+| `EvidenceBadge.test.tsx` | 12 |
+| `ClaimEvidence.test.tsx` | 14 |
+| `lib/evidence.test.ts` | 13 |
+| `tests/test_api_ask.py` (backend) | 9 |
+| `tests/test_agent_nodes.py` (backend) | 2 new |
+| **New total** | **177** |
+
+The evidence work covers each scenario its brief names: verified claims,
+unsupported claims (the server-side drop, plus `status` being a required
+prop so an unlabelled claim is unrepresentable), estimates, missing
+evidence, restricted fields, and multi-source evidence.
+
+Two guards are mutation-verified rather than assumed:
+
+- Making `sourceAnswerEvidenceStatus` return `source_backed`
+  unconditionally fails 3 cases.
+- Dropping `insight_numbers_checked` from one of the insight node's
+  non-success returns fails
+  `test_every_non_success_path_clears_the_verified_count`. **The first
+  version of that test did not catch it** — it covered four of five exit
+  paths and the mutation landed on the LLM-failure path. The test now
+  enumerates all six routes out of the node and asserts the key is
+  *present*, not merely falsy, since a missing key is what would let a
+  stale count survive the LangGraph state merge.
 
 `QueryLifecycle.test.tsx` covers each scenario the lifecycle work was
 asked to cover: success, validation failure, execution failure, timeout,
@@ -393,7 +588,7 @@ provides no `navigator.clipboard` — which vitest warns can cause false
 positives elsewhere; it now stubs the clipboard and asserts
 `writeText` received the SQL, so it also tests more than it did before.
 
-Frontend: **806 passed** (72 files). Backend: **5487 passed**.
+Frontend: **910 passed** (77 files). Backend: **5492 passed**.
 `npm run lint` exit 0, `tsc --noEmit` clean, `npm run build` succeeds.
 (The frontend total includes concurrent additions by a parallel session
 in the same working tree, so it is a point-in-time figure.)

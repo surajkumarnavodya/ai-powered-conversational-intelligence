@@ -407,5 +407,8 @@
       "unknown": "El agente no pudo producir una consulta funcional.",
       "executionFailed": "La consulta que confirmaste no se ejecutó correctamente."
     }
+  },
+  "evidence": {
+    "insightDetail": "Este es un resumen escrito del resultado. Su redacción se genera; sus cifras se comprueban con los datos antes de mostrar el resumen."
   }
 }
