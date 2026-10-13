@@ -35,7 +35,6 @@ from urllib.parse import urlparse
 
 import pandas as pd
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
-from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
@@ -78,6 +77,7 @@ from agent.sql_validator import (
 )
 from agent.state import ConversationExchange
 from api.analyst import router as analyst_router
+from api.artifacts import router as artifacts_router
 from api.attachments import router as attachments_router
 from api.authz import require_permission
 from api.bi_integration import router as bi_integration_router
@@ -105,6 +105,7 @@ from api.predictive import router as predictive_router
 from api.rate_limit import enforce_api_action_rate_limit
 from api.recommendation_governance import router as recommendation_governance_router
 from api.recommendation_persistence import persist_ask_recommendations
+from api.result_serialization import json_safe_cell, rows_to_json
 from api.scenarios import router as scenarios_router
 from api.schema_drift import router as schema_drift_router
 from api.schemas import (
@@ -438,6 +439,7 @@ app.include_router(tenant_admin_router)
 app.include_router(model_routing_router)
 app.include_router(navigation_router)
 app.include_router(workflow_router)
+app.include_router(artifacts_router)
 
 # No-op when Settings.cors_allowed_origins is empty (the default) -- a
 # same-origin deployment (the built React app served by this same FastAPI
@@ -758,45 +760,6 @@ def _stage_timings_out(state: Mapping[str, Any]) -> list[StageTimingOut]:
             )
         )
     return timings
-
-
-def _json_safe_cell(value: Any) -> Any:
-    """Replaces a raw binary value with a short, readable placeholder.
-
-    A real crash, found via live use: `fastapi.encoders.jsonable_encoder`'s
-    default handling for `bytes` is `lambda o: o.decode()` -- a bare UTF-8
-    decode, which raises `UnicodeDecodeError` (crashing the *entire*
-    response, not just that one cell) the moment a SELECT touches a
-    genuinely binary column, e.g. AdventureWorks' own
-    `Production.ProductPhoto.LargePhoto` (a `varbinary(max)` storing real
-    JPEG bytes). This app's SQL validator has no reason to reject such a
-    column (it's an ordinary, safe, read-only SELECT), so this must be
-    handled at serialization time, not prevented upstream. A results table
-    has no useful way to render raw binary anyway, so this is a short
-    placeholder -- never a base64 dump, which could turn one cell into
-    several MB of response body for a large image/blob column.
-    """
-    if isinstance(value, bytes | bytearray | memoryview):
-        return f"<binary data, {len(value)} bytes>"
-    return value
-
-
-def _rows_to_json(rows: list[Any] | None) -> list[list[Any]] | None:
-    """Converts DB result rows to plain JSON-encodable lists.
-
-    `db.execution.execute_readonly_sql` returns `sqlalchemy.engine.row.Row`
-    objects, not plain tuples -- `Row` behaves like a tuple (iterable,
-    indexable) but isn't recognized as one by `fastapi.encoders
-    .jsonable_encoder`'s isinstance checks, so passing it directly raises
-    (its dict()/vars() object-fallback path doesn't apply to Row either).
-    Converting to `list(row)` first sidesteps that entirely; jsonable_encoder
-    still does the real work of encoding each row's actual values (Decimal,
-    datetime, UUID, ...) -- `_json_safe_cell` runs first so a binary value
-    never reaches jsonable_encoder's own crash-prone default handling.
-    """
-    if rows is None:
-        return None
-    return jsonable_encoder([[_json_safe_cell(value) for value in row] for row in rows])
 
 
 def _redact_text(text: str | None, settings: Any) -> str | None:

@@ -2151,3 +2151,133 @@ class WorkflowEvent(Base):
     created_at: Mapped[datetime] = _created_at()
 
     workflow: Mapped[Workflow] = relationship(back_populates="events")
+
+
+class AnalysisArtifact(Base):
+    """One durable analysis artifact saved from a conversation turn --
+    the analysis artifact workspace (`docs/conversational-intelligence-ui.md`).
+
+    **Stores no result rows.** The columns/rows this artifact presents
+    live where they already lived: in the referenced `AiOutput` row's own
+    `metadata.result_snapshot`, written once by
+    `api.chat_persistence.persist_execute_result` when the user clicked
+    "Confirm and Run". This row keeps only the three facts staleness
+    needs about that snapshot (`origin_row_count`, `origin_captured_at`,
+    `origin_fingerprint`) plus the SQL and the lineage. The one place
+    result rows are ever written here is `metadata.refreshed_snapshot`,
+    bounded by `Settings.chat_history_max_result_rows` -- and only because
+    a refreshed result exists nowhere else in this database.
+
+    **A refresh never writes back into the referenced turn.** Mutating
+    `ai_outputs.metadata.result_snapshot` would make a saved conversation
+    display numbers that were never the answer to that question at that
+    time, breaking chat history's own "opening a saved conversation never
+    re-executes SQL" invariant from the other side. So the artifact owns
+    its refreshes and reports both results with both timestamps.
+
+    **Owner-scoped as well as tenant-scoped**, unlike `BiConnector`: this
+    row points at `conversations`/`prompts`/`ai_outputs`, which
+    `identity/repositories/history.py` deliberately scopes to one
+    `user_id`. A tenant-wide artifact would be a readable back door into a
+    colleague's private conversation. `artifacts/policy.py` enforces both.
+
+    `prompt_id`/`ai_output_id` are `ON DELETE SET NULL` while
+    `conversation_id` is `ON DELETE CASCADE`: deleting a *conversation*
+    removes the artifacts made from it (there is nothing left to open),
+    but a message row disappearing leaves the artifact as an honest record
+    whose source is gone -- which `artifacts.staleness` reports as
+    `SOURCE_MISSING` rather than as a current result.
+
+    No freshness/staleness column exists on purpose -- see
+    `artifacts/staleness.py`'s module docstring.
+    """
+
+    __tablename__ = "analysis_artifacts"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    # Denormalized from `users.tenant_id`, set once at creation, exactly
+    # like `conversations.tenant_id` (see that column's own comment) --
+    # it lets every repository query filter on tenant directly rather
+    # than relying on how a join happens to be written.
+    tenant_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("tenants.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+        default="default",
+        server_default="default",
+    )
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    prompt_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("prompts.id", ondelete="SET NULL"), nullable=True
+    )
+    ai_output_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("ai_outputs.id", ondelete="SET NULL"), nullable=True
+    )
+    artifact_type: Mapped[str] = mapped_column(
+        Enum(
+            "analysis",
+            "chart",
+            "result_table",
+            "sql",
+            "insight_summary",
+            "report",
+            name="analysis_artifact_type",
+            native_enum=False,
+            validate_strings=True,
+        ),
+        nullable=False,
+    )
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    # The database this artifact's SQL runs against, by configured
+    # connection name (`Settings.databases`), never a connection string.
+    database_id: Mapped[str] = mapped_column(String(100), nullable=True)
+    source_sql: Mapped[str] = mapped_column(Text, nullable=True)
+    # `db.schema_introspection.get_schema_fingerprint`'s value for
+    # `database_id` at creation time, read from the schema index's own
+    # manifest -- compared against the live one on every read so a schema
+    # change under the artifact is reported instead of ignored.
+    schema_fingerprint: Mapped[str] = mapped_column(String(64), nullable=True)
+    origin_row_count: Mapped[int] = mapped_column(Integer, nullable=True)
+    origin_captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    origin_fingerprint: Mapped[str] = mapped_column(String(64), nullable=True)
+    last_refresh_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_refresh_outcome: Mapped[str] = mapped_column(
+        Enum(
+            "never_refreshed",
+            "success",
+            "failed",
+            name="analysis_artifact_refresh_outcome",
+            native_enum=False,
+            validate_strings=True,
+        ),
+        nullable=False,
+        default="never_refreshed",
+        server_default="never_refreshed",
+    )
+    # Already redacted by the caller (`security.redaction.redact_secrets`)
+    # before it reaches here -- the same contract
+    # `identity.repositories.bi_integration.record_refresh_result` states
+    # for its own `last_error`.
+    last_refresh_error: Mapped[str] = mapped_column(Text, nullable=True)
+    last_refresh_row_count: Mapped[int] = mapped_column(Integer, nullable=True)
+    last_refresh_fingerprint: Mapped[str] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _updated_at()
+    # Soft delete only, matching `conversations.deleted_at`: an artifact is
+    # a record of work, and the retention story for the turn it references
+    # is already soft-delete. A hard `DELETE` here would also be the only
+    # irreversible operation in this feature.
+    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    # `{"lineage": {...}, "refreshed_snapshot": {...} | None}` -- see this
+    # class's own docstring for why the refreshed rows live here and not
+    # back in the referenced turn.
+    metadata_json: Mapped[dict] = mapped_column("metadata", _METADATA_JSON, nullable=True)

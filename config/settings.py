@@ -2607,6 +2607,23 @@ class Settings(BaseSettings):
     # conversation's storage footprint; the persisted field is truncated
     # with a trailing marker, never silently dropped.
     chat_history_max_text_chars: int = Field(default=4000, gt=0, le=50_000)
+    # --- Analysis artifact workspace (artifacts/, api/artifacts.py,
+    # identity/models.py::AnalysisArtifact) ---
+    # How long an artifact's captured result reads as current, and then as
+    # merely dated, before it reads as stale. Two budgets rather than one
+    # because "this is from this morning" and "this may no longer be true"
+    # are different messages to a reader -- collapsing them would either
+    # cry wolf on every artifact or say nothing until it was far too late.
+    # Deliberately *not* derived from `result_cache_ttl_seconds` (seconds,
+    # protecting a single repeated execution) -- an analysis someone saved
+    # is a different time horizon from a query cache.
+    artifact_aging_after_hours: float = Field(default=6.0, gt=0, le=8760)
+    artifact_stale_after_hours: float = Field(default=72.0, gt=0, le=8760)
+    # Retention: the most live artifacts one user may hold. A further save
+    # is refused with a clear message rather than silently evicting the
+    # oldest one -- an artifact is something a person deliberately kept,
+    # so this app never decides on their behalf which one to discard.
+    artifact_max_per_user: int = Field(default=200, gt=0, le=5000)
     # --- Secure conversation sharing (identity/share_policy.py,
     # identity/repositories/shares.py, api/shares.py) ---
     enable_conversation_sharing: bool = True
@@ -3002,6 +3019,25 @@ class Settings(BaseSettings):
                 f"than MODEL_ROUTING_UPGRADE_COMPLEXITY_THRESHOLD "
                 f"({self.model_routing_upgrade_complexity_threshold}) -- otherwise one "
                 f"complexity score would qualify a request as both simple and complex. "
+                f"Fix both in .env."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_artifact_freshness_ordering(self) -> Settings:
+        """`ARTIFACT_AGING_AFTER_HOURS` must be strictly less than
+        `ARTIFACT_STALE_AFTER_HOURS` -- otherwise an artifact crosses both
+        budgets at the same instant and never reads as merely "dated",
+        which is the whole point of having two (`artifacts.staleness`
+        checks the stale budget first, so the aging one would simply be
+        dead). The identical cross-field-ordering shape
+        `_validate_cost_threshold_ordering` already establishes above."""
+        if self.artifact_aging_after_hours >= self.artifact_stale_after_hours:
+            raise ConfigurationError(
+                f"ARTIFACT_AGING_AFTER_HOURS ({self.artifact_aging_after_hours}) must be "
+                f"strictly less than ARTIFACT_STALE_AFTER_HOURS "
+                f"({self.artifact_stale_after_hours}) -- otherwise a saved analysis would go "
+                f"from current straight to stale and never read as merely dated. "
                 f"Fix both in .env."
             )
         return self
