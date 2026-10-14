@@ -882,6 +882,60 @@ them. See `CLAUDE.md`'s "Prompt/agent/policy registry" section and
 `45_PROMPT_AGENT_REGISTRY_CONTRACT.md` for the full design, including
 why a deployed prompt artifact is never loaded as a live system prompt.
 
+### `GET /sources`
+
+Which data sources exist, which are configured, and which this caller may
+route to. Computed from the same descriptor table `agent/orchestrator/`
+routes with and the same permission check `router_node` applies, so the
+frontend never guesses from a role name and cannot disagree with the
+router about what a source is.
+
+```json
+{
+  "sources": [
+    {
+      "name": "policy",
+      "kind": "policy",
+      "description": "a separate, access-restricted collection ...",
+      "capabilities": {
+        "operations": ["ingest", "read", "search"],
+        "supports_citations": true,
+        "supports_pagination": false,
+        "supports_incremental_sync": false,
+        "has_side_effects": false,
+        "preserves_source_acl": false
+      },
+      "configured": true,
+      "authorized": false,
+      "required_permission": "policy_rag_query",
+      "per_request": false
+    }
+  ],
+  "usable": ["sql"],
+  "roles": ["viewer"]
+}
+```
+
+`configured` and `authorized` are reported **separately** on purpose: they
+are different failures with different remedies (an operator fixes one, an
+administrator the other), and collapsing them would leave the UI unable to
+say which. All registered sources are returned, not only the usable ones,
+so a source can be shown as unavailable *with a reason* rather than
+silently omitted.
+
+`per_request: true` means availability depends on the individual request
+rather than standing configuration (`attachments` is usable only when a
+file is attached to that question), so such a source never appears in
+`usable`.
+
+**This endpoint is an affordance, not a boundary.** It changes no access
+decision — `router_node` still filters the LLM's own source selection
+through the permission table before any subgraph runs, and every
+data-touching route re-checks. No secret, connection string or API key
+appears in the response; the only configuration fact exposed is the
+boolean `configured`. Design and invariants:
+[`docs/architecture/source-connector-contract.md`](architecture/source-connector-contract.md).
+
 ### Other routes
 
 `POST /execute` (SQL "Confirm and Run" equivalent), `POST /schema/refresh`,
