@@ -30,7 +30,24 @@ built or cannot be verified here.
 
 ---
 
-## 2. Batch plan
+## 2. Status
+
+| Batch | State | Commit |
+|---|---|---|
+| 0 — doc accuracy | **done** | `550d5ba` (stale `CLAUDE.md` §13 entry corrected) |
+| 1 — connector contract | **done** | `cc332a8` — see [`source-connector-contract.md`](source-connector-contract.md) |
+| 2 — existing sources behind contract | not started | — |
+| 3 — per-conversation source selection | not started | — |
+| 4+ | not started | — |
+
+Batch 1 shipped the descriptor half live and the connector-lifecycle half
+as a contract with a conformance suite and no production implementer. It
+added **no persistence** — whether `OnboardingJob` generalizes is a Batch 4
+decision, deferred until a real connector needs it.
+
+---
+
+## 3. Batch plan
 
 Batches are ordered so that each is independently shippable, testable and
 revertible. **Batches 0–3 need no external credentials.** Batches 4+ are
@@ -198,7 +215,7 @@ programme.
 
 ---
 
-## 3. Summary table
+## 4. Summary table
 
 | Batch | Capability | Pri | Size | Credentials? | Blocking risk |
 |---|---|---|---|---|---|
@@ -218,7 +235,7 @@ Sizes are S/M/L complexity, not time estimates.
 
 ---
 
-## 4. Cross-cutting requirements for every batch
+## 5. Cross-cutting requirements for every batch
 
 Each batch must satisfy [`CLAUDE.md`](../../CLAUDE.md) §11's definition of
 done. These are the ones this programme touches most:
@@ -245,11 +262,22 @@ done. These are the ones this programme touches most:
 
 ---
 
-## 5. Recommended first action
+## 6. Recommended next action
 
-**Batch 0, then stop for review of Batch 1's contract design.**
+**Batch 3 — per-conversation source selection.**
 
-Batch 0 is a ten-minute documentation correction, not a gate.
+Batches 0 and 1 are done. Batch 3 is now the highest-value remaining work
+that needs no credentials: `GET /sources` was built to feed exactly this,
+and it is the first user-visible capability in the programme.
+
+It carries the audit's one High security item (R4): a client-supplied
+source list must be **intersected** with the router's existing RBAC filter
+— a filter over what is already permitted, never a grant. That needs an
+explicit security regression test, proven non-vacuous.
+
+Batch 2 (adapting existing sources to the lifecycle contract) can wait: it
+is pure refactor with regression risk and no new capability, and it is
+better done once a second real connector exists to generalize against.
 
 Batch 1 is the decision that constrains everything after it, and R1 (a
 second owner of connection lifecycle) is the programme's largest design
