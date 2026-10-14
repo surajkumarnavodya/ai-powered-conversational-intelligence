@@ -612,10 +612,14 @@ Only when a task is specifically about them — never as a side effect:
 Named so a future session does not rediscover them. Each feature's own
 contract lists its specific limitations; these are the cross-cutting ones.
 
-- **`search/` has no dedicated mocked unit test file.** `tests/test_orchestrator.py`
-  mocks it at the boundary only; the Tavily request construction and response
-  parsing were verified against a real instance during development, not by a
-  regression suite. A real, worthwhile follow-up.
+- ~~**`search/` has no dedicated mocked unit test file.**~~ **Closed.**
+  `tests/test_web_search.py` (14 tests, `httpx.post` mocked throughout) now
+  pins the Tavily request shape, response parsing, empty/missing results,
+  HTTP error propagation, secret non-leakage and `SUPPORTED_SEARCH_PROVIDERS`
+  dispatch. Verified 2026-10-14; the entry had outlived the gap by some time.
+  **Treat every item below as dated** — confirm a gap still exists before
+  acting on it, the same way §13 asks you to measure before claiming a
+  finding is yours.
 - **No per-source query decomposition.** Every routed subgraph receives the
   same full question, so a question that is really two unrelated asks can
   retrieve poorly on both sides.
