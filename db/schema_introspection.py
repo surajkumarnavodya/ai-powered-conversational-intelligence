@@ -267,6 +267,40 @@ def extract_ddl_column_names(ddl: str) -> list[str]:
     return names
 
 
+def extract_ddl_column_types(ddl: str) -> dict[str, str]:
+    """Maps each column name to its raw rendered type token, out of one
+    table's `render_ddl`-rendered DDL text.
+
+    The type-lookup half of `extract_ddl_column_names` above, sharing its
+    exact line-skipping rules so the two can never disagree about which
+    lines are columns. Extracted here (rather than left private in one
+    caller) because three places now need a column's declared type from
+    already-retrieved DDL -- `agent.plan_validator._column_type_family`
+    (Prompt 12's time-range feasibility check) and
+    `recommendation.followups` (deciding whether a real temporal or
+    dimension-shaped column exists before suggesting a follow-up that
+    would need one) -- and a second copy of the parsing would be free to
+    drift from this one.
+
+    The value is the raw token exactly as `render_ddl` wrote it (e.g.
+    `"DATETIME"`, `"NVARCHAR(50)"`); pass it through
+    `db.relationship_inference.type_family` for the coarse family. A
+    column whose line declares no type token at all is omitted.
+    """
+    types: dict[str, str] = {}
+    for line in ddl.splitlines():
+        stripped = line.strip().rstrip(",")
+        if not stripped or stripped.startswith(
+            ("CREATE TABLE", "CREATE VIEW", "FOREIGN KEY", "PRIMARY KEY", ")")
+        ):
+            continue
+        tokens = stripped.split()
+        if len(tokens) < 2 or not tokens[0].isidentifier():
+            continue
+        types[tokens[0]] = tokens[1]
+    return types
+
+
 def extract_ddl_foreign_key_targets(ddl: str) -> list[str]:
     """Pulls the *referred table* name out of every `FOREIGN KEY (...)
     REFERENCES <table> (...)` line in one table's `render_ddl`-rendered DDL

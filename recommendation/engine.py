@@ -103,6 +103,11 @@ from config.sensitive_columns import load_sensitive_columns
 from config.settings import Settings, get_settings
 from db.query_cost import CostEstimate
 from db.query_store import QueryStoreFindings
+from recommendation.followups import (
+    FollowUpContext,
+    FollowUpSuggestion,
+    build_follow_up_suggestions,
+)
 from recommendation.models import Recommendation, RecommendationCategory, RecommendationKind
 from security.audit_log import log_security_event
 
@@ -182,6 +187,13 @@ class RecommendationInputs(BaseModel):
             `agent.sql_validator.find_restricted_column_references`), not
             this module, to avoid a second SQL-parsing implementation.
             Feeds the SECURITY rule.
+        follow_up_context: The question, result columns, retrieved
+            schema, governed metrics/dimensions and prior questions this
+            turn had -- feeds the EXPLORATION rule
+            (`recommendation.followups`, the one-click "Ask next" chips).
+            `None` for a caller with no conversational context (a report
+            job, a batch recompute) produces zero EXPLORATION candidates,
+            never an error.
         caller_roles: The roles of whoever will actually *view* this
             recommendation set -- used only for the authorization check
             described in this module's own docstring. Defaults to `()`
@@ -197,6 +209,7 @@ class RecommendationInputs(BaseModel):
     query_store_findings: QueryStoreFindings | None = None
     performance_snapshot: Mapping[str, Any] | None = None
     restricted_column_hits: tuple[tuple[str, str], ...] = ()
+    follow_up_context: FollowUpContext | None = None
     caller_roles: tuple[str, ...] = ()
 
 
@@ -755,6 +768,52 @@ def _security_candidates(restricted_hits: tuple[tuple[str, str], ...]) -> list[_
 # ---------------------------------------------------------------------------
 
 
+def _follow_up_candidates(
+    context: FollowUpContext,
+    result: AnalyticsResult | None,
+    settings: Settings,
+) -> list[_Candidate]:
+    """EXPLORATION: the grounded one-click follow-up questions
+    (`recommendation.followups`), mapped into this module's own candidate
+    shape.
+
+    Deliberately a thin mapping, not a rule implementation: *which*
+    follow-ups are grounded is `recommendation.followups`' concern (it
+    needs schema DDL, governed catalog concepts and conversation
+    context -- none of which any other rule here uses), while whether a
+    grounded candidate clears evidence, the confidence floor and the
+    restricted-column authorization gate stays this module's, via the
+    same `_finalize_candidate` every other rule goes through.
+
+    `FollowUpSuggestion.label` becomes `Recommendation.action` -- the
+    short, imperative core that field is documented for -- and
+    `.question` becomes the claim text a click actually submits. That
+    split is what lets a chip read "Top 5" while asking a complete,
+    unambiguous question.
+    """
+    suggestions: tuple[FollowUpSuggestion, ...] = build_follow_up_suggestions(
+        context, result, settings
+    )
+    return [
+        _Candidate(
+            category=RecommendationCategory.EXPLORATION,
+            kind=RecommendationKind.NEXT_QUESTION,
+            text=suggestion.question,
+            rationale=(
+                "A follow-up this result's own shape, the retrieved schema and the "
+                "approved semantic catalog can actually answer."
+            ),
+            evidence=suggestion.evidence,
+            action=suggestion.label,
+            confidence=suggestion.confidence,
+            rule_name=suggestion.rule_name,
+            limitations=suggestion.limitations,
+            evidence_columns=suggestion.columns,
+        )
+        for suggestion in suggestions
+    ]
+
+
 def _restricted_column_names(settings: Settings) -> frozenset[str]:
     """Every column name (lowercased, table-agnostic) classified
     "restricted" anywhere in `config/sensitive_columns.yaml` -- loaded
@@ -916,6 +975,15 @@ def generate_recommendations(
 
     if inputs.restricted_column_hits:
         candidates.extend(_security_candidates(inputs.restricted_column_hits))
+
+    # Last, deliberately: a follow-up suggestion is the least urgent thing
+    # this engine produces, and `generate_recommendations` returns in rule
+    # order, so running it here keeps every real finding ahead of every
+    # chip for any caller that renders them together.
+    if inputs.follow_up_context is not None:
+        candidates.extend(
+            _follow_up_candidates(inputs.follow_up_context, inputs.analytics_result, settings)
+        )
 
     restricted_column_names = _restricted_column_names(settings)
     recommendations = [

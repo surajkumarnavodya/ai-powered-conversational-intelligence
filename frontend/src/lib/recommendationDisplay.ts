@@ -25,6 +25,12 @@ export const CATEGORY_LABELS: Record<RecommendationCategory, string> = {
   data_quality: 'Data quality',
   security: 'Security',
   database_performance: 'Database performance',
+  // `recommendation.followups`' suggested next questions. These render as
+  // chips under the answer (`chat/FollowUpSuggestions`) rather than in the
+  // governance dashboard, but the map is exhaustive over the category
+  // union by design -- which is what surfaced this when the category was
+  // added -- so it carries a label either way.
+  exploration: 'Exploration',
 }
 
 export const STATUS_LABELS: Record<RecommendationStatus, string> = {

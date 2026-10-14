@@ -1079,6 +1079,14 @@ class Settings(BaseSettings):
             .engine`'s CUSTOMER/PRODUCT concentration rule fires when a
             single ranked label's share of the total (percent) is at
             least this.
+        enable_follow_up_suggestions: Whether `recommendation.engine`
+            produces the grounded one-click follow-up chips
+            (`recommendation.followups`) rendered under an answered turn.
+            True by default -- a pure, deterministic filter over evidence
+            the request already computed.
+        max_follow_up_suggestions: How many follow-up chips may be shown
+            under one answer.
+        follow_up_top_n: The N in a "Top N" follow-up chip.
         recommendation_slow_stage_ms_threshold: `recommendation.engine`'s
             PERFORMANCE rule fires when a LangGraph pipeline stage's
             rolling p95 duration (milliseconds) is at least this.
@@ -2003,6 +2011,21 @@ class Settings(BaseSettings):
     # when a column's null rate, within one result, is at least this
     # fraction.
     recommendation_null_rate_threshold: float = Field(default=0.2, ge=0.0, le=1.0)
+    # Whether recommendation.engine produces the one-click "Ask next"
+    # follow-up chips (recommendation.followups). True by default: a pure,
+    # deterministic filter over evidence this request already computed --
+    # no new query, no vector lookup, no Ollama call -- same posture as
+    # enable_recommendation_engine itself.
+    enable_follow_up_suggestions: bool = True
+    # How many follow-up chips may be shown under one answer. Kept in
+    # step with frontend/src/components/chat/FollowUpSuggestions.tsx's own
+    # cap: more than a handful stops being a suggestion and becomes a
+    # second navigation surface.
+    max_follow_up_suggestions: int = Field(default=4, ge=0, le=10)
+    # The N in a "Top N" follow-up chip. Only ever offered when a real
+    # ranking finding has more than this many entries, so narrowing
+    # genuinely drops something.
+    follow_up_top_n: int = Field(default=5, ge=1, le=100)
 
     # --- Prompt 33 (AI Data Analyst agent, agent/analyst/): a bounded,
     # multi-step analysis loop that reuses the governed Text-to-SQL pipeline

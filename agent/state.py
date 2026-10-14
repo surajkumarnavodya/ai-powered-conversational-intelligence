@@ -373,6 +373,18 @@ class AgentState(TypedDict, total=False):
     # ._build_mandatory_metrics_block and checked against the generated
     # SQL by review_metric_conformance_node below.
     governing_metrics: list[dict]
+    # Set by retrieve_business_context_node alongside governing_metrics --
+    # the same filter applied to PUBLISHED, DIMENSION-typed governed
+    # catalog entries instead (retrieval.retriever
+    # .extract_governing_dimensions, added by Prompt 37 and until now
+    # without a live caller). Read only by generate_recommendations_node,
+    # which prefers an approved dimension's own business name over a raw
+    # schema column name when suggesting a follow-up breakdown
+    # (recommendation.followups). Empty list (not None) when no governed
+    # dimension matched -- the common case. Never influences sql/
+    # result_rows: unlike governing_metrics, a governed dimension places
+    # no mandatory constraint on generation.
+    governing_dimensions: list[dict]
 
     # Set by classify_analytical_intent_node (Prompt 11,
     # 11_ANALYTICAL_INTENT_CONTRACT.md), which runs between

@@ -29,8 +29,17 @@ from analytics.engine import compute_analytics_result
 from analytics.forecasting import generate_forecast
 from analytics.models import AnalyticsResult
 from recommendation.engine import RecommendationInputs, generate_recommendations
+from recommendation.followups import (
+    FollowUpConcept,
+    FollowUpContext,
+    FollowUpSchemaTable,
+)
 from recommendation.models import Recommendation
-from retrieval.retriever import extract_governing_metrics, retrieve_business_context
+from retrieval.retriever import (
+    extract_governing_dimensions,
+    extract_governing_metrics,
+    retrieve_business_context,
+)
 from sqlalchemy.exc import SQLAlchemyError
 
 from agent.analytical_plan import AnalyticalPlan, render_plan_as_steps
@@ -903,6 +912,15 @@ def retrieve_business_context_node(state: AgentState) -> dict[str, Any]:
     this question. Consumed by `generate_sql_node` (mandatory-use prompt
     block) and `review_metric_conformance_node` (enforcement).
 
+    `state["governing_dimensions"]` is the same filter over the same
+    already-retrieved chunks, for DIMENSION-typed published catalog
+    entries (`retrieval.retriever.extract_governing_dimensions`, which
+    Prompt 37 added and nothing called until now) -- also no second
+    query. Consumed only by `generate_recommendations_node`, so that a
+    suggested follow-up breakdown can name an approved dimension rather
+    than a raw column name. Unlike a governing *metric*, a governed
+    dimension constrains nothing about generation.
+
     This is an accuracy aid, never a gate: `retrieval.retriever
     .retrieve_business_context` already never raises (see that function's
     own fail-open contract), so the `except Exception` here is
@@ -941,16 +959,19 @@ def retrieve_business_context_node(state: AgentState) -> dict[str, Any]:
             "retrieval_warnings": [f"Business-context retrieval failed unexpectedly: {exc}"],
             "retrieval_metadata": {},
             "governing_metrics": [],
+            "governing_dimensions": [],
             "status": "generating",
         }
 
     governing_metrics = extract_governing_metrics(result.items)
+    governing_dimensions = extract_governing_dimensions(result.items)
     logger.info(
         "[retrieve_business_context] database=%r retrieved %d chunk(s), "
-        "governing_metrics=%d, warnings=%s",
+        "governing_metrics=%d, governing_dimensions=%d, warnings=%s",
         db_name,
         len(result.items),
         len(governing_metrics),
+        len(governing_dimensions),
         result.warnings,
     )
     return {
@@ -960,6 +981,7 @@ def retrieve_business_context_node(state: AgentState) -> dict[str, Any]:
         "retrieval_warnings": result.warnings,
         "retrieval_metadata": result.metadata,
         "governing_metrics": governing_metrics,
+        "governing_dimensions": governing_dimensions,
         "status": "generating",
     }
 
@@ -2407,6 +2429,50 @@ def _query_store_findings_for_state(state: AgentState, settings: Any) -> QuerySt
         return None
 
 
+def _follow_up_context_for_state(state: AgentState) -> FollowUpContext:
+    """Collects the grounding a follow-up suggestion may draw on, out of
+    facts this run already has on `state` -- zero new queries.
+
+    Every piece is already computed by an earlier node: the retrieved
+    schema (`retrieve_schema_node`), the governed metrics/dimensions
+    (`retrieve_business_context_node`), the result columns
+    (`execute_sql_node`) and the conversation the caller sent with the
+    request. The prior-question list is used only to *suppress* a
+    repeat -- see `recommendation.followups`' own docstring for why
+    question text is never treated as evidence.
+    """
+    prior = tuple(
+        text
+        for exchange in state.get("conversation_history", []) or []
+        if (text := (exchange.get("question") or "").strip())
+    )
+    return FollowUpContext(
+        question=state.get("question") or "",
+        result_columns=tuple(state.get("result_columns") or ()),
+        schema_tables=tuple(
+            FollowUpSchemaTable(table_name=table["table_name"], ddl=table["ddl"])
+            for table in state.get("schema_tables", []) or []
+        ),
+        governing_metrics=tuple(
+            FollowUpConcept(
+                business_name=str(metric.get("business_name") or ""),
+                column=None,
+            )
+            for metric in state.get("governing_metrics", []) or []
+            if metric.get("business_name")
+        ),
+        governing_dimensions=tuple(
+            FollowUpConcept(
+                business_name=str(dimension.get("business_name") or ""),
+                column=dimension.get("column"),
+            )
+            for dimension in state.get("governing_dimensions", []) or []
+            if dimension.get("business_name")
+        ),
+        prior_questions=prior,
+    )
+
+
 @_timed_node("generate_recommendations")
 def generate_recommendations_node(state: AgentState) -> dict[str, Any]:
     """Builds evidence-backed recommendations for a successfully executed
@@ -2433,6 +2499,12 @@ def generate_recommendations_node(state: AgentState) -> dict[str, Any]:
     inherited rather than worked around); the OPERATIONS category
     therefore never fires from this live node, only from a direct,
     standalone call to `recommendation.engine.generate_recommendations`.
+
+    `inputs.follow_up_context` (`_follow_up_context_for_state` above) is
+    what feeds the EXPLORATION rule -- the grounded one-click "Ask next"
+    chips (`recommendation.followups`). Also zero new queries: the
+    retrieved schema, governed metrics/dimensions, result columns and
+    conversation history are all already on `state` by this point.
 
     `inputs.caller_roles` is this same run's `state["caller_roles"]` --
     the authorization check this enables is provably redundant with
@@ -2491,6 +2563,7 @@ def generate_recommendations_node(state: AgentState) -> dict[str, Any]:
         query_store_findings=query_store_findings,
         performance_snapshot=performance_snapshot,
         restricted_column_hits=restricted_hits,
+        follow_up_context=_follow_up_context_for_state(state),
         caller_roles=tuple(state.get("caller_roles", ())),
     )
 

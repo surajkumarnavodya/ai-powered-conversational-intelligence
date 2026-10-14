@@ -74,6 +74,16 @@ class RecommendationCategory(str, Enum):
     DATA_QUALITY = "data_quality"
     SECURITY = "security"
     DATABASE_PERFORMANCE = "database_performance"
+    #: A suggested *next question* rather than a suggested action --
+    #: `recommendation.followups`' grounded one-click follow-up chips.
+    #: Added after Prompt 17's original nine: none of those nine fits a
+    #: follow-up (it is not a finding about performance, revenue or data
+    #: quality), and reusing one would make a chip indistinguishable from
+    #: a real finding in that category. Leaving `category=None` was the
+    #: other option and is worse -- that value already means
+    #: "produced before this taxonomy existed", per this class's own
+    #: docstring above.
+    EXPLORATION = "exploration"
 
 
 class Recommendation(BaseModel):

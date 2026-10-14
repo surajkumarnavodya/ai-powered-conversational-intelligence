@@ -36,7 +36,11 @@ from agent.analytical_plan import AnalyticalPlan
 from agent.authz import Permission, has_role_permission
 from config.sensitive_columns import load_sensitive_columns
 from db.relationship_inference import type_family
-from db.schema_introspection import extract_ddl_column_names, extract_ddl_foreign_key_targets
+from db.schema_introspection import (
+    extract_ddl_column_names,
+    extract_ddl_column_types,
+    extract_ddl_foreign_key_targets,
+)
 
 if TYPE_CHECKING:
     from agent.state import TableSchema
@@ -93,14 +97,15 @@ def _column_type_family(ddl: str, column_name: str) -> str | None:
     """Looks up `column_name`'s rendered type token in `ddl` and classifies
     it via `db.relationship_inference.type_family` (reused, not
     duplicated) -- `None` if the column isn't found at all (existence is
-    checked separately; this is purely a type lookup)."""
-    for line in ddl.splitlines():
-        stripped = line.strip().rstrip(",")
-        tokens = stripped.split()
-        if len(tokens) < 2 or tokens[0] != column_name:
-            continue
-        return type_family(tokens[1])
-    return None
+    checked separately; this is purely a type lookup).
+
+    The DDL parsing itself is `db.schema_introspection
+    .extract_ddl_column_types`, which shares its line-skipping rules with
+    `extract_ddl_column_names` -- this function is now just the
+    lookup-plus-classify step on top of it.
+    """
+    raw_type = extract_ddl_column_types(ddl).get(column_name)
+    return type_family(raw_type) if raw_type is not None else None
 
 
 def _table_columns(schema_tables: list[TableSchema]) -> dict[str, set[str]]:

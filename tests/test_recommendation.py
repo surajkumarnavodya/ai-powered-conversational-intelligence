@@ -117,6 +117,12 @@ class TestRecommendationEvidence:
 
 class TestRecommendationCategory:
     def test_every_required_category_exists(self):
+        # Exhaustive equality, not containment: adding a category must
+        # touch this test, which is exactly what caught `exploration`
+        # being introduced. The nine below are Prompt 17's own required
+        # taxonomy of *findings*; `exploration` was added afterwards for
+        # `recommendation.followups`' suggested next questions, which are
+        # not a finding about any of the nine domains.
         expected = {
             "performance",
             "anomaly",
@@ -127,6 +133,7 @@ class TestRecommendationCategory:
             "data_quality",
             "security",
             "database_performance",
+            "exploration",
         }
         assert {c.value for c in RecommendationCategory} == expected
 

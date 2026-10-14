@@ -1529,6 +1529,9 @@ export type RecommendationCategory =
   | 'data_quality'
   | 'security'
   | 'database_performance'
+  // `recommendation.followups`' one-click "Ask next" chips -- a suggested
+  // next question rather than a suggested action.
+  | 'exploration'
 
 /** The verdicts `POST /recommendations/{id}/feedback` accepts. `resolved`
  * and `expired` each have their own route (`.../resolve`, `.../expire`). */
