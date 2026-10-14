@@ -226,16 +226,27 @@ export function QuestionNavigator({
             </button>
           </div>
           <TooltipProvider delayDuration={300}>
-            {/* The one and only scroll region this panel owns -- bounded so the
-                panel itself never grows past a compact footprint. The formula
-                scales down on a short viewport (60% of it) but is capped at
-                26rem so the panel stays "compact" even on a very tall monitor,
-                per the feature's own requirement -- not a fixed pixel height
-                that would either overflow a small laptop window or look
-                awkwardly tiny on a 4K display. */}
+            {/* The one and only scroll region this panel owns, capped at
+                exactly five rows so the panel keeps the same compact
+                footprint whether the conversation has six questions or
+                sixty. Everything past the fifth scrolls; nothing is
+                dropped from the list.
+
+                The cap is derived, not eyeballed -- one row is the
+                `text-xs` line box (1rem) plus this button's `py-1.5`
+                (0.375rem x 2), so 1.75rem; five of those is 8.75rem, and
+                `box-border` means this element's own `py-1` (0.5rem)
+                counts inside `max-height`, giving 9.25rem total. Change
+                the row's padding or text size and this number has to
+                move with it.
+
+                `min(50vh, ...)` only engages on a viewport under ~300px
+                tall, where five rows genuinely would not fit -- it is a
+                floor for an extreme window, not the usual behaviour. */}
             <ul
               role="list"
-              className="max-h-[min(60vh,26rem)] overflow-y-auto overscroll-contain py-1"
+              data-testid="question-navigator-list"
+              className="max-h-[min(50vh,9.25rem)] overflow-y-auto overscroll-contain py-1"
             >
               {navigable.map((entry, index) => {
                 const domId = `turn-${entry.entryId}`
