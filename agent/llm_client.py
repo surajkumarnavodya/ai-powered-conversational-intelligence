@@ -20,6 +20,10 @@ from pydantic import ValidationError
 
 from agent.analytical_plan import AnalyticalPlan, render_plan_as_steps
 from agent.exceptions import MalformedLLMOutputError, OffTopicQuestionError, OllamaUnavailableError
+from agent.harness.breakers import check_provider, record_outcome
+from agent.harness.context import get_current_envelope
+from agent.harness.envelope import UNLIMITED
+from agent.harness.failures import FailureClass
 from agent.insight import ResultSummary
 from agent.intent import AnalyticalIntentClassification, AnalyticalIntentType, ExpectedResultShape
 from agent.state import ConversationExchange, GoldenExample
@@ -50,6 +54,51 @@ def get_ollama_client(settings: Settings) -> ollama.Client:
     `Settings` object, not the raw `(host, timeout)` pair every generation
     call site here already has in scope."""
     return _get_ollama_client(settings.ollama_host, settings.ollama_request_timeout_seconds)
+
+
+#: Deadline-derived timeouts are rounded down to this many seconds before
+#: they key `_get_ollama_client`'s cache. Without bucketing, a per-request
+#: remaining-time value would mint a near-unique client per call and turn
+#: an unbounded `functools.cache` into a slow leak -- defeating the
+#: connection pooling that cache exists for. Rounding *down* is the safe
+#: direction: the call gets slightly less time than it strictly could,
+#: never more.
+_TIMEOUT_BUCKET_SECONDS = 10
+
+
+def _harness_client(settings: Settings) -> ollama.Client:
+    """The Ollama client for one call, fast-failing and deadline-aware.
+
+    Three things happen here that a bare `_get_ollama_client` cannot do:
+
+    1. **Circuit check.** With Ollama down, every node would otherwise
+       wait its full `ollama_request_timeout_seconds` on every request,
+       occupying the bounded `/ask` pool doing nothing. After enough
+       real failures the breaker refuses immediately
+       (`agent/harness/breakers.py`, baseline gap H5).
+    2. **Deadline clamp.** The call gets at most the time the execution
+       has left, so independent per-call timeouts cannot compose past
+       the request ceiling (`ExecutionEnvelope.timeout_for`).
+    3. **Budget accounting.** The call counts against this execution's
+       model-call budget.
+
+    All three are no-ops when no envelope is bound -- a direct caller,
+    a script, or `ENABLE_AGENT_HARNESS=false` behaves exactly as before.
+    """
+    check_provider("ollama")
+
+    timeout = settings.ollama_request_timeout_seconds
+    envelope = get_current_envelope()
+    if envelope is not None:
+        remaining = envelope.remaining_seconds()
+        if remaining != UNLIMITED:
+            bucketed = int(remaining) // _TIMEOUT_BUCKET_SECONDS * _TIMEOUT_BUCKET_SECONDS
+            timeout = max(1, min(timeout, bucketed or 1))
+        # Raises HarnessTerminated when the model-call budget is spent;
+        # `run_agent` turns that into an orderly terminal state.
+        envelope.record_llm_call()
+
+    return _get_ollama_client(settings.ollama_host, timeout)
 
 
 # DB_TYPE -> a human-readable name for the prompt, so the model writes SQL in
@@ -615,7 +664,7 @@ def generate_insight_from_llm(
     """
     effective_model = model or settings.ollama_model
     user_prompt = _build_insight_prompt(question, sql, summary)
-    client = _get_ollama_client(settings.ollama_host, settings.ollama_request_timeout_seconds)
+    client = _harness_client(settings)
 
     logger.debug("Calling Ollama (insight) model=%s prompt=%r", effective_model, user_prompt)
     try:
@@ -631,6 +680,9 @@ def generate_insight_from_llm(
             },
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
+        # Provider health signal -- advances the circuit breaker so a
+        # sustained outage stops costing every request a full timeout.
+        record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
         # httpx.HTTPError (covers httpx.ReadTimeout/ConnectTimeout/...) is
         # NOT a subclass of the built-in TimeoutError/ConnectionError --
         # ollama's client is built on httpx, and a slow response (a large
@@ -797,7 +849,7 @@ def generate_sql_from_llm(
     )
 
     effective_model = model or settings.ollama_model
-    client = _get_ollama_client(settings.ollama_host, settings.ollama_request_timeout_seconds)
+    client = _harness_client(settings)
 
     logger.debug("Calling Ollama model=%s prompt=%r", effective_model, user_prompt)
     try:
@@ -813,6 +865,9 @@ def generate_sql_from_llm(
             },
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
+        # Provider health signal -- advances the circuit breaker so a
+        # sustained outage stops costing every request a full timeout.
+        record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
         # See the identical note in generate_insight_from_llm: httpx.HTTPError
         # (covers httpx.ReadTimeout/ConnectTimeout/...) is not a subclass of
         # the built-in TimeoutError/ConnectionError, so a merely-slow (not
@@ -845,7 +900,16 @@ def _get_field(response: object, name: str) -> int | None:
 
 
 def _log_ollama_timing(response: object) -> None:
-    """Logs Ollama's own reported call breakdown (all fields are nanoseconds).
+    """Logs Ollama's own reported call breakdown, and reports provider health.
+
+    Called immediately after every successful `client.chat` in this
+    module -- all seven of them -- which makes it the single natural
+    place to close the circuit breaker on success. Putting it here
+    rather than at each call site means a *new* call site gets the
+    success signal for free; forgetting it would leave a breaker that
+    opens and never recovers, which is strictly worse than no breaker.
+
+    Logs Ollama's own reported call breakdown (all fields are nanoseconds).
 
     Far more precise than wrapping the call in `time.perf_counter()`: Ollama
     separates model *load* time (only nonzero on a cold model, e.g. after
@@ -856,6 +920,7 @@ def _log_ollama_timing(response: object) -> None:
     which one dominates determines whether prompt trimming, a smaller
     model, or neither is the right lever.
     """
+    record_outcome("ollama", None)
     total_ns = _get_field(response, "total_duration")
     load_ns = _get_field(response, "load_duration")
     prompt_eval_ns = _get_field(response, "prompt_eval_duration")
@@ -1118,7 +1183,7 @@ def generate_query_plan_from_llm(
     user_prompt = _build_plan_user_prompt(
         question, schema_context, retrieved_context, analytical_intent
     )
-    client = _get_ollama_client(settings.ollama_host, settings.ollama_request_timeout_seconds)
+    client = _harness_client(settings)
 
     logger.debug("Calling Ollama (query_plan) model=%s prompt=%r", effective_model, user_prompt)
     try:
@@ -1134,6 +1199,9 @@ def generate_query_plan_from_llm(
             },
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
+        # Provider health signal -- advances the circuit breaker so a
+        # sustained outage stops costing every request a full timeout.
+        record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
         raise OllamaUnavailableError(
             f"Could not reach Ollama at {settings.ollama_host} with model "
             f"'{effective_model}': {exc}."
@@ -1242,7 +1310,7 @@ def review_sql_against_plan_from_llm(
     """
     effective_model = model or settings.ollama_model
     user_prompt = _build_review_user_prompt(query_plan, sql)
-    client = _get_ollama_client(settings.ollama_host, settings.ollama_request_timeout_seconds)
+    client = _harness_client(settings)
 
     logger.debug("Calling Ollama (sql_review) model=%s prompt=%r", effective_model, user_prompt)
     try:
@@ -1258,6 +1326,9 @@ def review_sql_against_plan_from_llm(
             },
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
+        # Provider health signal -- advances the circuit breaker so a
+        # sustained outage stops costing every request a full timeout.
+        record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
         raise OllamaUnavailableError(
             f"Could not reach Ollama at {settings.ollama_host} with model "
             f"'{effective_model}': {exc}."
@@ -1353,7 +1424,7 @@ def review_sql_against_metrics_from_llm(
     """
     effective_model = model or settings.ollama_model
     user_prompt = _build_metric_conformance_user_prompt(governing_metrics, sql)
-    client = _get_ollama_client(settings.ollama_host, settings.ollama_request_timeout_seconds)
+    client = _harness_client(settings)
 
     logger.debug(
         "Calling Ollama (metric_conformance) model=%s prompt=%r", effective_model, user_prompt
@@ -1371,6 +1442,9 @@ def review_sql_against_metrics_from_llm(
             },
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
+        # Provider health signal -- advances the circuit breaker so a
+        # sustained outage stops costing every request a full timeout.
+        record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
         raise OllamaUnavailableError(
             f"Could not reach Ollama at {settings.ollama_host} with model "
             f"'{effective_model}': {exc}."
@@ -1555,7 +1629,7 @@ def generate_analytical_intent_from_llm(
     """
     effective_model = model or settings.ollama_model
     user_prompt = _build_intent_user_prompt(question, retrieved_context, governing_metrics)
-    client = _get_ollama_client(settings.ollama_host, settings.ollama_request_timeout_seconds)
+    client = _harness_client(settings)
 
     logger.debug(
         "Calling Ollama (analytical_intent) model=%s prompt=%r", effective_model, user_prompt
@@ -1573,6 +1647,9 @@ def generate_analytical_intent_from_llm(
             },
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
+        # Provider health signal -- advances the circuit breaker so a
+        # sustained outage stops costing every request a full timeout.
+        record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
         raise OllamaUnavailableError(
             f"Could not reach Ollama at {settings.ollama_host} with model "
             f"'{effective_model}': {exc}."
@@ -1778,7 +1855,7 @@ def generate_analytical_plan_from_llm(
     user_prompt = _build_analytical_plan_user_prompt(
         question, schema_context, retrieved_context, analytical_intent, governing_metrics
     )
-    client = _get_ollama_client(settings.ollama_host, settings.ollama_request_timeout_seconds)
+    client = _harness_client(settings)
 
     logger.debug(
         "Calling Ollama (analytical_plan) model=%s prompt=%r", effective_model, user_prompt
@@ -1796,6 +1873,9 @@ def generate_analytical_plan_from_llm(
             },
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
+        # Provider health signal -- advances the circuit breaker so a
+        # sustained outage stops costing every request a full timeout.
+        record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
         raise OllamaUnavailableError(
             f"Could not reach Ollama at {settings.ollama_host} with model "
             f"'{effective_model}': {exc}."

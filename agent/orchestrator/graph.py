@@ -156,6 +156,7 @@ def run_orchestrated(
     tenant_id: str | None = None,
     forecast_horizon: int | None = None,
     model_explicitly_selected: bool = False,
+    envelope: object | None = None,
 ) -> AgentState | OrchestratorState:
     """Routes a question to one or more sources and returns the combined result.
 
@@ -249,6 +250,7 @@ def run_orchestrated(
             tenant_id,
             forecast_horizon,
             model_explicitly_selected,
+            envelope=envelope,  # type: ignore[arg-type]
         )
 
     logger.info(
@@ -295,6 +297,12 @@ def run_orchestrated(
         "last_error_category": None,
         "failure_explanation": None,
         "status": "pending",
+        # Threaded so the SQL subgraph (`sql_source_node` -> `run_agent`)
+        # runs under the same execution budget and deadline as the
+        # single-source path -- otherwise the multi-source route would
+        # be the one way to get an unguarded run.
+        "harness_envelope": envelope,
+        "harness_termination_reason": None,
         "stage_timings": [],
         "route_decision": None,
         "sources_used": [],

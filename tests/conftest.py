@@ -124,6 +124,7 @@ def _clear_process_singleton_caches() -> None:
     from moderation.store import _cached_moderation_engine
 
     from agent.graph import build_graph
+    from agent.harness.breakers import reset_breakers as reset_harness_breakers
     from agent.llm_client import _get_ollama_client
     from agent.multiagent.policy import reset_breakers
     from agent.orchestrator.graph import build_orchestrator_graph
@@ -142,6 +143,13 @@ def _clear_process_singleton_caches() -> None:
     _cached_identity_engine.cache_clear()
     _cached_session_factory.cache_clear()
     _get_ask_executor.cache_clear()
+    # The harness's provider circuit breakers are process-lifetime state
+    # in the live LLM path, exactly like the caches above. Without this,
+    # a test that drives enough Ollama failures leaves the circuit open
+    # and the *next* test fails with ProviderUnavailable for no reason of
+    # its own -- the hardest kind of cross-test contamination to find,
+    # because it only appears in a particular test order.
+    reset_harness_breakers()
     clear_query_store_cache()
     # Prompt 47 (model routing): the per-route metrics rollup, the
     # per-model circuit breakers and the per-tenant escalation windows are

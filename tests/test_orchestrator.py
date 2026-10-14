@@ -806,6 +806,10 @@ class TestSqlSubgraphNode:
             tenant_id=None,
             forecast_horizon=None,
             model_explicitly_selected=False,
+            # Absorbs harness-era keywords (`envelope`) so this double
+            # keeps matching `run_agent`'s real signature without
+            # re-listing every parameter each time one is added.
+            **_harness,
         ):
             captured["args"] = (question, conversation_history, enable_insight, caller_roles, model)
             captured["forecast_horizon"] = forecast_horizon
@@ -837,6 +841,10 @@ class TestSqlSubgraphNode:
             tenant_id=None,
             forecast_horizon=None,
             model_explicitly_selected=False,
+            # Absorbs harness-era keywords (`envelope`) so this double
+            # keeps matching `run_agent`'s real signature without
+            # re-listing every parameter each time one is added.
+            **_harness,
         ):
             captured["enable_insight"] = enable_insight
             return {"status": "succeeded"}
@@ -1706,6 +1714,10 @@ class TestRunOrchestrated:
             tenant_id=None,
             forecast_horizon=None,
             model_explicitly_selected=False,
+            # Absorbs harness-era keywords (`envelope`) so this double
+            # keeps matching `run_agent`'s real signature without
+            # re-listing every parameter each time one is added.
+            **_harness,
         ):
             captured["args"] = (
                 question,
@@ -1739,7 +1751,7 @@ class TestRunOrchestrated:
         monkeypatch.setattr(
             orchestrator_nodes,
             "run_agent",
-            lambda question, conversation_history, enable_insight, caller_roles, model=None, tenant_id=None, forecast_horizon=None, model_explicitly_selected=False: {
+            lambda question, conversation_history, enable_insight, caller_roles, model=None, tenant_id=None, forecast_horizon=None, model_explicitly_selected=False, **_harness: {
                 "status": "succeeded",
                 "sql": "SELECT 1",
                 "row_count": 3,
@@ -1771,7 +1783,7 @@ class TestRunOrchestrated:
         monkeypatch.setattr(
             orchestrator_nodes,
             "run_agent",
-            lambda question, conversation_history, enable_insight, caller_roles, model=None, tenant_id=None, forecast_horizon=None, model_explicitly_selected=False: {
+            lambda question, conversation_history, enable_insight, caller_roles, model=None, tenant_id=None, forecast_horizon=None, model_explicitly_selected=False, **_harness: {
                 "status": "succeeded",
                 "sql": "SELECT 1",
                 "row_count": 5,
@@ -1843,7 +1855,7 @@ class TestRunOrchestrated:
         monkeypatch.setattr(
             orchestrator_graph,
             "run_agent",
-            lambda question, conversation_history, enable_insight, caller_roles, model=None, tenant_id=None, forecast_horizon=None, model_explicitly_selected=False: fake_result,
+            lambda question, conversation_history, enable_insight, caller_roles, model=None, tenant_id=None, forecast_horizon=None, model_explicitly_selected=False, **_harness: fake_result,
         )
         result = orchestrator_graph.run_orchestrated("how many orders?", attachment_ids=None)
         assert result is fake_result

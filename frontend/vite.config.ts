@@ -76,6 +76,13 @@ const BACKEND_ROUTES = [
   // reason. The chat page itself has no `/artifacts` route, so this
   // prefix is the API's alone.
   '/artifacts',
+  // Operational metrics (api/main.py): `/metrics/performance`, which
+  // `frontend/src/lib/api.ts` has always called, and `/metrics/harness`.
+  // Missing here until the harness work added a second route under the
+  // prefix and noticed -- the same dev-only 404 `/onboarding` and
+  // `/semantic-catalog` each had before their own prompts found it
+  // (`npm run build` output was unaffected; only `npm run dev` 404s).
+  '/metrics',
 ]
 
 export default defineConfig({

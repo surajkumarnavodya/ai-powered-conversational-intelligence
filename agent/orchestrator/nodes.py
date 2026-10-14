@@ -732,6 +732,9 @@ def sql_subgraph_node(state: OrchestratorState) -> dict[str, Any]:
         # event the SQL subgraph emits is now tenant-stamped on this path,
         # matching the single-source path.
         tenant_id=state.get("tenant_id"),
+        # Same envelope, so steps taken inside the SQL subgraph count
+        # against this request's single budget rather than a fresh one.
+        envelope=state.get("harness_envelope"),  # type: ignore[arg-type]
         forecast_horizon=state.get("forecast_horizon"),
         model_explicitly_selected=state.get("model_explicitly_selected", False),
     )

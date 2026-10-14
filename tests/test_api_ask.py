@@ -387,6 +387,8 @@ class TestAsk:
             tenant_id=None,
             forecast_horizon=None,
             model_explicitly_selected=False,
+            # Absorbs the harness envelope `/ask` now threads through.
+            **_harness,
         ):
             captured["question"] = question
             captured["conversation_history"] = conversation_history

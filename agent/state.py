@@ -756,6 +756,28 @@ class AgentState(TypedDict, total=False):
     # answer's own quality.
     route_decisions: list[dict]
 
+    # Prompt 02 (harness): this execution's `agent.harness
+    # .ExecutionEnvelope` -- the server-owned record of its identity,
+    # budgets, deadline and cancellation flag. Read by the control
+    # boundary (`agent.harness.guard_node`) before every node; never
+    # written by a node, and never derived from anything a model
+    # produced. Typed `object | None` for the same import-direction
+    # discipline `model_router` above follows, and `None` whenever a
+    # caller runs the graph directly -- which leaves the run completely
+    # unguarded, exactly as it was before the harness existed. A live
+    # object in state is safe for the same reason `model_router` is:
+    # this graph runs without a LangGraph checkpointer, so no whole
+    # `AgentState` is ever serialized.
+    harness_envelope: object | None
+
+    # Set only when the harness stopped the run itself (budget, deadline
+    # or cancellation) -- `agent.harness.FailureClass`'s value. Distinct
+    # from `status`, which collapses every unsuccessful outcome into
+    # "failed": this says *which* stop it was, which is what telemetry
+    # and an operator need and what the four-value response contract
+    # cannot express.
+    harness_termination_reason: str | None
+
     # Per-node-call wall-clock timings (see StageTiming) -- one entry per
     # node call, accumulated across retries. Powers performance profiling
     # (scripts/profile_pipeline.py) and, potentially, a live "which stage is

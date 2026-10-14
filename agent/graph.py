@@ -219,6 +219,15 @@ from functools import lru_cache
 from langgraph.graph import END, StateGraph
 
 from agent.complexity import compute_max_retries
+from agent.harness import (
+    ExecutionEnvelope,
+    ExecutionState,
+    HarnessTerminated,
+    guard_node,
+    terminal_state_for,
+)
+from agent.harness.context import reset_current_envelope, set_current_envelope
+from agent.harness.telemetry import get_harness_telemetry
 from agent.nodes import (
     build_analytical_plan_node,
     classify_analytical_intent_node,
@@ -281,24 +290,41 @@ def build_graph():
     """
     graph = StateGraph(AgentState)
 
-    graph.add_node("sanitize_input", sanitize_input_node)
-    graph.add_node("classify_followup", classify_followup_node)
-    graph.add_node("retrieve_schema", retrieve_schema_node)
-    graph.add_node("retrieve_golden_examples", retrieve_golden_examples_node)
-    graph.add_node("retrieve_business_context", retrieve_business_context_node)
-    graph.add_node("classify_analytical_intent", classify_analytical_intent_node)
-    graph.add_node("build_analytical_plan", build_analytical_plan_node)
-    graph.add_node("plan_query", plan_query_node)
-    graph.add_node("generate_sql", generate_sql_node)
-    graph.add_node("review_sql", review_sql_node)
-    graph.add_node("review_metric_conformance", review_metric_conformance_node)
-    graph.add_node("validate_sql", validate_sql_node)
-    graph.add_node("estimate_cost", estimate_query_cost_node)
-    graph.add_node("execute_sql", execute_sql_node)
-    graph.add_node("compute_analytics", compute_analytics_node)
-    graph.add_node("generate_forecast", generate_forecast_node)
-    graph.add_node("generate_recommendations", generate_recommendations_node)
-    graph.add_node("generate_insight", generate_insight_node)
+    graph.add_node("sanitize_input", guard_node("sanitize_input", sanitize_input_node))
+    graph.add_node("classify_followup", guard_node("classify_followup", classify_followup_node))
+    graph.add_node("retrieve_schema", guard_node("retrieve_schema", retrieve_schema_node))
+    graph.add_node(
+        "retrieve_golden_examples",
+        guard_node("retrieve_golden_examples", retrieve_golden_examples_node),
+    )
+    graph.add_node(
+        "retrieve_business_context",
+        guard_node("retrieve_business_context", retrieve_business_context_node),
+    )
+    graph.add_node(
+        "classify_analytical_intent",
+        guard_node("classify_analytical_intent", classify_analytical_intent_node),
+    )
+    graph.add_node(
+        "build_analytical_plan", guard_node("build_analytical_plan", build_analytical_plan_node)
+    )
+    graph.add_node("plan_query", guard_node("plan_query", plan_query_node))
+    graph.add_node("generate_sql", guard_node("generate_sql", generate_sql_node))
+    graph.add_node("review_sql", guard_node("review_sql", review_sql_node))
+    graph.add_node(
+        "review_metric_conformance",
+        guard_node("review_metric_conformance", review_metric_conformance_node),
+    )
+    graph.add_node("validate_sql", guard_node("validate_sql", validate_sql_node))
+    graph.add_node("estimate_cost", guard_node("estimate_cost", estimate_query_cost_node))
+    graph.add_node("execute_sql", guard_node("execute_sql", execute_sql_node))
+    graph.add_node("compute_analytics", guard_node("compute_analytics", compute_analytics_node))
+    graph.add_node("generate_forecast", guard_node("generate_forecast", generate_forecast_node))
+    graph.add_node(
+        "generate_recommendations",
+        guard_node("generate_recommendations", generate_recommendations_node),
+    )
+    graph.add_node("generate_insight", guard_node("generate_insight", generate_insight_node))
 
     graph.set_entry_point("sanitize_input")
     graph.add_conditional_edges(
@@ -397,6 +423,7 @@ def run_agent(
     tenant_id: str | None = None,
     forecast_horizon: int | None = None,
     model_explicitly_selected: bool = False,
+    envelope: ExecutionEnvelope | None = None,
 ) -> AgentState:
     """Runs the full agent graph for a single natural-language question.
 
@@ -564,6 +591,10 @@ def run_agent(
         "last_error_category": None,
         "failure_explanation": None,
         "status": "pending",
+        # Harness control record (Prompt 02). `None` leaves this run
+        # unguarded -- the behaviour every direct caller had before.
+        "harness_envelope": envelope,
+        "harness_termination_reason": None,
     }
     # LangGraph's own default recursion_limit (25 total node executions) is
     # not automatically related to this graph's *own* retry budget
@@ -596,11 +627,34 @@ def run_agent(
     # `contextvars` -- this is the worker side of that boundary. Reset in
     # `finally` so the value can never leak into whatever reuses this thread.
     audit_token = set_audit_tenant_id(tenant_id)
+    # Binds this run's envelope for the same reason, on the same thread,
+    # with the same reset discipline: `agent/llm_client.py` reads it for
+    # the circuit breaker, the deadline clamp and the model-call budget
+    # without seven call sites each needing an extra parameter. A leaked
+    # binding would apply this request's budget to whatever reuses the
+    # pool thread, so the reset below is unconditional.
+    envelope_token = set_current_envelope(envelope)
     try:
         final_state = compiled_graph.invoke(
             initial_state, config={"recursion_limit": recursion_limit}
         )
+    except HarnessTerminated as exc:
+        # An orderly stop the harness demanded: a budget ran out, the
+        # deadline passed, or the caller cancelled. Converted here into
+        # the same terminal state shape a normally-failed run returns,
+        # because letting it escape would turn an expected, designed
+        # termination into an unhandled 500 -- the exact failure this
+        # graph already hit once with GraphRecursionError (see the
+        # recursion_limit comment above).
+        # `envelope` is necessarily non-None here: `guard_node` only
+        # enforces -- and so only raises -- when a state carries one.
+        # Asserted rather than assumed so a future refactor that moves
+        # the raise fails loudly instead of masking it with a None.
+        if envelope is None:  # pragma: no cover - structurally unreachable
+            raise
+        final_state = {**initial_state, **terminal_state_for(envelope, exc)}
     finally:
+        reset_current_envelope(envelope_token)
         reset_audit_tenant_id(audit_token)
     # Prompt 47: the router recorded one decision per routed LLM call, in
     # order, including the ones that changed nothing. Read back here
@@ -634,6 +688,22 @@ def run_agent(
     # the rollup," never to "the user's question failed," matching this
     # codebase's standing fail-open posture for every other accuracy/
     # observability aid (see observability/metrics.py's own docstring).
+    # Harness execution record (agent/harness/telemetry.py). Identifiers
+    # and counts only -- the envelope's own `snapshot()` is the single
+    # definition of what is safe to retain, so this cannot widen it.
+    # Fail-open for the same reason the rollup below is: a telemetry bug
+    # must cost this run's data point, never the user's answer.
+    if envelope is not None:
+        try:
+            envelope.finish(
+                ExecutionState.COMPLETED
+                if final_state.get("status") == "succeeded"
+                else ExecutionState.FAILED
+            )
+            get_harness_telemetry().record_execution(envelope)
+        except Exception:
+            logger.warning("Failed to record harness execution telemetry", exc_info=True)
+
     try:
         get_default_metrics().record_agent_run(
             final_state.get("stage_timings", []),

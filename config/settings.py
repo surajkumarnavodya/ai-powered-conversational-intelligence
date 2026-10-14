@@ -1776,6 +1776,39 @@ class Settings(BaseSettings):
     question_rate_limit_per_minute: int = Field(default=10, gt=0)
     llm_call_rate_limit_per_minute: int = Field(default=20, gt=0)
     max_concurrent_ask_requests: int = Field(default=50, gt=0)
+
+    # --- Agent harness (agent/harness) -------------------------------
+    # Per-execution ceilings the harness enforces. Each bounds ONE
+    # /ask execution, which is what the pre-existing per-operation
+    # timeouts and per-minute rate limits never did: they bound a single
+    # call and a single caller, not the total an execution may consume.
+    #
+    # The master switch. False restores the exact pre-harness behaviour
+    # (no envelope is built, so every run is unguarded) -- the same
+    # independent-rollback pattern ENABLE_REQUEST_GOVERNANCE and friends
+    # already follow.
+    enable_agent_harness: bool = Field(default=True)
+    # Total node executions. Above the graph's own `recursion_limit`
+    # (20 + max_retries*10) on purpose: LangGraph's limit is the hard
+    # structural stop, this is the harness's budget, and a budget that
+    # fires *before* the structural stop would make the structural stop
+    # unreachable and untestable.
+    harness_max_steps: int = Field(default=120, gt=0)
+    # Model calls per execution. The 18-node graph makes roughly 6-8 on
+    # a clean run; a fully-retried complex run is well under 40.
+    harness_max_llm_calls: int = Field(default=40, gt=0)
+    harness_max_tool_calls: int = Field(default=30, gt=0)
+    # 0 disables the token budget. Off by default because Ollama's
+    # reported counts are captured opportunistically from log lines
+    # (observability/llm_timing_capture.py) rather than guaranteed, and
+    # a budget enforced on a best-effort number would fail executions
+    # for a measurement gap.
+    harness_max_tokens: int = Field(default=0, ge=0)
+    # Hard ceiling on one tool/source result the harness will carry, in
+    # bytes. Guards context amplification: a single oversized payload
+    # must not be able to push the model past its window.
+    harness_max_result_bytes: int = Field(default=8_000_000, gt=0)
+    harness_max_context_chars: int = Field(default=400_000, gt=0)
     max_concurrent_ask_requests_per_caller: int = Field(default=2, gt=0)
     api_action_rate_limit_per_minute: int = Field(default=20, gt=0)
     enable_database_concurrency_limit: bool = True

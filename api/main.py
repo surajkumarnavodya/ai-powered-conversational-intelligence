@@ -49,6 +49,10 @@ from analytics.visualization import build_chart_spec
 from agent.authz import Permission
 from agent.exceptions import AgentError
 from agent.graph import build_graph
+from agent.harness import budgets_from_settings as harness_budgets_from_settings
+from agent.harness import create_envelope
+from agent.harness.breakers import breaker_states as harness_breaker_states
+from agent.harness.telemetry import get_harness_telemetry
 from agent.llm_client import get_ollama_client
 from agent.model_registry import (
     InvalidModelSelectionError,
@@ -1210,6 +1214,7 @@ def _run_orchestrated_with_timeout(
     tenant_id: str | None = None,
     forecast_horizon: int | None = None,
     model_explicitly_selected: bool = False,
+    envelope: object | None = None,
 ) -> Mapping[str, Any]:
     """Runs `run_orchestrated` on `_get_ask_executor`'s bounded pool and
     gives up *waiting* past `timeout_seconds`, raising `_AskRequestTimedOut`
@@ -1250,6 +1255,7 @@ def _run_orchestrated_with_timeout(
                 tenant_id=tenant_id,
                 forecast_horizon=forecast_horizon,
                 model_explicitly_selected=model_explicitly_selected,
+                envelope=envelope,
             )
         except BaseException as exc:  # noqa: BLE001 - re-raised on the caller's thread below
             error["error"] = exc
@@ -1401,6 +1407,27 @@ def ask(
         per_caller_limiter.release()
         global_limiter.release()
 
+    # Harness execution envelope (agent/harness). Built here, at the
+    # request boundary, from values this server resolved -- never from
+    # the question, a retrieved document or a tool result. Everything
+    # inside the graph reads its budgets; nothing inside can widen them.
+    harness_envelope = (
+        None
+        if not settings.enable_agent_harness
+        else create_envelope(
+            graph_name="text_to_sql",
+            request_id=session_id,
+            session_id=session_id,
+            conversation_id=payload.conversation_id,
+            correlation_id=get_correlation_id(),
+            tenant_id=resolve_tenant_id_for_identity(identity),
+            user_id=real_caller_subject(identity),
+            caller_roles=tuple(identity.roles),
+            model=selected_model,
+            budgets=harness_budgets_from_settings(settings),
+        )
+    )
+
     try:
         final_state = _run_orchestrated_with_timeout(
             payload.question,
@@ -1422,6 +1449,7 @@ def ask(
             # caller asked for this model' from 'the caller asked for
             # nothing'. Model routing never overrides an explicit choice.
             model_explicitly_selected=payload.model is not None,
+            envelope=harness_envelope,
         )
     except _AskRequestTimedOut:
         # See Settings.request_timeout_seconds's docstring: this is "stop
@@ -1433,10 +1461,22 @@ def ask(
         # finishes (see `_run_orchestrated_with_timeout`'s own docstring for
         # why releasing early here would defeat the whole point of bounding
         # concurrency in the first place).
+        # Signals the abandoned worker to stop at its next node
+        # boundary instead of running to completion. This is the
+        # harness's answer to the limitation the comment above
+        # describes: still not a pre-emptive kill (Python cannot
+        # interrupt a thread inside a C extension), but it bounds the
+        # wasted work to roughly one node rather than a whole graph run
+        # -- including any LLM and SQL calls that run would still have
+        # made after the caller was already gone.
+        if harness_envelope is not None:
+            harness_envelope.cancel("request_deadline_exceeded")
         logger.warning(
-            "[api] /ask exceeded request_timeout_seconds=%ds (session_id=%s)",
+            "[api] /ask exceeded request_timeout_seconds=%ds "
+            "(session_id=%s, execution_id=%s) -- cancellation signalled",
             settings.request_timeout_seconds,
             session_id,
+            harness_envelope.identity.execution_id if harness_envelope else None,
         )
         final_state = {
             "status": "failed",
@@ -1943,6 +1983,37 @@ def schema_refresh(
             )
         )
     return SchemaRefreshResponse(databases=databases)
+
+
+@app.get("/metrics/harness")
+def metrics_harness(
+    identity: AuthIdentity = Depends(require_permission(Permission.ADMIN_CONFIG)),
+) -> dict[str, Any]:
+    """Live agent-harness telemetry: reliability, latency, efficiency and
+    harness-health counters, plus per-node, per-tool and per-provider
+    breakdowns and the current circuit-breaker states.
+
+    **Carries no content.** Every number here comes from
+    `ExecutionEnvelope.snapshot()`, which is the single definition of
+    what is safe to retain -- identifiers, counts and durations, never a
+    question, SQL, a row, a tool result or a caller's roles. That is why
+    this returns the store's snapshot directly rather than re-deriving
+    a view: a second derivation would be a second chance to widen it.
+
+    Admin-only and **not** tenant-scoped, unlike `/metrics/performance`.
+    The distinction is deliberate: that endpoint reports per-question
+    latency, which is tenant-attributable operational data, while this
+    one reports whether the *runtime itself* is healthy -- breaker
+    states, budget terminations, node latency -- which is a property of
+    the process, not of any tenant's traffic. Nothing here can be
+    attributed to a tenant, so there is nothing to scope.
+
+    Single-process and in-memory, resetting on restart, like every other
+    metric store in this codebase (CLAUDE.md §13).
+    """
+    snapshot = get_harness_telemetry().snapshot()
+    snapshot["circuit_breakers"] = harness_breaker_states()
+    return snapshot
 
 
 @app.get("/metrics/performance", response_model=PerformanceMetricsResponse)
