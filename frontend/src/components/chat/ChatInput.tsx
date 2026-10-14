@@ -14,6 +14,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import { ChatAttachmentChip } from '@/components/chat/ChatAttachmentChip'
 import { ImageUploader } from '@/components/image/ImageUploader'
+import { SourcePicker } from '@/components/chat/SourcePicker'
 import { ImageViewer } from '@/components/image/ImageViewer'
 import { OcrResultDialog } from '@/components/image/OcrResultDialog'
 import { RemoveTextDialog } from '@/components/image/RemoveTextDialog'
@@ -325,6 +326,7 @@ export function ChatInput({ onSend }: { onSend?: () => void } = {}) {
             className="min-h-10 max-h-60 flex-1 resize-none overflow-y-auto bg-transparent px-1 py-2 text-sm leading-6 focus-visible:outline-none"
           />
           <ImageUploader onFilesSelected={(files) => void attachments.addFiles(files)} disabled={disabled} />
+          <SourcePicker disabled={disabled} />
           {showVoiceButton && (
             <Button
               variant="secondary"

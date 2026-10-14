@@ -37,12 +37,26 @@ interface SettingsState {
    * null the next time GET /models loads, rather than leaving every /ask
    * failing with a 400 until the user notices and re-picks manually. */
   selectedModel: string | null
+  /** Source name(s) this caller has narrowed questions to (from a
+   * GET /sources response's sources[].name), or null for "no
+   * restriction" -- the default, and what makes /ask behave exactly as it
+   * did before the picker existed. Persisted like selectedModel (a device
+   * preference).
+   *
+   * Purely an affordance. The server intersects whatever this sends with
+   * what is configured AND what the caller's role permits, so a stale
+   * value here can only narrow a route, never widen one -- and an
+   * unhonorable selection comes back as
+   * AskResponse.source_selection_notice rather than failing the request,
+   * so this never needs defensive resetting the way selectedModel does. */
+  selectedSources: string[] | null
   setThemeMode: (mode: ThemeMode) => void
   setAccent: (accentId: string) => void
   setFont: (fontId: string) => void
   setLanguage: (language: string) => void
   setVoiceModeEnabled: (enabled: boolean) => void
   setSelectedModel: (modelId: string | null) => void
+  setSelectedSources: (sources: string[] | null) => void
   toggleSection: (sectionId: string) => void
   isSectionCollapsed: (sectionId: string) => boolean
   toggleSidebarCollapsed: () => void
@@ -68,8 +82,15 @@ export const useSettingsStore = create<SettingsState>()(
       voiceModeEnabled: true,
       sidebarCollapsed: false,
       selectedModel: null,
+      selectedSources: null,
       setVoiceModeEnabled: (enabled) => set({ voiceModeEnabled: enabled }),
       setSelectedModel: (modelId) => set({ selectedModel: modelId }),
+      // An empty array is normalized to null: "nothing selected" and "no
+      // restriction" are the same thing to the user, and AskRequest.sources
+      // rejects [] outright (it would be ambiguous server-side between
+      // "unrestricted" and "no sources at all").
+      setSelectedSources: (sources) =>
+        set({ selectedSources: sources && sources.length > 0 ? sources : null }),
       toggleSidebarCollapsed: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
       setThemeMode: (mode) => {
         applyThemeMode(mode)

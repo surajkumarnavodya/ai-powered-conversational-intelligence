@@ -40,6 +40,7 @@ function makeFinalState(overrides: Partial<AskResponse> = {}): AskResponse {
     followup_classification: null,
     followup_resolved_against: null,
     permission_denied_notice: null,
+    source_selection_notice: null,
     analytical_result: null,
     forecast_result: null,
     recommendations: [],

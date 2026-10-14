@@ -117,9 +117,47 @@ Request:
     {"question": "prior question", "sql": "SELECT ...", "tables": ["FactInternetSales"], "status": "succeeded"}
   ],
   "enable_insight": true,
-  "model": "qwen2.5:7b"
+  "model": "qwen2.5:7b",
+  "sources": ["sql", "policy"]
 }
 ```
+
+`sources` is optional (from a prior `GET /sources` response's
+`sources[].name`) — omit it to let the router choose from everything
+configured and authorized, which is exactly what every caller from before
+this field existed does.
+
+**It is a filter, never a grant.** The selection is intersected with what
+standing configuration makes available *and* what the caller's role(s)
+permit, so naming a source here can only narrow the route — it can never
+reach a source the caller could not otherwise use. The pre-existing role
+check in `router_node` still runs on whatever survives the filter. See
+`agent/orchestrator/nodes.py::_apply_source_selection`.
+
+Behaviour worth knowing:
+
+- An **unrecognized source name** returns `422` naming the valid options.
+  This leaks nothing: every registered name is already public via
+  `GET /sources`. Whether a source is *configured*, or whether this caller
+  may *use* it, is deliberately **not** answered at this layer — that
+  would turn a 422 into an oracle for configuration and permissions.
+- An **empty array is rejected**. It would be ambiguous between "no
+  restriction" and "no sources at all"; callers omit the field instead.
+- Names are lower-cased and de-duplicated, preserving first-seen order.
+- A selection that **cannot be honored does not fail the request.** If a
+  named source is not configured, the question is answered from the
+  unrestricted route and `source_selection_notice` says so. If the caller
+  lacks permission for it, the existing `permission_denied_notice` says
+  so. Failing instead would turn a stale client — or an operator switching
+  a source off — into an outage for questions that are still answerable.
+- `attachments` is **exempt**: a file attached to this question stays in
+  the route whatever the selection says, because attaching it is itself an
+  explicit per-request choice and an attachment is never silently
+  discarded.
+- Supplying `sources` makes the orchestrator graph run even with
+  `ENABLE_MULTI_SOURCE_ROUTER=false`, for the same reason a non-empty
+  `attachment_ids` does. Omitting it leaves that path completely
+  unchanged.
 
 `model` is optional (from a prior `GET /models` response's `models[].id`) —
 omit it to use the server-configured default (`Settings.ollama_model`);

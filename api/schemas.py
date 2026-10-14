@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from agent.state import AgentStatus
 
@@ -114,6 +114,57 @@ class AskRequest(BaseModel):
             "that cap is rejected with HTTP 400, never silently clamped."
         ),
     )
+    sources: list[str] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=16,
+        description=(
+            "Restrict this question to specific data source(s), from a prior "
+            "GET /sources response's `sources[].name`. Omit (the default) to let the "
+            "router choose from everything configured and authorized, which is exactly "
+            "what every caller predating this field already does. "
+            "SECURITY: this is a FILTER, never a grant -- the selection is intersected "
+            "with what standing configuration makes available AND what the caller's "
+            "role(s) permit, so naming a source here can only ever narrow the route, "
+            "never widen it (see agent/orchestrator/nodes.py::_apply_source_selection). "
+            "An unrecognized source name is rejected with HTTP 422 rather than silently "
+            "ignored. A selection that cannot be honored (the named source is not "
+            "configured, or the caller lacks permission) does not fail the request: it "
+            "falls back to the unrestricted route and reports why via "
+            "AskResponse.source_selection_notice / permission_denied_notice."
+        ),
+    )
+
+    @field_validator("sources")
+    @classmethod
+    def _validate_source_names(cls, value: list[str] | None) -> list[str] | None:
+        """Rejects an unregistered source name, and de-dupes the rest.
+
+        Validating only the *names* here is deliberate. Whether a source is
+        configured, or whether this caller may use it, is decided later by
+        `router_node` -- answering either question at the schema layer
+        would turn a 422 into an oracle for another tenant's configuration
+        and for the caller's own permissions.
+
+        De-duplication preserves first-seen order so the route stays
+        deterministic for a repeated name.
+        """
+        if value is None:
+            return None
+        # Imported here, not at module top: `sources.registry` imports
+        # `agent.authz`, and `api.schemas` is imported very early by
+        # `api.main`. Keeping it local avoids widening this module's import
+        # graph for one validator.
+        from sources.registry import all_names, is_registered
+
+        seen: list[str] = []
+        for raw in value:
+            name = raw.strip().lower()
+            if not is_registered(name):
+                raise ValueError(f"Unknown source {raw!r}. Valid sources: {', '.join(all_names())}")
+            if name not in seen:
+                seen.append(name)
+        return seen
 
 
 class AttemptRecordOut(BaseModel):
@@ -942,6 +993,18 @@ class AskResponse(BaseModel):
             "analyst/admin) -- that source was dropped and the question was answered "
             "from whatever remained instead, which may not match what was asked. "
             "None when nothing was denied."
+        ),
+    )
+    source_selection_notice: str | None = Field(
+        default=None,
+        description=(
+            "Set when AskRequest.sources named a source that could not be honored "
+            "because standing configuration does not make it available -- the question "
+            "was answered from the unrestricted route instead. Kept distinct from "
+            "permission_denied_notice because the two have different causes and "
+            "different remedies: an operator fixes configuration, an administrator "
+            "fixes permission. None when the selection was honored in full, or when "
+            "no selection was made."
         ),
     )
     # Prompt 30 (30_ANALYTICS_INSIGHTS_DASHBOARD_CONTRACT.md) -- all four are

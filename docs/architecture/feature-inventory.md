@@ -63,7 +63,7 @@ says so.
 | Media search (local CLIP) | Flag-gated | `media/`; `ENABLE_MEDIA_SEARCH=false` | [`../MULTI_SOURCE_GUIDE.md`](../MULTI_SOURCE_GUIDE.md) | keep | — |
 | Media generation | Flag-gated | `media_gen/`; `ENABLE_MEDIA_GENERATION=false` (`.env.example:785`) | [`../MULTI_SOURCE_GUIDE.md`](../MULTI_SOURCE_GUIDE.md) | keep | — |
 | Chat attachments (per-request source) | Flag-gated | `attachments/` (21 modules incl. `zip_safety.py`, `pdf_safety.py`, `validation.py`) | [`../FILE_UPLOAD_SECURITY.md`](../FILE_UPLOAD_SECURITY.md) | keep | — |
-| **Per-conversation source selection by the user** | **Absent** | `api/schemas.py::AskRequest` carries `question`, `conversation_history`, `enable_insight`, `session_id`, `conversation_id`, `attachment_ids`, `model`, `forecast_horizon` — **no source-selection field** | — | implement | **P1** |
+| **Per-conversation source selection by the user** | **Live** (as of 2026-10-15) | `api/schemas.py::AskRequest.sources`; `agent/orchestrator/nodes.py::_apply_source_selection`; `frontend/src/components/chat/SourcePicker.tsx`; `tests/test_source_selection.py` | [`source-connector-contract.md`](source-connector-contract.md) §8 | keep | — |
 | Per-source query decomposition | Absent (disclosed) | [`CLAUDE.md`](../../CLAUDE.md) §13 | [`CLAUDE.md`](../../CLAUDE.md) §13 | defer | P2 |
 
 ## 4. Source connectivity — inbound
@@ -141,7 +141,8 @@ unmet item is streaming, which is a disclosed gap, not an oversight.
 | Admin dashboards (platform + tenant) | Live | `frontend/src/pages/PlatformAdmin.tsx`, `TenantAdmin.tsx`, `api/platform_admin.py`, `api/tenant_admin.py` | [`features-governance-and-admin.md`](features-governance-and-admin.md) |
 | Knowledge-source management UI | Live | `frontend/src/pages/KnowledgeSources.tsx` (documents + policies tabs, upload/delete/download) | [`features-frontend.md`](features-frontend.md) |
 | Citations / evidence UI | Live | `frontend/src/components/chat/SourcesUsedPanel.tsx`, `SourceLineagePanel.tsx`, `SourceAnswerCard.tsx` | [`features-frontend.md`](features-frontend.md) |
-| **Connector configuration UI** | **Absent** | No connector settings surface. `KnowledgeSources.tsx` and the two admin pages are the established pattern to follow | — |
+| Per-conversation source picker | Live | `frontend/src/components/chat/SourcePicker.tsx` (+ `SourcePicker.test.tsx`) | [`features-frontend.md`](features-frontend.md) |
+| **Connector configuration UI** (add/edit a connection) | **Absent** | The picker above *selects* among existing sources; nothing yet *configures* one. `KnowledgeSources.tsx` and the two admin pages are the established pattern to follow | — |
 
 **Note for Prompt 3 §C:** the pack says to add an admin UI "only if the
 existing app has an established admin/settings pattern". It does —
@@ -156,7 +157,7 @@ Each is a finding of this audit, not a restatement of an existing doc.
 | R1 | A connector framework built fresh alongside `onboarding/` would be a second owner of connection lifecycle — [`CLAUDE.md`](../../CLAUDE.md) §4.5/§4.8 | **High** (design risk) | §4.1 above | generalize `onboarding/`, do not duplicate it |
 | R2 | M365 connectors cannot be end-to-end verified here. Writing them without a tenant risks fabricated scopes, which master instruction #4 forbids | **High** (process risk) | 0 Graph files; no tenant credentials in this environment | config + adapter seam only; mark live verification **blocked** |
 | R3 | **[`CLAUDE.md`](../../CLAUDE.md) §13 carries a stale gap entry.** It states "`search/` has no dedicated mocked unit test file ... A real, worthwhile follow-up." That follow-up was **already done** | Medium (doc accuracy) | `tests/test_web_search.py` — 236 lines, 14 tests, `httpx.post` mocked throughout, covering request shape, response parsing, empty/missing results, HTTP error propagation, secret non-leakage and provider dispatch. Its own docstring says it closes that gap | **correct §13.** The gap is closed |
-| R4 | Adding user-selected sources to `AskRequest` touches the router's permission filter. A client-supplied source list must be intersected with RBAC, never trusted | **High** (security) | `agent/orchestrator/nodes.py:472` | treat the selection as a *filter*, never a grant; test denial |
+| R4 | ~~Adding user-selected sources to `AskRequest` touches the router's permission filter~~ **Closed 2026-10-15.** The selection is intersected, never unioned; `_apply_source_selection` returns a subset of what configuration already allows and the role check still runs downstream | **High** (security) — **mitigated** | `tests/test_source_selection.py::TestSelectionCannotGrant`; mutating the intersection to a union fails 19 tests | done — keep the mutation evidence in [`source-connector-contract.md`](source-connector-contract.md) §8.2 |
 | R5 | No streaming means no mid-run progress signal, so a long multi-source run looks hung | Medium (UX) | §5 | out of scope until prioritised |
 
 **A note on R3, because it cuts both ways.** This audit initially recorded

@@ -169,6 +169,14 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
         {state.permission_denied_notice && (
           <p className="text-sm text-[var(--warning)]">{state.permission_denied_notice}</p>
         )}
+        {/* Kept separate from permission_denied_notice above rather than
+            merged: "the source you picked isn't configured here" and "your
+            role can't use it" have different remedies, and the server
+            reports them as two fields for exactly that reason. Both can be
+            set on the same turn. */}
+        {state.source_selection_notice && (
+          <p className="text-sm text-[var(--warning)]">{state.source_selection_notice}</p>
+        )}
         {entry.agentStatus === 'pending' && (
           <p className="text-sm text-[var(--muted-foreground)]">
             {t('chat.noRecordedAnswer')}

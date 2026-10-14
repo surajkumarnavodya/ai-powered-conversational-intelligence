@@ -36,9 +36,12 @@ built or cannot be verified here.
 |---|---|---|
 | 0 — doc accuracy | **done** | `550d5ba` (stale `CLAUDE.md` §13 entry corrected) |
 | 1 — connector contract | **done** | `cc332a8` — see [`source-connector-contract.md`](source-connector-contract.md) |
-| 2 — existing sources behind contract | not started | — |
-| 3 — per-conversation source selection | not started | — |
-| 4+ | not started | — |
+| 2 — existing sources behind contract | deferred (see §6) | — |
+| 3 — per-conversation source selection | **done** | `AskRequest.sources` + picker; see [`source-connector-contract.md`](source-connector-contract.md) §8 |
+| 4, 6, 7 — SharePoint/OneDrive, Dataverse, Outlook | blocked (no tenant) | — |
+| 5 — REST/OpenAPI | not started | — |
+| 8 — MCP client | not started | — |
+| Teams | not scheduled | — |
 
 Batch 1 shipped the descriptor half live and the connector-lifecycle half
 as a contract with a conformance suite and no production implementer. It
@@ -222,7 +225,7 @@ programme.
 | 0 | Doc accuracy (stale `CLAUDE.md` §13 entry) | P0 | S | no | — |
 | 1 | Connector lifecycle contract | P0 | M | no | R1 design |
 | 2 | Existing sources behind contract | P1 | M | no | regression |
-| 3 | Per-conversation source selection | P1 | M | no | **R4 security** |
+| 3 | Per-conversation source selection | P1 | M | no | **R4 security** — done, mutation-proven |
 | 4 | SharePoint + OneDrive | P1 | L | **yes** | R2 |
 | 5 | REST / OpenAPI | P2 | M | no | SSRF |
 | 6 | Dataverse | P2 | L | **yes** | R2 |
@@ -264,20 +267,24 @@ done. These are the ones this programme touches most:
 
 ## 6. Recommended next action
 
-**Batch 3 — per-conversation source selection.**
+**Batch 5 — REST/OpenAPI**, then **Batch 8 — MCP client**.
 
-Batches 0 and 1 are done. Batch 3 is now the highest-value remaining work
-that needs no credentials: `GET /sources` was built to feed exactly this,
-and it is the first user-visible capability in the programme.
+Batches 0, 1 and 3 are done, and R4 is closed and mutation-proven. Those
+two are the only remaining batches that need no external credentials.
 
-It carries the audit's one High security item (R4): a client-supplied
-source list must be **intersected** with the router's existing RBAC filter
-— a filter over what is already permitted, never a grant. That needs an
-explicit security regression test, proven non-vacuous.
+Batch 5's substance is security, not plumbing: a host allowlist, method
+and argument validation, read-vs-side-effect classification, and SSRF
+validation **re-run on every use** rather than once at registration
+([`CLAUDE.md`](../../CLAUDE.md) §5.6).
 
-Batch 2 (adapting existing sources to the lifecycle contract) can wait: it
-is pure refactor with regression risk and no new capability, and it is
-better done once a second real connector exists to generalize against.
+Batch 2 stays deferred — pure refactor, regression risk, no new
+capability, and it generalizes better against a second real connector.
+
+Batches 4, 6 and 7 remain blocked on an Entra tenant and admin consent;
+Teams is not scheduled (see
+[`data-source-matrix.md`](data-source-matrix.md) §3.4). Streaming is still
+the one unmet item from the pack's platform-foundation prompt and should
+be prioritised on its own merits.
 
 Batch 1 is the decision that constrains everything after it, and R1 (a
 second owner of connection lifecycle) is the programme's largest design

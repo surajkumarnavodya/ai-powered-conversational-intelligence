@@ -336,6 +336,50 @@ export interface AskRequest {
   // Omit to use the server-configured default -- see settingsStore.ts's
   // selectedModel and HistorySettingsSection.tsx's "AI Model" picker.
   model?: string | null
+  // Restrict this question to specific source(s), from a prior
+  // GET /sources response's sources[].name -- see SourcePicker.tsx. Omit
+  // (the default, and what the picker sends when nothing is narrowed) to
+  // let the router choose from everything configured and authorized.
+  //
+  // A FILTER the server intersects with what is configured AND what the
+  // caller's role permits, so naming a source here can only narrow the
+  // route, never widen it. The picker hiding a source is an affordance,
+  // never the boundary -- the server re-decides on every request.
+  sources?: string[] | null
+}
+
+/** One source type as GET /sources reports it for the current caller --
+ * mirrors `api/sources_schemas.py::SourceOut`. */
+export interface SourceOut {
+  name: string
+  kind: string
+  description: string
+  capabilities: {
+    operations: string[]
+    supports_citations: boolean
+    supports_pagination: boolean
+    supports_incremental_sync: boolean
+    has_side_effects: boolean
+    preserves_source_acl: boolean
+  }
+  /** Standing configuration makes this source usable at all. */
+  configured: boolean
+  /** This caller's role(s) permit it. Separate from `configured`: the two
+   * have different remedies -- an operator fixes one, an administrator
+   * the other. */
+  authorized: boolean
+  required_permission: string | null
+  /** Availability depends on the individual request (a file attached to
+   * that question), so it never appears in `usable`. */
+  per_request: boolean
+}
+
+/** Mirrors `api/sources_schemas.py::SourcesOut`. */
+export interface SourcesOut {
+  sources: SourceOut[]
+  /** Names routable right now, assuming no attachment on the request. */
+  usable: string[]
+  roles: string[]
 }
 
 /** Mirrors `agent.provenance.DataTruthLevel`. Every analytics panel renders
@@ -624,6 +668,11 @@ export interface AskResponse {
   // needs analyst/admin) -- the question was answered from whatever
   // remained instead, which may not match what was actually asked.
   permission_denied_notice: string | null
+  /** Set when AskRequest.sources named a source standing configuration
+   * does not make available, so the question was answered from the
+   * unrestricted route instead. Distinct from permission_denied_notice:
+   * configuration vs permission, different remedies. */
+  source_selection_notice: string | null
   // Prompt 30 -- analytics dashboard fields. See the type declarations above
   // and api/schemas.py's own field descriptions for each one's guarantees.
   analytical_result: AnalyticsResult | null
@@ -979,6 +1028,7 @@ export interface ServerMessageMetadata {
   clarification_message?: string | null
   failure_explanation?: string | null
   permission_denied_notice?: string | null
+  source_selection_notice?: string | null
   document_result?: SourceAnswer | null
   policy_result?: SourceAnswer | null
   web_result?: SourceAnswer | null

@@ -429,6 +429,11 @@ _EXPENSIVE_SOURCES = ("generation", "web")
 # dict, so `router_node`'s existing `SOURCE_PERMISSIONS.get(name)` lookup
 # behaves identically. `tests/test_sources_descriptors.py` pins the mapping
 # against the values this dict held before it was derived.
+#: Exempt from `AskRequest.sources` filtering -- see
+#: `_apply_source_selection`. Named rather than inlined so the exemption
+#: is greppable and there is exactly one of it.
+_ALWAYS_AVAILABLE_SOURCE = "attachments"
+
 SOURCE_PERMISSIONS: dict[str, Permission] = {
     d.name: d.permission for d in all_descriptors() if d.permission is not None
 }
@@ -447,6 +452,77 @@ _SOURCE_DENIAL_LABELS: dict[str, str] = {
     "web": "live web search",
     "media_search": "the media library",
 }
+
+
+def _apply_source_selection(
+    available: list[str], selected: list[str] | None
+) -> tuple[list[str], str | None]:
+    """Narrows `available` to the caller's selection.
+
+    **This is a filter, never a grant.** The result is always a subset of
+    `available`, so a caller naming a source they are not entitled to --
+    or one that is not configured at all -- cannot reach it this way. The
+    role check further down `router_node` then runs unchanged on whatever
+    survives, which is what keeps authorization a server-side decision
+    (`CLAUDE.md` 5.2: a client-supplied value is never a boundary).
+
+    `attachments` is exempt and always kept when available: the caller
+    attached file(s) to this exact question, which is itself an explicit
+    per-request choice, and the attachment feature's own requirement is
+    that an attachment is never silently discarded. A selection that omits
+    it is treated as "also use these other sources", not "throw my file
+    away".
+
+    An unhonorable selection does not fail the request. If nothing
+    survives the intersection, the full `available` set is returned with a
+    notice, mirroring how a role-denied source already falls back to
+    whatever remains rather than refusing outright. Failing here would
+    turn a stale frontend -- or an operator switching a source off -- into
+    an outage for questions that are still perfectly answerable.
+
+    Args:
+        available: Sources standing configuration makes usable, in
+            declaration order (from `get_available_sources`).
+        selected: The caller's `AskRequest.sources`, already validated for
+            name correctness and de-duplicated by `api.schemas`, or None
+            for no restriction.
+
+    Returns:
+        `(sources, notice)`. `sources` preserves `available`'s order, not
+        the caller's, so the classification prompt's option order stays
+        stable regardless of what order a client sends. `notice` is
+        user-facing prose when part of the selection could not be honored,
+        else None.
+    """
+    if not selected:
+        return available, None
+
+    keep = set(selected)
+    narrowed = [name for name in available if name in keep or name == _ALWAYS_AVAILABLE_SOURCE]
+    unavailable = [name for name in selected if name not in available]
+
+    if not narrowed:
+        # Every named source is unavailable. Fall back rather than refuse,
+        # and say so -- answering silently from sources the caller did not
+        # ask for would be worse than answering with a disclosure.
+        friendly = [_SOURCE_DENIAL_LABELS.get(name, name) for name in unavailable]
+        notice = (
+            f"You restricted this question to {', '.join(friendly)}, which "
+            f"{'is' if len(friendly) == 1 else 'are'} not available on this "
+            "deployment -- it was answered from the sources that are configured "
+            "instead, which may not match what you asked for."
+        )
+        return available, notice
+
+    notice = None
+    if unavailable:
+        friendly = [_SOURCE_DENIAL_LABELS.get(name, name) for name in unavailable]
+        notice = (
+            f"{', '.join(friendly)} {'is' if len(friendly) == 1 else 'are'} not "
+            "available on this deployment, so it was left out of this question's "
+            "sources. The rest of your selection was used."
+        )
+    return narrowed, notice
 
 
 def router_node(state: OrchestratorState) -> dict[str, Any]:
@@ -480,6 +556,18 @@ def router_node(state: OrchestratorState) -> dict[str, Any]:
     has_attachments = bool(state.get("pending_attachment_ids"))
     available = get_available_sources(settings, has_attachments=has_attachments)
     question = state["question"]
+
+    # Caller-supplied source restriction (AskRequest.sources). Applied
+    # before the branch below so the short-circuit, the deterministic
+    # attachment pre-check and the LLM classifier all see only the sources
+    # this question is actually allowed to use -- a narrowed selection
+    # therefore also avoids paying for a classification call it does not
+    # need. A filter only; see _apply_source_selection.
+    available, source_selection_notice = _apply_source_selection(
+        available, state.get("selected_sources")
+    )
+    if source_selection_notice:
+        logger.info("[router] source selection partially unhonored: %s", source_selection_notice)
 
     if len(available) <= 1:
         reasoning = f"only {available[0]!r} is configured -- routed without a classification call"
@@ -622,7 +710,11 @@ def router_node(state: OrchestratorState) -> dict[str, Any]:
             sources=sources,
             short_circuited=short_circuited,
         )
-    return {"route_decision": route_decision, "permission_denied_notice": permission_denied_notice}
+    return {
+        "route_decision": route_decision,
+        "permission_denied_notice": permission_denied_notice,
+        "source_selection_notice": source_selection_notice,
+    }
 
 
 _DESTINATION_NODE_NAMES: dict[str, str] = {

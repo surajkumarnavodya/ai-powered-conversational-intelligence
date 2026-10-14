@@ -1,4 +1,4 @@
-# Source connector contract — Batch 1
+# Source connector contract — Batches 1 and 3
 
 **Scope.** The design of `sources/` and `GET /sources`: what the contract
 is, what it deliberately is not, and which invariants it carries. This
@@ -10,11 +10,12 @@ capabilities and auth in [`data-source-matrix.md`](data-source-matrix.md);
 the batch plan in
 [`implementation-roadmap.md`](implementation-roadmap.md).
 
-**Date:** 2026-10-14. **Batch:** 1 of the source-connectivity roadmap.
+**Date:** 2026-10-15. **Batches:** 1 (contract + registry) and 3
+(per-conversation source selection) of the source-connectivity roadmap.
 
 ---
 
-## 1. What this batch did
+## 1. What Batch 1 did
 
 Two halves, in deliberately different states.
 
@@ -117,7 +118,7 @@ contain a real-shaped connection string and API key).
 
 ---
 
-## 4. How "behaviour is unchanged" is actually proven
+## 4. How Batch 1's "behaviour is unchanged" is actually proven
 
 `tests/test_sources_descriptors.py` does not import the new table to build
 its expectations — that would make every assertion vacuous. Instead it:
@@ -157,7 +158,7 @@ raising, and asserts each is detectably broken.
 
 ---
 
-## 5. Invariants this batch carries
+## 5. Invariants Batch 1 carries
 
 - **A descriptor with `permission=None` is not unrestricted.** `sql`
   carries no source-level permission and is still bounded by SQL
@@ -192,7 +193,7 @@ raising, and asserts each is detectably broken.
 
 ---
 
-## 6. What this batch deliberately did not do
+## 6. What Batch 1 deliberately did not do
 
 - **No persistence.** No tables, no migration. Deferred to the batch that
   needs it (§2).
@@ -214,6 +215,8 @@ raising, and asserts each is detectably broken.
 
 ## 7. Files
 
+### Batch 1
+
 | File | Role |
 |---|---|
 | `sources/types.py` | the contract: descriptor, capabilities, evidence, lifecycle Protocol, errors |
@@ -231,12 +234,101 @@ raising, and asserts each is detectably broken.
 | `tests/test_sources_conformance.py` | the conformance suite |
 | `tests/test_api_sources.py` | endpoint, incl. no-secret-leak and not-a-boundary |
 
+### Batch 3
+
+| File | Role |
+|---|---|
+| `agent/orchestrator/nodes.py` | `_apply_source_selection` — the filter (§8.1) |
+| `agent/orchestrator/state.py` | `selected_sources`, `source_selection_notice` |
+| `agent/orchestrator/graph.py` | `selected_sources` param; short-circuit |
+| `api/schemas.py` | `AskRequest.sources` + name validator; `AskResponse.source_selection_notice` |
+| `api/main.py` | threads the selection and the notice |
+| `frontend/src/components/chat/SourcePicker.tsx` | the picker |
+| `frontend/src/components/chat/ChatInput.tsx` | mounts it |
+| `frontend/src/components/chat/TurnCard.tsx` | renders the notice |
+| `frontend/src/store/settingsStore.ts` | `selectedSources` (persisted) |
+| `frontend/src/store/chatStore.ts` | sends it on `/ask` |
+| `frontend/src/lib/{api,types,history}.ts`, `hooks/queries.ts` | client, types, `useSources` |
+| `frontend/src/i18n/locales/*/translation.json` | 11 `sources.*` keys × 5 locales |
+| `tests/test_source_selection.py` | the R4 security regression + non-vacuity |
+| `tests/test_api_source_selection.py` | schema validation + router wiring |
+| `frontend/src/components/chat/SourcePicker.test.tsx` | picker behaviour and states |
+
 ---
 
-## 8. Next
+## 8. Batch 3 — per-conversation source selection
 
-**Batch 2** adapts the existing sources to the lifecycle half of the
-contract, behaviour-preserving. **Batch 3** adds per-conversation source
-selection, which is what `GET /sources` was built to feed — and which
-carries the audit's one High security item: a client-supplied source list
-must be a filter over RBAC, never a grant.
+`AskRequest.sources` lets a caller restrict one question to named
+source(s). `GET /sources` feeds the picker that produces it.
+
+### 8.1 The security property, and where it lives
+
+**R4:** a client-supplied source list is a *filter*, never a grant.
+`agent/orchestrator/nodes.py::_apply_source_selection` returns a subset of
+what `get_available_sources` already allows, and the pre-existing role
+check downstream in `router_node` still runs on whatever survives. So the
+selection narrows a route; it cannot widen one.
+
+The filter is applied **before** the branch that short-circuits or calls
+the classifier, which has a useful side effect: narrowing to one source
+skips the LLM classification call entirely, so a caller who has already
+decided does not pay for the model deciding again.
+
+### 8.2 Mutation evidence
+
+The filter was replaced with a union — `sorted(set(available) | keep)`,
+the exact R4 mistake — applied to live code and then reverted:
+
+| Mutation | Result |
+|---|---|
+| intersection → union | **19 failed**, 27 passed |
+
+Clean: `46 passed`. The failures include every assertion in
+`TestSelectionCannotGrant`, the subset invariant, and the end-to-end
+"a viewer naming `policy` still gets denied" case.
+
+`TestTheGuardIsNotVacuous` additionally builds the broken union
+implementation inline and asserts it *does* grant, so the guard cannot
+pass by both sides being wrong together.
+
+### 8.3 Decisions worth recording
+
+| Decision | Why |
+|---|---|
+| An unrecognized name → `422`; configured/authorized → **not** checked at the schema layer | A 422 on availability or permission would be an oracle for another tenant's configuration and for the caller's own roles. Names are already public via `GET /sources`, so rejecting an unknown one leaks nothing |
+| An empty array is rejected | `[]` is ambiguous between "no restriction" and "no sources at all"; the latter makes the question unanswerable. Callers omit the field |
+| An unhonorable selection falls back **with disclosure**, not a failure | A stale client or an operator switching a source off must not become an outage for an answerable question. Mirrors how a role-denied source already falls back |
+| `source_selection_notice` is a **separate field** from `permission_denied_notice` | "Not configured" and "not permitted" have different causes and different remedies — an operator fixes one, an administrator the other. One field for both would leave the caller unable to tell which. Both can be set on the same turn |
+| `attachments` is exempt from the filter | Attaching a file is itself an explicit per-request choice, and the attachment feature's own rule is that an attachment is never silently discarded |
+| A selection breaks the `ENABLE_MULTI_SOURCE_ROUTER=false` short-circuit | Nothing else would apply the filter or report an unhonorable selection. `sources=None` leaves that path byte-identical, so the default deployment is unaffected |
+| The store normalizes `[]` → `null` | So "I unchecked the last box" and "I never opened the picker" mean the same thing, and the request omits the field rather than sending a value the server rejects |
+
+### 8.4 The picker is an affordance
+
+`SourcePicker.tsx` shows a source the caller cannot use as **disabled
+with a reason** (`not set up` vs `no access`) rather than omitting it, so
+"why can't I pick this" has a visible answer. Hiding it would be no more
+secure — the server re-decides every request — and less honest.
+
+`per_request` sources are excluded from the standing choices: their
+availability depends on whether a file is attached to that individual
+question, so offering them as a persistent preference would mislead.
+
+---
+
+## 9. Next
+
+
+
+Batches 1 and 3 are done. The remaining credential-free work is
+**Batch 5** (REST/OpenAPI, needing SSRF validation re-run on every use)
+and **Batch 8** (a real MCP client, administrator-controlled trust only).
+
+**Batch 2** — adapting the existing sources to the lifecycle half of the
+contract — is deliberately deferred: it is pure refactor with regression
+risk and no new capability, and it generalizes better once a second real
+connector exists to generalize against.
+
+**Batch 4/6/7** (SharePoint/OneDrive, Dataverse, Outlook) stay blocked on
+an Entra tenant and admin consent. Teams is not scheduled at all — see
+[`data-source-matrix.md`](data-source-matrix.md) §3.4.

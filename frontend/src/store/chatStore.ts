@@ -305,6 +305,7 @@ function emptyAskResponse(message: string): AskResponse {
     followup_classification: null,
     followup_resolved_against: null,
     permission_denied_notice: null,
+    source_selection_notice: null,
     analytical_result: null,
     forecast_result: null,
     recommendations: [],
@@ -496,6 +497,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // always safe to include even when the user never opened the
             // model picker.
             model: useSettingsStore.getState().selectedModel,
+            // Same cross-store read as `model` above, same reasoning.
+            // null means "no restriction" and is simply omitted, so a user
+            // who never touched the picker sends exactly the request the
+            // frontend sent before it existed.
+            sources: useSettingsStore.getState().selectedSources ?? undefined,
           },
           controller.signal,
         ))

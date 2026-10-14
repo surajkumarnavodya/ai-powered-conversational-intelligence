@@ -1,5 +1,6 @@
 import { getBearerToken } from '@/store/authStore'
 import type {
+  SourcesOut,
   AiImageEditRequest,
   AiImageEditResponse,
   AskRequest,
@@ -224,6 +225,19 @@ export function getPerformanceMetrics(): Promise<PerformanceMetricsResponse> {
  * /ask -- the frontend caches this response instead. */
 export function getAvailableModels(): Promise<ModelsResponse> {
   return request<ModelsResponse>('/models')
+}
+
+/** Source capability discovery (`GET /sources`) -- which sources exist,
+ * which are configured, and which this caller may route to. Computed
+ * server-side from the same descriptor table the router uses, so the
+ * picker and the router cannot disagree about a source.
+ *
+ * Cached by useSources() rather than re-fetched per question: standing
+ * configuration and the caller's roles both change rarely, and the server
+ * re-decides authorization on every /ask regardless of what this returned
+ * (the picker is an affordance, not a boundary). */
+export function getSources(): Promise<SourcesOut> {
+  return request<SourcesOut>('/sources')
 }
 
 export function listDocuments(collection?: Collection): Promise<DocumentListResponse> {
