@@ -133,6 +133,50 @@ describe('QuestionNavigator', () => {
     expect(within(nav).getAllByRole('listitem')).toHaveLength(3)
   })
 
+  it('caps the visible list at five rows and scrolls the rest, without dropping any', () => {
+    // jsdom computes no layout, so the assertion is on the contract that
+    // produces the behaviour: a bounded height plus vertical overflow on
+    // the one scroll region, with every entry still in the DOM. A test
+    // that only counted rendered rows would pass just as happily if the
+    // list were *truncated* to five, which is the opposite of what was
+    // asked for.
+    const entries = Array.from({ length: 12 }, (_, i) => makeEntry(`Question ${i + 1}`))
+    renderNavigator(entries)
+    openNavigator()
+
+    const list = screen.getByTestId('question-navigator-list')
+
+    expect(list.className).toContain('overflow-y-auto')
+    // Five rows: 5 x (1rem line box + 0.375rem x 2 padding) = 8.75rem,
+    // plus the list's own 0.5rem `py-1` under `box-border` = 9.25rem.
+    expect(list.className).toContain('max-h-[min(50vh,9.25rem)]')
+    expect(within(list).getAllByRole('listitem')).toHaveLength(12)
+  })
+
+  it('keeps every question reachable by scrolling rather than hiding the overflow', () => {
+    const entries = Array.from({ length: 20 }, (_, i) => makeEntry(`Question ${i + 1}`))
+    renderNavigator(entries)
+    openNavigator()
+
+    const list = screen.getByTestId('question-navigator-list')
+
+    expect(list.className).not.toContain('overflow-hidden')
+    expect(within(list).getByText('Question 20')).toBeInTheDocument()
+  })
+
+  it('still bounds the panel when there are fewer than five questions', () => {
+    // The cap is a maximum, not a fixed height -- a short list must not
+    // leave empty space below it.
+    renderNavigator([makeEntry('One'), makeEntry('Two')])
+    openNavigator()
+
+    const list = screen.getByTestId('question-navigator-list')
+
+    expect(list.className).toContain('max-h-')
+    // A standalone `h-[...]`, not the `h-[` inside `max-h-[`.
+    expect(list.className).not.toMatch(/(^|\s)h-\[/)
+  })
+
   it('collapses again when the toggle is activated a second time', () => {
     renderNavigator([makeEntry('First question'), makeEntry('Second question')])
     const toggle = openNavigator()
