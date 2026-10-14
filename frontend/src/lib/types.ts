@@ -1597,3 +1597,98 @@ export interface RecommendationQualityMetricsOut {
   judged_total: number
   acceptance_rate: number | null
 }
+
+/* --- Analysis artifact workspace (`api/artifacts.py`) --- */
+
+export type ArtifactType =
+  | 'analysis'
+  | 'chart'
+  | 'result_table'
+  | 'sql'
+  | 'insight_summary'
+  | 'report'
+
+/** How much an artifact's stored result can still be relied on.
+ *
+ * Computed by the server on every read and never stored -- see
+ * `artifacts/staleness.py`. The client must not derive it either: a
+ * second opinion about freshness is exactly how a stale artifact comes to
+ * look current on one surface and dated on another. */
+export type ArtifactFreshnessState =
+  | 'current'
+  | 'aging'
+  | 'stale'
+  | 'source_missing'
+  | 'no_result_captured'
+
+export interface ArtifactFreshnessOut {
+  state: ArtifactFreshnessState
+  reasons: string[]
+  result_age_seconds: number | null
+  result_as_of: string | null
+}
+
+export interface ArtifactResultOut {
+  columns: string[]
+  rows: unknown[][]
+  row_count: number | null
+  returned_rows: number
+  truncated: boolean
+  column_types: Record<string, string> | null
+  chart_recommendation: ChartRecommendation | null
+  captured_at: string | null
+}
+
+export interface ArtifactOut {
+  id: string
+  artifact_type: ArtifactType
+  title: string
+  created_at: string
+  updated_at: string
+  conversation_id: string
+  /** The source question's own row id -- also the `entryId` a reloaded
+   * conversation gives that turn (`serverMessagesToQueryHistory` keys on
+   * it), which is what lets "open the source question" reuse the existing
+   * `turn-${entryId}` anchor. */
+  prompt_id: string | null
+  message_id: string | null
+  database: string | null
+  model: string | null
+  sources_used: string[]
+  row_count: number | null
+  freshness: ArtifactFreshnessOut
+  is_refreshable: boolean
+  refresh_blocked_reason: string | null
+  last_refresh_at: string | null
+  last_refresh_outcome: 'never_refreshed' | 'success' | 'failed'
+  last_refresh_error: string | null
+}
+
+export interface ArtifactDetailOut extends ArtifactOut {
+  question: string | null
+  insight: string | null
+  insight_numbers_checked: number | null
+  tables_referenced: string[]
+  governed_metrics: string[]
+  truth_level: TruthLevel
+  /** `null` when no SQL was recorded *or* when this caller may not be
+   * shown it -- `sql_withheld_reason` distinguishes the two. */
+  sql: string | null
+  sql_withheld_reason: string | null
+  origin_result: ArtifactResultOut | null
+  refreshed_result: ArtifactResultOut | null
+  result_changed_since_creation: boolean
+}
+
+export interface ArtifactListOut {
+  items: ArtifactOut[]
+  total: number
+  limit_per_user: number
+}
+
+export interface CreateArtifactRequest {
+  conversation_id: string
+  message_id: string
+  artifact_type?: ArtifactType
+  title?: string
+}

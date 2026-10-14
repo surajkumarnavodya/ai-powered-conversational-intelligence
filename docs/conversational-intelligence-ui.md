@@ -15,7 +15,7 @@ was scattered. Nothing was rebuilt that already worked.
 | 4 | Interactive Analytics Workspace | **Already complete** | `analytics/AnalyticsSummary.tsx` + 12 panels + `ChartSection` | Nothing |
 | 5 | Data Source & Lineage Panel | **Linked** | `SchemaContextPanel`, `SourcesUsedPanel`, a separate `/data-lineage` page | A link from the SQL intelligence panel to the lineage explorer |
 | 6 | Grounded Insight / Evidence Panel | **Extended** | `analytics/EvidencePanel.tsx` (a recommendations panel, despite the name), `TruthLevelBadge` with 3 of the 5 labels | `EvidenceStatus` + `EvidenceBadge` (all 5 labels, one owner), `ClaimEvidence`, the insight and source answers labelled at last — see the section below |
-| 7 | Analysis Artifact Workspace | **Added** | — | New `chat/ArtifactWorkspace.tsx` + `PinTurnButton`, and `pinnedEntryIds`/`togglePinned` on the existing store |
+| 7 | Analysis Artifact Workspace | **Made durable** | A session-only pinned worklist (`chat/ArtifactWorkspace.tsx` + `PinTurnButton`, `pinnedEntryIds` on the store) — cleared by every reload, with no lineage, no freshness, no tenant ownership and nothing to refresh | A real `analysis_artifacts` table, `artifacts/` (staleness + policy), 5 routes under `/artifacts`, and the workspace rewritten around them — see the section below |
 | 8 | Conversation Context Manager | **Added** | `ConversationList`, `ConversationSearch` (history navigation) — but nothing showed the follow-up window actually sent | New `chat/ConversationContextPanel.tsx`, calling the same `buildConversationHistory` the request payload uses |
 | 9 | Agent Execution Timeline | **Added (needed backend)** | `RetryTimeline` (attempt outcomes only); `stage_timings` was recorded server-side but never exposed | `StageTimingOut` + `AskResponse.stage_timings`; new `chat/AgentExecutionTimeline.tsx` |
 | 10 | Intelligent Follow-up Recommendations | **Surfaced** | `next_question` recommendations rendered inside `EvidencePanel` — lazy-loaded, nested in the analytics expander, only after Confirm and Run | New `chat/FollowUpSuggestions.tsx` renders them directly under the answer. **One renderer, not two**: removed from `EvidencePanel` |
@@ -433,6 +433,234 @@ how the signature was arrived at.
 - The restricted-material case above is a security property, not a
   cosmetic one.
 
+## The analysis artifact workspace in detail
+
+### What already existed, and why it was not enough
+
+A session-only pinned worklist: a `Set<string>` of `entryId`s on
+`chatStore`, rendered as a jump list. It was honest about being
+session-only, and for "the two results that matter in a long
+conversation" it was the right size.
+
+It could not be the durable work product this brief asks for, though,
+and the gap is not cosmetic:
+
+| Requirement | Session pin |
+|---|---|
+| Source question / answer id | implied by `entryId`; lost on reload |
+| Generated timestamp | none |
+| Source / lineage metadata | none |
+| SQL when permitted | none |
+| Result snapshot or reference | none |
+| Refresh / reopen | impossible — nothing to re-run |
+| Tenant ownership | no concept |
+| Stale artifacts never look current | nothing to be stale |
+
+So this pass kept the control and the panel, and put a real,
+tenant- and owner-scoped record behind them.
+
+### An artifact is a reference, not a copy
+
+Requirement 1 says to inspect existing result snapshots before adding
+persistence, and that inspection decided the whole design.
+`api/chat_persistence.py::persist_execute_result` **already** writes a
+bounded result snapshot into `ai_outputs.metadata.result_snapshot` when
+the user clicks "Confirm and Run" — columns, rows (capped at
+`Settings.chat_history_max_result_rows`), row count, truncation flag,
+column types, chart recommendation, the normalized SQL, duration, and a
+`captured_at` timestamp.
+
+That is the artifact's result. `analysis_artifacts` stores **no rows**:
+it points at the `Prompt` row (the source question id), the `AiOutput`
+row (the answer/result id), and keeps the three facts staleness actually
+needs about that snapshot — `origin_row_count`, `origin_captured_at`,
+`origin_fingerprint`. Saving a 50-row analysis adds three scalars, not a
+second copy of the result (requirement 3).
+
+The one place result rows are ever written is
+`metadata.refreshed_snapshot`, and only because a refreshed result exists
+nowhere else in the database.
+
+**A refresh never writes back into the referenced turn.** Mutating
+`ai_outputs.metadata.result_snapshot` would make a saved conversation
+display numbers that were never the answer to that question at that time
+— the mirror image of chat history's own "opening a saved conversation
+never re-executes SQL" invariant. So the artifact owns its refreshes and
+reports *both* results with *both* timestamps, which is also the literal
+answer to requirement 7.
+
+### Owner-scoped, not just tenant-scoped
+
+Every other tenant-scoped resource in this codebase (`BiConnector`,
+`GovernanceAssetVersion`, `EvaluationRun`, ...) is readable by anyone in
+the tenant holding the right permission. An artifact must not be, and
+this is the sharpest authorization decision in the feature:
+
+> An artifact points at `conversations`/`prompts`/`ai_outputs` rows that
+> `identity/repositories/history.py` deliberately scopes to one
+> `user_id`. A tenant-wide artifact would be a readable back door into a
+> colleague's private question and its answer.
+
+`artifacts/policy.py` therefore matches tenant **and** owner, and a
+denial on either becomes the same 404 a nonexistent artifact gets — so
+the route is not an existence oracle for other people's saved analyses.
+An admin of the same tenant gets that 404 too, which is deliberate and
+pinned by a test.
+
+### No new permission code was invented
+
+The base-role vocabulary already drew the distinction this feature needs:
+
+| Action | Permission | Why |
+|---|---|---|
+| list / save / open / delete | `ask` | Owning analyses of your own questions |
+| **refresh** | `execute_sql` | It really runs a query — the same permission `POST /execute` requires |
+
+That second row is the substance of requirement 8. A `viewer`, who may
+ask questions but may not run them, cannot make a saved artifact run one
+on their behalf. Inventing an `ARTIFACT_*` permission would have created
+a second, drifting answer to a question `agent/authz.py` already answers.
+
+### A stored snapshot is re-governed on every read
+
+The headline security property, and the one that looks redundant until
+you think about time:
+
+> The rows in a saved artifact were governed for whoever executed them.
+> **Roles change.** An analyst who saves an analysis over a restricted
+> column and later loses `view_restricted_columns` would otherwise keep a
+> permanent, unprivileged window onto exactly the values the
+> restricted-column gate exists to withhold — and one no part of the
+> live SQL pipeline could close, because nothing re-executes.
+
+So `governance.result_policy.govern_rows_for_caller` runs against the
+**current** caller's roles every time an artifact is opened, and the
+recorded SQL is withheld (with a fixed sentence, never the column name)
+when `find_restricted_column_references` says it touches a restricted
+field. Both are mutation-verified: removing the re-governing call fails
+the role-revocation test.
+
+A refresh governs on the way in as well as on the way out, so neither
+layer is the only thing standing between a restricted value and a
+caller.
+
+### Freshness is computed on every read and never stored
+
+Requirement 6 ("prevent stale artifacts from appearing current") is
+satisfied structurally: **there is no freshness column to go wrong.** A
+persisted `is_stale` boolean is precisely how a stale artifact comes to
+look current — nothing updates it when the schema changes, when the
+source turn is deleted, or when the clock simply moves. An exact-column-set
+test pins this, so adding a stored verdict under any name has to touch it
+and explain itself.
+
+`artifacts/staleness.py::assess_freshness` is a pure function taking a
+caller-supplied `as_of` — the same boundary
+`data_quality.models.FreshnessRule.as_of` and `briefing/` already draw,
+and the reason "this artifact is three days old" is testable at all.
+
+Five states, because they are genuinely different things to a reader:
+
+| State | Meaning |
+|---|---|
+| `current` | Inside the freshness window, nothing disagreeing |
+| `aging` | Dated but usable — past `ARTIFACT_AGING_AFTER_HOURS` |
+| `stale` | Past `ARTIFACT_STALE_AFTER_HOURS`, or the schema moved |
+| `source_missing` | The turn it references is gone |
+| `no_result_captured` | Answered, but its SQL was never confirmed and run |
+
+Two budgets rather than one because "this is from this morning" and "this
+may no longer be true" are different messages, and collapsing them would
+either cry wolf on everything or say nothing until far too late. A
+`model_validator` refuses a configuration where aging >= stale, which
+would make the aging state dead code.
+
+Reasons **accumulate** rather than short-circuiting — "why is this
+dated" usually has more than one answer, and the first one found is not
+necessarily the one a reader needs.
+
+Three deliberate judgments inside that function:
+
+- **A failed refresh is not the standing result.** Age is measured from
+  the last *successful* capture, so a failed verification cannot make an
+  artifact look freshly verified — precisely when verification did not
+  happen. The failure is still reported as its own reason.
+- **An unknown schema fingerprint draws no conclusion.** A database that
+  has never been indexed has nothing to compare; "unknown" must never
+  read as "changed".
+- **`result_changed_on_refresh` can appear on a `current` artifact.** It
+  describes the superseded *original* capture, not the result the
+  artifact now stands on. That is the one case, it is deliberate, and
+  dropping it would hide the single most useful thing a refresh can
+  discover.
+
+Change detection uses two independent comparisons because each catches
+what the other misses: the **fingerprint** covers the stored rows (capped,
+so a change beyond the cap is invisible to it), and the **row count** is
+the query's own uncapped total (so a result that grew or shrank is caught
+even when every stored row is identical). The one case neither sees — a
+change past the cap within an unchanged total — is disclosed rather than
+claimed as covered.
+
+### Navigating back to the source question costs no new mechanism
+
+`serverMessagesToQueryHistory` keys every turn restored from saved
+history on its `Prompt` row id, which is exactly the artifact's own
+`prompt_id`. So `resolveArtifactAnchor` matches either the live turn (by
+the server `message_id` inside its response) or the restored turn (by
+prompt id), and "Go to question" reuses the one existing
+`turn-${entryId}` scroll anchor `QuestionNavigator` already relies on.
+When the artifact belongs to a conversation that is not on screen, the
+control is disabled with a reason rather than silently scrolling nowhere.
+
+### One affordance, two backing stores
+
+The save control stays one button. With a local account **and** a
+persisted turn it writes a durable artifact; otherwise it falls back to
+the pre-existing session pin, and the panel says so. The fallback is not
+hypothetical: chat persistence is deliberately fail-open and only runs
+for a locally-authenticated caller, so a turn can legitimately have no
+`message_id` — offering a durable Save there would quietly 404.
+
+### Retention
+
+Soft delete only (`deleted_at`), matching `conversations.deleted_at`:
+an artifact is a record of work, and a hard `DELETE` would be the only
+irreversible operation in the feature. Deleting an artifact never touches
+the turn it was made from. `ARTIFACT_MAX_PER_USER` (default 200) caps live
+artifacts per user; a further save is **refused with a clear message
+rather than silently evicting the oldest**, because an artifact is
+something a person deliberately kept.
+
+Deleting the *conversation* cascades its artifacts away — there is
+nothing left to open. A vanished message row does not: the artifact stays
+as an honest record whose source is gone, reported as `source_missing`.
+Those three rules are asserted against the declared schema rather than by
+deleting rows, because SQLite does not enforce foreign keys unless
+`PRAGMA foreign_keys=ON`, so a behavioural test would pass vacuously and
+prove nothing about PostgreSQL.
+
+### A real bug the live data found
+
+The first version read the turn's persisted `schema_tables` and labelled
+it "Tables". Those are the **top-k candidates schema retrieval offered**,
+routinely a superset of what the query uses — a real saved artifact
+showed 7 consulted tables for a 3-table query. CLAUDE.md flags this exact
+trap for the SQL panel, and the codebase already had the correct answer:
+`agent.sql_validator.summarize_sql`, which derives the referenced tables
+from the same parse and the same CTE-aware filtering
+`find_unexpected_table_references` performs. The artifact now reuses it,
+parsed in its own database's dialect (passing `config.db_type`, never the
+config object — under sqlglot's generic dialect T-SQL does not parse at
+all). Unparseable SQL reports no tables, since showing the consulted set
+instead would reintroduce the mislabel.
+
+A second real bug, caught by a test rather than review:
+`tables.map(sanitizeLabel)` — `Array.map` passes the index as the second
+argument, which `sanitizeLabel` reads as its character cap, so every label
+was truncated to its own position in the list (`sales` rendered as
+`sale…`). Checked for elsewhere in the frontend; it was only here.
+
 ## API / schema changes
 
 Two additions, both additive and optional:
@@ -458,7 +686,32 @@ turn a successful answer into a 500 (pinned by a test).
   `agent.sql_validator.summarize_sql`, parsed in the dialect of the
   database the question was actually routed to.
 
-No database change, no migration, no new endpoint, no new permission.
+**The analysis artifact workspace is the one part of this series that
+needed persistence**, and it is the only database change here:
+
+- `identity/models.py`: new `AnalysisArtifact` (`analysis_artifacts`),
+  tenant- and owner-scoped, storing **no result rows** — see the section
+  above for why, and `identity/migrations/versions/p8t1u4v7w0x3_analysis_artifacts.py`
+  for the migration (verified both directions against the real PostgreSQL
+  identity database).
+- `api/artifacts.py`: 5 routes under `/artifacts` (save, list, open,
+  refresh, delete), every one behind `require_local_user` plus
+  `artifacts.policy.authorize_artifact_action`.
+- `config/settings.py`: `ARTIFACT_AGING_AFTER_HOURS` (6),
+  `ARTIFACT_STALE_AFTER_HOURS` (72), `ARTIFACT_MAX_PER_USER` (200).
+- `embeddings/schema_indexer.py`: `get_last_schema_fingerprint(db_name)`
+  — a read of the manifest that module already writes, so artifact
+  staleness can notice a schema change with no introspection on the read
+  path. It reports the last *discovered* schema, so a change nothing has
+  discovered yet is invisible; disclosed rather than papered over.
+- `frontend/vite.config.ts`: `/artifacts` added to `BACKEND_ROUTES` —
+  the same recurring dev-proxy gap every new backend prefix since Prompt
+  26 has needed, added up front here.
+
+**No new permission code**, in this or any other part of the series: the
+base-role `ask`/`execute_sql` vocabulary already drew the distinction the
+workspace needed. Every other feature in this series is frontend-only
+over already-returned fields.
 
 ## Reused rather than rebuilt
 
@@ -527,13 +780,18 @@ No new state library, no new chart engine, no new dependency.
 | `FollowUpSuggestions.test.tsx` | 14 |
 | `SqlIntelligencePanel.test.tsx` | 23 (rescoped) |
 | `ConversationContextPanel.test.tsx` | 9 |
-| `ArtifactWorkspace.test.tsx` | 12 |
+| `test_artifact_staleness.py` (backend, pure) | 26 |
+| `test_artifact_policy.py` (backend, pure) | 19 |
+| `test_api_artifacts.py` (backend, HTTP) | 46 |
+| `tests/security/test_artifacts_cannot_bypass_authorization.py` | 11 |
+| `ArtifactWorkspace.test.tsx` | 28 (rewritten, was 12) |
+| `ArtifactDetail.test.tsx` | 19 |
 | `EvidenceBadge.test.tsx` | 12 |
 | `ClaimEvidence.test.tsx` | 14 |
 | `lib/evidence.test.ts` | 13 |
 | `tests/test_api_ask.py` (backend) | 9 |
 | `tests/test_agent_nodes.py` (backend) | 2 new |
-| **New total** | **177** |
+| **New total** | **315** |
 
 The evidence work covers each scenario its brief names: verified claims,
 unsupported claims (the server-side drop, plus `status` being a required

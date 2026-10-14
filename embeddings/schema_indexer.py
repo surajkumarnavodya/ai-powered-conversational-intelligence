@@ -170,6 +170,33 @@ def get_last_discovery_diff(
     )
 
 
+def get_last_schema_fingerprint(db_name: str, settings: Settings | None = None) -> str | None:
+    """The schema fingerprint recorded the last time `build_index` ran for
+    `db_name`, or `None` when this database has never been indexed (or its
+    manifest is unreadable).
+
+    A read of the manifest this module already writes -- no introspection,
+    no database connection, no new file. Added for Prompt 07's analysis
+    artifacts, which compare a saved artifact's recorded fingerprint
+    against the current one to notice that the schema changed underneath
+    it; the artifact code path cannot afford a live `introspect_schema`
+    call on every read.
+
+    **This is the last *discovered* schema, not necessarily the live
+    one** -- a change nothing has discovered yet (no startup refresh, no
+    `POST /schema/refresh`, no `scripts/build_embeddings.py` run) is
+    invisible here, so artifact staleness inherits the schema index's own
+    discovery cadence. Disclosed rather than papered over: the alternative
+    is introspecting a customer database on every artifact list.
+    """
+    settings = settings or get_settings()
+    manifest = _read_manifest(settings, db_name)
+    if manifest is None:
+        return None
+    fingerprint = manifest.get("fingerprint")
+    return fingerprint if isinstance(fingerprint, str) else None
+
+
 def get_embedding_function(settings: Settings) -> embedding_functions.EmbeddingFunction:
     """Returns the embedding function configured by `EMBEDDING_MODEL_NAME`.
 

@@ -17,7 +17,7 @@ import { ChatMessage } from './ChatMessage'
 import { CopyAnswerButton } from './CopyAnswerButton'
 import { DownloadAnswerButton } from './DownloadAnswerButton'
 import { AgentExecutionTimeline } from './AgentExecutionTimeline'
-import { PinTurnButton } from './ArtifactWorkspace'
+import { SaveArtifactButton } from './ArtifactWorkspace'
 import { FollowUpSuggestions } from './FollowUpSuggestions'
 import { ReadAloudButton } from './ReadAloudButton'
 import { ResponseFeedbackWidget } from './ResponseFeedbackWidget'
@@ -127,7 +127,7 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
             <>
               <CopyAnswerButton answer={answerMarkdown} />
               <DownloadAnswerButton question={entry.question} answer={answerMarkdown} />
-              <PinTurnButton entryId={entry.entryId} question={entry.question} />
+              <SaveArtifactButton entry={entry} />
               <ResponseFeedbackWidget entryId={entry.entryId} />
               {showReadAloud && <ReadAloudButton text={buildSpokenAnswerText(entry)} />}
             </>

@@ -72,6 +72,10 @@ const BACKEND_ROUTES = [
   '/schema-drift',
   // AI Governance Center (api/governance.py, Prompt 44) -- same reason.
   '/governance',
+  // Analysis artifact workspace (api/artifacts.py) -- same
+  // reason. The chat page itself has no `/artifacts` route, so this
+  // prefix is the API's alone.
+  '/artifacts',
 ]
 
 export default defineConfig({

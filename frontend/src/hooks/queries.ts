@@ -1,4 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  deleteArtifact,
+  getArtifact,
+  listArtifacts,
+  refreshArtifact,
+  saveArtifact,
+} from '@/lib/artifactsApi'
 import { getNavigation } from '@/lib/navigationApi'
 import { useLocalAuthStore } from '@/store/localAuthStore'
 import {
@@ -664,4 +671,56 @@ export function useAssignRecommendationOwner() {
       assignRecommendationOwner(recordId, ownerUserId),
     onSuccess: invalidate,
   })
+}
+
+// --- Analysis artifact workspace (`api/artifacts.py`) --------------------
+// Keyed by the signed-in account, like `useNavigation` above, so a
+// different person on the same browser never sees another's saved
+// analyses from cache. Disabled entirely when nobody is signed in: the
+// routes require a local account, so querying would only produce a 403
+// per mount. ---
+
+export function useArtifacts(conversationId?: string) {
+  const userId = useLocalAuthStore((state) => state.user?.id ?? null)
+  return useQuery({
+    queryKey: ['artifacts', userId, conversationId ?? 'all'],
+    queryFn: () => listArtifacts(conversationId),
+    enabled: userId !== null,
+    retry: false,
+  })
+}
+
+/** One opened artifact. Fetched only when actually opened, because a list
+ * row deliberately carries no result rows. */
+export function useArtifact(artifactId: string | null) {
+  const userId = useLocalAuthStore((state) => state.user?.id ?? null)
+  return useQuery({
+    queryKey: ['artifact', userId, artifactId],
+    queryFn: () => getArtifact(artifactId as string),
+    enabled: userId !== null && artifactId !== null,
+    retry: false,
+  })
+}
+
+function useInvalidateArtifactQueries() {
+  const queryClient = useQueryClient()
+  return () => {
+    void queryClient.invalidateQueries({ queryKey: ['artifacts'] })
+    void queryClient.invalidateQueries({ queryKey: ['artifact'] })
+  }
+}
+
+export function useSaveArtifact() {
+  const invalidate = useInvalidateArtifactQueries()
+  return useMutation({ mutationFn: saveArtifact, onSuccess: invalidate })
+}
+
+export function useRefreshArtifact() {
+  const invalidate = useInvalidateArtifactQueries()
+  return useMutation({ mutationFn: refreshArtifact, onSuccess: invalidate })
+}
+
+export function useDeleteArtifact() {
+  const invalidate = useInvalidateArtifactQueries()
+  return useMutation({ mutationFn: deleteArtifact, onSuccess: invalidate })
 }

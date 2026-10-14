@@ -5834,6 +5834,178 @@ count is `len(extract_numbers(text))` taken *after* grounding passed, so
 it is exactly the count verified -- confirmed against the real functions
 (2, 1, 0 for three realistic insights).
 
+**Analysis artifact workspace (same pass).** The one part of this series
+that needed persistence. A session-only pinned worklist already existed
+(`pinnedEntryIds` on `chatStore`); it could not carry a source id, a
+timestamp, lineage, a result reference, tenant ownership, or anything to
+refresh, so a real `analysis_artifacts` table now sits behind the same
+control. New `artifacts/` (pure: `models.py`, `staleness.py`,
+`policy.py`), `identity/repositories/artifacts.py`, `api/artifacts.py`
+(5 routes), migration `p8t1u4v7w0x3`.
+
+**Invariants that must not regress:**
+- **An artifact stores no result rows.** It references the `Prompt` row
+  (source question id), the `AiOutput` row (answer/result id), and keeps
+  only `origin_row_count`/`origin_captured_at`/`origin_fingerprint` about
+  the snapshot `api.chat_persistence.persist_execute_result` already
+  wrote into `ai_outputs.metadata.result_snapshot`. The only rows it owns
+  are a refresh's, because those exist nowhere else.
+- **A refresh never writes back into the referenced turn.** Mutating that
+  turn's snapshot would make a saved conversation show numbers that were
+  never the answer to that question at that time -- the mirror image of
+  chat history's "opening a saved conversation never re-executes SQL".
+  Both results are reported, with both timestamps.
+- **Owner-scoped, not just tenant-scoped.** Unlike every other
+  tenant-scoped resource here, an artifact points at rows
+  `identity/repositories/history.py` scopes to one `user_id`; a
+  tenant-wide artifact would be a readable back door into a colleague's
+  private question. `artifacts/policy.py` matches tenant **and** owner,
+  and either mismatch is the same 404 a nonexistent artifact gets. An
+  admin of the same tenant gets that 404 too.
+- **A stored snapshot is re-governed on every read.**
+  `govern_rows_for_caller` runs against the **current** caller's roles
+  each time an artifact is opened, and the recorded SQL is withheld (a
+  fixed sentence, never the column name) when
+  `find_restricted_column_references` says it touches a restricted field.
+  Roles change: without this, an analyst who saved an analysis over a
+  restricted column and later lost `view_restricted_columns` would keep a
+  permanent unprivileged window onto it, one no part of the live pipeline
+  could close because nothing re-executes. Mutation-verified.
+- **Refresh is gated on `Permission.EXECUTE_SQL`**, the permission
+  `POST /execute` itself requires -- so a `viewer` who may ask but not
+  run cannot make a saved artifact run for them. **No new permission code
+  was invented**; the base-role vocabulary already drew the distinction.
+  Refresh reuses `POST /execute`'s own governed sequence verbatim and
+  accepts no SQL from the caller; the stored statement is re-validated
+  every time.
+- **Freshness is computed on every read and never stored.** There is no
+  column to go wrong, pinned by an exact-column-set test.
+  `artifacts.staleness.assess_freshness` is pure and takes a
+  caller-supplied `as_of`. Five states (`current`/`aging`/`stale`/
+  `source_missing`/`no_result_captured`) and accumulating reasons; a
+  failed refresh is never the standing result; an unknown schema
+  fingerprint draws no conclusion; `result_changed_on_refresh` may appear
+  on a `current` artifact because it describes the superseded original.
+- **Change detection needs both halves**: the fingerprint covers the
+  capped stored rows, the row count is the query's uncapped total. A
+  change past the cap within an unchanged total is disclosed, not claimed
+  as covered.
+- **Anything that stores or hashes a result goes through
+  `api.result_serialization.rows_to_json` first.** A SQL Server `decimal`
+  cell otherwise fails the JSONB write outright, and `default=str` would
+  hash it as a quoted string against the origin's bare number -- so every
+  refresh would have reported "the numbers moved". Found by a parallel
+  session extracting that module from `api/main.py`; this refresh path is
+  its second caller.
+- **Navigating back costs no new mechanism**: a restored turn's `entryId`
+  *is* its `Prompt` row id, so `resolveArtifactAnchor` reuses the
+  existing `turn-${entryId}` anchor.
+
+**Known limitations:** local accounts only (`require_local_user`) -- the
+same limitation chat history itself has; without one the control falls
+back to the pre-existing session pin and the panel says so. Soft delete
+only, capped by `ARTIFACT_MAX_PER_USER` (a further save is refused, never
+a silent eviction). Schema-change detection reads the schema index's own
+manifest, so a change nothing has discovered yet is invisible. The
+refreshed result renders as a table in the panel; the original capture
+does not (it already renders in the turn the artifact points at).
+
+### Follow-up recommendation chips ("Ask next")
+
+`RecommendationKind.NEXT_QUESTION` and the chip component
+(`chat/FollowUpSuggestions.tsx`) both already existed. **What did not was
+a producer**: the only two anywhere in this codebase were
+`analytics.forecasting.recommendations_for_forecast` and
+`analytics.scenario.recommendations_for_scenario`, and both are disclosed
+above as not wired into any live path, while `recommendation.engine`
+itself produced zero. The chips were real UI over a permanently empty
+list -- in the live `/ask` pipeline they never rendered at all.
+`recommendation/followups.py` is that missing producer.
+
+It produces **candidates, not `Recommendation`s**:
+`recommendation.engine._finalize_candidate` stays the single construction
+point, so the evidence floor, the confidence floor
+(`RECOMMENDATION_MIN_CONFIDENCE`) and the restricted-column authorization
+gate all apply to a chip exactly as to any other rule. The engine runs it
+last, so every real finding stays ahead of every chip.
+
+**Everything a chip is grounded in is a fact the request already
+computed** -- no new query, no vector lookup, no LLM call. Result shape
+and findings from `analytics.engine` (a `RANKING` finding's own
+`DATABASE_FACT` claim is reused verbatim as the evidence for "Top 5", a
+`GROWTH` finding's for a period comparison); the introspected DDL of the
+tables retrieval already selected; and `governing_metrics`/
+`governing_dimensions`, which are `CONFIRMED_BUSINESS_TRUTH` published
+catalog entries. `extract_governing_dimensions` (Prompt 37, until now
+with no live caller) finally has one. The question and the conversation
+are used **only to suppress** a repeat -- user input is never evidence.
+
+**Invariants that must not regress:**
+- **"Never suggest what the data cannot answer" is structural.** A chip
+  naming a column exists only because that column was found in real
+  introspected DDL; "Top N" only because a real ranking with more than N
+  entries was computed (three rows are already their own top 5). An
+  empty result, a zero row count, or a missing `AnalyticsResult` all
+  yield **nothing** rather than a guessed shape.
+- **Restricted fields are filtered twice, and the first filter ignores
+  role.** A column classified at or above
+  `DataClassification.CONFIDENTIAL` is never named, for any caller: a
+  chip *proactively steers* someone toward a field, a stronger act than
+  reporting a statistic they asked for, and withholding costs nothing
+  (they can still type the question). The engine's existing
+  `_authorized` check is the second gate. Note **which** classifier:
+  `config/sensitive_columns.yaml` ships empty by design, so a filter
+  reading only that file protects nothing on a real database (the gap
+  `docs/DATA_PRIVACY_GOVERNANCE_ENGINE.md` names) --
+  `governance.classification` is the layer that actually infers from the
+  column name, so it is the one consulted.
+- **Deduplication is by column, not only by text.** The governed and
+  schema breakdown rules can propose the *same column* under two names
+  ("By Sales Region" from the catalog, "By Region" from the column) --
+  two choices to read, one in substance. The governed rule runs first,
+  so the approved name wins. Dedup is on "every column already
+  claimed", not "any", so a breakdown sharing only a measure column is
+  still offered.
+- **Short label, complete question.** `action` carries the chip text
+  (`MAX_LABEL_CHARS` = 24), `claim.value` the full question a click
+  submits; the whole question is the button's accessible name, so a
+  screen-reader user is never asked to act on "By Region" without
+  knowing what it asks. A name too long to scan is **dropped, not
+  truncated** -- "By Regional Sales Terr…" tells the reader nothing.
+- **No SQL, anywhere.** A chip carries natural language; the frontend
+  builds no query. A click re-enters the ordinary `POST /ask` path, so
+  `agent.input_guard`, the governance request policy and the SQL
+  validator all apply as they would to a typed question. Asking is also
+  not running: "Confirm and Run" is still required, so a click can
+  never execute anything.
+- **A new `RecommendationCategory.EXPLORATION`**, not one of Prompt 17's
+  nine reused (a follow-up is not a finding about performance or revenue,
+  and reusing one would make a chip indistinguishable from a real
+  finding) and not `None` (which already means "pre-taxonomy").
+
+**Reuse rather than a second parser:** `db.schema_introspection
+.extract_ddl_column_types` is new, sharing `extract_ddl_column_names`'
+own line-skipping rules, and `agent.plan_validator._column_type_family`
+was refactored onto it -- one DDL type lookup in this codebase, not two.
+
+**Four real bugs its own tests and the type checker caught:** the cap was
+checked *after* appending, so `MAX_FOLLOW_UP_SUGGESTIONS=0` still leaked
+one chip; the same column was offered twice under two names; an
+exhaustive-equality test pinned the category enum to nine (working as
+designed); and `Record<RecommendationCategory, string>` in
+`lib/recommendationDisplay.ts` stopped compiling until the new category
+had a label.
+
+**Known limitations:** chips need the analytics engine on
+(`ENABLE_ANALYTICS_ENGINE`) -- result shape is a required grounding
+input. A dimension candidate is any non-key text-family column, since
+DDL carries no cardinality, so a high-cardinality text column can be
+offered. Questions are templated, not LLM-phrased -- deliberate (no new
+LLM call, and determinism), at the cost of some naturalness. A reloaded
+past turn shows no chips, since `recommendations` are not in the
+persisted message metadata (the same disclosed limitation the analytics
+panels carry).
+
 **Read [`docs/conversational-intelligence-ui.md`](docs/conversational-intelligence-ui.md)**
 for the feature-by-feature audit table, the API change, the
 accessibility/performance/security review and the full test counts.

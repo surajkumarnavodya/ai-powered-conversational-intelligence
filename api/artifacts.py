@@ -377,7 +377,7 @@ def _out(
     standing = standing_result(snapshot)
     return ArtifactOut(
         id=snapshot.id,
-        artifact_type=snapshot.artifact_type.value,  # type: ignore[arg-type]
+        artifact_type=snapshot.artifact_type.value,
         title=snapshot.title,
         created_at=snapshot.created_at,
         updated_at=snapshot.updated_at,
@@ -397,7 +397,7 @@ def _out(
         is_refreshable=snapshot.is_refreshable and database_available,
         refresh_blocked_reason=_refresh_block_reason(snapshot, database_available),
         last_refresh_at=snapshot.last_refresh_at,
-        last_refresh_outcome=snapshot.last_refresh_outcome.value,  # type: ignore[arg-type]
+        last_refresh_outcome=snapshot.last_refresh_outcome.value,
         last_refresh_error=snapshot.last_refresh_error,
     )
 

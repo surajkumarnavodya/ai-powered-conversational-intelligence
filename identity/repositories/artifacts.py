@@ -165,7 +165,7 @@ def soft_delete_artifact(session: Session, artifact: AnalysisArtifact) -> Analys
     deleting an already-deleted artifact keeps the original timestamp, so
     a retried request cannot rewrite when it happened."""
     if artifact.deleted_at is None:
-        artifact.deleted_at = datetime.now(UTC)  # type: ignore[assignment]
+        artifact.deleted_at = datetime.now(UTC)
         session.commit()
         session.refresh(artifact)
     return artifact
@@ -195,7 +195,7 @@ def record_refresh_result(
     its fingerprint, so a transient failure does not destroy the result
     the artifact was legitimately standing on.
     """
-    artifact.last_refresh_at = datetime.now(UTC)  # type: ignore[assignment]
+    artifact.last_refresh_at = datetime.now(UTC)
     artifact.last_refresh_outcome = (
         RefreshOutcome.SUCCESS.value if success else RefreshOutcome.FAILED.value
     )
