@@ -265,9 +265,19 @@ def _database_available(snapshot: ArtifactSnapshot, settings: Settings) -> bool:
     tenant* -- `Settings.databases_for_tenant`, the same per-tenant view
     `POST /execute` and `GET /schema/tables` resolve names through
     (Prompt 20). A tenant that loses access to a database must not keep
-    refreshing artifacts against it."""
+    refreshing artifacts against it.
+
+    An artifact that never recorded a database (every non-SQL source --
+    a document, policy, web or media answer) is `True`: the question
+    this answers is "has this artifact's database gone away", and for an
+    artifact that never had one the honest answer is "nothing has gone
+    away", not "unavailable". Returning `False` here put
+    `DATABASE_NOT_AVAILABLE` in the freshness reasons of every non-SQL
+    artifact, which reads as something having broken. Refusing a refresh
+    is handled separately and earlier by `_refresh_block_reason`, which
+    checks `source_sql`/`database_id` before it ever consults this."""
     if not snapshot.database_id:
-        return False
+        return True
     return any(
         db.name == snapshot.database_id for db in settings.databases_for_tenant(snapshot.tenant_id)
     )
@@ -430,6 +440,7 @@ def _detail_out(
     return ArtifactDetailOut(
         **base.model_dump(),
         question=prompt.final_content if prompt is not None else None,
+        answer=_answer_from_turn(ai_output),
         insight=snapshot.lineage.insight,
         insight_numbers_checked=snapshot.lineage.insight_numbers_checked,
         tables_referenced=list(snapshot.lineage.tables_referenced),
@@ -462,6 +473,42 @@ def _referenced_tables(sql: str | None, dialect: str | None) -> list[str]:
         return []
     summary = summarize_sql(sql, dialect=dialect)
     return list(summary[1]) if summary is not None else []
+
+
+def _answer_from_turn(ai_output: AiOutput | None) -> str | None:
+    """The answer this turn actually gave, whatever produced it.
+
+    Read from the turn's own persisted fields, never re-derived, so an
+    artifact can never disagree with the conversation it was saved from.
+
+    Two fields, in this order, because neither alone is right:
+
+    `synthesized_answer` first. It is the *whole* answer for a run that
+    used more than one source -- `agent.orchestrator.nodes.synthesis_node`
+    writes one labelled section per source into it -- and it is absent
+    for a single-source SQL run, where synthesis is a pass-through.
+
+    `AiOutput.content` otherwise. That is chat history's own canonical
+    pick (`api.chat_persistence._answer_text_for_history`), which covers
+    every source, so this adds no second answer-picking convention.
+
+    Taking `content` alone was wrong, and a real multi-source run showed
+    it: that function prefers the SQL `insight` over everything else, so
+    an artifact saved from an attachments+sql turn carried only the
+    database half ("Australia, 9,061,000") while the attachment half --
+    the part the question was actually about ("East, 143500") -- was
+    silently dropped. Taking `synthesized_answer` alone would be wrong
+    too: a plain SQL turn has none.
+
+    `insight` on its own stays what it is -- the SQL pipeline's narrative,
+    `None` for every other source -- and is reported separately.
+    """
+    if ai_output is None:
+        return None
+    synthesized = (ai_output.metadata_json or {}).get("synthesized_answer")
+    if isinstance(synthesized, str) and synthesized.strip():
+        return synthesized
+    return ai_output.content
 
 
 def _lineage_from_turn(

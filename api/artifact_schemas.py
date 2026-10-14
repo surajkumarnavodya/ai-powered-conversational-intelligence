@@ -139,6 +139,10 @@ class ArtifactDetailOut(ArtifactOut):
     model_config = ConfigDict(frozen=True)
 
     question: str | None = None
+    #: The answer this turn gave, whatever produced it -- the same text
+    #: chat history stores for the same turn. `insight` below is narrower:
+    #: the SQL pipeline's own narrative, and `None` for every other source.
+    answer: str | None = None
     insight: str | None = None
     insight_numbers_checked: int | None = None
     tables_referenced: list[str] = Field(default_factory=list)

@@ -212,6 +212,52 @@ def _make_turn(
         session.close()
 
 
+def _make_non_sql_turn(
+    user_id: uuid.UUID,
+    *,
+    tenant_id: str = "tenant-a",
+    question: str = "What does the leave policy say?",
+    sources_used: list[str] | None = None,
+    synthesized_answer: str | None = None,
+    answer_text: str = "Employees get 22 days of annual leave.",
+) -> tuple[str, str, str]:
+    """A turn produced by a source other than SQL.
+
+    The shape `api.chat_persistence` really writes for a documents/policy/
+    web/media/attachment answer: no `sql`, no `database`, no `insight`,
+    and no `result_snapshot` -- the answer lives in `AiOutput.content`
+    and, for a multi-source run, in `synthesized_answer`.
+    """
+    session = identity_db_mod.get_identity_session(_SETTINGS)
+    try:
+        conversation = create_conversation(
+            session, user_id=user_id, feature_type="text_to_sql", tenant_id=tenant_id
+        )
+        metadata: dict = {
+            "schema_version": 2,
+            "status": "succeeded",
+            "sources_used": sources_used or ["documents"],
+            "database": None,
+            "model": "llama3.1:8b",
+            "sql": None,
+            "insight": None,
+            "synthesized_answer": synthesized_answer,
+            "result_snapshot": None,
+        }
+        prompt, ai_output = append_turn(
+            session,
+            conversation=conversation,
+            user_id=user_id,
+            question=question,
+            answer_text=answer_text,
+            output_type="sql_query",
+            output_metadata=metadata,
+        )
+        return str(conversation.id), str(prompt.id), str(ai_output.id)
+    finally:
+        session.close()
+
+
 def _save(client: TestClient, headers: dict, conversation_id: str, message_id: str, **extra):
     payload = {"conversation_id": conversation_id, "message_id": message_id}
     payload.update(extra)
@@ -319,6 +365,76 @@ class TestCreate:
         conversation_a, _p, _m = _make_turn(user_id)
         _conversation_b, _p2, message_b = _make_turn(user_id, question="Something else?")
         assert _save(client, headers, conversation_a, message_b).status_code == 404
+
+
+class TestNonSqlSources:
+    """An artifact saved from a source other than SQL.
+
+    Five of this application's six answer sources (documents, policy,
+    web, media search, attachments) never produce SQL, a database or an
+    insight -- so everything an artifact reports about them has to come
+    from somewhere else. Found by saving real answers from a running
+    app, where each of these was wrong.
+    """
+
+    def test_a_document_answer_is_carried_into_the_artifact(self, client):
+        headers, user_id = _account(client, "a@example.com")
+        conversation_id, _p, message_id = _make_non_sql_turn(user_id)
+        body = _save(client, headers, conversation_id, message_id).json()
+        # `insight` is the SQL pipeline's own narrative and stays None --
+        # but the answer must still be there, or the artifact reopens empty.
+        assert body["answer"] == "Employees get 22 days of annual leave."
+        assert body["insight"] is None
+
+    def test_a_multi_source_answer_keeps_every_source_not_just_sql(self, client):
+        """The bug this pins: `AiOutput.content` prefers the SQL insight,
+        so an attachments+sql artifact carried only the database half and
+        silently dropped the half the question was actually about."""
+        headers, user_id = _account(client, "a@example.com")
+        blank = chr(10) + chr(10)
+        synthesized = (
+            "**Database**: 1 row(s) returned."
+            + blank
+            + "**Attached Files**: The region with the highest revenue is East, at 143500."
+        )
+        conversation_id, _p, message_id = _make_non_sql_turn(
+            user_id,
+            sources_used=["attachments", "sql"],
+            synthesized_answer=synthesized,
+            answer_text="The region with the highest revenue is Australia.",
+        )
+        body = _save(client, headers, conversation_id, message_id).json()
+        assert body["answer"] == synthesized
+        assert "East" in body["answer"]
+        assert "143500" in body["answer"]
+
+    def test_a_sql_only_answer_still_uses_the_turns_own_content(self, client):
+        """A single-source SQL run has no synthesized answer at all
+        (`synthesis_node` is a pass-through), so the fallback must hold."""
+        headers, user_id = _account(client, "a@example.com")
+        conversation_id, _p, message_id = _make_turn(user_id)
+        body = _save(client, headers, conversation_id, message_id).json()
+        assert body["answer"] == "Australia leads."
+
+    def test_no_database_recorded_is_not_reported_as_one_going_missing(self, client):
+        """A non-SQL artifact never had a database, so `database_not_available`
+        -- which reads as something having broken -- must not appear."""
+        headers, user_id = _account(client, "a@example.com")
+        conversation_id, _p, message_id = _make_non_sql_turn(user_id)
+        body = _save(client, headers, conversation_id, message_id).json()
+        reasons = body["freshness"]["reasons"]
+        assert "database_not_available" not in reasons
+        assert reasons == ["no_result_captured"]
+        assert body["freshness"]["state"] == "no_result_captured"
+
+    def test_it_still_cannot_be_refreshed_and_says_why(self, client):
+        headers, user_id = _account(client, "a@example.com")
+        conversation_id, _p, message_id = _make_non_sql_turn(user_id)
+        artifact_id = _save(client, headers, conversation_id, message_id).json()["id"]
+        detail = client.get(f"/artifacts/{artifact_id}", headers=headers).json()
+        assert detail["is_refreshable"] is False
+        assert detail["refresh_blocked_reason"]
+        assert client.post(f"/artifacts/{artifact_id}/refresh", headers=headers).status_code == 409
 
 
 class TestOpenAndNavigateBack:
