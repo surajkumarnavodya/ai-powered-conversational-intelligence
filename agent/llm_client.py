@@ -19,6 +19,7 @@ import ollama
 from pydantic import ValidationError
 
 from agent.analytical_plan import AnalyticalPlan, render_plan_as_steps
+from agent.context_budget import Section, SectionPriority, apply_budget
 from agent.exceptions import MalformedLLMOutputError, OffTopicQuestionError, OllamaUnavailableError
 from agent.harness.breakers import check_provider, record_outcome
 from agent.harness.context import get_current_envelope
@@ -27,7 +28,7 @@ from agent.harness.failures import FailureClass
 from agent.insight import ResultSummary
 from agent.intent import AnalyticalIntentClassification, AnalyticalIntentType, ExpectedResultShape
 from agent.state import ConversationExchange, GoldenExample
-from config.settings import Settings
+from config.settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +100,62 @@ def _harness_client(settings: Settings) -> ollama.Client:
         envelope.record_llm_call()
 
     return _get_ollama_client(settings.ollama_host, timeout)
+
+
+#: Characters held back from the user-prompt budget for the system
+#: prompt. `_system_prompt("mssql")` measures 8,064 characters, so this
+#: is that rounded up -- deliberately a constant rather than a live
+#: `len()` call, because the reserve must not shrink for a dialect whose
+#: system prompt happens to be shorter and then leave no headroom when
+#: the dialect changes.
+_SYSTEM_PROMPT_RESERVE_CHARS = 8_500
+
+
+def _context_budget_chars(settings: Settings | None) -> int:
+    """The character budget for one assembled user prompt.
+
+    `None` settings means "resolve them here", so the many existing
+    callers of `_build_user_prompt` that never passed settings keep
+    working unchanged. Returns 0 -- budgeting disabled -- if settings
+    cannot be resolved at all, because failing to read a tunable must
+    never be a reason a question cannot be answered.
+    """
+    if settings is None:
+        try:
+            settings = get_settings()
+        except Exception:  # noqa: BLE001 - an accuracy aid never fails a request
+            logger.debug("[context_budget] settings unavailable; budgeting disabled")
+            return 0
+    return settings.context_budget_max_chars
+
+
+def _decoding_options(settings: Settings, num_predict: int) -> dict[str, object]:
+    """The decoding parameters every Ollama call in this module uses.
+
+    One function rather than seven literal dicts, so decoding policy has
+    a single owner. Before this existed each call site repeated
+    `{"num_predict": ..., "temperature": 0.0}` and **nothing set
+    `num_ctx`** -- which meant every call ran against Ollama's small
+    default window regardless of the model's trained context length, and
+    long prompts were silently truncated from the start, dropping the
+    system prompt. See `docs/INFERENCE_ENGINEERING_BASELINE.md` §1 for
+    the measurement.
+
+    `num_predict` stays per-task: an insight is one or two sentences and
+    a SQL statement is not, so their output caps are genuinely
+    different. Everything else is uniform, because a per-task sampling
+    difference would be a per-task reproducibility difference.
+
+    `temperature=0.0` is unchanged from what every call site already
+    used -- this function preserves it rather than introducing it.
+    """
+    return {
+        "num_predict": num_predict,
+        "temperature": 0.0,
+        "num_ctx": settings.ollama_num_ctx,
+        "seed": settings.ollama_seed,
+        "top_p": settings.ollama_top_p,
+    }
 
 
 # DB_TYPE -> a human-readable name for the prompt, so the model writes SQL in
@@ -520,11 +577,31 @@ def _build_user_prompt(
     retrieved_context: list[dict] | None = None,
     governing_metrics: list[dict] | None = None,
     analytical_plan: dict | None = None,
+    settings: Settings | None = None,
 ) -> str:
-    """Builds the user-turn prompt, including error feedback on a retry."""
-    sections = [f"Schema:\n{schema_context}"]
+    """Builds the user-turn prompt, including error feedback on a retry.
+
+    Each block is labelled with a `SectionPriority` so
+    `agent.context_budget` can decide what to drop when the assembled
+    prompt would overflow the model's served context window. The order
+    blocks appear in is unchanged, and when nothing is dropped the
+    returned string is byte-identical to what this function produced
+    before budgeting existed -- the budget decides membership, never
+    wording or sequence.
+
+    Schema, governing metrics and the retry block are `CRITICAL` and are
+    never dropped: without a schema there is no valid SQL, a governing
+    metric is a mandatory governance block, and a retry without its
+    error feedback is just the same failing call again.
+    """
+    budget_chars = _context_budget_chars(settings)
+    parts: list[Section] = [
+        Section("schema", f"Schema:\n{schema_context}", SectionPriority.CRITICAL)
+    ]
     if followup_context is not None:
-        sections.append(_build_followup_block(followup_context))
+        parts.append(
+            Section("followup", _build_followup_block(followup_context), SectionPriority.FOLLOWUP)
+        )
     # A validated structured analytical_plan (Prompt 12,
     # 12_ANALYTICAL_PLANNING_CONTRACT.md) supersedes the generic free-text
     # query_plan block for *prompt* purposes -- state["query_plan"] is
@@ -534,25 +611,52 @@ def _build_user_prompt(
     # showing the model both blocks here would just be the same steps
     # twice under two different framings.
     if query_plan and not analytical_plan:
-        sections.append(_build_plan_block(query_plan))
+        parts.append(Section("query_plan", _build_plan_block(query_plan), SectionPriority.PLAN))
     if golden_examples:
-        sections.append(_build_golden_examples_block(golden_examples))
+        parts.append(
+            Section(
+                "golden_examples",
+                _build_golden_examples_block(golden_examples),
+                SectionPriority.GOLDEN_EXAMPLES,
+            )
+        )
     if retrieved_context:
-        sections.append(_build_business_context_block(retrieved_context))
+        parts.append(
+            Section(
+                "business_context",
+                _build_business_context_block(retrieved_context),
+                SectionPriority.BUSINESS_CONTEXT,
+            )
+        )
     if governing_metrics:
         # Placed last among context blocks, immediately before the
         # question itself -- see _build_mandatory_metrics_block's own
         # docstring for why this needs to be the most salient block, not
         # folded into the generic, advisory-only business-context one.
-        sections.append(_build_mandatory_metrics_block(governing_metrics))
+        # CRITICAL: a governing metric is mandatory, so dropping one to
+        # save space would let the model answer with its own definition
+        # of a metric the business has already defined.
+        parts.append(
+            Section(
+                "governing_metrics",
+                _build_mandatory_metrics_block(governing_metrics),
+                SectionPriority.CRITICAL,
+            )
+        )
     if analytical_plan:
         # The most salient plan-shaped block of all: a deterministically
         # re-verified structured plan, placed last among the plan-shaped
         # blocks (after the advisory ones above) for the same "most
         # salient, closest to the question" reasoning
         # _build_mandatory_metrics_block's own docstring gives.
-        sections.append(_build_analytical_plan_block(analytical_plan))
-    sections.append(f"Question: {question}")
+        parts.append(
+            Section(
+                "analytical_plan",
+                _build_analytical_plan_block(analytical_plan),
+                SectionPriority.PLAN,
+            )
+        )
+    parts.append(Section("question", f"Question: {question}", SectionPriority.CRITICAL))
     if previous_sql and error_feedback:
         retry_block = (
             "Your previous attempt failed. Fix it and return corrected SQL only.\n"
@@ -562,8 +666,12 @@ def _build_user_prompt(
         hint = _ERROR_CATEGORY_HINTS.get(error_category or "", "")
         if hint:
             retry_block += f"\n{hint}"
-        sections.append(retry_block)
-    return "\n\n".join(sections)
+        parts.append(Section("retry", retry_block, SectionPriority.CRITICAL))
+
+    result = apply_budget(parts, budget_chars, reserved_chars=_SYSTEM_PROMPT_RESERVE_CHARS)
+    if result.changed or result.over_budget:
+        logger.info("[context_budget] sql prompt: %s", result.summary())
+    return "\n\n".join(section.text for section in result.sections)
 
 
 _INSIGHT_SYSTEM_PROMPT = (
@@ -674,10 +782,7 @@ def generate_insight_from_llm(
                 {"role": "system", "content": _INSIGHT_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            options={
-                "num_predict": settings.insight_max_tokens,
-                "temperature": 0.0,
-            },
+            options=_decoding_options(settings, settings.insight_max_tokens),
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
         # Provider health signal -- advances the circuit breaker so a
@@ -859,10 +964,7 @@ def generate_sql_from_llm(
                 {"role": "system", "content": _system_prompt(settings.db_type)},
                 {"role": "user", "content": user_prompt},
             ],
-            options={
-                "num_predict": settings.llm_max_tokens,
-                "temperature": 0.0,
-            },
+            options=_decoding_options(settings, settings.llm_max_tokens),
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
         # Provider health signal -- advances the circuit breaker so a
@@ -1193,10 +1295,7 @@ def generate_query_plan_from_llm(
                 {"role": "system", "content": _PLAN_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            options={
-                "num_predict": settings.query_plan_max_tokens,
-                "temperature": 0.0,
-            },
+            options=_decoding_options(settings, settings.query_plan_max_tokens),
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
         # Provider health signal -- advances the circuit breaker so a
@@ -1320,10 +1419,7 @@ def review_sql_against_plan_from_llm(
                 {"role": "system", "content": _REVIEW_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            options={
-                "num_predict": settings.sql_review_max_tokens,
-                "temperature": 0.0,
-            },
+            options=_decoding_options(settings, settings.sql_review_max_tokens),
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
         # Provider health signal -- advances the circuit breaker so a
@@ -1436,10 +1532,7 @@ def review_sql_against_metrics_from_llm(
                 {"role": "system", "content": _METRIC_CONFORMANCE_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            options={
-                "num_predict": settings.sql_review_max_tokens,
-                "temperature": 0.0,
-            },
+            options=_decoding_options(settings, settings.sql_review_max_tokens),
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
         # Provider health signal -- advances the circuit breaker so a
@@ -1641,10 +1734,7 @@ def generate_analytical_intent_from_llm(
                 {"role": "system", "content": _INTENT_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            options={
-                "num_predict": settings.intent_classification_max_tokens,
-                "temperature": 0.0,
-            },
+            options=_decoding_options(settings, settings.intent_classification_max_tokens),
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
         # Provider health signal -- advances the circuit breaker so a
@@ -1867,10 +1957,7 @@ def generate_analytical_plan_from_llm(
                 {"role": "system", "content": _ANALYTICAL_PLAN_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            options={
-                "num_predict": settings.analytical_plan_max_tokens,
-                "temperature": 0.0,
-            },
+            options=_decoding_options(settings, settings.analytical_plan_max_tokens),
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
         # Provider health signal -- advances the circuit breaker so a

@@ -1734,6 +1734,66 @@ class Settings(BaseSettings):
     ollama_host: str = "http://localhost:11434"
     ollama_model: str = "llama3.1:8b"
     ollama_request_timeout_seconds: int = Field(default=300, gt=0)
+
+    # --- Decoding policy (agent/llm_client._decoding_options) ----------
+    # The served context window for every Ollama call. **Not the same as
+    # the model's trained context length**: llama3.1:8b reports
+    # llama.context_length=131072, but Ollama serves a far smaller window
+    # unless told otherwise, and it silently truncates anything longer --
+    # discarding the *start* of the conversation, which is the system
+    # prompt. Measured on this machine before this setting existed: a
+    # 21,500-token prompt came back with prompt_eval_count=2050, and the
+    # model ignored its system instruction entirely because truncation
+    # had removed it (see docs/INFERENCE_ENGINEERING_BASELINE.md §1).
+    #
+    # 16384 is sized from the measurement, not picked round: the usable
+    # window is half this (see below), so 16384 admits ~8,192 prompt
+    # tokens ~= 32,700 characters, which covers a realistic 4-table
+    # prompt (2,800-11,400 tokens) without evicting anything. The
+    # previous effective window was 2,048 tokens -- smaller than the
+    # system prompt alone.
+    #
+    # **This costs VRAM.** Measured here at num_ctx=8192 the model held
+    # ~2.2 GB; each doubling of context adds roughly another GB of KV
+    # cache per concurrent slot on an 8B model. Lower it if memory is
+    # tight -- and lower `context_budget_max_chars` with it, or the
+    # budget will let through prompts the window cannot hold.
+    #
+    # **The usable window is this divided by OLLAMA_NUM_PARALLEL**, which
+    # is a server-side Ollama setting this application cannot read.
+    # Measured here: num_ctx=8192 admitted 4,098 prompt tokens and
+    # num_ctx=16384 admitted 8,194 -- exactly half each time, with
+    # `/api/ps` confirming the model was loaded at the requested length.
+    # So budget against half of this value unless you have pinned
+    # OLLAMA_NUM_PARALLEL=1 on the server.
+    ollama_num_ctx: int = Field(default=16384, gt=0)
+    # Pins Ollama's sampler RNG so a repeated question produces a
+    # byte-identical prompt *and* a byte-identical completion. Every call
+    # site already uses temperature=0.0, which is greedy and nearly
+    # deterministic on its own; the seed closes the remaining tie-break
+    # nondeterminism, which is what makes a regression reproducible
+    # rather than "usually reproducible".
+    ollama_seed: int = Field(default=0)
+    # Nucleus sampling cutoff. At temperature 0.0 this is close to
+    # inert, but pinning it means a future per-task temperature change
+    # cannot silently also change the sampling distribution.
+    ollama_top_p: float = Field(default=1.0, gt=0.0, le=1.0)
+    # Character ceiling on the assembled SQL user prompt
+    # (agent/context_budget.py). 0 disables budgeting, which is the
+    # documented off switch and restores the exact pre-budget behaviour.
+    #
+    # Sized against the *usable* window, not `ollama_num_ctx`: with the
+    # parallel split documented above, num_ctx=16384 admits ~8,192
+    # tokens ~= 32,700 characters. The default reserves ~8,500 of that
+    # for the system prompt and gives the user prompt the rest, so a
+    # realistic 4-table prompt keeps every block and only a genuinely
+    # oversized schema loses its optional context.
+    #
+    # Keep this and `ollama_num_ctx` in step. Raising only this one lets
+    # through prompts the window cannot hold, which just moves
+    # truncation back to Ollama where it is silent; raising only
+    # `ollama_num_ctx` leaves usable context unused.
+    context_budget_max_chars: int = Field(default=32_000, ge=0)
     ollama_model_selection_enabled: bool = True
     # `NoDecode` tells pydantic-settings not to attempt its own default
     # JSON-array decoding of a compound-typed env var -- without it, an env

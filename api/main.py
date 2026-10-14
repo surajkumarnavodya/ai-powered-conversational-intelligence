@@ -53,6 +53,7 @@ from agent.harness import budgets_from_settings as harness_budgets_from_settings
 from agent.harness import create_envelope
 from agent.harness.breakers import breaker_states as harness_breaker_states
 from agent.harness.telemetry import get_harness_telemetry
+from agent.inference_fingerprint import fingerprint_summary as inference_fingerprint_summary
 from agent.llm_client import get_ollama_client
 from agent.model_registry import (
     InvalidModelSelectionError,
@@ -1988,6 +1989,7 @@ def schema_refresh(
 @app.get("/metrics/harness")
 def metrics_harness(
     identity: AuthIdentity = Depends(require_permission(Permission.ADMIN_CONFIG)),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     """Live agent-harness telemetry: reliability, latency, efficiency and
     harness-health counters, plus per-node, per-tool and per-provider
@@ -2013,6 +2015,12 @@ def metrics_harness(
     """
     snapshot = get_harness_telemetry().snapshot()
     snapshot["circuit_breakers"] = harness_breaker_states()
+    # Inference configuration fingerprint (agent/inference_fingerprint.py).
+    # Reported alongside the counters rather than on its own endpoint so
+    # that "what changed?" and "what is the current behaviour?" are read
+    # from one place -- a fingerprint in a separate response is one more
+    # thing to correlate by hand. Hashes and numeric tunables only.
+    snapshot["inference_fingerprint"] = inference_fingerprint_summary(settings)
     return snapshot
 
 
