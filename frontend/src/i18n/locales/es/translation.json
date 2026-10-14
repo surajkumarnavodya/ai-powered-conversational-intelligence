@@ -159,7 +159,19 @@
     "stage": "etapa",
     "stages": "etapas",
     "stageCalls": "{{count}} llamadas",
-    "executionTimelineHint": "Tiempo real por etapa del proceso, incluidos los reintentos. La inferencia del modelo local suele ser la mayor parte."
+    "executionTimelineHint": "Tiempo real por etapa del proceso, incluidos los reintentos. La inferencia del modelo local suele ser la mayor parte.",
+    "timelineCompleted": "El agente ha terminado",
+    "timelineStopped": "El agente se detuvo en {{stage}}",
+    "timelineFailed": "El agente no pudo terminar",
+    "timelineTotal": "{{duration}} en {{count}} {{stages}}",
+    "timelineRetry": "1 reintento",
+    "timelineRetries": "{{count}} reintentos",
+    "timelineSkipped": "No se muestran {{count}} etapa(s) que no aportaron nada a esta pregunta.",
+    "stageStatus": {
+      "ok": "completada",
+      "retried": "reintentada y completada",
+      "failed": "se detuvo aquí"
+    }
   },
   "results": {
     "title": "Resultados",
@@ -346,9 +358,15 @@
     "metadata": "Metadatos de la consulta",
     "statementType": "Tipo de instrucción",
     "referencedTables": "Tablas referenciadas",
-    "attempts": "Intentos",
     "rowCount": "Filas devueltas",
     "duration": "Tiempo de ejecución"
+  },
+  "context": {
+    "title": "Contexto incluido: {{count}} de {{max}} turnos",
+    "hint": "Tu próxima pregunta se resuelve con estos turnos anteriores. Solo se incluyen los turnos que tuvieron éxito, y solo los más recientes.",
+    "carriedLabel": "Turnos incluidos como contexto",
+    "tables": "Tablas en contexto",
+    "skipped": "{{count}} turno(s) anterior(es) no se incluyen."
   },
   "artifacts": {
     "title": "Análisis",

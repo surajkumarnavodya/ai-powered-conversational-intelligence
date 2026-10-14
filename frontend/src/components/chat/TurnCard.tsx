@@ -21,7 +21,6 @@ import { SaveArtifactButton } from './ArtifactWorkspace'
 import { FollowUpSuggestions } from './FollowUpSuggestions'
 import { ReadAloudButton } from './ReadAloudButton'
 import { ResponseFeedbackWidget } from './ResponseFeedbackWidget'
-import { RetryTimeline } from './RetryTimeline'
 import { SentAttachmentsPreview } from './SentAttachmentsPreview'
 import { SourceLineagePanel } from './SourceLineagePanel'
 import { SourcesUsedPanel } from './SourcesUsedPanel'
@@ -210,8 +209,13 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
           onAsk={(question) => void askQuestion(question)}
           disabled={pendingQuestion !== null}
         />
-        {state.attempt_history.length > 0 && <RetryTimeline attempts={state.attempt_history} />}
-        <AgentExecutionTimeline timings={state.stage_timings ?? []} />
+        {/* What the agent did, stage by stage. Replaces the former
+            `RetryTimeline`: it listed the same retries, but rendered each
+            attempt's raw server error text and raw outcome codes. */}
+        <AgentExecutionTimeline
+          timings={state.stage_timings ?? []}
+          agentStatus={entry.agentStatus}
+        />
         <SourcesUsedPanel state={state} entryId={entry.entryId} />
         {/* Cross-source provenance for this answer. Sits after the
             answer body and before the SQL-specific panel, because it

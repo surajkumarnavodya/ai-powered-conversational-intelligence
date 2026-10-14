@@ -89,19 +89,56 @@ class ConversationExchange(TypedDict):
     status: str  # "succeeded" | "failed" | "needs_clarification"
 
 
+StageOutcome = Literal["ok", "error", "no_op"]
+"""What one node call did, as a fact about that call alone.
+
+- ``"ok"``: returned normally having produced at least one non-null value.
+- ``"error"``: recorded a failure or refusal -- it set
+  ``last_error_category``, or flipped ``status`` to a terminal value.
+- ``"no_op"``: returned normally having produced nothing. This is what a
+  pass-through node looks like when its feature flag is off (e.g.
+  ``plan_query_node`` with ``ENABLE_QUERY_PLANNING=false`` returns only
+  ``status``), and also what an enabled node that genuinely found nothing
+  looks like (``retrieve_golden_examples_node`` with no match above the
+  similarity floor returns ``{"golden_examples": None, ...}``). The two
+  are deliberately not distinguished: neither contributed anything to this
+  question, which is the only distinction a reader of a timeline needs,
+  and telling them apart would require every node to report its own
+  skip reason -- exactly the per-node coupling `_timed_node` exists to
+  avoid.
+
+A node that *raises* produces no ``StageTiming`` at all, since
+`agent.nodes._timed_node` appends the record only after the node returns.
+So the presence of a record already means "this call completed"; this
+field says what it completed with.
+"""
+
+
 class StageTiming(TypedDict):
-    """One node call's wall-clock duration, for performance profiling.
+    """One node call's wall-clock duration and outcome.
 
     One entry per node *call* (not per attempt) -- a question that retries
     twice produces two `generate_sql`/`validate_sql`/`execute_sql` entries,
     which is the point: it lets a profiling script sum "total time spent in
     stage X" across the whole run, including retries, rather than only
     seeing the last attempt's cost.
+
+    `outcome`/`error_category` are read from the node's *own returned dict*,
+    never from the merged state -- `last_error_category` persists in state
+    across retries, so a merged read would attribute a previous attempt's
+    failure to whichever node happened to run next. See `StageOutcome`.
     """
 
     stage: str  # "retrieve_schema" | "generate_sql" | "validate_sql" | "execute_sql"
     attempt: int
     duration_ms: float
+    outcome: StageOutcome
+    # The node's own `last_error_category` when it set one, else the
+    # terminal `status` name it flipped to ("rejected", "rate_limited",
+    # ...). None whenever `outcome` is not "error". Always one of this
+    # application's own fixed category names -- never a driver message,
+    # never anything derived from the question or the data.
+    error_category: str | None
 
 
 class AttemptRecord(TypedDict):

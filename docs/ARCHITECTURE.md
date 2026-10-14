@@ -70,15 +70,26 @@ flowchart TD
 and `generate_recommendations` are the six nodes added since this
 document's diagram was first written — see their own paragraphs below,
 and CLAUDE.md's per-prompt sections (9-18) for the full design history
-each one came from. `estimate_cost` here is the graph's own node *key*
-(`agent/graph.py::build_graph`'s `add_node("estimate_cost", ...)`) — the
-same node's `_timed_node` *stage* name (used for `[timing]`/`[trace]`
-log lines and `AgentState["stage_timings"]`, see
-[`docs/OBSERVABILITY.md`](OBSERVABILITY.md)) is `estimate_query_cost`; a
-disclosed, harmless naming inconsistency between the two separate
-identifier spaces, not a bug — found and left alone (not renamed) during
-the Prompt 24 full-integration-and-regression pass, since renaming either
-one is a bigger, separate change than this pass's own scope.
+each one came from. `estimate_cost` here is both the graph's own node *key*
+(`agent/graph.py::build_graph`'s `add_node("estimate_cost", ...)`) and the
+same node's `_timed_node` *stage* name (used for `[timing]`/`[trace]` log
+lines and `AgentState["stage_timings"]`, see
+[`docs/OBSERVABILITY.md`](OBSERVABILITY.md)). Those two were once
+different — the stage name was `estimate_query_cost` — which the Prompt 24
+pass found and disclosed here as a harmless inconsistency between two
+separate identifier spaces, correctly so at the time. It stopped being
+harmless once `frontend/src/components/sql/QueryLifecycle.tsx` began
+deciding which lifecycle stage a run reached by matching
+`stage_timings[].stage` against the graph's *node keys*: the one name that
+differed meant its always-visible "Cost check" chip could never read as
+reached, on any run, however long cost estimation actually took. Renamed
+to the single canonical node key, and
+`tests/test_agent_nodes.py::TestStageTimingLabels` now pins every
+`_timed_node` label to a registered node name so the two identifier spaces
+cannot drift apart again. Historical stage-timing figures in
+[`docs/PERFORMANCE_BASELINE.md`](PERFORMANCE_BASELINE.md) and
+[`docs/DEEP_FEATURE_PERFORMANCE_ASSESSMENT.md`](DEEP_FEATURE_PERFORMANCE_ASSESSMENT.md)
+still carry the old label, which is accurate for the runs they measured.
 
 Three failure shapes go straight to `END (failed)`/`END (rejected)` and
 never loop back at all: a validator **safety violation** (non-SELECT,

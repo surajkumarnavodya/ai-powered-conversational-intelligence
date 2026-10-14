@@ -180,7 +180,19 @@
     "stage": "stage",
     "stages": "stages",
     "stageCalls": "{{count}} calls",
-    "executionTimelineHint": "Wall-clock time per pipeline stage, including retried attempts. Local model inference is usually the largest share."
+    "executionTimelineHint": "Wall-clock time per pipeline stage, including retried attempts. Local model inference is usually the largest share.",
+    "timelineCompleted": "Agent completed",
+    "timelineStopped": "Agent stopped at {{stage}}",
+    "timelineFailed": "Agent could not finish",
+    "timelineTotal": "{{duration}} in {{count}} {{stages}}",
+    "timelineRetry": "1 retry",
+    "timelineRetries": "{{count}} retries",
+    "timelineSkipped": "{{count}} stage(s) that did nothing for this question are not listed.",
+    "stageStatus": {
+      "ok": "completed",
+      "retried": "retried, then completed",
+      "failed": "stopped here"
+    }
   },
   "results": {
     "title": "Results",
@@ -564,7 +576,6 @@
     "metadata": "Query metadata",
     "statementType": "Statement type",
     "referencedTables": "Tables referenced",
-    "attempts": "Attempts",
     "rowCount": "Rows returned",
     "duration": "Execution time"
   },

@@ -160,7 +160,16 @@ class StageTimingOut(BaseModel):
     Already recorded by `agent.nodes._timed_node` for every node; this
     exposes it, and adds no instrumentation. `stage` is a fixed node name
     from this application's own graph -- never a free-text label, and
-    never anything derived from the question or the data.
+    never anything derived from the question or the data. The same is true
+    of `error_category`: one of this application's own fixed category
+    names, never a driver or model message (those are carried, already
+    reduced to `AgentError.safe_message`, by `failure_explanation`).
+
+    `outcome` is what that one call did -- see `agent.state.StageOutcome`.
+    It is the server's own judgment, recorded at the call, rather than
+    something a client re-derives from `attempt_history`: a client reading
+    the shared `last_error_category` would attribute a failure to whichever
+    node ran next.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -168,6 +177,8 @@ class StageTimingOut(BaseModel):
     stage: str
     attempt: int
     duration_ms: float
+    outcome: Literal["ok", "error", "no_op"] = "ok"
+    error_category: str | None = None
 
 
 class SchemaTableOut(BaseModel):

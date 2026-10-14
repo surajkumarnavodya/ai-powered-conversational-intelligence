@@ -14,12 +14,13 @@ import { cn } from '@/lib/utils'
  * blocked" is coherent, where "Validated: blocked" would have the
  * stage name contradicting its own status.
  *
- * **What this adds that nothing else showed.** The turn already had three
- * run-related surfaces and none of them answered "where did this stop":
- * `RetryTimeline` lists each attempt's outcome, `AgentExecutionTimeline`
- * lists each stage's duration, and `ExecutionStatusBar` flags whether the
- * *result* can be trusted. A reader wanting "it got as far as validation
- * and was refused there" had to infer it from an attempt outcome code.
+ * **What this adds that nothing else showed.** The other run-related
+ * surfaces answer different questions: `AgentExecutionTimeline` is the
+ * per-node record of the run (what ran, how long, how many times, which
+ * node owned the failure), and `ExecutionStatusBar` flags whether the
+ * *result* can be trusted. Neither is this rail's coarse, always-visible
+ * "how far through the safety gates, and where did it stop" reading, which
+ * a reader previously had to infer from an attempt outcome code.
  *
  * **Every stage is evidence-backed; none is assumed.** A stage is shown as
  * reached only because `AskResponse.stage_timings` contains a real call to

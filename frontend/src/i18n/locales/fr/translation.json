@@ -159,7 +159,19 @@
     "stage": "étape",
     "stages": "étapes",
     "stageCalls": "{{count}} appels",
-    "executionTimelineHint": "Temps réel par étape du pipeline, y compris les tentatives répétées. L'inférence du modèle local en représente généralement la plus grande part."
+    "executionTimelineHint": "Temps réel par étape du pipeline, y compris les tentatives répétées. L'inférence du modèle local en représente généralement la plus grande part.",
+    "timelineCompleted": "L'agent a terminé",
+    "timelineStopped": "L'agent s'est arrêté à {{stage}}",
+    "timelineFailed": "L'agent n'a pas pu terminer",
+    "timelineTotal": "{{duration}} en {{count}} {{stages}}",
+    "timelineRetry": "1 nouvelle tentative",
+    "timelineRetries": "{{count}} nouvelles tentatives",
+    "timelineSkipped": "{{count}} étape(s) sans effet sur cette question ne sont pas affichées.",
+    "stageStatus": {
+      "ok": "terminée",
+      "retried": "reprise puis terminée",
+      "failed": "arrêtée ici"
+    }
   },
   "results": {
     "title": "Résultats",
@@ -346,9 +358,15 @@
     "metadata": "Métadonnées de la requête",
     "statementType": "Type d'instruction",
     "referencedTables": "Tables référencées",
-    "attempts": "Tentatives",
     "rowCount": "Lignes renvoyées",
     "duration": "Temps d'exécution"
+  },
+  "context": {
+    "title": "Contexte conservé : {{count}} tours sur {{max}}",
+    "hint": "Votre prochaine question est résolue à partir de ces tours précédents. Seuls les tours réussis sont conservés, et uniquement les plus récents.",
+    "carriedLabel": "Tours conservés comme contexte",
+    "tables": "Tables dans le contexte",
+    "skipped": "{{count}} tour(s) précédent(s) ne sont pas conservés."
   },
   "artifacts": {
     "title": "Analyse",

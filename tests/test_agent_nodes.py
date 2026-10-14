@@ -16,6 +16,7 @@ not a test fixture) -- validate_sql_node's row-limit rendering
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, cast
 
@@ -25,6 +26,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from agent.exceptions import OllamaUnavailableError, SchemaRetrievalError
 from agent.nodes import (
     _query_fingerprint,
+    _stage_outcome,
+    _timed_node,
     build_analytical_plan_node,
     classify_analytical_intent_node,
     classify_followup_node,
@@ -2784,3 +2787,129 @@ class TestRoutingFunctions:
     )
     def test_route_after_execution(self, status, expected):
         assert route_after_execution({"status": status}) == expected
+
+
+class TestStageTimingLabels:
+    """`_timed_node`'s stage label must be the graph's own node key.
+
+    These are two separate identifier spaces -- `add_node("x", ...)` names
+    a node for routing, `@_timed_node("x")` names it in
+    `AgentState["stage_timings"]` -- and for most of this project's life
+    one node disagreed across them (`estimate_cost` vs
+    `estimate_query_cost`). `docs/ARCHITECTURE.md` disclosed that as a
+    harmless inconsistency, which it was, until the frontend's
+    `QueryLifecycle` rail began deciding which lifecycle stage a run
+    reached by matching recorded stage names against node keys: the one
+    name that differed meant its always-visible "Cost check" chip could
+    never read as reached on any run. Both the rail and
+    `AgentExecutionTimeline` now depend on the two spaces agreeing, so
+    this pins them together rather than leaving it to a docstring.
+    """
+
+    def test_every_timed_stage_label_is_a_real_graph_node_name(self):
+        from agent.graph import build_graph
+
+        node_names = set(build_graph().get_graph().nodes.keys()) - {"__start__", "__end__"}
+        source = Path(__file__).resolve().parents[1] / "agent" / "nodes.py"
+        labels = set(re.findall(r'@_timed_node\("([a-z_]+)"\)', source.read_text(encoding="utf-8")))
+        assert labels, "no @_timed_node labels found -- the pattern above has gone stale"
+        assert labels == node_names
+
+
+class TestStageOutcome:
+    """`_stage_outcome` classifies one node call from that node's own
+    returned dict.
+
+    Deliberately not from the merged `{**state, **result}` view: the
+    `last_error_category` key persists in state across a retry, so a
+    merged read would attribute a failure to whichever node happened to
+    run next -- `generate_sql`'s second attempt would inherit
+    `validate_sql`'s first-attempt violation.
+    """
+
+    def test_a_node_that_produced_a_value_is_ok(self):
+        assert _stage_outcome({"sql": "SELECT 1", "status": "reviewing"}) == ("ok", None)
+
+    def test_a_disabled_pass_through_node_is_a_no_op(self):
+        # `plan_query_node` with ENABLE_QUERY_PLANNING=false returns only
+        # a status.
+        assert _stage_outcome({"status": "generating"}) == ("no_op", None)
+
+    def test_a_node_that_produced_only_nulls_is_a_no_op(self):
+        # `review_sql_node` skipping, and `retrieve_golden_examples_node`
+        # finding nothing above the similarity floor, both look like this.
+        assert _stage_outcome(
+            {"plan_review_passed": None, "plan_review_feedback": None, "status": "validating"}
+        ) == ("no_op", None)
+
+    def test_a_retryable_failure_reports_its_category(self):
+        assert _stage_outcome({"last_error_category": "syntax", "status": "generating"}) == (
+            "error",
+            "syntax",
+        )
+
+    def test_a_terminal_failure_reports_its_category_in_preference_to_the_status(self):
+        assert _stage_outcome({"last_error_category": "safety_violation", "status": "failed"}) == (
+            "error",
+            "safety_violation",
+        )
+
+    def test_a_terminal_status_with_no_category_reports_the_status_name(self):
+        # An input-guard rejection and a rate-limit refusal are real
+        # stopping points that set no error category of their own.
+        assert _stage_outcome({"status": "rejected"}) == ("error", "rejected")
+        assert _stage_outcome({"status": "rate_limited"}) == ("error", "rate_limited")
+
+    def test_success_is_never_mistaken_for_a_terminal_failure(self):
+        # "succeeded" is terminal, but it is not a failure.
+        assert _stage_outcome({"insight": "Revenue rose.", "status": "succeeded"}) == ("ok", None)
+
+    def test_an_explicitly_cleared_category_is_not_a_failure(self):
+        assert _stage_outcome(
+            {"last_error_category": None, "sql": "SELECT 1", "status": "reviewing"}
+        ) == ("ok", None)
+
+    def test_a_falsy_category_string_is_not_a_failure(self):
+        # No real node returns this, but the guard matters: an empty
+        # category must never be read as a failure. Whether the call then
+        # reads "ok" or "no_op" is incidental -- it returned a key, so
+        # "ok" is the honest reading -- and is deliberately not asserted.
+        outcome, category = _stage_outcome({"last_error_category": "", "status": "generating"})
+        assert outcome != "error"
+        assert category is None
+
+
+class TestTimedNodeRecordsOutcome:
+    """The decorator records the outcome alongside the duration."""
+
+    def test_a_successful_call_records_ok(self):
+        @_timed_node("generate_sql")
+        def node(state):
+            return {"sql": "SELECT 1", "status": "reviewing"}
+
+        timing = node(cast(Any, {"retry_count": 0}))["stage_timings"][0]
+        assert timing["stage"] == "generate_sql"
+        assert timing["attempt"] == 1
+        assert timing["outcome"] == "ok"
+        assert timing["error_category"] is None
+
+    def test_a_failing_call_records_the_category_and_the_attempt_number(self):
+        @_timed_node("validate_sql")
+        def node(state):
+            return {"last_error_category": "safety_violation", "status": "failed"}
+
+        timing = node(cast(Any, {"retry_count": 1}))["stage_timings"][0]
+        assert timing["attempt"] == 2
+        assert timing["outcome"] == "error"
+        assert timing["error_category"] == "safety_violation"
+
+    def test_a_raising_node_records_no_timing_at_all(self):
+        # The record is appended only after the node returns, so the mere
+        # presence of one already means "this call completed" -- which is
+        # what lets the UI read a missing stage as "never ran".
+        @_timed_node("execute_sql")
+        def node(state):
+            raise SQLAlchemyError("boom")
+
+        with pytest.raises(SQLAlchemyError):
+            node(cast(Any, {"retry_count": 0}))

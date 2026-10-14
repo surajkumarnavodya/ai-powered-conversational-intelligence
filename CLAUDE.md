@@ -5569,7 +5569,9 @@ optional, defaulting to `[]`), feeding
 being discarded.
 
 **New components:** `chat/AgentExecutionTimeline.tsx` (per-stage
-durations, aggregated across retried calls, in pipeline order),
+durations, aggregated across retried calls, in pipeline order -- later
+given per-stage status and made the single stage-level surface, see
+"Agent execution timeline" below),
 `sql/ExecutionStatusBar.tsx` (one scannable badge row for validation /
 retries / cost / rows / truncation / duration / cache / governance),
 `sql/SqlIntelligencePanel.tsx` (one expander replacing four siblings),
@@ -5703,9 +5705,10 @@ used instead). That edit has since been completed and the full
 compact row saying how far a question got and where it stopped:
 `✓ Understanding  ✓ Schema  ✓ SQL  ✓ Validation  ✓ Cost check  ● Ready to
 run  ○ Execution`. Three run-related surfaces already existed and none
-answered that question -- `RetryTimeline` answers "what happened on each
-attempt", `AgentExecutionTimeline` "which stage was slow",
-`ExecutionStatusBar` "can the result be trusted".
+answered that question -- `RetryTimeline` answered "what happened on each
+attempt" (since replaced, see "Agent execution timeline" below),
+`AgentExecutionTimeline` "which stage was slow", `ExecutionStatusBar`
+"can the result be trusted".
 
 **Invariants that must not regress:**
 - **A stage reads as reached only because `stage_timings` holds a real
@@ -6009,6 +6012,81 @@ panels carry).
 **Read [`docs/conversational-intelligence-ui.md`](docs/conversational-intelligence-ui.md)**
 for the feature-by-feature audit table, the API change, the
 accessibility/performance/security review and the full test counts.
+
+### Agent execution timeline (stage-level status)
+
+`chat/AgentExecutionTimeline.tsx` is the one stage-level record of a run:
+collapsed it reads `Agent completed • 2.75s in 7 stages • 1 retry`;
+expanded it lists each stage that did something, with `✓` / `↻` / `✗`, its
+duration, its call count, and -- for the stage that stopped the run -- a
+user-safe sentence. It began as a duration-only bar chart with mechanical
+labels ("Generate sql"); this pass gave it status, retries, failure
+reasons and readable operational labels.
+
+**Per-stage status is recorded by the server, not re-derived by the
+client.** `agent.state.StageTiming` gained `outcome`
+(`ok`/`error`/`no_op`) and `error_category`, set by
+`agent.nodes._stage_outcome` from **the dict that node itself returned**.
+Reading the merged state instead would blame the wrong node:
+`last_error_category` persists across a retry, so `generate_sql`'s second
+attempt would inherit `validate_sql`'s first-attempt violation. No new
+instrumentation -- `_timed_node` already computed both values for its
+`[trace]` line and discarded them. A node that *raises* appends no timing
+at all, so a record's presence already means "this call completed".
+
+**Invariants that must not regress:**
+- **Only stages that were applicable are listed.** A stage whose every
+  call is `no_op` contributed nothing -- an optional feature switched off
+  (`plan_query` with `ENABLE_QUERY_PLANNING=false` returns only `status`),
+  or an enabled one that genuinely found nothing
+  (`retrieve_golden_examples` with no match above the similarity floor).
+  On a plain lookup question 10 of 17 node calls are `no_op`, so listing
+  them would bury the seven that did the work. Their duration still counts
+  toward the total, and the number omitted is stated under the list rather
+  than left to be noticed.
+- **No internals, ever.** `stage_timings` carries only fixed node names,
+  durations, an outcome enum and an error *category*; the panel renders a
+  fixed sentence chosen by category, never the category name and never the
+  server's own error text. Reusing `lifecycle.reason.*` keeps one set of
+  failure wording in the app. The category vocabulary is deliberately
+  *not* `AttemptRecord.outcome` (`syntax` here is `syntax_error` there),
+  so the two maps stay separate rather than silently mismatching.
+- **There is no active/streaming state, because there is no stream.**
+  `POST /ask` is one request; there is no SSE or WebSocket route in `api/`,
+  so no "currently on stage N" signal exists mid-flight. The panel renders
+  final state, the in-flight phase keeps `PendingTurn`'s live counter, and
+  nothing polls -- the one response carries the whole timeline. Inventing
+  a plausible in-progress rail would be guessing.
+- **One renderer per fact.** This panel owns retries and per-stage
+  duration. `RetryTimeline` was **deleted**: it listed the same retries but
+  rendered each attempt's raw `str(exc)` and raw outcome codes.
+  `SqlIntelligencePanel`'s bare attempt count was removed too (its test now
+  asserts the absence, so the duplication cannot creep back).
+  `QueryLifecycle` keeps its coarse, always-visible safety-gate rail and
+  its reason sentence -- a different question at a different granularity.
+
+**A real bug this found and fixed.** The graph registers
+`add_node("estimate_cost", ...)` but the node was decorated
+`@_timed_node("estimate_query_cost")` -- the only one of eighteen where the
+two identifier spaces disagreed. `docs/ARCHITECTURE.md` had disclosed that
+as harmless, correctly so when written; it stopped being harmless once
+`QueryLifecycle` began deciding which stage a run reached by matching
+`stage_timings[].stage` against node keys, which silently meant its
+always-visible "Cost check" chip **could never read as reached on any
+run**, however long cost estimation actually took. Its own tests passed
+because their fixtures used the node name, not the label the server
+actually records -- the test encoded the same assumption as the code.
+Renamed to the single canonical node key, and
+`tests/test_agent_nodes.py::TestStageTimingLabels` now pins every
+`_timed_node` label to a real graph node name, comparing the two spaces
+against each other rather than against a hand-written list.
+
+**Known limitations:** the 18 stage labels are English-only, as the
+mechanical labels they replaced were (the panel's own chrome is
+translated), with a derived fallback so a newly added node still gets a
+readable label rather than a raw identifier; and a turn reconstructed from
+saved chat history shows no timeline, since `stage_timings` is not
+persisted -- the same disclosed gap the lifecycle rail already has.
 
 ## How to run
 

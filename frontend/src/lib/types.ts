@@ -26,12 +26,6 @@ export interface ConversationExchange {
   status: AgentStatus
 }
 
-/** Mirrors `api.schemas.StageTimingOut` -- one graph node call's duration.
- *
- * One entry per node *call*, not per attempt, so a retried question has
- * several entries for the same `stage`. `stage` is a fixed node name from
- * the server's own graph, never free text.
- */
 /** Mirrors `api.schemas.SqlSummaryOut` -- what the generated SQL is.
  *
  * `referenced_tables` are the tables the query actually uses, which are
@@ -43,10 +37,27 @@ export interface SqlSummary {
   referenced_tables: string[]
 }
 
+/** Mirrors `api.schemas.StageTimingOut` -- one graph node call's duration
+ * and outcome.
+ *
+ * One entry per node *call*, not per attempt, so a retried question has
+ * several entries for the same `stage`. `stage` is a fixed node name from
+ * the server's own graph, never free text, and `error_category` is one of
+ * the server's own fixed category names -- never a driver or model
+ * message.
+ *
+ * `outcome`/`error_category` are optional because they were added after
+ * this field shipped: a response replayed from an older cache carries
+ * neither, and `AgentExecutionTimeline` reads a missing `outcome` as
+ * `"ok"` so an older payload still renders as a plain timing list rather
+ * than as a run full of failures.
+ */
 export interface StageTiming {
   stage: string
   attempt: number
   duration_ms: number
+  outcome?: 'ok' | 'error' | 'no_op'
+  error_category?: string | null
 }
 
 export interface AttemptRecord {

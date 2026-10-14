@@ -116,21 +116,18 @@ describe('buildSqlMetadata', () => {
     expect(buildSqlMetadata(e, true, tKey).some((row) => row.key === 'database')).toBe(true)
   })
 
-  it('reports attempts only when the query was retried', () => {
-    const once = entry({
-      attempt_history: [{ attempt: 1, sql: SQL, outcome: 'succeeded', error: null, will_retry: false }],
-    })
-    expect(buildSqlMetadata(once, false, tKey).some((row) => row.key === 'attempts')).toBe(false)
-
+  it('never reports the attempt count -- the timeline owns it', () => {
+    // `AgentExecutionTimeline` states the retry count in its own
+    // collapsed summary, visible without opening a panel and next to
+    // which stage was actually retried. Asserting its absence here is
+    // what keeps the duplication from creeping back.
     const twice = entry({
       attempt_history: [
         { attempt: 1, sql: 'SELECT x', outcome: 'invalid_column', error: 'b', will_retry: true },
         { attempt: 2, sql: SQL, outcome: 'succeeded', error: null, will_retry: false },
       ],
     })
-    expect(buildSqlMetadata(twice, false, tKey).find((row) => row.key === 'attempts')?.value).toBe(
-      '2',
-    )
+    expect(buildSqlMetadata(twice, false, tKey).some((row) => row.key === 'attempts')).toBe(false)
   })
 
   it('reports the row count and duration after execution', () => {

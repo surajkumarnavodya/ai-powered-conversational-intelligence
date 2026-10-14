@@ -86,6 +86,7 @@ from agent.state import (
     AttemptRecord,
     ConversationExchange,
     GoldenExample,
+    StageOutcome,
     StageTiming,
     TableSchema,
 )
@@ -140,6 +141,42 @@ def _query_fingerprint(sql: str | None) -> str | None:
     if not sql:
         return None
     return hashlib.sha256(sql.encode()).hexdigest()[:16]
+
+
+# A `status` value that means this run is over -- `agent.state.AgentStatus`
+# members that no further node will advance past. Used only to classify one
+# node call's own outcome; routing itself is `agent/graph.py`'s job.
+_TERMINAL_STATUSES = frozenset({"failed", "rejected", "rate_limited", "needs_clarification"})
+
+
+def _stage_outcome(result: dict[str, Any]) -> tuple[StageOutcome, str | None]:
+    """Classifies one node call from the dict that node itself returned.
+
+    Deliberately reads `result`, never the merged `{**state, **result}`
+    view the `[trace]` line below uses. `last_error_category` persists in
+    state across a retry, so a merged read would mark whichever node ran
+    *after* a failure as having failed itself -- `generate_sql`'s second
+    attempt would inherit `validate_sql`'s first-attempt violation. A node
+    that did not touch those keys did not fail, and that is exactly what
+    reading its own return dict says.
+
+    Returns `("no_op", None)` when every key the node returned other than
+    `status` is None: a pass-through node with its feature flag off, or an
+    enabled one that genuinely found nothing. See `agent.state.StageOutcome`
+    for why those two are not distinguished.
+    """
+    status = result.get("status")
+    category = result.get("last_error_category")
+    has_category = isinstance(category, str) and bool(category)
+    if isinstance(status, str) and status in _TERMINAL_STATUSES:
+        # A terminal status with no category of its own (an input-guard
+        # rejection, a rate-limit refusal) is still a real stopping point,
+        # so the status name itself is the most specific thing to report.
+        return "error", (category if has_category else status)
+    if has_category:
+        return "error", category
+    produced = any(key != "status" and value is not None for key, value in result.items())
+    return ("ok" if produced else "no_op"), None
 
 
 def _timed_node(stage: str) -> Callable[[Callable[[AgentState], dict[str, Any]]], Callable]:
@@ -219,10 +256,13 @@ def _timed_node(stage: str) -> Callable[[Callable[[AgentState], dict[str, Any]]]
                     duration_ms,
                     rendered,
                 )
+            outcome, outcome_category = _stage_outcome(result)
             timing: StageTiming = {
                 "stage": stage,
                 "attempt": attempt_number,
                 "duration_ms": round(duration_ms, 2),
+                "outcome": outcome,
+                "error_category": outcome_category,
             }
             result = dict(result)
             result["stage_timings"] = [timing]
@@ -1766,7 +1806,7 @@ def validate_sql_node(state: AgentState) -> dict[str, Any]:
     }
 
 
-@_timed_node("estimate_query_cost")
+@_timed_node("estimate_cost")
 def estimate_query_cost_node(state: AgentState) -> dict[str, Any]:
     """Runs a non-executing EXPLAIN/SHOWPLAN estimate before the validated SQL executes.
 

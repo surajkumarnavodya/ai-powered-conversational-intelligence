@@ -746,20 +746,42 @@ def _stage_timings_out(state: Mapping[str, Any]) -> list[StageTimingOut]:
     node would otherwise raise here on an otherwise-successful answer --
     the same tolerance `observability.metrics.record_run` already applies
     to the same list.
+
+    `outcome` is narrowed to the three values `StageTimingOut` accepts and
+    falls back to `"ok"` for anything else, for the same reason: this
+    field is read back out of a reducer channel, and a `Literal` that
+    raised on an unrecognized value would turn a future node's typo into a
+    failed answer. An unclassifiable call reads as unremarkable rather than
+    as a failure, so the fallback never invents a problem that was not
+    recorded.
     """
     timings: list[StageTimingOut] = []
     for record in state.get("stage_timings", []) or []:
         stage = record.get("stage") if isinstance(record, Mapping) else None
         if not stage:
             continue
+        outcome = record.get("outcome")
+        category = record.get("error_category")
         timings.append(
             StageTimingOut(
                 stage=str(stage),
                 attempt=int(record.get("attempt", 1) or 1),
                 duration_ms=float(record.get("duration_ms", 0.0) or 0.0),
+                outcome=outcome if outcome in ("ok", "error", "no_op") else "ok",
+                error_category=str(category) if category else None,
             )
         )
     return timings
+
+
+#: Re-exported under this module's own long-standing private names so every
+#: existing call site (and `tests/test_api_execute.py`, which calls
+#: `api_main._rows_to_json` directly) keeps resolving unchanged. The one
+#: implementation now lives in `api/result_serialization.py`, because
+#: `api/artifacts.py` needs it too and cannot import from this module
+#: (which imports that router -- a cycle).
+_json_safe_cell = json_safe_cell
+_rows_to_json = rows_to_json
 
 
 def _redact_text(text: str | None, settings: Any) -> str | None:

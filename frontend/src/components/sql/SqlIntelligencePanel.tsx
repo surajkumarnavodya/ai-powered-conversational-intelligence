@@ -14,7 +14,11 @@ import type { QueryHistoryEntry } from '@/lib/history'
  * Collapsed it reads as a status line -- `SQL • Validated • 42 rows` --
  * so a long conversation stays scannable. Expanded it holds the SQL
  * itself, the Confirm and Run control, and the metadata that describes
- * it: statement type, referenced tables, database, retries, duration.
+ * it: statement type, referenced tables, database, duration.
+ *
+ * The attempt count deliberately is not here: `AgentExecutionTimeline`
+ * states it in its own collapsed summary, where it is visible without
+ * opening a panel, alongside which stage was actually retried.
  *
  * **It composes; it does not re-derive.** The SQL viewer is the existing
  * `SqlEditor` (CodeMirror with `@codemirror/lang-sql`, so syntax
@@ -100,13 +104,6 @@ export function buildSqlMetadata(
   }
   if (state.model) {
     rows.push({ key: 'model', label: t('details.model'), value: state.model })
-  }
-  if (state.attempt_history.length > 1) {
-    rows.push({
-      key: 'attempts',
-      label: t('sqlIntelligence.attempts'),
-      value: String(state.attempt_history.length),
-    })
   }
   if (entry.confirmedRows) {
     rows.push({
