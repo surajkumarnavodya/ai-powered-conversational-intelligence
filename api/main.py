@@ -1690,6 +1690,7 @@ def execute(
     # Result-level governance (governance/result_policy.py), applied per caller
     # AFTER the result cache: the cache holds raw rows, so a cache hit is masked
     # for this caller's own roles exactly as a fresh execution would be.
+    rows_before_governance = len(rows)
     if settings.enable_result_governance:
         # Domain detection is strongest here: unlike the request gate, the
         # real referenced table names are known, and a table name is much
@@ -1706,11 +1707,18 @@ def execute(
             settings.governance_min_group_size,
         )
         rows = governed.rows
-        if governed.changed:
+        # See agent/nodes.py's identical condition: an `audit_required`
+        # domain logs a clean allow too, so the trail has no holes.
+        if governed.changed or governed.audit_required:
             log_security_event(
-                "governance_result_protected",
+                "governance_result_protected" if governed.changed else "governance_result_allowed",
                 "info",
-                "Result-level governance protected values returned by Confirm and Run.",
+                (
+                    "Result-level governance protected values returned by Confirm and Run."
+                    if governed.changed
+                    else "Result-level governance allowed a Confirm and Run result unchanged "
+                    "in an audited domain."
+                ),
                 domain=governance_domain.value,
                 actions=",".join(
                     governance_normalize_action(action) for action in governed.actions
@@ -1781,8 +1789,11 @@ def execute(
         visualization_spec=visualization_spec_out,
         # Best-effort signal, not a real "is there more data" answer -- see
         # ExecuteResponse.truncated's own docstring for why this app never
-        # runs a separate COUNT(*) query to know the true total.
-        truncated=len(rows) >= settings.max_result_rows,
+        # runs a separate COUNT(*) query to know the true total. The second
+        # clause covers the per-domain export ceiling, which can remove rows
+        # well below the global cap: without it a result capped from 600 to
+        # HR's 100 would report `truncated=False` and read as complete.
+        truncated=(len(rows) >= settings.max_result_rows or len(rows) < rows_before_governance),
         cache_status=cache_status,
     )
 

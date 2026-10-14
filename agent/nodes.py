@@ -2188,12 +2188,20 @@ def execute_sql_node(state: AgentState) -> dict[str, Any]:
             settings.governance_min_group_size,
         )
         rows = governed.rows
-        if governed.changed:
+        # An `audit_required` domain (HR, healthcare, BFSI, legal, ...)
+        # logs every decision including a clean allow -- the audit trail
+        # for "who ran what against this data" must not have holes where
+        # nothing happened to need protecting.
+        if governed.changed or governed.audit_required:
             log_security_event(
-                "governance_result_protected",
+                "governance_result_protected" if governed.changed else "governance_result_allowed",
                 "info",
-                "Result-level governance protected values before the insight step, the "
-                "recommendation engine or the response saw them.",
+                (
+                    "Result-level governance protected values before the insight step, the "
+                    "recommendation engine or the response saw them."
+                    if governed.changed
+                    else "Result-level governance allowed a result unchanged in an audited domain."
+                ),
                 domain=_governance_domain(state).value,
                 actions=",".join(normalize_action(action) for action in governed.actions),
             )

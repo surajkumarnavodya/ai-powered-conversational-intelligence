@@ -24,6 +24,9 @@ Module map:
   recommendation engine or the UI sees them.
 - `suppression.py` -- k-anonymity suppression for small groups.
 - `recommendation_safety.py` -- whether a recommendation may be shown.
+- `memory_policy.py` -- what a stored conversation turn may retain.
+  Read-time governance decides what a caller sees now; this decides
+  what the application is still holding months from now.
 - `telemetry.py` -- counts of what the engine did. Counts only.
 
 **Defense in depth, and where each layer lives.** Governance is not a
@@ -37,6 +40,7 @@ prompt instruction, and no single layer is load-bearing alone:
 | SQL | `agent/sql_validator.py` (AST allowlist, restricted columns, wildcard, system catalogs) |
 | Result | `result_policy` + `suppression` |
 | Recommendation | `recommendation_safety` |
+| Conversation memory | `memory_policy` (before a turn is persisted) |
 | Logging | `security/audit_log.py` (events carry decisions, never values) |
 
 A request that generates different SQL does not get a different answer

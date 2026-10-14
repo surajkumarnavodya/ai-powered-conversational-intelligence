@@ -417,6 +417,91 @@ class TestPersistExecuteResult:
         # same "save what was actually run" principle golden examples use.
         assert assistant_row.metadata["sql"] == "SELECT TOP 100 * FROM t"
 
+    def test_a_credential_column_is_never_written_into_conversation_memory(self, identity_engine):
+        """Conversation-memory governance (governance/memory_policy.py).
+
+        The rows reaching persistence were already governed for the
+        caller who ran them, so an authorized analyst's stored snapshot
+        legitimately holds real values. A never-disclosed category is
+        the exception: no role is ever shown a credential, so keeping a
+        durable copy in a JSONB column protects nobody and is simply
+        retained risk.
+        """
+        user_id = _make_user(identity_engine)
+        identity = _local_identity(user_id)
+        conversation_id, message_id = persist_ask_turn(
+            identity=identity,
+            conversation_id=None,
+            question="Which services have keys?",
+            ask_response=_ask_response(sql="SELECT service, api_key FROM svc"),
+            settings=_BASE_SETTINGS,
+        )
+
+        ok = persist_execute_result(
+            identity=identity,
+            conversation_id=conversation_id,
+            message_id=message_id,
+            sql="SELECT service, api_key FROM svc",
+            execute_response=ExecuteResponse(
+                status="succeeded",
+                database="default",
+                result_columns=["service", "api_key"],
+                result_rows=[["billing", "sk-live-should-never-persist"]],
+                row_count=1,
+            ),
+            settings=_BASE_SETTINGS,
+        )
+        assert ok is True
+
+        factory = sessionmaker(bind=identity_engine)
+        session: Session = factory()
+        rows, _ = list_messages(
+            session, conversation_id=uuid.UUID(conversation_id), user_id=user_id, limit=10, offset=0
+        )
+        session.close()
+        snapshot = next(r for r in rows if r.role == "assistant").metadata["result_snapshot"]
+        assert "sk-live-should-never-persist" not in str(snapshot["rows"])
+        assert snapshot["rows"][0][0] == "billing", "the ordinary column must survive"
+
+    def test_an_authorized_sensitive_result_is_still_retained_and_declared(self, identity_engine):
+        """Compensation has authorized readers -- masking it at write
+        time would break every legitimate reload while adding nothing
+        the read-time gate does not already give."""
+        user_id = _make_user(identity_engine)
+        identity = _local_identity(user_id)
+        conversation_id, message_id = persist_ask_turn(
+            identity=identity,
+            conversation_id=None,
+            question="What does each employee earn?",
+            ask_response=_ask_response(sql="SELECT employee_name, annual_salary FROM hr"),
+            settings=_BASE_SETTINGS,
+        )
+
+        persist_execute_result(
+            identity=identity,
+            conversation_id=conversation_id,
+            message_id=message_id,
+            sql="SELECT employee_name, annual_salary FROM hr",
+            execute_response=ExecuteResponse(
+                status="succeeded",
+                database="default",
+                result_columns=["employee_name", "annual_salary"],
+                result_rows=[["Ada", 187431.55]],
+                row_count=1,
+            ),
+            settings=_BASE_SETTINGS,
+        )
+
+        factory = sessionmaker(bind=identity_engine)
+        session: Session = factory()
+        rows, _ = list_messages(
+            session, conversation_id=uuid.UUID(conversation_id), user_id=user_id, limit=10, offset=0
+        )
+        session.close()
+        snapshot = next(r for r in rows if r.role == "assistant").metadata["result_snapshot"]
+        assert snapshot["rows"][0][1] == 187431.55
+        assert "compensation" in snapshot["retained_categories"]
+
     def test_bounds_stored_rows_to_the_configured_cap(self, identity_engine):
         user_id = _make_user(identity_engine)
         identity = _local_identity(user_id)

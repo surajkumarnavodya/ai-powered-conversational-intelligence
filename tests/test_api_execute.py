@@ -156,6 +156,35 @@ class TestExecute:
         assert response.status_code == 200
         assert response.json()["truncated"] is True
 
+    def test_the_export_ceiling_sets_truncated_well_below_the_global_cap(self, monkeypatch, client):
+        """The per-domain export ceiling (governance/result_policy.py) can
+        remove rows far below `max_result_rows`. `truncated` has to say so
+        -- otherwise a 600-row HR result capped to 100 reports
+        `truncated=False` and reads as the complete answer.
+        """
+        from governance.domains import BusinessDomain, policy_for
+
+        limit = policy_for(BusinessDomain.HR).export_row_limit
+        assert limit is not None
+        assert limit < _BASE_SETTINGS.max_result_rows, "otherwise this proves nothing"
+        monkeypatch.setattr(
+            "api.main.execute_readonly_sql",
+            lambda sql, timeout, max_rows, engine=None: (
+                ["employee_name", "annual_salary"],
+                [(f"Employee {i}", 50_000 + i) for i in range(limit + 50)],
+            ),
+        )
+
+        response = client.post(
+            "/execute", json={"sql": "SELECT employee_name, annual_salary FROM hr_employees"}
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body["result_rows"]) == limit
+        assert body["row_count"] == limit
+        assert body["truncated"] is True
+
     def test_destructive_sql_is_rejected_not_executed(self, monkeypatch, client):
         called = False
 

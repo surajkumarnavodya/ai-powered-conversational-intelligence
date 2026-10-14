@@ -256,12 +256,18 @@ restriction as a boundary.** Full detail:
   — so an alias, a `UNION`, or `SELECT *` reaches the same protection.
 - **Small-group suppression applies to an authorized caller too** — it
   protects the individual in the group, not the column's sensitivity. The
-  group label and count stay visible and **no row is ever dropped** (a
+  group label and count stay visible and **suppression never drops a row** (a
   vanished row lets a reader difference a published total against the visible
-  rows and recover the hidden value).
+  rows and recover the hidden value). The per-domain *export ceiling*
+  (`DomainPolicy.export_row_limit`) is the one control that does remove rows,
+  and it must always be disclosed — `/execute` reports `truncated=True`, and
+  the result gate names it in `actions`.
 - A **stored** result is re-governed on every read against the *current*
   caller's roles — never trusted because it was governed when captured. Roles
-  change.
+  change. Both read-back surfaces do this: `api.artifacts._result_out` and
+  `api.shares._governed_result_snapshot`. A share is the sharpest case — an
+  "anyone with the link" viewer holds no roles at all — so a new surface that
+  serves a persisted `result_snapshot` must re-govern it too.
 
 ### 5.5 Untrusted content and prompt injection
 

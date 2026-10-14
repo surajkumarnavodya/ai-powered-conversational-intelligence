@@ -45,6 +45,21 @@ so reopening a conversation later shows a previously confirmed result
 immediately -- **without ever re-running the SQL itself**. Nothing in this
 module executes a query, calls a model, fetches a URL, or performs OCR --
 it only ever stores what the caller-facing response already computed.
+
+**Conversation-memory governance (2026-10-14).** What a caller may see
+now and what this application should still be holding months from now
+are different questions. `persist_execute_result` routes a snapshot
+through `governance.memory_policy.govern_rows_for_memory` before the
+write, which blanks any never-disclosed category -- a credential or a
+payment instrument is shown to no role at all, so a durable copy of one
+in a JSONB column protects nobody -- and records
+`retained_categories` (category names and counts, never a value) as the
+audit trail for what a stored turn holds. It deliberately does *not*
+mask the tier above SENSITIVE: compensation and PHI have authorized
+readers, so masking them here would break every legitimate reload while
+adding nothing, and they are protected instead at read time,
+re-governed against whoever is asking then (`api.artifacts._result_out`,
+`api.shares._governed_result_snapshot`).
 """
 
 from __future__ import annotations
@@ -64,6 +79,7 @@ from identity.repositories.history import (
 
 from api.schemas import AskResponse, ExecuteResponse, SourceAnswerOut
 from config.settings import Settings, get_settings
+from governance.memory_policy import govern_rows_for_memory
 from security.oidc import AuthIdentity, real_caller_subject
 
 logger = logging.getLogger(__name__)
@@ -432,10 +448,31 @@ def persist_execute_result(
         bounded_rows = rows[:row_cap]
         normalized_sql = execute_response.normalized_sql or sql
 
+        # Conversation-memory governance (governance/memory_policy.py).
+        # The rows reaching here were already governed for *this* caller,
+        # so an authorized analyst's snapshot legitimately holds the real
+        # values they were shown. What must still not be written is a
+        # never-disclosed value (credential, payment instrument): no role
+        # is ever shown one, so keeping a durable copy protects nobody.
+        retained_categories: tuple[str, ...] = ()
+        if settings.enable_result_governance:
+            memory_governed = govern_rows_for_memory(columns, bounded_rows)
+            bounded_rows = memory_governed.rows
+            retained_categories = memory_governed.retained_categories
+            if memory_governed.changed:
+                logger.info(
+                    "[chat_persistence] memory governance withheld %d never-disclosed "
+                    "column(s) from the stored result snapshot",
+                    len(memory_governed.withheld_columns),
+                )
+
         metadata = dict(ai_output.metadata_json or {})
         metadata["result_snapshot"] = {
             "columns": columns,
             "rows": bounded_rows,
+            # Category names and counts only -- never a value. The audit
+            # trail for "what does this stored turn still hold?".
+            "retained_categories": list(retained_categories),
             "row_count": execute_response.row_count,
             "returned_rows": len(bounded_rows),
             "truncated": bool(execute_response.truncated) or len(bounded_rows) < len(rows),

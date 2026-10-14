@@ -11,9 +11,17 @@ ad hoc ownership/membership logic.
 A shared conversation is a **read-only projection, never a live query
 channel**: nothing in this file ever calls into `agent.graph`,
 `agent.orchestrator`, `rag/`, `search/`, `media_gen/`, or any embedding/
-retrieval code. `GET /share-view/{ref}` only ever reads already-persisted,
-already-redacted `Prompt`/`AiOutput` rows through
+retrieval code. `GET /share-view/{ref}` only ever reads already-persisted
+`Prompt`/`AiOutput` rows through
 `identity.repositories.shares.build_share_projection`.
+
+**Already-persisted is not the same as safe for this viewer.** A stored
+`result_snapshot` was governed for whoever ran the query; a share hands
+it to somebody else, and on an "anyone with the link" share to somebody
+with no account and no roles. `_governed_result_snapshot` therefore
+re-runs result-level governance against the *viewer's* roles on every
+read -- the same control `api.artifacts._result_out` applies, on the
+surface with the weakest viewer. See `docs/SHARING_SECURITY.md`.
 
 **Anonymous-reachable routes never confirm whether a share exists.**
 `GET /share-view/{ref}` and its attachment sibling collapse every denial reason
@@ -26,6 +34,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
@@ -60,7 +69,7 @@ from identity.repositories.shares import (
     revoke_share,
     update_share,
 )
-from identity.repositories.users import get_user_by_id
+from identity.repositories.users import get_user_by_id, get_user_roles
 from identity.security import looks_like_local_token, validate_local_token
 from identity.share_audit import record_share_event
 from identity.share_policy import ShareAction, authorize_share_action
@@ -83,6 +92,8 @@ from sqlalchemy.orm import Session
 from agent.rate_limit import get_share_invite_limiter, get_share_link_access_limiter
 from api.identity_authz import get_identity_db, require_identity_permission, require_local_user
 from config.settings import Settings, get_settings
+from governance.domain_detection import detect_domain
+from governance.result_policy import govern_result_for_domain
 from security.client_ip import resolve_client_ip
 from security.tenancy import resolve_actor_tenant_id
 
@@ -201,7 +212,86 @@ def _share_out(session: Session, share) -> ShareOut:  # noqa: ANN001
     )
 
 
-def _projected_turn_out(turn: ProjectedTurn) -> ProjectedTurnOut:
+def _governed_result_snapshot(
+    extra: dict,
+    viewer_roles: Sequence[str],
+    settings: Settings,
+) -> dict | None:
+    """One stored `result_snapshot`, **re-governed for whoever is viewing now**.
+
+    The rows in a shared conversation were governed once, for the person
+    who ran the query. A share hands that record to somebody else --
+    frequently somebody with fewer roles, and on an "anyone with the
+    link" share, somebody with *no* roles and no account at all. Serving
+    the stored rows as-is would make a share a durable copy of data the
+    viewer was never entitled to: an analyst holding
+    `VIEW_RESTRICTED_COLUMNS` runs a salary query, sees real figures
+    (correctly), shares the conversation, and an anonymous visitor reads
+    those same figures. `api.artifacts._result_out` already re-governs
+    for exactly this reason; this is the same control on the surface
+    that needs it most.
+
+    Owner intent does not enter into it. Two of the protections this
+    applies are not the owner's to waive: a credential or payment
+    instrument is withheld from every caller, and small-group
+    suppression protects the individual in the group rather than the
+    sensitivity of the column.
+
+    The domain is detected from the snapshot's own stored SQL, with the
+    result's column names as schema evidence. That is slightly weaker
+    evidence than `POST /execute` has (which extracts real table names
+    from a live statement), and deliberately so: a worse guess falls
+    back to `GENERAL`, whose policy is the *strictest* of the registry,
+    so the degradation direction is toward more protection, never less.
+    """
+    snapshot = extra.get("result_snapshot")
+    if not isinstance(snapshot, dict) or not settings.enable_result_governance:
+        return snapshot if isinstance(snapshot, dict) else None
+
+    columns = snapshot.get("columns")
+    rows = snapshot.get("rows")
+    if not isinstance(columns, list) or not isinstance(rows, list) or not rows:
+        return snapshot
+
+    column_names = [str(column) for column in columns]
+    stored_sql = snapshot.get("normalized_sql") or extra.get("sql") or ""
+    domain = detect_domain(str(stored_sql), column_names).domain
+    governed = govern_result_for_domain(
+        column_names,
+        rows,
+        viewer_roles,
+        domain,
+        settings.governance_min_group_size,
+    )
+    if not governed.changed:
+        return snapshot
+
+    logger.info(
+        "[shares] result-level governance re-applied to a shared snapshot "
+        "(domain=%s, actions=%d)",
+        domain.value,
+        len(governed.actions),
+    )
+    protected = dict(snapshot)
+    protected["rows"] = [list(row) for row in governed.rows]
+    # Governance can remove rows outright (the per-domain export ceiling),
+    # so the snapshot's own row bookkeeping has to follow -- otherwise the
+    # viewer is told "150 rows" above a table holding 100 and reads the
+    # difference as a rendering bug rather than a policy decision.
+    # `row_count` deliberately keeps its original value: it is what the
+    # query matched, which is still true and is what makes the shortfall
+    # legible.
+    if len(governed.rows) != len(rows):
+        protected["returned_rows"] = len(governed.rows)
+        protected["truncated"] = True
+    return protected
+
+
+def _projected_turn_out(
+    turn: ProjectedTurn,
+    viewer_roles: Sequence[str],
+    settings: Settings,
+) -> ProjectedTurnOut:
     extra = turn.extra
     return ProjectedTurnOut(
         sequence_number=turn.sequence_number,
@@ -221,7 +311,7 @@ def _projected_turn_out(turn: ProjectedTurn) -> ProjectedTurnOut:
         generation_result=extra.get("generation_result"),
         media_search_result=extra.get("media_search_result"),
         attachment_refs=list(extra.get("attachment_refs") or []),
-        result_snapshot=extra.get("result_snapshot"),
+        result_snapshot=_governed_result_snapshot(extra, viewer_roles, settings),
     )
 
 
@@ -816,12 +906,17 @@ def get_shared_conversation_route(
         result="allowed",
         reason=decision.reason,
     )
+    # Result-level governance is re-applied per viewer, not per owner --
+    # an anonymous link visitor resolves to no account and therefore to
+    # no roles, which is exactly the permission set their view should be
+    # governed against. See `_governed_result_snapshot`.
+    viewer_roles = tuple(get_user_roles(session, actor.id)) if actor is not None else ()
     return SharedConversationOut(
         conversation_title=projection.conversation_title,
         feature_type=projection.feature_type,
         snapshot_captured_at=projection.snapshot_captured_at,
         viewer_role=decision.reason,  # type: ignore[arg-type]
-        turns=[_projected_turn_out(t) for t in projection.turns],
+        turns=[_projected_turn_out(t, viewer_roles, settings) for t in projection.turns],
     )
 
 

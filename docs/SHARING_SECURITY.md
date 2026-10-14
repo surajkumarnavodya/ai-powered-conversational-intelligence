@@ -227,6 +227,59 @@ behavioral claim. There is no "Confirm and Run," no chart regeneration, no
 composer, no way to trigger SQL/web/document/vector/model/image work from
 opening a share.
 
+## Result governance is re-applied per viewer (2026-10-14)
+
+The allowlist above decides *which fields* reach a viewer. It does not
+decide *what the values inside them may contain*, and for
+`result_snapshot` those two questions have different answers.
+
+A stored snapshot was governed once, for the person who ran the query.
+A share hands that record to somebody else — on an "anyone with the
+link" share, to somebody with no account and therefore **no roles at
+all**. Serving the stored rows verbatim made a share a durable copy of
+data the viewer was never entitled to:
+
+> an analyst holding `view_restricted_columns` runs a salary query and
+> sees the real figures (correctly); the snapshot is persisted with
+> those figures (also correctly, so their own reload works); they share
+> the conversation; an anonymous visitor opens the link and reads the
+> salaries.
+
+`api/shares.py::_governed_result_snapshot` closes this by re-running
+`governance.result_policy.govern_result_for_domain` against the
+**viewer's** roles, resolved from their account or empty for an
+anonymous visitor. `api/artifacts.py::_result_out` already did this for
+the artifact surface; sharing, the surface with by far the weakest
+viewer, did not. This is the general rule in `CLAUDE.md` §5.4 — *a
+stored result is re-governed on every read against the current caller's
+roles, never trusted because it was governed when captured* — now
+holding on this path too.
+
+**Owner intent does not waive it.** Two of the protections applied are
+not the owner's to give away: a credential or payment instrument is
+withheld from every caller including an admin, and small-group
+suppression protects the individual in the group rather than the
+sensitivity of the column.
+
+The domain is detected from the snapshot's own stored SQL with the
+result's column names as schema evidence — weaker evidence than `POST
+/execute` has, and deliberately so: a worse guess falls back to
+`GENERAL`, the strictest policy in the registry, so the degradation
+direction is toward more protection.
+
+Ordinary shared analytics is unaffected — a non-sensitive result passes
+through byte-identical, because over-blocking it is its own failure
+mode. The layer rides the existing `ENABLE_RESULT_GOVERNANCE` switch.
+
+Verified end to end through the real HTTP surface in
+`tests/security/test_shared_results_are_regoverned.py` (5 cases), and
+mutation-verified: reverting the call makes the two leak cases fail
+while the pass-through, owner-view and rollback cases stay green.
+
+**Operator note:** an existing share of a conversation whose result
+contains personal or compensation columns will now show `[restricted]`
+to its visitors where it previously showed values.
+
 ## API surface (`api/shares.py`)
 
 | Route | Auth | Purpose |
