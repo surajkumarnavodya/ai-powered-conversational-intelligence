@@ -24,15 +24,33 @@ MIS = BusinessDomain.MIS
 
 class TestCatalog:
     def test_the_supplied_sales_skills_are_registered(self):
-        """Per-domain rather than a whole-catalog equality, so a later batch
-        does not have to edit this assertion to stay true."""
-        assert tuple(s.slug for s in ds.skills_for_domain(SALES)) == (
+        """By group, not by domain: `skills_for_domain(SALES_MARKETING)`
+        now returns Marketing's five as well."""
+        assert tuple(s.slug for s in ds.all_skills() if s.group == "sales") == (
             "sales.revenue",
             "sales.customer",
             "sales.regional",
             "sales.product",
             "sales.pricing",
         )
+
+    def test_the_supplied_marketing_skills_are_registered(self):
+        """Marketing shares a governance domain with Sales, so it is looked
+        up by group rather than by domain."""
+        assert tuple(s.slug for s in ds.all_skills() if s.group == "marketing") == (
+            "marketing.campaign",
+            "marketing.channel",
+            "marketing.offer",
+            "marketing.segmentation",
+            "marketing.lead_funnel",
+        )
+
+    def test_marketing_did_not_add_a_governance_domain(self):
+        """Three batches, still two governance domains. A new prompt-domain
+        does not imply a new governance domain, and inventing one would
+        mean two answers to 'what may this question return'."""
+        assert ds.covered_domains() == (SALES, MIS)
+        assert len({s.group for s in ds.all_skills()}) == 3
 
     def test_the_supplied_mis_skills_are_registered(self):
         assert tuple(s.slug for s in ds.skills_for_domain(MIS)) == (
@@ -53,13 +71,19 @@ class TestCatalog:
     def test_slugs_are_unique(self):
         assert len(set(ds.all_slugs())) == len(ds.all_slugs())
 
-    @pytest.mark.parametrize("domain", ds.covered_domains(), ids=lambda d: d.value)
-    def test_each_domain_stores_its_scope_once_not_per_skill(self, domain):
-        """Every batch so far arrived with an identical scope sentence
-        across its five prompts. If a future edit forks one, this fails --
-        which is the point, because a forked scope is the first step back
-        toward ninety copies of the same text."""
-        scopes = {s.scope for s in ds.skills_for_domain(domain)}
+    @pytest.mark.parametrize("group", sorted({s.group for s in ds.all_skills()}), ids=lambda g: g)
+    def test_each_prompt_domain_stores_its_scope_once(self, group):
+        """One scope per PROMPT-domain, not per governance domain.
+
+        This asserted per-governance-domain until batch 3. Marketing shares
+        `SALES_MARKETING` with Sales but has a genuinely different
+        analytical scope, so the old assertion was wrong about the model,
+        not about the data. Keeping it would have forced either a fake
+        shared scope or a deleted test; the invariant it actually protects
+        -- a scope is written once and not forked per skill -- survives
+        intact at the right grain.
+        """
+        scopes = {s.scope for s in ds.all_skills() if s.group == group}
         assert len(scopes) == 1
 
     def test_coverage_is_exactly_the_delivered_batches(self):
@@ -85,6 +109,13 @@ class TestCatalog:
     def test_each_skill_is_frozen(self, skill):
         with pytest.raises(FrozenInstanceError):
             skill.slug = "mutated"  # type: ignore[misc]
+
+    @pytest.mark.parametrize("skill", ds.all_skills(), ids=lambda s: s.slug)
+    def test_group_always_matches_the_slug_prefix(self, skill):
+        """`group` is derived, not stored, so the two cannot disagree. This
+        pins that derivation."""
+        assert skill.group == skill.slug.split(".", 1)[0]
+        assert skill.group
 
     @pytest.mark.parametrize("skill", ds.all_skills(), ids=lambda s: s.slug)
     def test_each_skill_has_a_distinct_focus(self, skill):
@@ -149,7 +180,18 @@ class TestFailsOpen:
     existing behaviour rather than refusing (`CLAUDE.md` 4.2)."""
 
     def test_disabled_changes_nothing(self):
-        assert guidance_for(SALES, enabled=False) is None
+        """Asserted on MIS, not `SALES_MARKETING`.
+
+        This used SALES and went VACUOUS when batch 3 made that domain
+        ambiguous: SALES returns None whether the flag is on or off, so
+        deleting the `if not enabled` guard changed nothing and the
+        mutation survived. A test that asserts "returns None" proves
+        nothing unless the same call returns something when the condition
+        under test is reversed -- so the positive case is asserted here
+        too.
+        """
+        assert guidance_for(MIS, enabled=True) is not None, "setup: must be non-None when on"
+        assert guidance_for(MIS, enabled=False) is None
 
     def test_an_uncovered_domain_changes_nothing(self):
         assert guidance_for(BusinessDomain.HR, enabled=True) is None
@@ -189,12 +231,68 @@ class TestFailsOpen:
         assert "executive KPIs" in text
         assert "commercial revenue" not in text, "Sales scope leaked into MIS"
 
-    def test_a_covered_domain_produces_guidance(self):
-        result = guidance_for(SALES, enabled=True)
+    def test_a_covered_unambiguous_domain_produces_guidance(self):
+        """Uses MIS: `SALES_MARKETING` now holds two prompt-domains and
+        deliberately produces nothing without a slug -- see
+        `TestItRefusesToGuessAcrossPromptDomains`."""
+        result = guidance_for(MIS, enabled=True)
         assert result is not None
         text, skill = result
         assert text
-        assert skill.domain is SALES
+        assert skill.domain is MIS
+
+
+class TestItRefusesToGuessAcrossPromptDomains:
+    """`SALES_MARKETING` holds two prompt-domains with different scopes.
+
+    With nothing to disambiguate, framing a campaign question as Revenue
+    Intelligence would be actively wrong -- worse than not framing it. So
+    selection returns None and the analysis keeps the platform's existing
+    neutral framing.
+    """
+
+    def test_an_ambiguous_domain_with_no_slug_returns_nothing(self):
+        from domain_skills.registry import groups_for_domain
+
+        assert len(groups_for_domain(SALES)) > 1, "setup: domain must be ambiguous"
+        assert select_skill(SALES) is None
+        assert guidance_for(SALES, enabled=True) is None
+
+    def test_an_unambiguous_domain_still_gets_its_default(self):
+        """The refusal must be scoped to real ambiguity, not a blanket
+        disabling of defaults."""
+        from domain_skills.registry import groups_for_domain
+
+        assert groups_for_domain(MIS) == ("mis",)
+        chosen = select_skill(MIS)
+        assert chosen is not None and chosen.group == "mis"
+
+    @pytest.mark.parametrize(
+        "slug,expected_group",
+        [("sales.revenue", "sales"), ("marketing.campaign", "marketing")],
+    )
+    def test_an_explicit_slug_resolves_the_ambiguity(self, slug, expected_group):
+        chosen = select_skill(SALES, preferred_slug=slug)
+        assert chosen is not None
+        assert chosen.slug == slug
+        assert chosen.group == expected_group
+
+    def test_marketing_guidance_carries_the_marketing_scope(self):
+        """The two prompt-domains must not bleed into each other."""
+        result = guidance_for(SALES, enabled=True, preferred_slug="marketing.offer")
+        assert result is not None
+        text, skill = result
+        assert skill.group == "marketing"
+        assert "campaigns, channels, offers" in text
+        assert "commercial revenue" not in text, "Sales scope leaked into Marketing"
+
+    def test_sales_guidance_still_carries_the_sales_scope(self):
+        result = guidance_for(SALES, enabled=True, preferred_slug="sales.revenue")
+        assert result is not None
+        text, skill = result
+        assert skill.group == "sales"
+        assert "commercial revenue" in text
+        assert "lead funnels" not in text, "Marketing scope leaked into Sales"
 
 
 class TestSkillSelectionCannotCrossDomains:
@@ -202,21 +300,20 @@ class TestSkillSelectionCannotCrossDomains:
     domain's framing."""
 
     def test_a_real_skill_from_another_domain_is_ignored(self):
-        """Now that two domains are registered this needs no injection:
-        `mis.scorecard` is genuinely registered under a different domain,
-        so the guard is exercised against the real catalog.
+        """Exercised against the real catalog, no injection needed.
 
-        Kept alongside the monkeypatched version below, which still earns
-        its place: it is the technique the GENERAL guard needs, and it
-        keeps working when a batch is the only one in its domain.
+        Runs against MIS rather than `SALES_MARKETING`: the assertion is
+        that an intruder slug falls back to *this* domain's default, and
+        `SALES_MARKETING` deliberately has no default now that it holds two
+        prompt-domains.
         """
-        assert ds.is_registered("mis.scorecard")
-        assert ds.get_skill("mis.scorecard").domain is MIS
+        assert ds.is_registered("sales.revenue")
+        assert ds.get_skill("sales.revenue").domain is SALES
 
-        chosen = select_skill(SALES, preferred_slug="mis.scorecard")
+        chosen = select_skill(MIS, preferred_slug="sales.revenue")
         assert chosen is not None
-        assert chosen.domain is SALES, "another domain's skill leaked through"
-        assert chosen.slug.startswith("sales.")
+        assert chosen.domain is MIS, "another domain's skill leaked through"
+        assert chosen.group == "mis"
 
     def test_a_slug_from_another_domain_is_ignored(self, monkeypatch):
         """The other-domain skill must be genuinely REGISTERED for this to
@@ -244,15 +341,20 @@ class TestSkillSelectionCannotCrossDomains:
         assert reg.is_registered("hr.attrition") is True, "setup failed"
         assert reg.get_skill("hr.attrition").domain is BusinessDomain.HR
 
-        chosen = select_skill(SALES, preferred_slug="hr.attrition")
+        chosen = select_skill(MIS, preferred_slug="hr.attrition")
         assert chosen is not None
-        assert chosen.domain is SALES, "another domain's skill leaked through"
+        assert chosen.domain is MIS, "another domain's skill leaked through"
         assert chosen.slug != "hr.attrition"
 
     def test_an_unknown_slug_falls_back_to_the_domain_default(self):
-        chosen = select_skill(SALES, preferred_slug="does.not.exist")
+        """On an unambiguous domain. On an ambiguous one it returns None --
+        see `TestItRefusesToGuessAcrossPromptDomains`."""
+        chosen = select_skill(MIS, preferred_slug="does.not.exist")
         assert chosen is not None
-        assert chosen.slug == "sales.revenue"
+        assert chosen.slug == "mis.executive_kpi"
+
+    def test_an_unknown_slug_on_an_ambiguous_domain_yields_nothing(self):
+        assert select_skill(SALES, preferred_slug="does.not.exist") is None
 
     def test_a_valid_same_domain_slug_is_honoured(self):
         chosen = select_skill(SALES, preferred_slug="sales.pricing")
@@ -384,20 +486,22 @@ class TestThePinnedPromptsAreUntouched:
 class TestTheGuardsAreNotVacuous:
     def test_a_cross_domain_selection_would_be_detectable(self):
         """Shows the domain filter is doing work: without it, a slug from
-        another domain would be returned as-is."""
+        another domain would be returned as-is.
+
+        Uses MIS as the domain under test, because the comparison needs a
+        domain that still has a default to fall back to.
+        """
 
         def _broken(domain, preferred_slug=None):
-            if preferred_slug:
+            if preferred_slug and ds.is_registered(preferred_slug):
                 return ds.get_skill(preferred_slug)
             return ds.skills_for_domain(domain)[0]
 
-        leaked = _broken(SALES, "sales.pricing")
-        assert leaked.slug == "sales.pricing"
-        with pytest.raises(UnknownSkillError):
-            _broken(SALES, "hr.attrition")
+        leaked = _broken(MIS, "sales.revenue")
+        assert leaked.group == "sales", "the broken version should leak"
 
-        safe = select_skill(SALES, preferred_slug="hr.attrition")
-        assert safe is not None and safe.domain is SALES
+        safe = select_skill(MIS, preferred_slug="sales.revenue")
+        assert safe is not None and safe.group == "mis"
 
     def test_a_contract_with_a_format_slot_would_be_caught(self):
         hostile = "Analyse {user_input} carefully."

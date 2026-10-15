@@ -5,11 +5,18 @@ lines here; there is deliberately no API route, no admin surface and no
 settings field that can add or edit a skill at runtime — see
 `domain_skills/types.py` on why a skill must stay an in-code constant.
 
-Batch 1 registered the five Sales skills; batch 2 adds the five MIS /
-Management Reporting skills. Both batches arrived with an identical body
-and an identical "Domain scope" sentence across their five prompts,
-differing only in the heading — so each domain's scope is written once
-(`_SALES_SCOPE`, `_MIS_SCOPE`) and each skill carries only its own focus.
+Batches so far: Sales, MIS / Management Reporting, Marketing. Every batch
+has arrived with an identical body and an identical "Domain scope" sentence
+across its five prompts, differing only in the heading — so each *prompt-
+domain* writes its scope once (`_SALES_SCOPE`, `_MIS_SCOPE`,
+`_MARKETING_SCOPE`) and each skill carries only its own focus.
+
+**Marketing shares `BusinessDomain.SALES_MARKETING` with Sales** but has a
+different analytical scope. A governance domain answers "what may this
+question return"; it is not a statement about framing. `DomainSkill.group`
+(the slug prefix) is what separates the two, and
+`composer.select_skill` refuses to pick a default when a domain holds more
+than one group rather than guessing.
 
 The remaining domains are **not** registered yet. A skill is added when its
 prompt arrives, not in anticipation of one — an empty domain here would
@@ -182,6 +189,85 @@ MIS_SKILLS: tuple[DomainSkill, ...] = (
     ),
 )
 
+#: The supplied Marketing prompts' "Domain scope:" sentence, verbatim.
+#:
+#: Note this is a *different* scope from `_SALES_SCOPE` inside the *same*
+#: governance domain. Sales and Marketing share `SALES_MARKETING` because
+#: that enum answers "what may this question return"; they do not share an
+#: analytical scope. `DomainSkill.group` is what keeps them apart — see its
+#: docstring for the modelling error batch 3 exposed.
+_MARKETING_SCOPE = "Analyze campaigns, channels, offers, segments and lead funnels."
+
+MARKETING_SKILLS: tuple[DomainSkill, ...] = (
+    DomainSkill(
+        slug="marketing.campaign",
+        title="Campaign Intelligence",
+        domain=_SALES,
+        scope=_MARKETING_SCOPE,
+        focus=(
+            "Campaign performance: reach, response and return against spend "
+            "and against prior campaigns. Attribute an outcome to a campaign "
+            "only where the data actually links the two; otherwise say the "
+            "two moved together and label it a correlation."
+        ),
+        dimensions=("campaign", "period", "channel", "segment", "spend"),
+    ),
+    DomainSkill(
+        slug="marketing.channel",
+        title="Channel Intelligence",
+        domain=_SALES,
+        scope=_MARKETING_SCOPE,
+        focus=(
+            "Channel mix and efficiency: volume, cost and conversion by "
+            "channel, and where spend is concentrated versus where it "
+            "performs. A channel carrying little volume can look efficient "
+            "on a ratio alone — report the base alongside the rate."
+        ),
+        dimensions=("channel", "campaign", "period", "cost", "conversion"),
+    ),
+    DomainSkill(
+        slug="marketing.offer",
+        title="Offer Intelligence",
+        domain=_SALES,
+        scope=_MARKETING_SCOPE,
+        focus=(
+            "Offer and promotion response: uptake, incremental volume and "
+            "the margin given away to achieve it. Distinguish demand the "
+            "offer created from demand it merely discounted, and say when "
+            "the data cannot separate the two."
+        ),
+        dimensions=("offer", "campaign", "segment", "period", "discount"),
+    ),
+    DomainSkill(
+        slug="marketing.segmentation",
+        title="Customer Segmentation Intelligence",
+        domain=_SALES,
+        scope=_MARKETING_SCOPE,
+        focus=(
+            "How segments differ in size, value and behaviour, and which "
+            "differences are material rather than small-sample noise. "
+            "Analyse segments and cohorts; never profile or target an "
+            "identifiable individual, and never infer a protected "
+            "characteristic from behaviour."
+        ),
+        dimensions=("segment", "cohort", "value band", "channel", "period"),
+    ),
+    DomainSkill(
+        slug="marketing.lead_funnel",
+        title="Lead Funnel Intelligence",
+        domain=_SALES,
+        scope=_MARKETING_SCOPE,
+        focus=(
+            "Progression and drop-off through the lead funnel: volume at "
+            "each stage, conversion between stages, and where leads stall. "
+            "State the cohort and the window a conversion rate is measured "
+            "over, since a funnel measured on an open cohort understates "
+            "later stages."
+        ),
+        dimensions=("funnel stage", "source", "campaign", "period", "conversion"),
+    ),
+)
+
 #: Every registered skill, in declaration order. Later batches append their
-#: own domain tuple here.
-ALL_SKILLS: tuple[DomainSkill, ...] = SALES_SKILLS + MIS_SKILLS
+#: own tuple here.
+ALL_SKILLS: tuple[DomainSkill, ...] = SALES_SKILLS + MIS_SKILLS + MARKETING_SKILLS

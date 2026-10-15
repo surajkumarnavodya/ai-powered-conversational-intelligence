@@ -91,6 +91,29 @@ class DomainSkill:
     focus: str
     dimensions: tuple[str, ...] = ()
 
+    @property
+    def group(self) -> str:
+        """The *supplied prompt-domain*, e.g. `"sales"` — the slug prefix.
+
+        Distinct from `domain`, and batch 3 is why. A governance domain can
+        hold several prompt-domains: Sales and Marketing arrived as separate
+        batches with genuinely different analytical scopes ("commercial
+        revenue, customers, regions…" versus "campaigns, channels, offers…"),
+        yet both map to `BusinessDomain.SALES_MARKETING`, because that enum
+        exists to answer "what may this question return", not "how should
+        this analysis be framed".
+
+        Conflating the two was a real modelling error in batches 1–2. It did
+        not show until a second prompt-domain landed in an occupied
+        governance domain, at which point two things broke: the
+        one-scope-per-domain invariant, and the default-skill choice, which
+        would have framed a campaign question as Revenue Intelligence.
+
+        Derived from the slug rather than stored, so the two can never
+        disagree.
+        """
+        return self.slug.split(".", 1)[0]
+
     def __post_init__(self) -> None:
         # Validated at import rather than at use: a malformed skill is a
         # programming error that should fail the process, not produce a

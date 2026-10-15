@@ -66,6 +66,21 @@ def skills_for_domain(domain: BusinessDomain) -> tuple[DomainSkill, ...]:
     return tuple(s for s in ALL_SKILLS if s.domain is domain)
 
 
+def groups_for_domain(domain: BusinessDomain) -> tuple[str, ...]:
+    """The distinct prompt-domains declared inside one governance domain.
+
+    Usually one. `SALES_MARKETING` holds two (`sales`, `marketing`) because
+    Sales and Marketing arrived as separate batches with different
+    analytical scopes while sharing one governance policy. See
+    `DomainSkill.group`.
+    """
+    seen: list[str] = []
+    for skill in skills_for_domain(domain):
+        if skill.group not in seen:
+            seen.append(skill.group)
+    return tuple(seen)
+
+
 def covered_domains() -> tuple[BusinessDomain, ...]:
     """Domains that have at least one declared skill.
 

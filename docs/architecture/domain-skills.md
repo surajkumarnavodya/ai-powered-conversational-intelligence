@@ -9,7 +9,7 @@ recommended in a business domain is
 [`../DATA_PRIVACY_GOVERNANCE_ENGINE.md`](../DATA_PRIVACY_GOVERNANCE_ENGINE.md),
 and a skill cannot change any of it.
 
-**Date:** 2026-10-15. **Batches delivered:** 2 of 18 domains — Sales, MIS / Management Reporting.
+**Date:** 2026-10-15. **Batches delivered:** 3 — Sales, MIS / Management Reporting, Marketing (across 2 of 18 governance domains).
 
 ---
 
@@ -113,7 +113,7 @@ the two distinguishable where it matters (`sales.*` vs a future
 
 `registry.covered_domains()` answers "which of the eighteen are actually
 covered" from the catalog itself, so no document can claim coverage the
-code does not have. **Today: Sales and MIS.**
+code does not have. **Today: Sales, MIS and Marketing — 15 skills across 2 governance domains.**
 
 A test asserts `covered_domains()` equals exactly the delivered batches, so
 a new domain fails it until this document is updated in the same change —
@@ -165,17 +165,20 @@ caller text, no retrieved document, no database value, no model output.
 
 ## 7. Mutation evidence
 
-Each applied to live code, then reverted. Clean: `59 passed`.
+Each applied to live code, then reverted. Clean: `129 passed` (3 batches).
 
 | Mutation | Result |
 |---|---|
-| selection stops filtering by domain (cross-domain leak) | **1 failed**, 58 passed |
-| no longer fails open when the flag is off | **1 failed**, 58 passed |
-| contract gains a format slot | **2 failed**, 57 passed |
-| `GENERAL` (unknown domain) gets guessed framing | **1 failed**, 58 passed |
+| selection stops filtering by domain (cross-domain leak) | **3 failed**, 126 passed |
+| no longer fails open when the flag is off | **1 failed**, 128 passed |
+| contract gains a format slot | **2 failed**, 127 passed |
+| `GENERAL` (unknown domain) gets guessed framing | **1 failed**, 128 passed |
+| guesses a default across prompt-domains (campaign → Revenue framing) | **2 failed**, 127 passed |
+| `group` stops being derived from the slug | **21 failed**, 106 passed |
 
-Two of those only became real after the tests were fixed, and the reason is
-worth recording:
+Three of those only became real after a vacuous test was fixed. The full
+pattern is in §8; the first two are recorded here because they were found
+in batch 1:
 
 - **The cross-domain test was vacuous.** It passed a slug for an
   *unregistered* skill, so the safe and the broken implementations both
@@ -190,13 +193,76 @@ worth recording:
 
 ---
 
-## 8. Adding the next batch
+## 8. What batch 3 corrected: prompt-domain is not governance-domain
 
-1. Add the domain's scope string once in `catalog.py`.
+Marketing shares `BusinessDomain.SALES_MARKETING` with Sales. That exposed
+a modelling error in batches 1–2, which had quietly treated the two as the
+same thing.
+
+**They are not.** A governance domain answers *"what may this question
+return"* — it drives the restricted-category union and the
+prohibited-action list. A prompt-domain answers *"how should this analysis
+be framed"*. Sales and Marketing share the first and differ completely on
+the second: "commercial revenue, customers, regions, products and pricing"
+versus "campaigns, channels, offers, segments and lead funnels".
+
+Two things broke, and neither would have shown until a second prompt-domain
+landed in an occupied governance domain:
+
+| Broke | Fix |
+|---|---|
+| The one-scope-per-domain invariant — two legitimate scopes in one domain | `DomainSkill.group` (the slug prefix, derived not stored). The scope test now asserts one scope per **group** |
+| `select_skill` returned `candidates[0]` as the domain default, so a campaign question would have been framed as **Revenue Intelligence** | With more than one group and nothing to disambiguate, selection returns **None** |
+
+### Why refusing to guess is the right answer
+
+Wrong framing is worse than no framing. Returning None means the analysis
+proceeds with the platform's existing neutral behaviour, which is the
+correct fail-open posture for an accuracy aid
+([`CLAUDE.md`](../../CLAUDE.md) §4.2). An explicit skill slug still resolves
+the ambiguity, and an unambiguous domain still gets its default — the
+refusal is scoped to real ambiguity, not a blanket disabling.
+
+Resolving it *automatically* needs a classifier that can tell a sales
+question from a marketing one. That belongs with the wiring batch, not
+here, and it is listed as outstanding rather than quietly assumed.
+
+### Three tests went vacuous as the data grew
+
+Worth recording, because the pattern will recur:
+
+1. **Cross-domain (batch 1)** — passed a slug for an *unregistered* skill,
+   so safe and broken implementations both fell through to the same
+   default. Fixed by injecting a registered intruder.
+2. **`GENERAL` guard (batch 1)** — `GENERAL` had no skills, so deleting the
+   guard changed nothing. Fixed the same way.
+3. **Disabled-flag (batch 3)** — asserted `guidance_for(SALES,
+   enabled=False) is None`, but once SALES became ambiguous it returned
+   None with the flag *on* too. Deleting the flag check changed nothing and
+   the mutation survived. Fixed by asserting on an unambiguous domain *and*
+   asserting the positive case.
+
+The common shape: **a test that asserts "returns None" proves nothing
+unless the same call returns something when the condition under test is
+reversed.** Each was found by mutation testing, not by review.
+
+---
+
+## 9. Adding the next batch
+
+1. Add the **prompt-domain's** scope string once in `catalog.py`. If the
+   batch shares a governance domain with an existing one (as Marketing
+   does with Sales), that is fine — the scope belongs to the group, not
+   the domain.
 2. Add one `DomainSkill` per supplied prompt — `slug`, `title`, `domain`,
-   `focus`, `dimensions`.
+   `focus`, `dimensions`. The slug prefix *is* the group, so pick it
+   deliberately.
 3. Append the new tuple to `ALL_SKILLS`.
-4. Add the domain to the coverage test's expectation.
+4. Update the coverage test, which asserts `covered_domains()` equals
+   exactly the delivered batches.
+5. If the batch lands in an already-occupied governance domain, check
+   whether any test asserts a default for it — that default is now
+   deliberately gone.
 
 No other file changes. Validation runs at import, so a malformed skill
 fails the process rather than producing a degraded prompt on some later
@@ -204,13 +270,14 @@ request.
 
 ---
 
-## 9. Status
+## 10. Status
 
 | Item | State |
 |---|---|
 | Contract, registry, composer | **Live**, off by default (`ENABLE_DOMAIN_SKILLS`) |
 | Sales skills (5 of 5 supplied) | **Registered** |
 | MIS / Management Reporting skills (5 of 5 supplied) | **Registered** |
+| Marketing skills (5 of 5 supplied) | **Registered** |
 | Other 16 domains | **Not registered** — a skill is added when its prompt arrives, never in anticipation |
 | Wiring into a live analysis path | **Not done** — see below |
 

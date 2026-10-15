@@ -83,16 +83,37 @@ def select_skill(domain: BusinessDomain, preferred_slug: str | None = None) -> D
         for candidate in candidates:
             if candidate.slug == preferred_slug:
                 return candidate
-        # Registered elsewhere, or not registered at all. Either way this is
-        # not a failure: the question still gets its domain's default
-        # framing, and the mismatch is logged for an operator rather than
-        # surfaced to the caller.
+        # Registered elsewhere, or not registered at all. Not a failure --
+        # fall through to the domain default below, logged for an operator
+        # rather than surfaced to the caller.
         logger.info(
             "[domain_skills] requested skill %r is not available for domain %r; "
-            "using the domain default",
+            "falling back to the domain default",
             preferred_slug,
             domain.value,
         )
+
+    # A governance domain can hold more than one prompt-domain:
+    # `SALES_MARKETING` holds both `sales` and `marketing`, with genuinely
+    # different analytical scopes. With no slug to disambiguate there is no
+    # honest default -- picking the first would frame a campaign question as
+    # Revenue Intelligence, which is worse than not framing it at all.
+    #
+    # So: refuse to guess. Returning None means the analysis proceeds with
+    # the platform's existing neutral framing, which is the correct
+    # fail-open behaviour for an accuracy aid (`CLAUDE.md` 4.2). Resolving
+    # this properly needs a classifier that can tell a sales question from a
+    # marketing one, and that belongs with the wiring batch, not here.
+    groups = {candidate.group for candidate in candidates}
+    if len(groups) > 1:
+        logger.info(
+            "[domain_skills] domain %r holds %d prompt-domains (%s) and no skill "
+            "was specified; applying no skill framing rather than guessing",
+            domain.value,
+            len(groups),
+            ", ".join(sorted(groups)),
+        )
+        return None
 
     return candidates[0]
 
