@@ -576,8 +576,9 @@ would turn every write into prompt injection with full pipeline reach.
 `identity/rbac.py`; what may be returned stays with `governance/`. None of
 those gates reads a skill.
 
-Coverage today is **Sales only** (5 skills). The other 17 domains have none
-declared — a skill is added when its prompt arrives, never in anticipation.
+Coverage today is **Sales and MIS / Management Reporting** (10 skills).
+The other 16 domains have none declared — a skill is added when its prompt
+arrives, never in anticipation.
 
 ### MCP client (optional, off by default)
 

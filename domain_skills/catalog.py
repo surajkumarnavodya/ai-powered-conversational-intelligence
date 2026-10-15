@@ -5,11 +5,11 @@ lines here; there is deliberately no API route, no admin surface and no
 settings field that can add or edit a skill at runtime — see
 `domain_skills/types.py` on why a skill must stay an in-code constant.
 
-Batch 1 registers the five Sales skills supplied as
-`01_revenue_intelligence.md` … `05_pricing_and_discount_intelligence.md`.
-All five shared an identical body and an identical "Domain scope" sentence,
-differing only in their heading, so the scope is written once as
-`_SALES_SCOPE` and each skill carries only its own focus.
+Batch 1 registered the five Sales skills; batch 2 adds the five MIS /
+Management Reporting skills. Both batches arrived with an identical body
+and an identical "Domain scope" sentence across their five prompts,
+differing only in the heading — so each domain's scope is written once
+(`_SALES_SCOPE`, `_MIS_SCOPE`) and each skill carries only its own focus.
 
 The remaining domains are **not** registered yet. A skill is added when its
 prompt arrives, not in anticipation of one — an empty domain here would
@@ -100,6 +100,88 @@ SALES_SKILLS: tuple[DomainSkill, ...] = (
     ),
 )
 
+#: The supplied MIS prompts' "Domain scope:" sentence, verbatim. Shared by
+#: all five, same as `_SALES_SCOPE` above.
+_MIS_SCOPE = (
+    "Analyze executive KPIs, targets, variances, trends, anomalies and " "management scorecards."
+)
+
+#: `BusinessDomain.EXECUTIVE` also exists and would fit "Executive KPI
+#: Intelligence" by name. `MIS` is used instead because that is the domain
+#: the batch was supplied under ("MIS / Management Reporting"), and because
+#: the choice is governance-neutral: `policy_for(MIS)` and
+#: `policy_for(EXECUTIVE)` were compared and are identical -- same effective
+#: restricted categories, same (empty) prohibited-action set, same minimum
+#: group size. Nothing is under-protected by picking one.
+_MIS = BusinessDomain.MIS
+
+MIS_SKILLS: tuple[DomainSkill, ...] = (
+    DomainSkill(
+        slug="mis.executive_kpi",
+        title="Executive KPI Intelligence",
+        domain=_MIS,
+        scope=_MIS_SCOPE,
+        focus=(
+            "Headline KPIs for management review: current standing, "
+            "direction of travel, and which movements are material enough "
+            "to brief rather than merely visible."
+        ),
+        dimensions=("kpi", "period", "business unit", "region", "owner"),
+    ),
+    DomainSkill(
+        slug="mis.target_vs_actual",
+        title="Target vs Actual Intelligence",
+        domain=_MIS,
+        scope=_MIS_SCOPE,
+        focus=(
+            "Variance against plan or target: size and direction of the gap, "
+            "which line items drive it, and whether a gap is closing or "
+            "widening. State the basis of any variance percentage, since a "
+            "variance on a near-zero target is arithmetically unstable."
+        ),
+        dimensions=("kpi", "target", "variance", "period", "business unit"),
+    ),
+    DomainSkill(
+        slug="mis.period_comparison",
+        title="Period Comparison Intelligence",
+        domain=_MIS,
+        scope=_MIS_SCOPE,
+        focus=(
+            "Like-for-like comparison across periods: period-over-period and "
+            "year-over-year movement, and what changed between them. Say so "
+            "when a period is partial or the two periods are not comparable "
+            "in length, rather than comparing them silently."
+        ),
+        dimensions=("period", "kpi", "business unit", "region", "product"),
+    ),
+    DomainSkill(
+        slug="mis.anomaly",
+        title="MIS Anomaly Intelligence",
+        domain=_MIS,
+        scope=_MIS_SCOPE,
+        focus=(
+            "Outliers and breaks in an otherwise stable series: what deviated, "
+            "by how much, and against what baseline. An anomaly is something "
+            "to investigate, never a proven error or an established cause."
+        ),
+        dimensions=("kpi", "period", "baseline", "business unit", "deviation"),
+    ),
+    DomainSkill(
+        slug="mis.scorecard",
+        title="Management Scorecard Intelligence",
+        domain=_MIS,
+        scope=_MIS_SCOPE,
+        focus=(
+            "Balanced view across several KPIs at once: where a scorecard is "
+            "green, amber or red, and which measures move together. Report "
+            "unit and team performance in aggregate -- this domain restricts "
+            "the employee and performance categories, so never rank or "
+            "evaluate an identifiable individual."
+        ),
+        dimensions=("kpi", "business unit", "period", "status", "weight"),
+    ),
+)
+
 #: Every registered skill, in declaration order. Later batches append their
 #: own domain tuple here.
-ALL_SKILLS: tuple[DomainSkill, ...] = SALES_SKILLS
+ALL_SKILLS: tuple[DomainSkill, ...] = SALES_SKILLS + MIS_SKILLS

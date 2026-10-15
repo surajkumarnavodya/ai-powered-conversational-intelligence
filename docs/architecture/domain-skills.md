@@ -9,7 +9,7 @@ recommended in a business domain is
 [`../DATA_PRIVACY_GOVERNANCE_ENGINE.md`](../DATA_PRIVACY_GOVERNANCE_ENGINE.md),
 and a skill cannot change any of it.
 
-**Date:** 2026-10-15. **Batch:** 1 of 18 domains (Sales).
+**Date:** 2026-10-15. **Batches delivered:** 2 of 18 domains — Sales, MIS / Management Reporting.
 
 ---
 
@@ -36,6 +36,11 @@ The five Sales prompts supplied in batch 1 —
 `01_revenue_intelligence.md` … `05_pricing_and_discount_intelligence.md` —
 are **byte-identical except for their heading**. Same opening, same
 "Domain scope" sentence, same Before/Analyze/Safety/Return blocks.
+
+**Batch 2 (MIS) confirmed the pattern**: its five prompts are likewise
+identical except for the heading, with their own shared scope sentence. The
+structure is therefore a property of the series, not a coincidence of the
+first batch — which is what justifies storing the framing once.
 
 Storing them verbatim would mean five copies of the same thirty lines, and
 ninety copies across the full series. So:
@@ -92,7 +97,15 @@ restricted-category union and the prohibited-action list, so a skill
 cannot sit in a domain the governance engine has no policy for.
 
 The supplied 18-domain list maps onto it cleanly, with one merge:
-**Sales and Marketing share `SALES_MARKETING`**. That merge predates this
+**Sales and Marketing share `SALES_MARKETING`**.
+
+A second choice arose in batch 2: `BusinessDomain.EXECUTIVE` also exists
+and fits "Executive KPI Intelligence" by name. `MIS` was used because that
+is the domain the batch was supplied under, and because the choice is
+**governance-neutral** — `policy_for(MIS)` and `policy_for(EXECUTIVE)` were
+compared and are identical: same effective restricted categories, same
+(empty) prohibited-action set, same minimum group size. Nothing is
+under-protected either way. That merge predates this
 package. It is reused rather than split, because two domain vocabularies
 would mean two answers to "what may this question return". Skill slugs keep
 the two distinguishable where it matters (`sales.*` vs a future
@@ -100,7 +113,11 @@ the two distinguishable where it matters (`sales.*` vs a future
 
 `registry.covered_domains()` answers "which of the eighteen are actually
 covered" from the catalog itself, so no document can claim coverage the
-code does not have. **Today: Sales only.**
+code does not have. **Today: Sales and MIS.**
+
+A test asserts `covered_domains()` equals exactly the delivered batches, so
+a new domain fails it until this document is updated in the same change —
+the coverage claim cannot drift behind the code.
 
 ---
 
@@ -193,7 +210,8 @@ request.
 |---|---|
 | Contract, registry, composer | **Live**, off by default (`ENABLE_DOMAIN_SKILLS`) |
 | Sales skills (5 of 5 supplied) | **Registered** |
-| Other 17 domains | **Not registered** — a skill is added when its prompt arrives, never in anticipation |
+| MIS / Management Reporting skills (5 of 5 supplied) | **Registered** |
+| Other 16 domains | **Not registered** — a skill is added when its prompt arrives, never in anticipation |
 | Wiring into a live analysis path | **Not done** — see below |
 
 **Deliberately not wired yet.** The composer produces guidance, and nothing

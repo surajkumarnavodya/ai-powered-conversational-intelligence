@@ -19,16 +19,28 @@ from domain_skills.types import DomainSkill, UnknownSkillError
 from governance.domains import BusinessDomain
 
 SALES = BusinessDomain.SALES_MARKETING
+MIS = BusinessDomain.MIS
 
 
 class TestCatalog:
-    def test_the_five_supplied_sales_skills_are_registered(self):
-        assert ds.all_slugs() == (
+    def test_the_supplied_sales_skills_are_registered(self):
+        """Per-domain rather than a whole-catalog equality, so a later batch
+        does not have to edit this assertion to stay true."""
+        assert tuple(s.slug for s in ds.skills_for_domain(SALES)) == (
             "sales.revenue",
             "sales.customer",
             "sales.regional",
             "sales.product",
             "sales.pricing",
+        )
+
+    def test_the_supplied_mis_skills_are_registered(self):
+        assert tuple(s.slug for s in ds.skills_for_domain(MIS)) == (
+            "mis.executive_kpi",
+            "mis.target_vs_actual",
+            "mis.period_comparison",
+            "mis.anomaly",
+            "mis.scorecard",
         )
 
     def test_every_skill_belongs_to_a_real_governance_domain(self):
@@ -41,16 +53,33 @@ class TestCatalog:
     def test_slugs_are_unique(self):
         assert len(set(ds.all_slugs())) == len(ds.all_slugs())
 
-    def test_the_shared_scope_is_stored_once_not_per_skill(self):
-        """The five supplied prompts had an identical scope sentence. If a
-        future edit forks them, this fails -- which is the point."""
-        scopes = {s.scope for s in ds.skills_for_domain(SALES)}
+    @pytest.mark.parametrize("domain", ds.covered_domains(), ids=lambda d: d.value)
+    def test_each_domain_stores_its_scope_once_not_per_skill(self, domain):
+        """Every batch so far arrived with an identical scope sentence
+        across its five prompts. If a future edit forks one, this fails --
+        which is the point, because a forked scope is the first step back
+        toward ninety copies of the same text."""
+        scopes = {s.scope for s in ds.skills_for_domain(domain)}
         assert len(scopes) == 1
 
-    def test_only_sales_is_covered_so_far(self):
+    def test_coverage_is_exactly_the_delivered_batches(self):
         """Coverage is read from the catalog, so no document can claim a
-        domain the code does not actually have."""
-        assert ds.covered_domains() == (SALES,)
+        domain the code does not actually have.
+
+        **This assertion is meant to be updated by each batch.** Failing
+        here when a domain lands is the point: it forces the coverage claim
+        in `docs/architecture/domain-skills.md` to be updated in the same
+        change, instead of drifting behind the code.
+        """
+        assert ds.covered_domains() == (SALES, MIS)
+
+    def test_the_other_sixteen_domains_have_no_skills(self):
+        """An uncovered domain must stay genuinely empty rather than
+        quietly inheriting another domain's framing."""
+        covered = set(ds.covered_domains())
+        for domain in BusinessDomain:
+            if domain not in covered:
+                assert ds.skills_for_domain(domain) == (), domain.value
 
     @pytest.mark.parametrize("skill", ds.all_skills(), ids=lambda s: s.slug)
     def test_each_skill_is_frozen(self, skill):
@@ -150,6 +179,16 @@ class TestFailsOpen:
 
         assert guidance_for(BusinessDomain.GENERAL, enabled=True) is None
 
+    def test_mis_produces_its_own_guidance(self):
+        """Each covered domain must get its own scope text, not another
+        domain's."""
+        result = guidance_for(MIS, enabled=True)
+        assert result is not None
+        text, skill = result
+        assert skill.domain is MIS
+        assert "executive KPIs" in text
+        assert "commercial revenue" not in text, "Sales scope leaked into MIS"
+
     def test_a_covered_domain_produces_guidance(self):
         result = guidance_for(SALES, enabled=True)
         assert result is not None
@@ -161,6 +200,23 @@ class TestFailsOpen:
 class TestSkillSelectionCannotCrossDomains:
     """The skill parameter must not become a way to pull in another
     domain's framing."""
+
+    def test_a_real_skill_from_another_domain_is_ignored(self):
+        """Now that two domains are registered this needs no injection:
+        `mis.scorecard` is genuinely registered under a different domain,
+        so the guard is exercised against the real catalog.
+
+        Kept alongside the monkeypatched version below, which still earns
+        its place: it is the technique the GENERAL guard needs, and it
+        keeps working when a batch is the only one in its domain.
+        """
+        assert ds.is_registered("mis.scorecard")
+        assert ds.get_skill("mis.scorecard").domain is MIS
+
+        chosen = select_skill(SALES, preferred_slug="mis.scorecard")
+        assert chosen is not None
+        assert chosen.domain is SALES, "another domain's skill leaked through"
+        assert chosen.slug.startswith("sales.")
 
     def test_a_slug_from_another_domain_is_ignored(self, monkeypatch):
         """The other-domain skill must be genuinely REGISTERED for this to
