@@ -2409,6 +2409,38 @@ class Settings(BaseSettings):
     # reached.
     bi_export_cache_max_entries: int = Field(default=200, gt=0)
 
+    # --- Batch 5 of docs/architecture/implementation-roadmap.md: the
+    # REST/OpenAPI connector (`rest/`). Off by default, and off is not the
+    # same as "no allowlist": `rest_allowed_hosts` empty means every
+    # outbound call is refused, so enabling the flag without naming hosts
+    # is inert rather than open. See security/outbound_url.py.
+    enable_rest_connector: bool = False
+
+    #: Hostnames the REST connector may call, comma-separated
+    #: (`REST_ALLOWED_HOSTS=api.example.com,data.example.org`) -- same
+    #: convention as `OLLAMA_ALLOWED_MODELS`/`CORS_ALLOWED_ORIGINS`.
+    #: Matched exactly and case-insensitively, never as a suffix: an
+    #: `example.com` entry does NOT permit `evil-example.com` or
+    #: `example.com.evil.net`. Empty (the default) refuses everything --
+    #: this is an allowlist, so "unset" must mean "nothing", never "any".
+    rest_allowed_hosts: Annotated[tuple[str, ...], NoDecode] = ()
+
+    #: Per-request timeout for an outbound REST call, seconds.
+    rest_timeout_seconds: float = Field(default=10.0, gt=0.0)
+
+    #: Hard cap on how many bytes one REST response may be read into
+    #: memory. Enforced against a declared `Content-Length` before any
+    #: body is read AND against bytes actually received, since a response
+    #: can omit or lie about that header. Deliberately far smaller than
+    #: `media_max_file_mb`: a JSON API response is not a media file, and a
+    #: cap sized for the latter would not bound this at all.
+    rest_max_response_bytes: int = Field(default=2_000_000, gt=0)
+
+    #: How many redirect hops a REST call may follow. Each hop is itself a
+    #: fresh SSRF check, so an unbounded chain would also mean unbounded
+    #: validation work. 0 means "follow none".
+    rest_max_redirects: int = Field(default=3, ge=0)
+
     # --- Prompt 47 (47_MODEL_ROUTING_COST_OPTIMIZATION_CONTRACT.md):
     # model_routing/'s own tunables -- which locally-installed Ollama model
     # drafts each LLM call the SQL pipeline makes, by complexity, risk,
@@ -3014,6 +3046,19 @@ class Settings(BaseSettings):
         """
         if isinstance(value, str):
             return tuple(model.strip() for model in value.split(",") if model.strip())
+        return value
+
+    @field_validator("rest_allowed_hosts", mode="before")
+    @classmethod
+    def _split_rest_allowed_hosts(cls, value: object) -> object:
+        """Same comma-separated `.env` convention as `_split_cors_origins`/
+        `_split_ollama_allowed_models` above. Hosts are stored as given and
+        compared case-insensitively at use (see
+        `security.outbound_url.assert_safe_url`) rather than lower-cased
+        here, so an operator reading back their own `.env` value sees what
+        they typed."""
+        if isinstance(value, str):
+            return tuple(host.strip() for host in value.split(",") if host.strip())
         return value
 
     @field_validator("google_oauth_allowed_hosted_domains", mode="before")

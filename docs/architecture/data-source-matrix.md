@@ -136,12 +136,12 @@ adapter seam, then mark live verification blocked.
 
 | | REST / OpenAPI | MCP |
 |---|---|---|
-| **Status** | Absent | **Partial** — `agent/tools/` is MCP-*shaped*, not an MCP client |
+| **Status** | **Flag-gated** (2026-10-15) — `rest/`, off by default, not routable yet | **Partial** — `agent/tools/` is MCP-*shaped*, not an MCP client |
 | **Existing seam** | `agent/tools/types.py::Tool` already carries name, description, schema, permission, `timeout_seconds`, `RetryPolicy`, audit | same |
-| **What's missing** | host allowlist, method/arg/redirect/payload validation, read-vs-side-effect classification, per-endpoint auth | MCP transport, remote server client, trust process |
+| **What's missing** | OpenAPI spec parsing, per-endpoint auth headers, and a `sources/descriptors.py` entry (so nothing can route to it yet). Host allowlist, redirect/payload validation and read-vs-side-effect classification are **done** — `security/outbound_url.py` | MCP transport, remote server client, trust process |
 | **Security requirements** | SSRF validation re-run **on every use** (not once at registration), destination allowlist, payload cap | tool descriptions and results are **untrusted data**; an LLM must never register a remote tool — administrator-controlled trust only |
 | **Side effects** | must be declared and approval-gated | same |
-| **Blocked?** | no — buildable and testable here | no |
+| **Blocked?** | no — built and tested here | no |
 
 ---
 

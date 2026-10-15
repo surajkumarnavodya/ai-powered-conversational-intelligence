@@ -1,4 +1,4 @@
-# Source connector contract — Batches 1 and 3
+# Source connector contract — Batches 1, 3 and 5
 
 **Scope.** The design of `sources/` and `GET /sources`: what the contract
 is, what it deliberately is not, and which invariants it carries. This
@@ -10,8 +10,9 @@ capabilities and auth in [`data-source-matrix.md`](data-source-matrix.md);
 the batch plan in
 [`implementation-roadmap.md`](implementation-roadmap.md).
 
-**Date:** 2026-10-15. **Batches:** 1 (contract + registry) and 3
-(per-conversation source selection) of the source-connectivity roadmap.
+**Date:** 2026-10-15. **Batches:** 1 (contract + registry), 3
+(per-conversation source selection) and 5 (REST/OpenAPI connector) of the
+source-connectivity roadmap.
 
 ---
 
@@ -54,9 +55,10 @@ describes and §4.7 protects — do not "finish the wiring" as a side effect
 of unrelated work, and do not delete it as dead code.
 
 What keeps it from being merely aspirational: `sources/mock.py` implements
-it and `tests/test_sources_conformance.py` runs 27 checks against it. A
-Protocol alone cannot be wrong; an implementation plus a suite that
-rejects a non-conforming connector can be.
+it and `tests/test_sources_conformance.py` runs against it. A Protocol
+alone cannot be wrong; an implementation plus a suite that rejects a
+non-conforming connector can be. **`rest/` (Batch 5) is now the first
+real implementer** — see §9.
 
 ---
 
@@ -254,6 +256,20 @@ raising, and asserts each is detectably broken.
 | `tests/test_api_source_selection.py` | schema validation + router wiring |
 | `frontend/src/components/chat/SourcePicker.test.tsx` | picker behaviour and states |
 
+### Batch 5
+
+| File | Role |
+|---|---|
+| `security/outbound_url.py` | the SSRF controls: allowlist, blocklist, redirect-safe bounded JSON GET |
+| `rest/types.py` | `RestEndpoint`, `RestMethod` — the operator-declared call |
+| `rest/connector.py` | `RestConnector` + its (unregistered) descriptor |
+| `rest/__init__.py` | public surface |
+| `config/settings.py` | 5 `rest_*` settings + the comma-separated splitter |
+| `.env.example` | the operator-facing block |
+| `tests/test_outbound_url.py` | 61 SSRF tests + the three-way blocklist pin |
+| `tests/test_rest_connector.py` | configuration validity, read-only posture, no query interpolation |
+| `tests/test_sources_conformance.py` | `Harness`/`TestUniversalContract`; `RestConnector` enrolled |
+
 ---
 
 ## 8. Batch 3 — per-conversation source selection
@@ -316,18 +332,117 @@ question, so offering them as a persistent preference would mislead.
 
 ---
 
-## 9. Next
+## 9. Batch 5 — REST/OpenAPI connector
+
+`rest/` calls a fixed set of operator-declared, allowlisted HTTPS
+endpoints read-only. `security/outbound_url.py` holds the SSRF controls.
+
+### 9.1 The duplication decision, stated plainly
+
+Two copies of the resolve-and-blocklist check already existed:
+`media_gen/download.py` (which also has the redirect-revalidation loop)
+and `bi_integration/outbound_safety.py`, whose own docstring explains why
+it did not extract a shared helper — `tests/test_media_gen.py` patches
+`media_gen.download.log_security_event` directly, and moving that call out
+of that namespace would break an audited suite.
+
+That reasoning still holds, so **Batch 5 did not touch either.**
+`security/outbound_url.py` is the canonical home for *new* callers. There
+are therefore **three** copies of the blocklist, which for a security
+control is only acceptable if divergence cannot go unnoticed. What makes
+it acceptable is a test, not a convention:
+`tests/test_outbound_url.py::TestBlocklistsAreIdentical` asserts all three
+match exactly, plus a second check that the list still covers the ranges
+that matter — so editing all three together into something weaker fails
+too.
+
+**Consolidating the two older copies is its own task** and has to deal
+with those patch targets. It is not done.
+
+### 9.2 What this batch adds beyond the older two
+
+| Control | Why it is new here |
+|---|---|
+| **Host allowlist, checked before DNS** | A blocklist alone is deny-known-bad. Fine for a provider CDN URL the app itself built; not sufficient for an operator-configured endpoint, where the safe set is small, enumerable, and should be stated positively. Checking it before resolution also means this server makes no network request at all — not even a lookup — on behalf of a rejected URL |
+| **Exact host matching** | A suffix check accepts `api.example.com.evil.net`; a substring check accepts `evil-api.example.com`. Both are tested |
+| **Every resolved address checked** | Not `addrinfo[0]`. A host with one public and one private A record must be refused, and taking the first would let record ordering decide |
+| **Bounded JSON GET** | Cap enforced against a declared `Content-Length` before any body is read *and* against bytes received, since a response can omit or lie about it |
+
+### 9.3 Mutation evidence
+
+Each applied to live code, then reverted. Clean: `61 passed`.
+
+| Mutation | Result |
+|---|---|
+| drop per-hop redirect re-validation | **3 failed**, 58 passed |
+| drop the host allowlist check | **9 failed**, 52 passed |
+| check only the first resolved address | **1 failed**, 60 passed |
+
+### 9.4 A real finding: the suite was making DNS calls
+
+After enrolling `RestConnector` in the conformance suite, a probe run with
+`socket.getaddrinfo` stubbed to raise caught **four tests making real DNS
+lookups** for `api.example.com` — through `health()`, which resolves. They
+passed (the name NXDOMANs, so health reported unhealthy), which is exactly
+why it went unnoticed: a green test that quietly depends on the network is
+slow, fails offline, and breaks the repo's fully-mocked rule
+([`CLAUDE.md`](../../CLAUDE.md) §7).
+
+Fixed with a `Harness.prepare` hook that patches DNS and transport before
+every universal check. Re-probed: **137 passed with `getaddrinfo` globally
+blocked** across all three new test files.
+
+### 9.5 A correction to Batch 1's claim
+
+Batch 1's conformance-suite docstring said any connector could be added to
+`_CONNECTORS` and "inherit every check". That was overstated — those
+checks are mock-shaped (they drive a `(corpus, configured=, healthy=)`
+constructor and assert against corpus contents). A real connector takes
+its own constructor arguments and reads its own `Settings`.
+
+The suite now has two tiers: the existing corpus-aware checks over
+`_CONNECTORS`, and `TestUniversalContract` over `_HARNESSES` — the parts
+of the contract that do not depend on what a connector reads. `RestConnector`
+is enrolled in the second. §4's claim is corrected accordingly.
+
+### 9.6 Deliberately not done
+
+- **Not routable.** No `sources/descriptors.py` entry, so `GET /sources`
+  does not advertise it and the router cannot reach it — there is no
+  orchestrator node for it, and advertising a source nothing can answer
+  is worse than omitting it.
+- **No write verbs.** `RestMethod` has `GET` and `HEAD` only. The write
+  verbs are absent rather than present-and-blocked: adding `POST` should
+  be the change that requires review, and an enum member nothing can
+  execute is an empty abstraction.
+- **No query interpolation.** `search`'s `query` never reaches a URL.
+  Letting a question's text into an outbound request hands an end user
+  partial control of it — path traversal, a swapped host, a credential
+  leaked into a query string. Endpoints are fixed; filtering happens on
+  what comes back.
+- **No OpenAPI spec parsing.** Endpoints are declared directly. Ingesting
+  a spec means trusting a remote document to define what this server may
+  call, which needs its own trust story.
+- **No endpoint-creation API route.** Endpoints are configuration only.
+
+---
+
+## 10. Next
 
 
 
-Batches 1 and 3 are done. The remaining credential-free work is
-**Batch 5** (REST/OpenAPI, needing SSRF validation re-run on every use)
-and **Batch 8** (a real MCP client, administrator-controlled trust only).
+
+
+Batches 1, 3 and 5 are done. The remaining credential-free work is
+**Batch 8** (a real MCP client, administrator-controlled trust only), and
+two items worth their own decision: wiring `rest/` into the orchestrator so
+it becomes routable, and consolidating the three SSRF blocklist copies
+(§9.1).
 
 **Batch 2** — adapting the existing sources to the lifecycle half of the
-contract — is deliberately deferred: it is pure refactor with regression
-risk and no new capability, and it generalizes better once a second real
-connector exists to generalize against.
+contract — is now better motivated than before: `rest/` is a second real
+implementer to generalize against, which was the stated reason for
+deferring it.
 
 **Batch 4/6/7** (SharePoint/OneDrive, Dataverse, Outlook) stay blocked on
 an Entra tenant and admin consent. Teams is not scheduled at all — see

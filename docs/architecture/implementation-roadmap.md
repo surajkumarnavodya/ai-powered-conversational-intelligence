@@ -39,7 +39,7 @@ built or cannot be verified here.
 | 2 — existing sources behind contract | deferred (see §6) | — |
 | 3 — per-conversation source selection | **done** | `AskRequest.sources` + picker; see [`source-connector-contract.md`](source-connector-contract.md) §8 |
 | 4, 6, 7 — SharePoint/OneDrive, Dataverse, Outlook | blocked (no tenant) | — |
-| 5 — REST/OpenAPI | not started | — |
+| 5 — REST/OpenAPI | **done** | `rest/` + `security/outbound_url.py`; see [`source-connector-contract.md`](source-connector-contract.md) §9 |
 | 8 — MCP client | not started | — |
 | Teams | not scheduled | — |
 
@@ -227,7 +227,7 @@ programme.
 | 2 | Existing sources behind contract | P1 | M | no | regression |
 | 3 | Per-conversation source selection | P1 | M | no | **R4 security** — done, mutation-proven |
 | 4 | SharePoint + OneDrive | P1 | L | **yes** | R2 |
-| 5 | REST / OpenAPI | P2 | M | no | SSRF |
+| 5 | REST / OpenAPI | P2 | M | no | SSRF — done, 3 mutations proven |
 | 6 | Dataverse | P2 | L | **yes** | R2 |
 | 7 | Outlook read | P2 | L | **yes** | R2 + injection |
 | 8 | MCP client | P2 | L | no | trust process |
@@ -267,18 +267,27 @@ done. These are the ones this programme touches most:
 
 ## 6. Recommended next action
 
-**Batch 5 — REST/OpenAPI**, then **Batch 8 — MCP client**.
+**Batch 8 — MCP client**, or one of the two decisions Batch 5 surfaced.
 
-Batches 0, 1 and 3 are done, and R4 is closed and mutation-proven. Those
-two are the only remaining batches that need no external credentials.
+Batches 0, 1, 3 and 5 are done. Batch 8 is the last batch needing no
+external credentials: a real MCP transport behind `agent/tools/`'s
+existing typed contract, with **administrator-controlled trust only** — an
+LLM must never register a remote tool, and tool descriptions and results
+are untrusted data.
 
-Batch 5's substance is security, not plumbing: a host allowlist, method
-and argument validation, read-vs-side-effect classification, and SSRF
-validation **re-run on every use** rather than once at registration
-([`CLAUDE.md`](../../CLAUDE.md) §5.6).
+Two items Batch 5 raised that deserve their own decision rather than being
+folded into a batch:
 
-Batch 2 stays deferred — pure refactor, regression risk, no new
-capability, and it generalizes better against a second real connector.
+- **Make `rest/` routable.** It implements the lifecycle contract but has
+  no descriptor and no orchestrator node, so nothing can reach it yet.
+  Wiring it wants a deployment with real endpoints to test against.
+- **Consolidate the three SSRF blocklist copies.** Pinned identical by a
+  test, so this is hygiene rather than a live risk — but it has to deal
+  with `tests/test_media_gen.py`'s patch target (see
+  [`source-connector-contract.md`](source-connector-contract.md) §9.1).
+
+Batch 2 is now better motivated: `rest/` is the second real implementer
+that was the stated reason for deferring it.
 
 Batches 4, 6 and 7 remain blocked on an Entra tenant and admin consent;
 Teams is not scheduled (see

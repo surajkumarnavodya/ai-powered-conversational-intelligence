@@ -85,7 +85,7 @@ and `openapi`.
 | Dataverse | **Absent** | 0 files | implement (**Blocked** on tenant) | P2 |
 | Outlook / email | **Absent** | 0 files | implement (**Blocked** on tenant) | P2 |
 | Microsoft Teams | **Absent** | 0 files | implement (**Blocked** on tenant) | P2 |
-| REST / OpenAPI | **Absent** | 0 files | implement | P2 |
+| REST / OpenAPI | **Flag-gated** (2026-10-15), not routable | `rest/`, `security/outbound_url.py`; `ENABLE_REST_CONNECTOR=false`; `tests/test_outbound_url.py` (61), `tests/test_rest_connector.py` (29) | wire into routing when a deployment has endpoints | P2 |
 | MCP (real client) | **Partial** | `agent/tools/` is an *MCP-shaped internal* registry (`types.py::Tool` with `timeout_seconds`, `RetryPolicy`, permission, audit). No MCP transport, no remote server client | implement | P2 |
 | **Unified inbound connector registry / lifecycle contract** | **Absent** | The 16 files matching `connector` are all **outbound BI** (`bi_integration/`, `api/bi_integration.py`) or unrelated (`agent/followup.py`, `workflow/models.py`). There is no inbound connector type registry | implement | **P0** |
 

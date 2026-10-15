@@ -526,6 +526,33 @@ for how the router/subgraphs work internally.
 | `WEB_SEARCH_API_KEY` | *(unset)* | API key for the configured provider. Get a Tavily key at [tavily.com](https://tavily.com). `SecretStr`-wrapped. |
 | `WEB_SEARCH_MAX_RESULTS` | `5` | Max results requested per search call. |
 
+### REST/OpenAPI connector (optional, off by default)
+
+Calls a fixed set of operator-declared, allowlisted HTTPS endpoints
+read-only. See
+[`docs/architecture/source-connector-contract.md`](architecture/source-connector-contract.md)
+§9.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ENABLE_REST_CONNECTOR` | `false` | Enables `rest/`. **Not routable yet** — there is no `sources/descriptors.py` entry, so this does not appear in `GET /sources` and the router cannot reach it. |
+| `REST_ALLOWED_HOSTS` | *(empty)* | Comma-separated hostnames the connector may call. Matched **exactly** and case-insensitively, never as a suffix — an `example.com` entry does not permit `evil-example.com` or `example.com.evil.net`. Empty refuses everything. |
+| `REST_TIMEOUT_SECONDS` | `10.0` | Per-request timeout. |
+| `REST_MAX_RESPONSE_BYTES` | `2000000` | Cap on bytes read from one response. Enforced against a declared `Content-Length` before any body is read *and* against bytes actually received, since a response can omit or lie about that header. |
+| `REST_MAX_REDIRECTS` | `3` | Redirect hops a call may follow. Each hop is a fresh SSRF check, so an unbounded chain means unbounded validation work. `0` follows none. |
+
+**Enabling the flag without naming hosts is inert, not open.** An
+allowlist with no entries permits nothing — for an allowlist, "unset" must
+mean "nothing", never "any".
+
+Every URL is validated on **every** use, never once at configuration time:
+HTTPS-only, the host allowlist checked *before* DNS (so a rejected URL
+causes no network request at all, not even a lookup), and **every**
+resolved address checked against the private/loopback/link-local/reserved
+blocklist — not just the first, or record ordering would decide. Redirects
+are followed manually with each hop re-validated. See
+[`security/outbound_url.py`](../security/outbound_url.py).
+
 ### Voice mode (optional, on by default)
 
 Local speech-to-text/text-to-speech — no cloud API, same posture as
