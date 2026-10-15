@@ -6,11 +6,12 @@ settings field that can add or edit a skill at runtime — see
 `domain_skills/types.py` on why a skill must stay an in-code constant.
 
 Batches so far: Sales, MIS / Management Reporting, Marketing, HR,
-eCommerce, Training / L&D, Finance & Corporate Functions, BFSI. Every
-batch has arrived with an identical body and an identical "Domain scope"
-sentence across its five prompts, differing only in the heading — so each
-*prompt-domain* writes its scope once (`_SALES_SCOPE`, `_MIS_SCOPE`,
-`_MARKETING_SCOPE`) and each skill carries only its own focus.
+eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply
+Chain / Procurement & Logistics. Every batch has arrived with an identical
+body and an identical "Domain scope" sentence across its five prompts,
+differing only in the heading — so each *prompt-domain* writes its scope
+once (`_SALES_SCOPE`, `_MIS_SCOPE`, `_MARKETING_SCOPE`) and each skill
+carries only its own focus.
 
 **Marketing shares `BusinessDomain.SALES_MARKETING` with Sales** but has a
 different analytical scope. A governance domain answers "what may this
@@ -733,6 +734,114 @@ BFSI_SKILLS: tuple[DomainSkill, ...] = (
     ),
 )
 
+#: The supplied Supply Chain prompts' "Domain scope:" sentence, verbatim.
+_SUPPLY_CHAIN_SCOPE = (
+    "Analyze supply, inventory, procurement, suppliers, shipments, logistics and delivery."
+)
+
+#: The mirror image of batch 8. `policy_for(SUPPLY_CHAIN)` prohibits
+#: **nothing** -- it declares restricted categories (contract, banking and
+#: proprietary, plus the unavoidable baseline) but not one
+#: `ProhibitedAction`. So `composer._prohibitions_block` returns "" and no
+#: constraint block is appended at all, which means the shared contract's
+#: invitation to "rank top and bottom performers" stands unqualified here.
+#:
+#: MIS is the only other zero-prohibition domain, and it got away with it
+#: because management reporting is inherently aggregate. Supply chain is
+#: not: supplier and carrier measures name counterparties, and delivery
+#: records frequently identify an individual driver or courier. The two
+#: risks that creates are therefore carried by the skills' own focus texts
+#: -- the `finance.ar_ap` precedent -- because there is no policy-backed
+#: prohibition for the composer to derive.
+#:
+#: Neither focus text is the control. Driver-level performance is
+#: `DataCategory.PERFORMANCE`, which `BASELINE_RESTRICTED_CATEGORIES`
+#: restricts in every domain, so `governance/result_policy.py` is what
+#: actually withholds it. The focus text only stops the model being
+#: invited to ask for it.
+_SUPPLY_CHAIN = BusinessDomain.SUPPLY_CHAIN
+
+#: Declared in the supplied numeric order (01 chain performance, 02
+#: inventory, 03 logistics and delivery, 04 supplier and spend, 05
+#: procurement cycle), so the domain default is Supply Chain Performance
+#: Intelligence (01) -- the broadest of the five.
+SUPPLY_CHAIN_SKILLS: tuple[DomainSkill, ...] = (
+    DomainSkill(
+        slug="supply_chain.performance",
+        title="Supply Chain Performance Intelligence",
+        domain=_SUPPLY_CHAIN,
+        scope=_SUPPLY_CHAIN_SCOPE,
+        focus=(
+            "End-to-end service and cost across the chain: fill rate, "
+            "on-time-in-full, total lead time and cost to serve, and which "
+            "stage the delay actually sits in. A chain-level number hides "
+            "its own cause, so attribute a movement to a stage or say "
+            "plainly that it cannot be attributed."
+        ),
+        dimensions=("stage", "site", "product category", "supplier", "period"),
+    ),
+    DomainSkill(
+        slug="supply_chain.inventory",
+        title="Inventory Intelligence",
+        domain=_SUPPLY_CHAIN,
+        scope=_SUPPLY_CHAIN_SCOPE,
+        focus=(
+            "Stock health: cover and days of supply, turns, stock-outs, "
+            "excess and ageing. Inventory is a point-in-time snapshot, not "
+            "a flow -- it must never be summed across periods, and an "
+            "average has to name the snapshot dates it averages. Give the "
+            "cost basis behind any turns figure."
+        ),
+        dimensions=("sku", "location", "product category", "ageing band", "period"),
+    ),
+    DomainSkill(
+        slug="supply_chain.logistics",
+        title="Logistics and Delivery Intelligence",
+        domain=_SUPPLY_CHAIN,
+        scope=_SUPPLY_CHAIN_SCOPE,
+        focus=(
+            "Shipment and delivery performance: on-time rate, transit time, "
+            "exceptions, and carrier and lane performance. Name which "
+            "promise date on-time is measured against, since a revised date "
+            "flatters the number against the original one. Delivery records "
+            "frequently identify a driver or courier: report carrier, lane "
+            "and route performance, never an individual's."
+        ),
+        dimensions=("carrier", "lane", "service level", "destination region", "period"),
+    ),
+    DomainSkill(
+        slug="supply_chain.supplier_spend",
+        title="Supplier and Spend Intelligence",
+        domain=_SUPPLY_CHAIN,
+        scope=_SUPPLY_CHAIN_SCOPE,
+        focus=(
+            "Spend and supplier performance in aggregate: spend by category "
+            "and by supplier, concentration and tail spend, and delivery and "
+            "quality performance per supplier. State one currency basis and "
+            "one document basis -- purchase order, invoice or payment -- "
+            "because mixing them double-counts. Weak measured performance "
+            "is a performance fact, never evidence of bad faith or "
+            "misconduct by a supplier."
+        ),
+        dimensions=("supplier", "spend category", "contract status", "region", "period"),
+    ),
+    DomainSkill(
+        slug="supply_chain.procurement_cycle",
+        title="Procurement Cycle Intelligence",
+        domain=_SUPPLY_CHAIN,
+        scope=_SUPPLY_CHAIN_SCOPE,
+        focus=(
+            "The requisition-to-payment cycle: stage durations, approval "
+            "lead time, where requests queue, and off-contract buying. Only "
+            "a completed cycle has a measurable duration, so a mean over "
+            "closed requisitions alone is biased low while the slowest are "
+            "still open -- give the inclusion rule and how many remain in "
+            "flight."
+        ),
+        dimensions=("stage", "buyer group", "spend category", "approval tier", "period"),
+    ),
+)
+
 #: Every registered skill, in declaration order. Later batches append their
 #: own tuple here.
 ALL_SKILLS: tuple[DomainSkill, ...] = (
@@ -744,4 +853,5 @@ ALL_SKILLS: tuple[DomainSkill, ...] = (
     + TRAINING_SKILLS
     + FINANCE_SKILLS
     + BFSI_SKILLS
+    + SUPPLY_CHAIN_SKILLS
 )

@@ -43,6 +43,7 @@ ECOMMERCE = BusinessDomain.ECOMMERCE
 TRAINING = BusinessDomain.TRAINING
 FINANCE = BusinessDomain.FINANCE
 BFSI = BusinessDomain.BFSI
+SUPPLY_CHAIN = BusinessDomain.SUPPLY_CHAIN
 
 
 class TestCatalog:
@@ -56,6 +57,21 @@ class TestCatalog:
             "sales.product",
             "sales.pricing",
         )
+
+    def test_the_supplied_supply_chain_skills_are_registered_in_numeric_order(self):
+        """Supplied 01..05 in order; registered in that order, so the
+        domain default is Supply Chain Performance Intelligence, the
+        broadest of the five."""
+        assert tuple(s.slug for s in ds.skills_for_domain(SUPPLY_CHAIN)) == (
+            "supply_chain.performance",  # 01
+            "supply_chain.inventory",  # 02
+            "supply_chain.logistics",  # 03
+            "supply_chain.supplier_spend",  # 04
+            "supply_chain.procurement_cycle",  # 05
+        )
+        default = select_skill(SUPPLY_CHAIN)
+        assert default is not None
+        assert default.slug == "supply_chain.performance"
 
     def test_the_supplied_bfsi_skills_are_registered_in_numeric_order(self):
         """Supplied 01..05 in order; registered in that order, so the domain
@@ -144,8 +160,8 @@ class TestCatalog:
         """Four prompt-domains, three governance domains: Marketing shares
         `SALES_MARKETING` with Sales. Inventing a governance domain per
         batch would mean two answers to 'what may this question return'."""
-        assert len({s.group for s in ds.all_skills()}) == 8
-        assert len(ds.covered_domains()) == 7
+        assert len({s.group for s in ds.all_skills()}) == 9
+        assert len(ds.covered_domains()) == 8
 
     def test_the_supplied_mis_skills_are_registered(self):
         assert tuple(s.slug for s in ds.skills_for_domain(MIS)) == (
@@ -198,6 +214,7 @@ class TestCatalog:
             TRAINING,
             FINANCE,
             BFSI,
+            SUPPLY_CHAIN,
         )
 
     def test_every_uncovered_domain_has_no_skills(self):
@@ -523,12 +540,22 @@ class TestDomainProhibitionsAreDerivedNotRestated:
         assert text.rstrip().endswith("instead of doing it.")
         assert text.index("Domain constraints") > text.index("Rank top and bottom")
 
-    def test_a_domain_with_no_prohibitions_appends_nothing(self):
-        """MIS prohibits nothing, so there is no empty block to read past."""
+    @pytest.mark.parametrize("domain", [MIS, SUPPLY_CHAIN], ids=lambda d: d.value)
+    def test_a_domain_with_no_prohibitions_appends_nothing(self, domain):
+        """Neither MIS nor SUPPLY_CHAIN declares a `ProhibitedAction`, so
+        there is no empty block to read past.
+
+        Parametrized at batch 9: SUPPLY_CHAIN is the second such domain,
+        and the consequence is not cosmetic. With no block appended, the
+        contract's "rank top and bottom performers" invitation is never
+        overridden for these two, which is exactly why the supply-chain
+        skills carry their own guards -- see
+        `TestSupplyChainCarriesItsOwnGuards`.
+        """
         from governance.domains import policy_for
 
-        assert policy_for(MIS).prohibited_actions == frozenset()
-        result = guidance_for(MIS, enabled=True)
+        assert policy_for(domain).prohibited_actions == frozenset()
+        result = guidance_for(domain, enabled=True)
         assert result is not None
         text, _ = result
         assert "Domain constraints" not in text
@@ -677,6 +704,110 @@ class TestDomainProhibitionsAreDerivedNotRestated:
             lowered = skill.focus.lower()
             assert "individual compensation decision" not in lowered
             assert "unsupported allegation" not in lowered
+
+
+class TestSupplyChainCarriesItsOwnGuards:
+    """Batch 9 is the mirror image of batch 8.
+
+    BFSI's problem was a policy that prohibits four actions while three of
+    its skills are named after one of them. SUPPLY_CHAIN's problem is the
+    opposite: the policy prohibits **nothing**, so
+    `composer._prohibitions_block` appends no constraint block, and the
+    shared contract's invitation to "rank top and bottom performers" is
+    never overridden for this domain.
+
+    MIS is the only other zero-prohibition domain and it is safe by
+    subject matter -- management reporting is inherently aggregate. Supply
+    chain is not: supplier and carrier measures name counterparties, and
+    delivery records frequently identify a driver. So the two risks are
+    carried by the skills' own focus texts, following `finance.ar_ap`.
+
+    These tests exist because a derived block cannot cover this. They are
+    the only thing standing between the contract's ranking invitation and
+    a driver-level performance ranking in a domain whose policy forbids
+    neither.
+    """
+
+    def test_the_domain_genuinely_appends_no_constraint_block(self):
+        """The premise of this whole class. If SUPPLY_CHAIN ever gains a
+        `ProhibitedAction`, the derived block starts covering some of this
+        and these guards should be revisited rather than silently kept."""
+        from governance.domains import policy_for
+
+        assert policy_for(SUPPLY_CHAIN).prohibited_actions == frozenset()
+
+        for skill in ds.skills_for_domain(SUPPLY_CHAIN):
+            result = guidance_for(SUPPLY_CHAIN, enabled=True, preferred_slug=skill.slug)
+            assert result is not None
+            text, chosen = result
+            assert chosen.slug == skill.slug
+            assert "Domain constraints" not in text, skill.slug
+
+    def test_the_ranking_invitation_therefore_reaches_this_domain_unqualified(self):
+        """Proves the risk is real rather than theoretical: the ranking
+        bullet is present in supply-chain guidance and nothing after it
+        narrows it. This is what makes the two guards below load-bearing.
+        """
+        result = guidance_for(SUPPLY_CHAIN, enabled=True)
+        assert result is not None
+        text, _ = result
+        assert "Rank top and bottom performers" in text
+        assert "Domain constraints" not in text
+
+    def test_the_logistics_skill_guards_individual_level_performance_itself(self):
+        """`individual_performance_ranking` is prohibited in HR, not here --
+        yet delivery data is exactly where a named driver or courier shows
+        up. The realistic failure is a "bottom 10 performers" ranking of
+        people in a domain whose policy does not forbid it.
+        """
+        focus = ds.get_skill("supply_chain.logistics").focus.lower()
+        assert "identify a driver or courier" in focus
+        assert "never an individual's" in focus
+
+    def test_the_supplier_skill_carries_the_accusation_guard_itself(self):
+        """`unsupported_allegation` is prohibited in BFSI, not here. A
+        supplier missing its dates is a measured fact; reported as bad
+        faith it becomes an allegation about a counterparty. Same
+        mechanism as `finance.ar_ap`, different domain.
+        """
+        focus = ds.get_skill("supply_chain.supplier_spend").focus.lower()
+        assert "never evidence of bad faith or misconduct" in focus
+
+    def test_the_guards_are_not_a_restatement_of_a_prohibition(self):
+        """They must read as analytical guidance, not as a hand-written
+        copy of a `ProhibitedAction` -- which would be a second owner for
+        a fact `governance/domains.py` owns, free to drift from it.
+        """
+        for skill in ds.skills_for_domain(SUPPLY_CHAIN):
+            lowered = skill.focus.lower()
+            assert "individual performance ranking" not in lowered
+            assert "unsupported allegation" not in lowered
+            assert "prohibit" not in lowered
+
+    def test_each_skill_states_the_measurement_trap_its_subject_carries(self):
+        """Read off the subject matter, not from the policy. Each is a way
+        a correct-looking SQL answer is still wrong: a snapshot summed as
+        a flow, on-time measured against a re-promised date, spend mixed
+        across document bases, a cycle time averaged over closed cases
+        only.
+        """
+        inventory = ds.get_skill("supply_chain.inventory").focus.lower()
+        assert "point-in-time snapshot, not" in inventory
+        assert "never be summed across periods" in inventory
+
+        logistics = ds.get_skill("supply_chain.logistics").focus.lower()
+        assert "which promise date" in logistics
+
+        spend = ds.get_skill("supply_chain.supplier_spend").focus.lower()
+        assert "one currency basis" in spend
+        assert "double-counts" in spend
+
+        cycle = ds.get_skill("supply_chain.procurement_cycle").focus.lower()
+        assert "biased low" in cycle
+        assert "remain in flight" in cycle
+
+        performance = ds.get_skill("supply_chain.performance").focus.lower()
+        assert "cannot be attributed" in performance
 
 
 class TestNothingUntrustedReachesThePrompt:

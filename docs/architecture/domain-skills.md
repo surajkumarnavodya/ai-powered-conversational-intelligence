@@ -1,7 +1,7 @@
 # Domain analytics skills
 
 **Scope.** The design of `domain_skills/`: what a skill is, the boundaries
-it must respect, and how the next 50 are added. This document owns the
+it must respect, and how the next 45 are added. This document owns the
 **domain-skill contract**.
 
 It does not own domain *policy* — what may be asked, returned or
@@ -9,7 +9,7 @@ recommended in a business domain is
 [`../DATA_PRIVACY_GOVERNANCE_ENGINE.md`](../DATA_PRIVACY_GOVERNANCE_ENGINE.md),
 and a skill cannot change any of it.
 
-**Date:** 2026-10-15. **Batches delivered:** 8 — Sales, MIS / Management Reporting, Marketing, HR, eCommerce, Training / L&D, Finance & Corporate Functions, BFSI (across 7 of 18 governance domains).
+**Date:** 2026-10-15. **Batches delivered:** 9 — Sales, MIS / Management Reporting, Marketing, HR, eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply Chain / Procurement & Logistics (across 8 of 18 governance domains).
 
 ---
 
@@ -113,7 +113,7 @@ the two distinguishable where it matters (`sales.*` vs a future
 
 `registry.covered_domains()` answers "which of the eighteen are actually
 covered" from the catalog itself, so no document can claim coverage the
-code does not have. **Today: Sales, MIS, Marketing, HR, eCommerce, Training / L&D, Finance and BFSI — 40 skills across 7 governance domains.**
+code does not have. **Today: Sales, MIS, Marketing, HR, eCommerce, Training / L&D, Finance, BFSI and Supply Chain — 45 skills across 8 governance domains.**
 
 A test asserts `covered_domains()` equals exactly the delivered batches, so
 a new domain fails it until this document is updated in the same change —
@@ -165,23 +165,26 @@ caller text, no retrieved document, no database value, no model output.
 
 ## 7. Mutation evidence
 
-Each applied to live code, then reverted. Clean: `277 passed` (8 batches).
+Each applied to live code, then reverted. Clean: `311 passed` (9 batches).
 Counts grow with the catalog, which is the point — a guard that covered one
 batch would not stay meaningful as domains land.
 
 | Mutation | Result |
 |---|---|
-| selection stops filtering by domain — `select_skill` honours a slug registered in *any* domain (cross-domain leak) | **3 failed**, 274 passed |
-| no longer fails open when the flag is off | **1 failed**, 276 passed |
-| contract gains a format slot | **2 failed**, 275 passed |
-| `GENERAL` (unknown domain) gets guessed framing | **1 failed**, 276 passed |
-| guesses a default across prompt-domains (campaign → Revenue framing) | **2 failed**, 275 passed |
-| `group` stops being derived from the slug (returns a constant) | **46 failed**, 224 passed, 7 no longer collected |
-| prohibitions block dropped (HR invited to rank individuals) | **7 failed**, 270 passed |
-| prohibitions hard-coded to one domain instead of derived (`policy_for(HR)`) | **7 failed**, 270 passed |
-| ranking invitation becomes unqualified again | **1 failed**, 276 passed |
-| BFSI lending skill loses its redirect (refusal with no alternative) | **1 failed**, 276 passed |
-| BFSI skills declared under `FINANCE` (prohibitions silently halve) | **6 failed**, 271 passed |
+| selection stops filtering by domain — `select_skill` honours a slug registered in *any* domain (cross-domain leak) | **3 failed**, 308 passed |
+| no longer fails open when the flag is off | **1 failed**, 310 passed |
+| contract gains a format slot | **2 failed**, 309 passed |
+| `GENERAL` (unknown domain) gets guessed framing | **1 failed**, 310 passed |
+| guesses a default across prompt-domains (campaign → Revenue framing) | **2 failed**, 309 passed |
+| `group` stops being derived from the slug (returns a constant) | **51 failed**, 252 passed, 8 no longer collected |
+| prohibitions block dropped (HR invited to rank individuals) | **7 failed**, 304 passed |
+| prohibitions hard-coded to one domain instead of derived (`policy_for(HR)`) | **10 failed**, 301 passed |
+| ranking invitation becomes unqualified again | **1 failed**, 310 passed |
+| BFSI lending skill loses its redirect (refusal with no alternative) | **1 failed**, 310 passed |
+| BFSI skills declared under `FINANCE` (prohibitions silently halve) | **6 failed**, 305 passed |
+| supply-chain supplier skill loses its accusation guard | **1 failed**, 310 passed |
+| supply-chain logistics skill loses its individual-level guard | **1 failed**, 310 passed |
+| supply-chain skills declared under `MANUFACTURING` (its listed neighbour) | **4 failed**, 307 passed |
 
 **Two notes on reading these numbers**, both found while re-measuring the
 table at batch 8 rather than carrying the previous figures forward:
@@ -193,14 +196,16 @@ table at batch 8 rather than carrying the previous figures forward:
   assertions that have nothing to do with the cross-domain guard. The
   inflated count would look like stronger evidence while actually testing
   something else. Mutation 8's count likewise depends on **which** domain
-  is hard-coded, so the row now names it: `policy_for(HR)` fails 7, while
-  `policy_for(SALES_MARKETING)` fails 6 (HR's own assertion fails in the
-  second case but not the first). Either proves the derivation is
-  load-bearing; only a named one is reproducible.
+  is hard-coded, so the row now names it. At batch 8 `policy_for(HR)`
+  failed 7 and `policy_for(SALES_MARKETING)` failed 6; at batch 9 the HR
+  variant fails **10**, because the zero-prohibition assertion is now
+  parametrized over both MIS and `SUPPLY_CHAIN` and catches it twice more.
+  Either variant proves the derivation is load-bearing; only a named one is
+  reproducible, and only a re-measured one is current.
 - **Mutation 6 changes how many tests exist.** The scope-once test is
   parametrized over the distinct `group` values, so collapsing `group` to
-  a constant collapses 8 parameters to 1 and the
-  total drops from 277 to 270. The 46 failures are real; the missing 7 were
+  a constant collapses 9 parameters to 1 and the
+  total drops from 311 to 303. The 51 failures are real; the missing 8 were
   never collected, not silently passed.
 
 Three of those only became real after a vacuous test was fixed. The full
@@ -488,7 +493,105 @@ correctly declared. It fails 6 tests.
 
 ---
 
-## 13. Adding the next batch
+## 13. Batch 9 (Supply Chain): when the policy prohibits nothing
+
+Batch 9 is the exact mirror of batch 8. BFSI's difficulty was a policy
+prohibiting four actions while three of its skills were *named* after one
+of them. `policy_for(SUPPLY_CHAIN)` prohibits **nothing at all**:
+
+```python
+BusinessDomain.SUPPLY_CHAIN: DomainPolicy(
+    restricted_categories=frozenset({CONTRACT, BANKING, PROPRIETARY}),
+    minimum_group_size=0,
+    export_row_limit=500,
+    cross_domain_allowed=frozenset({BusinessDomain.MANUFACTURING}),
+)   # no prohibited_actions
+```
+
+So `composer._prohibitions_block` returns `""` and **no constraint block is
+appended** — which means the shared contract's invitation to "rank top and
+bottom performers" is never overridden for this domain. Every batch from 3
+to 8 had that invitation narrowed by a derived block. This one does not.
+
+MIS is the only other zero-prohibition domain, and it was safe by subject
+matter: management reporting is inherently aggregate, so there is nobody
+for a ranking to be *about*. Supply chain is not safe that way:
+
+- supplier, carrier and lane measures name **counterparties**, and
+- delivery records very often identify an individual **driver or courier**.
+
+`individual_performance_ranking` is prohibited in HR; `unsupported_allegation`
+is prohibited in BFSI. Neither is prohibited here. So both risks are carried
+by the skills' own focus texts — the `finance.ar_ap` precedent from batch 7,
+now the established pattern for an analytical risk the policy does not
+cover:
+
+| Skill | Risk the policy does not cover | What the focus text requires |
+|---|---|---|
+| `supply_chain.logistics` | a "bottom 10 performers" ranking of named drivers | report carrier, lane and route performance, "never an individual's" |
+| `supply_chain.supplier_spend` | a missed delivery date reported as bad faith | weak performance is "a performance fact, never evidence of bad faith or misconduct" |
+
+**Neither focus text is the control, and the doc should not imply it is.**
+Driver-level performance is `DataCategory.PERFORMANCE`, which
+`BASELINE_RESTRICTED_CATEGORIES` restricts in *every* domain, so
+`governance/result_policy.py` is what actually withholds those values
+(`CLAUDE.md` §5.8 — always read `effective_restricted_categories`, never
+`restricted_categories`, which is precisely why this domain's short list
+does not loosen anything). The focus text only stops the model being
+invited to ask the question.
+
+`TestSupplyChainCarriesItsOwnGuards` pins the chain of reasoning rather
+than just the strings: that the domain really appends no block, that the
+ranking invitation really does reach it unqualified, and only then that each
+guard is present. Its first test fails loudly if `SUPPLY_CHAIN` ever gains
+a `ProhibitedAction` — at which point the derived block starts covering some
+of this and these guards should be reconsidered, not silently kept.
+
+### Analytical constraints this batch carries
+
+Read off the subject matter, none from the policy. Each is a way a
+correct-looking SQL answer is still wrong:
+
+- **Inventory is a stock, not a flow.** A point-in-time snapshot must never
+  be summed across periods, and an average has to name the snapshot dates
+  it averages. This is the most common grain error in the domain.
+- **On-time depends on which promise date.** Measuring against a revised or
+  re-confirmed date flatters the number against the original one, so the
+  basis has to be stated.
+- **Spend needs one currency basis and one document basis.** Purchase
+  order, invoice and payment are three different populations; mixing them
+  double-counts.
+- **Cycle time is censored by work in progress.** Only a completed cycle
+  has a measurable duration, so a mean over closed requisitions alone is
+  biased low while the slowest are still open — the same seasoning trap as
+  BFSI's loan vintages, in a different subject.
+- **A chain-level number hides its own cause.** Attribute a movement to a
+  stage or say plainly that it cannot be attributed.
+
+### Why mutation 14 is the interesting one
+
+It declares the supply-chain skills under `BusinessDomain.MANUFACTURING` —
+the realistic copy-paste error, since manufacturing is this domain's one
+listed `cross_domain_allowed` neighbour and the subject matter adjoins it.
+
+The BFSI equivalent (mutation 11) was caught partly because prohibitions
+silently halved. **Here that signal does not exist**: `MANUFACTURING`
+prohibits nothing either, so not one prohibition test notices. What catches
+it is the coverage assertion, the registration assertion, and the two new
+supply-chain tests, which stop finding their domain — 4 failures. The
+lesson is that a batch landing in a zero-prohibition domain has one fewer
+line of defence than previous batches did, which is the reason this
+section's guards are tested directly rather than inferred.
+
+Worth recording for the next batch: the misdeclaration would also have
+**quietly changed what the result gate restricts**, since `SUPPLY_CHAIN`
+restricts contract, banking and proprietary data while `MANUFACTURING`
+restricts only proprietary. No skill test can see that, because a skill
+grants nothing and reads nothing from the policy except its prohibitions.
+
+---
+
+## 14. Adding the next batch
 
 1. Add the **prompt-domain's** scope string once in `catalog.py`. If the
    batch shares a governance domain with an existing one (as Marketing
@@ -516,7 +619,7 @@ request.
 
 ---
 
-## 14. Status
+## 15. Status
 
 | Item | State |
 |---|---|
@@ -529,7 +632,8 @@ request.
 | Training / L&D skills (5 of 5 supplied) | **Registered** |
 | Finance & Corporate Functions skills (5 of 5 supplied) | **Registered** |
 | BFSI skills (5 of 5 supplied) | **Registered** |
-| Other 11 domains | **Not registered** — a skill is added when its prompt arrives, never in anticipation |
+| Supply Chain / Procurement & Logistics skills (5 of 5 supplied) | **Registered** |
+| Other 10 domains | **Not registered** — a skill is added when its prompt arrives, never in anticipation |
 | Wiring into a live analysis path | **Not done** — see below |
 
 **Deliberately not wired yet.** The composer produces guidance, and nothing
