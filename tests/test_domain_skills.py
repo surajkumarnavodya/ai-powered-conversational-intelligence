@@ -46,6 +46,7 @@ BFSI = BusinessDomain.BFSI
 SUPPLY_CHAIN = BusinessDomain.SUPPLY_CHAIN
 MANUFACTURING = BusinessDomain.MANUFACTURING
 CUSTOMER_SERVICE = BusinessDomain.CUSTOMER_SERVICE
+PROJECT = BusinessDomain.PROJECT
 
 #: Covered domains whose policy declares no `ProhibitedAction` at all, so
 #: `composer._prohibitions_block` appends nothing and the shared contract's
@@ -69,6 +70,20 @@ class TestCatalog:
             "sales.product",
             "sales.pricing",
         )
+
+    def test_the_supplied_project_skills_are_registered_in_numeric_order(self):
+        """Supplied 01..05 in order; registered in that order, so the
+        domain default is Portfolio Intelligence, the broadest."""
+        assert tuple(s.slug for s in ds.skills_for_domain(PROJECT)) == (
+            "project.portfolio",  # 01
+            "project.schedule",  # 02
+            "project.financial",  # 03
+            "project.resource_capacity",  # 04
+            "project.risk_dependency",  # 05
+        )
+        default = select_skill(PROJECT)
+        assert default is not None
+        assert default.slug == "project.portfolio"
 
     def test_the_supplied_customer_service_skills_are_registered_in_numeric_order(self):
         """Supplied 01..05 in order; registered in that order, so the
@@ -205,8 +220,8 @@ class TestCatalog:
         """Four prompt-domains, three governance domains: Marketing shares
         `SALES_MARKETING` with Sales. Inventing a governance domain per
         batch would mean two answers to 'what may this question return'."""
-        assert len({s.group for s in ds.all_skills()}) == 11
-        assert len(ds.covered_domains()) == 10
+        assert len({s.group for s in ds.all_skills()}) == 12
+        assert len(ds.covered_domains()) == 11
 
     def test_the_supplied_mis_skills_are_registered(self):
         assert tuple(s.slug for s in ds.skills_for_domain(MIS)) == (
@@ -262,6 +277,7 @@ class TestCatalog:
             SUPPLY_CHAIN,
             MANUFACTURING,
             CUSTOMER_SERVICE,
+            PROJECT,
         )
 
     def test_every_uncovered_domain_has_no_skills(self):
@@ -606,6 +622,7 @@ class TestDomainProhibitionsAreDerivedNotRestated:
             SUPPLY_CHAIN,
             MANUFACTURING,
             CUSTOMER_SERVICE,
+            PROJECT,
         )
 
     @pytest.mark.parametrize("domain", ZERO_PROHIBITION_DOMAINS, ids=lambda d: d.value)
@@ -620,8 +637,9 @@ class TestDomainProhibitionsAreDerivedNotRestated:
         safe by subject matter -- management reporting is inherently
         aggregate -- while the others carry their own guards, in
         `TestSupplyChainCarriesItsOwnGuards`,
-        `TestManufacturingCarriesItsOwnGuards` and
-        `TestCustomerServiceCarriesItsOwnGuards`.
+        `TestManufacturingCarriesItsOwnGuards`,
+        `TestCustomerServiceCarriesItsOwnGuards` and
+        `TestProjectCarriesItsOwnGuards`.
         """
         from governance.domains import policy_for
 
@@ -807,7 +825,13 @@ class TestSupplyChainCarriesItsOwnGuards:
 
         assert policy_for(SUPPLY_CHAIN).prohibited_actions == frozenset()
 
-        for skill in ds.skills_for_domain(SUPPLY_CHAIN):
+        skills = ds.skills_for_domain(SUPPLY_CHAIN)
+        # Without this the loop empties when the batch is declared under
+        # another domain, and the test passes vacuously -- so mutation
+        # 14 would survive the very assertion written to catch it.
+        # Found at batch 12; see docs/architecture/domain-skills.md section 7.
+        assert len(skills) == 5
+        for skill in skills:
             result = guidance_for(SUPPLY_CHAIN, enabled=True, preferred_slug=skill.slug)
             assert result is not None
             text, chosen = result
@@ -905,7 +929,13 @@ class TestManufacturingCarriesItsOwnGuards:
         should be revisited rather than silently kept."""
         assert policy_for(MANUFACTURING).prohibited_actions == frozenset()
 
-        for skill in ds.skills_for_domain(MANUFACTURING):
+        skills = ds.skills_for_domain(MANUFACTURING)
+        # Without this the loop empties when the batch is declared under
+        # another domain, and the test passes vacuously -- so mutation
+        # 18 would survive the very assertion written to catch it.
+        # Found at batch 12; see docs/architecture/domain-skills.md section 7.
+        assert len(skills) == 5
+        for skill in skills:
             result = guidance_for(MANUFACTURING, enabled=True, preferred_slug=skill.slug)
             assert result is not None
             text, chosen = result
@@ -997,7 +1027,13 @@ class TestCustomerServiceCarriesItsOwnGuards:
         should be revisited rather than silently kept."""
         assert policy_for(CUSTOMER_SERVICE).prohibited_actions == frozenset()
 
-        for skill in ds.skills_for_domain(CUSTOMER_SERVICE):
+        skills = ds.skills_for_domain(CUSTOMER_SERVICE)
+        # Without this the loop empties when the batch is declared under
+        # another domain, and the test passes vacuously -- so mutation
+        # 21 would survive the very assertion written to catch it.
+        # Found at batch 12; see docs/architecture/domain-skills.md section 7.
+        assert len(skills) == 5
+        for skill in skills:
             result = guidance_for(CUSTOMER_SERVICE, enabled=True, preferred_slug=skill.slug)
             assert result is not None
             text, chosen = result
@@ -1067,6 +1103,111 @@ class TestCustomerServiceCarriesItsOwnGuards:
         retention = ds.get_skill("customer_service.service_retention").focus.lower()
         assert "correlation whose direction this data cannot establish" in retention
         assert "which is not the same as support contact causing them to leave" in retention
+
+
+class TestProjectCarriesItsOwnGuards:
+    """Batch 12: the fifth zero-prohibition domain, and self-reported data.
+
+    `policy_for(PROJECT)` declares no `ProhibitedAction` and
+    `minimum_group_size=0`, so neither the derived block nor small-group
+    suppression applies. Resource allocation is per-person by
+    construction, so the guard batch 9 introduced applies for the fifth
+    time -- reused, not restated.
+
+    What distinguishes this batch is the *kind* of number. Batch 11 dealt
+    with a record of someone else's claim; here the central measures are
+    self-assessments by the party being measured. Percent-complete and
+    estimate-to-complete are entered by whoever owns the task, and a risk
+    score is a forward-looking judgement entered by whoever owns the risk.
+    Neither is an observation, so neither is a `DATABASE_FACT` about the
+    world -- the fact is that a figure was reported (`CLAUDE.md` §4.4).
+    """
+
+    def test_the_domain_genuinely_appends_no_constraint_block(self):
+        """The premise. If PROJECT ever gains a `ProhibitedAction` the
+        derived block starts covering some of this, and these guards
+        should be revisited rather than silently kept."""
+        assert policy_for(PROJECT).prohibited_actions == frozenset()
+        assert policy_for(PROJECT).minimum_group_size == 0
+
+        skills = ds.skills_for_domain(PROJECT)
+        # Without this the loop empties when the batch is declared under
+        # another domain, and the test passes vacuously -- mutation 25 is
+        # exactly that, and survived this assertion until batch 12 checked
+        # its failure list rather than its total.
+        assert len(skills) == 5
+        for skill in skills:
+            result = guidance_for(PROJECT, enabled=True, preferred_slug=skill.slug)
+            assert result is not None
+            text, chosen = result
+            assert chosen.slug == skill.slug
+            assert "Domain constraints" not in text, skill.slug
+            assert "Rank top and bottom performers" in text, skill.slug
+
+    def test_reported_progress_is_not_presented_as_measured_delivery(self):
+        """Percent-complete is the most consequential number in the domain
+        and the least observed: the task owner enters it. Reporting it as
+        delivery presents a self-assessment as a `DATABASE_FACT`.
+        """
+        focus = ds.get_skill("project.portfolio").focus.lower()
+        assert "self-assessment by whoever owns the task" in focus
+        assert "reported progress rather than as measured delivery" in focus
+
+    def test_a_risk_score_is_reported_as_a_judgement_not_an_outcome(self):
+        """A risk register is forward-looking. A "high" risk is somebody's
+        assessment, not an observation about what will happen, and an
+        issue that already materialised is a different thing entirely.
+        """
+        focus = ds.get_skill("project.risk_dependency").focus.lower()
+        assert "forward-looking judgement someone entered, not an observed" in focus
+        assert "when it was last reviewed rather than what will happen" in focus
+        assert "issue that has already materialised separate" in focus
+
+    def test_the_resource_skill_guards_individual_utilisation(self):
+        """Allocation data is per-person, and `minimum_group_size=0` means
+        nothing suppresses a one-person group here."""
+        focus = ds.get_skill("project.resource_capacity").focus.lower()
+        assert "report role, skill and team" in focus
+        assert "never an individual's utilisation as a measure of how productive" in focus
+
+    def test_the_financial_skill_defers_to_the_approved_earned_value_definition(self):
+        """Batch 10's rule, reused: `semantic.metrics.MetricDefinition`
+        owns a metric's formula, so the skill points at it rather than
+        composing SPI or CPI here. The catalog-wide formula assertion in
+        `TestManufacturingCarriesItsOwnGuards` already covers the
+        structural half for every skill, including these.
+        """
+        focus = ds.get_skill("project.financial").focus.lower()
+        assert "use the approved earned-value definitions" in focus
+        assert "rather than composing them here" in focus
+
+    def test_the_guards_are_not_a_restatement_of_a_prohibition(self):
+        for skill in ds.skills_for_domain(PROJECT):
+            lowered = skill.focus.lower()
+            assert "individual performance ranking" not in lowered
+            assert "unsupported allegation" not in lowered
+            assert "prohibit" not in lowered
+
+    def test_each_skill_states_the_measurement_trap_its_subject_carries(self):
+        """Read off the subject matter. The schedule and allocation traps
+        are structural rather than arithmetic, which is new: float belongs
+        to a path in a dependency graph, and allocation is a many-to-many.
+        """
+        portfolio = ds.get_skill("project.portfolio").focus.lower()
+        assert "not the average of its projects'" in portfolio
+        assert "one large project outweighs many small ones" in portfolio
+
+        schedule = ds.get_skill("project.schedule").focus.lower()
+        assert "re-baselining resets variance to zero" in schedule
+        assert "float belongs to a path" in schedule
+        assert "slack must not be summed" in schedule
+
+        financial = ds.get_skill("project.financial").focus.lower()
+        assert "without commitments understates exposure" in financial
+
+        resource = ds.get_skill("project.resource_capacity").focus.lower()
+        assert "many-to-many" in resource
+        assert "counts the same person once per project" in resource
 
 
 class TestNothingUntrustedReachesThePrompt:

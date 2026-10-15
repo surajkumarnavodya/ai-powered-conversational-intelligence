@@ -1,7 +1,7 @@
 # Domain analytics skills
 
 **Scope.** The design of `domain_skills/`: what a skill is, the boundaries
-it must respect, and how the next 35 are added. This document owns the
+it must respect, and how the next 30 are added. This document owns the
 **domain-skill contract**.
 
 It does not own domain *policy* — what may be asked, returned or
@@ -9,7 +9,7 @@ recommended in a business domain is
 [`../DATA_PRIVACY_GOVERNANCE_ENGINE.md`](../DATA_PRIVACY_GOVERNANCE_ENGINE.md),
 and a skill cannot change any of it.
 
-**Date:** 2026-10-15. **Batches delivered:** 11 — Sales, MIS / Management Reporting, Marketing, HR, eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply Chain / Procurement & Logistics, Manufacturing & Operations, Customer Service & Support (across 10 of 18 governance domains).
+**Date:** 2026-10-15. **Batches delivered:** 12 — Sales, MIS / Management Reporting, Marketing, HR, eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply Chain / Procurement & Logistics, Manufacturing & Operations, Customer Service & Support, Project & Portfolio Management (across 11 of 18 governance domains).
 
 ---
 
@@ -113,7 +113,7 @@ the two distinguishable where it matters (`sales.*` vs a future
 
 `registry.covered_domains()` answers "which of the eighteen are actually
 covered" from the catalog itself, so no document can claim coverage the
-code does not have. **Today: Sales, MIS, Marketing, HR, eCommerce, Training / L&D, Finance, BFSI, Supply Chain, Manufacturing and Customer Service — 55 skills across 10 governance domains.**
+code does not have. **Today: Sales, MIS, Marketing, HR, eCommerce, Training / L&D, Finance, BFSI, Supply Chain, Manufacturing, Customer Service and Project — 60 skills across 11 governance domains.**
 
 A test asserts `covered_domains()` equals exactly the delivered batches, so
 a new domain fails it until this document is updated in the same change —
@@ -165,36 +165,42 @@ caller text, no retrieved document, no database value, no model output.
 
 ## 7. Mutation evidence
 
-Each applied to live code, then reverted. Clean: `380 passed` (11 batches).
+Each applied to live code, then reverted. Clean: `415 passed` (12 batches).
 Counts grow with the catalog, which is the point — a guard that covered one
-batch would not stay meaningful as domains land.
+batch would not stay meaningful as domains land. Every figure below was
+re-measured at batch 12; none is carried forward.
 
 | Mutation | Result |
 |---|---|
-| selection stops filtering by domain — `select_skill` honours a slug registered in *any* domain (cross-domain leak) | **3 failed**, 377 passed |
-| no longer fails open when the flag is off | **1 failed**, 379 passed |
-| contract gains a format slot | **2 failed**, 378 passed |
-| `GENERAL` (unknown domain) gets guessed framing | **1 failed**, 379 passed |
-| guesses a default across prompt-domains (campaign → Revenue framing) | **2 failed**, 378 passed |
-| `group` stops being derived from the slug (returns a constant) | **61 failed**, 309 passed, 10 no longer collected |
-| prohibitions block dropped (HR invited to rank individuals) | **7 failed**, 373 passed |
-| prohibitions hard-coded to one domain instead of derived (`policy_for(HR)`) | **14 failed**, 366 passed |
-| ranking invitation becomes unqualified again | **1 failed**, 379 passed |
-| BFSI lending skill loses its redirect (refusal with no alternative) | **1 failed**, 379 passed |
-| BFSI skills declared under `FINANCE` (prohibitions silently halve) | **6 failed**, 374 passed |
-| supply-chain supplier skill loses its accusation guard | **1 failed**, 379 passed |
-| supply-chain logistics skill loses its individual-level guard | **1 failed**, 379 passed |
-| supply-chain skills declared under `MANUFACTURING` (its listed neighbour) | **7 failed**, 372 passed (was 4 at batch 9 — see §13) |
-| OEE skill loses the average-of-ratios constraint | **1 failed**, 379 passed |
-| OEE skill writes out the formula (a second owner for `MetricDefinition.formula`) | **2 failed**, 378 passed |
-| manufacturing downtime skill loses its operator guard | **1 failed**, 379 passed |
-| manufacturing skills declared under `SUPPLY_CHAIN` (the reverse copy-paste) | **7 failed**, 372 passed |
-| complaint skill loses its provenance guard (an allegation becomes a finding) | **1 failed**, 379 passed |
-| contact-centre skill loses its agent-level guard | **2 failed**, 378 passed |
-| customer-service skills declared under `SALES_MARKETING` (its listed neighbour) | **4 failed**, 375 passed |
+| selection stops filtering by domain — `select_skill` honours a slug registered in *any* domain (cross-domain leak) | **3 failed**, 412 passed |
+| no longer fails open when the flag is off | **1 failed**, 414 passed |
+| contract gains a format slot | **2 failed**, 413 passed |
+| `GENERAL` (unknown domain) gets guessed framing | **1 failed**, 414 passed |
+| guesses a default across prompt-domains (campaign → Revenue framing) | **2 failed**, 413 passed |
+| `group` stops being derived from the slug (returns a constant) | **73 failed**, 331 passed, 11 no longer collected |
+| prohibitions block dropped (HR invited to rank individuals) | **7 failed**, 408 passed |
+| prohibitions hard-coded to one domain instead of derived (`policy_for(HR)`) | **16 failed**, 399 passed |
+| ranking invitation becomes unqualified again | **1 failed**, 414 passed |
+| BFSI lending skill loses its redirect (refusal with no alternative) | **1 failed**, 414 passed |
+| BFSI skills declared under `FINANCE` (prohibitions silently halve) | **6 failed**, 409 passed |
+| supply-chain supplier skill loses its accusation guard | **1 failed**, 414 passed |
+| supply-chain logistics skill loses its individual-level guard | **1 failed**, 414 passed |
+| supply-chain skills declared under `MANUFACTURING` (its listed neighbour) | **9 failed**, 405 passed, 1 no longer collected (was 4 failed at batch 9 — see §13) |
+| OEE skill loses the average-of-ratios constraint | **1 failed**, 414 passed |
+| OEE skill writes out the formula (a second owner for `MetricDefinition.formula`) | **2 failed**, 413 passed |
+| manufacturing downtime skill loses its operator guard | **1 failed**, 414 passed |
+| manufacturing skills declared under `SUPPLY_CHAIN` (the reverse copy-paste) | **9 failed**, 405 passed, 1 no longer collected |
+| complaint skill loses its provenance guard (an allegation becomes a finding) | **1 failed**, 414 passed |
+| contact-centre skill loses its agent-level guard | **2 failed**, 413 passed |
+| customer-service skills declared under `SALES_MARKETING` (its listed neighbour) | **5 failed**, 409 passed, 1 no longer collected |
+| portfolio skill reports percent-complete as measured delivery (a self-assessment becomes a `DATABASE_FACT`) | **1 failed**, 414 passed |
+| risk skill reports a risk score as an outcome rather than a judgement | **1 failed**, 414 passed |
+| resource-capacity skill loses its individual-utilisation guard | **1 failed**, 414 passed |
+| project skills declared under `HR` (a misdeclaration that *adds* five prohibitions — see §16) | **8 failed**, 406 passed, 1 no longer collected |
 
-**Two notes on reading these numbers**, both found while re-measuring the
-table at batch 8 rather than carrying the previous figures forward:
+**Notes on reading these numbers**, each found while re-measuring the table
+rather than carrying the previous figures forward. Counted in the heading
+they would go stale, exactly as a count in a test name does:
 
 - **A mutation has to be named precisely enough to reproduce.** Mutation 1
   must be applied to `composer.select_skill`. Applying the same idea to
@@ -204,16 +210,39 @@ table at batch 8 rather than carrying the previous figures forward:
   inflated count would look like stronger evidence while actually testing
   something else. Mutation 8's count likewise depends on **which** domain
   is hard-coded, so the row now names it. `policy_for(HR)` failed 7 at
-  batch 8, **10** at batch 9, **12** at batch 10 and **14** at batch 11,
-  because the zero-prohibition assertion is derived over every such covered
-  domain and each new one catches the mutation again. Either variant proves the
-  derivation is load-bearing; only a named one is reproducible, and only a
-  re-measured one is current.
+  batch 8, **10** at batch 9, **12** at batch 10, **14** at batch 11 and
+  **16** at batch 12, because the zero-prohibition assertion is derived
+  over every such covered domain and each new one catches the mutation
+  again. Either variant proves the derivation is load-bearing; only a named
+  one is reproducible, and only a re-measured one is current.
 - **Mutation 6 changes how many tests exist.** The scope-once test is
-  parametrized over the distinct `group` values, so collapsing `group` to
-  a constant collapses 11 parameters to 1 and the
-  total drops from 380 to 370. The 61 failures are real; the missing 10 were
-  never collected, not silently passed.
+  parametrized over the distinct `group` values, so collapsing `group` to a
+  constant collapses 12 parameters to 1 and the total drops from 415 to
+  404. The 73 failures are real; the missing 11 were never collected, not
+  silently passed.
+
+- **A misdeclaration also shrinks a parametrization, which batch 12 made
+  visible.** `ZERO_PROHIBITION_DOMAINS` is derived from
+  `registry.covered_domains()`, so declaring a zero-prohibition batch under
+  another domain removes it from that list and
+  `test_a_domain_with_no_prohibitions_appends_nothing` loses a parameter.
+  Mutations 14, 18, 21 and 25 each drop one test that way. The figures up to
+  batch 11 omitted it (7 failed + 372 passed is 379, not 380, and the
+  shortfall went unexplained), so the column now states it. It matters for
+  the same reason as mutation 6: a test that is never collected cannot fail,
+  and an unexplained one-test gap is exactly how a vacuous guard hides.
+
+- **Pulling that thread found a fifth vacuous test — four, in fact.** Each
+  zero-prohibition batch's `test_the_domain_genuinely_appends_no_constraint_block`
+  looped over `skills_for_domain(...)` and asserted inside the loop. Move
+  the batch to another domain and the loop has nothing to iterate, so the
+  test passed while the misdeclaration it claims to catch was live. Batch
+  12 added `assert len(skills) == 5` to all four. The evidence moved with
+  it: mutations 14 and 18 went from 7 failures to **9**, 21 from 4 to
+  **5**, and 25 from 7 to **8**. This is the only vacuous test in this
+  package that mutation testing found rather than review — and it was found
+  only because §16's claim that "the premise test fails" was checked
+  against the failure list instead of the total.
 
 - **A mutation's meaning can change under you.** Mutation 14 failed 4 tests
   at batch 9 and fails 7 at batch 10 — not because a guard was added, but
@@ -292,6 +321,10 @@ Worth recording, because the pattern will recur:
 The common shape: **a test that asserts "returns None" proves nothing
 unless the same call returns something when the condition under test is
 reversed.** Each was found by mutation testing, not by review.
+
+A fourth followed in §9 and a fifth at batch 12 (§7), the latter a
+variant of the same shape: **a test that asserts inside a loop proves
+nothing unless something asserts the loop is not empty.**
 
 ---
 
@@ -796,7 +829,97 @@ exactly the sentence a well-meaning author would write.
 
 ---
 
-## 16. Adding the next batch
+## 16. Batch 12 (Project): a measure the measured party reported
+
+Project & Portfolio Management is the **fifth** zero-prohibition domain.
+`policy_for(PROJECT)` declares no `ProhibitedAction` and
+`minimum_group_size=0`, so neither the derived block nor small-group
+suppression applies, while contract, employee and PII data are restricted.
+Resource allocation is per-person by construction, so the guard batch 9
+introduced applies for the fifth time — reused, not restated. By now that
+half of the work is routine, which is the point of having a pattern.
+Mutation 24 removes it anyway: *routine* and *measured* are different
+claims, and only the second one is evidence.
+
+### The distinguishing problem: who produced the number
+
+The series has analysed three different kinds of number, and they are not
+interchangeable:
+
+| Kind | Example | What the `DATABASE_FACT` is |
+|---|---|---|
+| A measurement the business produced | units shipped, downtime minutes | the quantity itself |
+| A record of a third party's claim (batch 11) | a complaint | that it was logged |
+| **A self-assessment by the measured party** (batch 12) | percent-complete, risk score | that a figure was reported |
+
+Percent-complete is the most consequential number in this domain and the
+least observed: **the task owner enters it**, and it is the input to earned
+value. A risk score is a forward-looking judgement entered by whoever owns
+the risk. Neither is an observation, so neither is a fact about the world —
+the fact is that somebody reported it
+([`CLAUDE.md`](../../CLAUDE.md) §4.4).
+
+This is a step beyond batch 11. There the claim came from outside and the
+risk was restating it as a finding. Here the claim comes from the party
+whose performance the number describes, which makes "90% complete, so the
+project is nearly done" a conclusion drawn from the self-report of the
+person accountable for it. The skills therefore ask for *reported progress*
+rather than *measured delivery*, and for what a risk assessment says and
+when it was last reviewed rather than what will happen.
+
+Mutations 22 and 23 remove exactly those two clauses and replace them with
+the sentences a well-meaning author would write — "report percent-complete
+as delivery to date", and "report which risks will materialise and which
+projects they will delay."
+
+### Structural traps, not arithmetic ones
+
+Batch 10's traps were arithmetic (a ratio averaged instead of recomposed).
+This batch's are **structural** — they come from the shape of the data
+rather than the shape of the formula, which is new:
+
+- **Float belongs to a path, not a task.** Schedule data is a dependency
+  graph. Slack cannot be summed, and a late task off the critical path need
+  not delay anything at all. A "count of late tasks" ranking is therefore
+  close to meaningless without the path.
+- **Allocation is a many-to-many.** Summing allocations across projects
+  counts the same person once per project, so a portfolio can appear to
+  have capacity it does not have, or people booked past 100% who are not.
+  It has to be reconciled to a person's own total capacity.
+- **A portfolio's status is not the average of its projects'.** Status
+  rolls up by a stated rule, and the count of projects behind belongs next
+  to their value, since one large project outweighs many small ones.
+- **Re-baselining resets variance to zero** without the finish date
+  moving, so a variance needs the baseline it was measured against.
+
+Earned value follows batch 10's rule unchanged: the skill points at the
+approved definition rather than composing SPI or CPI, and the catalog-wide
+`test_no_skill_writes_out_a_metric_formula` already covers the structural
+half for these skills too. Reusing that assertion rather than adding a
+second one is deliberate — it is the same fact with one owner.
+
+### Mutation 25: a misdeclaration that makes the domain *stricter*
+
+Every previous "declared under the wrong domain" mutation lost something:
+BFSI under `FINANCE` silently halved the prohibitions. Mutation 25 declares
+the project skills under `HR`, which **adds** five prohibitions this domain
+does not have.
+
+That is worth a row of its own because the failure is inverted. A
+misdeclaration that tightens the policy looks harmless — stricter, even —
+but it is still wrong: it would attach HR's employment-decision
+prohibitions to portfolio reporting, and, more subtly, it would make the
+guards in these focus texts appear redundant, because the derived block
+would now narrow the ranking invitation that these skills exist to handle
+themselves. A future reader could then delete a guard as duplicated. The
+zero-prohibition pin and the premise test both fail, which is the point —
+though the premise test only fails because this batch fixed it. It had
+asserted inside a loop over the domain's own skills, so the misdeclaration
+emptied the loop and the test passed. See §7.
+
+---
+
+## 17. Adding the next batch
 
 1. Add the **prompt-domain's** scope string once in `catalog.py`. If the
    batch shares a governance domain with an existing one (as Marketing
@@ -824,7 +947,7 @@ request.
 
 ---
 
-## 17. Status
+## 18. Status
 
 | Item | State |
 |---|---|
@@ -840,7 +963,8 @@ request.
 | Supply Chain / Procurement & Logistics skills (5 of 5 supplied) | **Registered** |
 | Manufacturing & Operations skills (5 of 5 supplied) | **Registered** |
 | Customer Service & Support skills (5 of 5 supplied) | **Registered** |
-| Other 8 domains | **Not registered** — a skill is added when its prompt arrives, never in anticipation |
+| Project & Portfolio Management skills (5 of 5 supplied) | **Registered** |
+| Other 7 domains | **Not registered** — a skill is added when its prompt arrives, never in anticipation |
 | Wiring into a live analysis path | **Not done** — see below |
 
 **Deliberately not wired yet.** The composer produces guidance, and nothing

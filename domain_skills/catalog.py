@@ -8,7 +8,8 @@ settings field that can add or edit a skill at runtime — see
 Batches so far: Sales, MIS / Management Reporting, Marketing, HR,
 eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply
 Chain / Procurement & Logistics, Manufacturing & Operations, Customer
-Service & Support. Every batch has arrived with an identical
+Service & Support, Project & Portfolio Management. Every batch has arrived
+with an identical
 body and an identical "Domain scope" sentence across its five prompts,
 differing only in the heading — so each *prompt-domain* writes its scope
 once (`_SALES_SCOPE`, `_MIS_SCOPE`, `_MARKETING_SCOPE`) and each skill
@@ -1097,6 +1098,119 @@ CUSTOMER_SERVICE_SKILLS: tuple[DomainSkill, ...] = (
     ),
 )
 
+#: The supplied Project prompts' "Domain scope:" sentence, verbatim.
+_PROJECT_SCOPE = (
+    "Analyze project portfolios, schedules, finances, resources, risks and dependencies."
+)
+
+#: The fifth zero-prohibition domain. `policy_for(PROJECT)` declares no
+#: `ProhibitedAction` and `minimum_group_size=0`, so neither the derived
+#: constraint block nor small-group suppression applies -- while it does
+#: restrict contract, employee and PII data. Resource allocation is
+#: per-person by construction, so the individual-ranking guard batch 9
+#: introduced applies again, now for the fifth time, and is reused rather
+#: than restated.
+#:
+#: What distinguishes this batch is the *kind* of number it analyses.
+#: Batch 11 dealt with a record of someone else's claim; here the central
+#: measures are **self-assessments by the party being measured** --
+#: percent-complete and estimate-to-complete are entered by whoever owns
+#: the task, and a risk score is a forward-looking judgement entered by
+#: whoever owns the risk. Neither is an observation, so neither is a
+#: `DATABASE_FACT` about the world: the fact is that a figure was reported
+#: (`agent.provenance.DataTruthLevel`, `CLAUDE.md` §4.4).
+#:
+#: Earned value follows batch 10's rule unchanged: the skill points at the
+#: approved definition instead of composing SPI or CPI itself, because
+#: `semantic.metrics.MetricDefinition` owns a metric's formula.
+_PROJECT = BusinessDomain.PROJECT
+
+#: Declared in the supplied numeric order (01 portfolio, 02 schedule, 03
+#: project financials, 04 resource capacity, 05 risk and dependency), so
+#: the domain default is Portfolio Intelligence (01) -- the broadest.
+PROJECT_SKILLS: tuple[DomainSkill, ...] = (
+    DomainSkill(
+        slug="project.portfolio",
+        title="Portfolio Intelligence",
+        domain=_PROJECT,
+        scope=_PROJECT_SCOPE,
+        focus=(
+            "Portfolio shape and delivery: project count and value by "
+            "stage, benefit against plan, and where spend and slippage "
+            "concentrate. A portfolio's status is not the average of its "
+            "projects' -- roll status up by a stated rule, and report how "
+            "many projects are behind alongside their value, since one "
+            "large project outweighs many small ones. Percent-complete is "
+            "a self-assessment by whoever owns the task, so report it as "
+            "reported progress rather than as measured delivery."
+        ),
+        dimensions=("portfolio", "stage", "business unit", "investment type", "period"),
+    ),
+    DomainSkill(
+        slug="project.schedule",
+        title="Schedule Intelligence",
+        domain=_PROJECT,
+        scope=_PROJECT_SCOPE,
+        focus=(
+            "Schedule position: milestone attainment, slippage and float "
+            "across the plan. Name the baseline a variance is measured "
+            "against, because re-baselining resets variance to zero "
+            "without the finish date moving. Float belongs to a path "
+            "rather than a task, so slack must not be summed, and a late "
+            "task off the critical path need not delay anything at all."
+        ),
+        dimensions=("project", "milestone", "baseline version", "phase", "period"),
+    ),
+    DomainSkill(
+        slug="project.financial",
+        title="Project Financial Intelligence",
+        domain=_PROJECT,
+        scope=_PROJECT_SCOPE,
+        focus=(
+            "Project cost and benefit: spend against budget, committed "
+            "against actual cost, forecast to complete, and capitalised "
+            "against operating spend. Use the approved earned-value "
+            "definitions rather than composing them here. Spend to date "
+            "without commitments understates exposure, because a raised "
+            "purchase order is money already spoken for."
+        ),
+        dimensions=("project", "cost type", "funding source", "capitalisation class", "period"),
+    ),
+    DomainSkill(
+        slug="project.resource_capacity",
+        title="Resource Capacity Intelligence",
+        domain=_PROJECT,
+        scope=_PROJECT_SCOPE,
+        focus=(
+            "Demand and supply of effort: allocation against capacity, "
+            "bench and over-allocation by role and skill, and forecast "
+            "demand. Allocation across projects is a many-to-many, so "
+            "summing it counts the same person once per project -- "
+            "reconcile to a person's own total capacity before concluding "
+            "anything about it. Report role, skill and team, and never an "
+            "individual's utilisation as a measure of how productive they "
+            "are."
+        ),
+        dimensions=("role", "skill", "team", "project", "period"),
+    ),
+    DomainSkill(
+        slug="project.risk_dependency",
+        title="Risk and Dependency Intelligence",
+        domain=_PROJECT,
+        scope=_PROJECT_SCOPE,
+        focus=(
+            "The risk register and the dependency network: open risks by "
+            "severity and age, issues already realised, and which "
+            "dependencies block the most work. A risk score is a "
+            "forward-looking judgement someone entered, not an observed "
+            "outcome, so report what was assessed and when it was last "
+            "reviewed rather than what will happen. Keep a risk and an "
+            "issue that has already materialised separate."
+        ),
+        dimensions=("risk severity", "risk status", "dependency type", "project", "period"),
+    ),
+)
+
 #: Every registered skill, in declaration order. Later batches append their
 #: own tuple here.
 ALL_SKILLS: tuple[DomainSkill, ...] = (
@@ -1111,4 +1225,5 @@ ALL_SKILLS: tuple[DomainSkill, ...] = (
     + SUPPLY_CHAIN_SKILLS
     + MANUFACTURING_SKILLS
     + CUSTOMER_SERVICE_SKILLS
+    + PROJECT_SKILLS
 )
