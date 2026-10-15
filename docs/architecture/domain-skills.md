@@ -1,7 +1,7 @@
 # Domain analytics skills
 
 **Scope.** The design of `domain_skills/`: what a skill is, the boundaries
-it must respect, and how the next 25 are added. This document owns the
+it must respect, and how the next 20 are added. This document owns the
 **domain-skill contract**.
 
 It does not own domain *policy* — what may be asked, returned or
@@ -9,7 +9,7 @@ recommended in a business domain is
 [`../DATA_PRIVACY_GOVERNANCE_ENGINE.md`](../DATA_PRIVACY_GOVERNANCE_ENGINE.md),
 and a skill cannot change any of it.
 
-**Date:** 2026-10-16. **Batches delivered:** 13 — Sales, MIS / Management Reporting, Marketing, HR, eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply Chain / Procurement & Logistics, Manufacturing & Operations, Customer Service & Support, Project & Portfolio Management, IT Operations & Service Management (across 12 of 18 governance domains).
+**Date:** 2026-10-16. **Batches delivered:** 13 — Sales, MIS / Management Reporting, Marketing, HR, eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply Chain / Procurement & Logistics, Manufacturing & Operations, Customer Service & Support, Project & Portfolio Management, IT Operations & Service Management, Healthcare & Life Sciences (across 13 of 18 governance domains).
 
 ---
 
@@ -113,7 +113,7 @@ the two distinguishable where it matters (`sales.*` vs a future
 
 `registry.covered_domains()` answers "which of the eighteen are actually
 covered" from the catalog itself, so no document can claim coverage the
-code does not have. **Today: Sales, MIS, Marketing, HR, eCommerce, Training / L&D, Finance, BFSI, Supply Chain, Manufacturing, Customer Service, Project and IT Operations — 65 skills across 12 governance domains.**
+code does not have. **Today: Sales, MIS, Marketing, HR, eCommerce, Training / L&D, Finance, BFSI, Supply Chain, Manufacturing, Customer Service, Project, IT Operations and Healthcare — 70 skills across 13 governance domains.**
 
 A test asserts `covered_domains()` equals exactly the delivered batches, so
 a new domain fails it until this document is updated in the same change —
@@ -165,45 +165,52 @@ caller text, no retrieved document, no database value, no model output.
 
 ## 7. Mutation evidence
 
-Each applied to live code, then reverted. Clean: `453 passed` (13 batches).
+Each applied to live code, then reverted. Clean: `490 passed` (14 batches).
 Counts grow with the catalog, which is the point — a guard that covered one
 batch would not stay meaningful as domains land. Every figure below was
-re-measured at batch 13; none is carried forward.
+re-measured at batch 14; none is carried forward.
 
 | Mutation | Result |
 |---|---|
-| selection stops filtering by domain — `select_skill` honours a slug registered in *any* domain (cross-domain leak) | **3 failed**, 450 passed |
-| no longer fails open when the flag is off | **1 failed**, 452 passed |
-| contract gains a format slot | **2 failed**, 451 passed |
-| `GENERAL` (unknown domain) gets guessed framing | **1 failed**, 452 passed |
-| guesses a default across prompt-domains (campaign → Revenue framing) | **2 failed**, 451 passed |
-| `group` stops being derived from the slug (returns a constant) | **78 failed**, 363 passed, 12 no longer collected |
-| prohibitions block dropped (HR invited to rank individuals) | **10 failed**, 443 passed |
-| prohibitions hard-coded to one domain instead of derived (`policy_for(HR)`) | **19 failed**, 434 passed |
-| ranking invitation becomes unqualified again | **1 failed**, 452 passed |
-| BFSI lending skill loses its redirect (refusal with no alternative) | **1 failed**, 452 passed |
-| BFSI skills declared under `FINANCE` (prohibitions silently halve) | **6 failed**, 447 passed |
-| supply-chain supplier skill loses its accusation guard | **1 failed**, 452 passed |
-| supply-chain logistics skill loses its individual-level guard | **1 failed**, 452 passed |
-| supply-chain skills declared under `MANUFACTURING` (its listed neighbour) | **10 failed**, 442 passed, 1 no longer collected (was 4 failed at batch 9 — see §13) |
-| OEE skill loses the average-of-ratios constraint | **1 failed**, 452 passed |
-| OEE skill writes out the formula (a second owner for `MetricDefinition.formula`) | **2 failed**, 451 passed |
-| manufacturing downtime skill loses its operator guard | **1 failed**, 452 passed |
-| manufacturing skills declared under `SUPPLY_CHAIN` (the reverse copy-paste) | **10 failed**, 442 passed, 1 no longer collected |
-| complaint skill loses its provenance guard (an allegation becomes a finding) | **1 failed**, 452 passed |
-| contact-centre skill loses its agent-level guard | **2 failed**, 451 passed |
-| customer-service skills declared under `SALES_MARKETING` (its listed neighbour) | **5 failed**, 447 passed, 1 no longer collected |
-| portfolio skill reports percent-complete as measured delivery (a self-assessment becomes a `DATABASE_FACT`) | **1 failed**, 452 passed |
-| risk skill reports a risk score as an outcome rather than a judgement | **1 failed**, 452 passed |
-| resource-capacity skill loses its individual-utilisation guard | **1 failed**, 452 passed |
-| project skills declared under `HR` (a misdeclaration that *adds* five prohibitions — see §16) | **8 failed**, 444 passed, 1 no longer collected |
-| incident skill loses its configuration-provenance clause (a tool reading becomes an observation) | **1 failed**, 452 passed |
-| change skill loses its linkage rule (a sequence becomes a cause) | **1 failed**, 452 passed |
-| application skill loses the average-of-percentiles constraint | **1 failed**, 452 passed |
-| incident skill loses its individual-assignee guard | **1 failed**, 452 passed |
-| a focus text *restates* the derived prohibition (a second owner for `policy_for(IT_OPERATIONS)`) | **2 failed**, 451 passed |
-| IT-ops skills declared under `PROJECT` (a misdeclaration that *drops* the one absolute prohibition — see §17) | **9 failed**, 444 passed |
-| cost skill loses the tagging-coverage trap (untagged spend read as no spend) | **1 failed**, 452 passed |
+| selection stops filtering by domain — `select_skill` honours a slug registered in *any* domain (cross-domain leak) | **3 failed**, 487 passed |
+| no longer fails open when the flag is off | **1 failed**, 489 passed |
+| contract gains a format slot | **2 failed**, 488 passed |
+| `GENERAL` (unknown domain) gets guessed framing | **1 failed**, 489 passed |
+| guesses a default across prompt-domains (campaign → Revenue framing) | **2 failed**, 488 passed |
+| `group` stops being derived from the slug (returns a constant) | **83 failed**, 394 passed, 13 no longer collected |
+| prohibitions block dropped (HR invited to rank individuals) | **12 failed**, 478 passed |
+| prohibitions hard-coded to one domain instead of derived (`policy_for(HR)`) | **20 failed**, 470 passed |
+| ranking invitation becomes unqualified again | **1 failed**, 489 passed |
+| BFSI lending skill loses its redirect (refusal with no alternative) | **1 failed**, 489 passed |
+| BFSI skills declared under `FINANCE` (prohibitions silently halve) | **6 failed**, 484 passed |
+| supply-chain supplier skill loses its accusation guard | **1 failed**, 489 passed |
+| supply-chain logistics skill loses its individual-level guard | **1 failed**, 489 passed |
+| supply-chain skills declared under `MANUFACTURING` (its listed neighbour) | **10 failed**, 479 passed, 1 no longer collected (was 4 failed at batch 9 — see §13) |
+| OEE skill loses the average-of-ratios constraint | **1 failed**, 489 passed |
+| OEE skill writes out the formula (a second owner for `MetricDefinition.formula`) | **2 failed**, 488 passed |
+| manufacturing downtime skill loses its operator guard | **1 failed**, 489 passed |
+| manufacturing skills declared under `SUPPLY_CHAIN` (the reverse copy-paste) | **10 failed**, 479 passed, 1 no longer collected |
+| complaint skill loses its provenance guard (an allegation becomes a finding) | **1 failed**, 489 passed |
+| contact-centre skill loses its agent-level guard | **2 failed**, 488 passed |
+| customer-service skills declared under `SALES_MARKETING` (its listed neighbour) | **5 failed**, 484 passed, 1 no longer collected |
+| portfolio skill reports percent-complete as measured delivery (a self-assessment becomes a `DATABASE_FACT`) | **1 failed**, 489 passed |
+| risk skill reports a risk score as an outcome rather than a judgement | **1 failed**, 489 passed |
+| resource-capacity skill loses its individual-utilisation guard | **1 failed**, 489 passed |
+| project skills declared under `HR` (a misdeclaration that *adds* five prohibitions — see §16) | **8 failed**, 481 passed, 1 no longer collected |
+| incident skill loses its configuration-provenance clause (a tool reading becomes an observation) | **1 failed**, 489 passed |
+| change skill loses its linkage rule (a sequence becomes a cause) | **1 failed**, 489 passed |
+| application skill loses the average-of-percentiles constraint | **1 failed**, 489 passed |
+| incident skill loses its individual-assignee guard | **1 failed**, 489 passed |
+| a focus text *restates* the derived prohibition (a second owner for `policy_for(IT_OPERATIONS)`) | **2 failed**, 488 passed |
+| IT-ops skills declared under `PROJECT` (a misdeclaration that *drops* the one absolute prohibition — see §17) | **9 failed**, 481 passed |
+| cost skill loses the tagging-coverage trap (untagged spend read as no spend) | **1 failed**, 489 passed |
+| the supplied scope sentence is trimmed of its "never diagnose" clause (the catalog stops matching what was supplied) | **1 failed**, 489 passed |
+| journey skill accounts for an individual patient's outcome (a clinical decision in place of a cohort description) | **1 failed**, 489 passed |
+| journey skill loses the export-ceiling clause (a truncated result read as a population) | **2 failed**, 488 passed |
+| quality skill loses the suppression clause (a withheld measure read as a zero) | **2 failed**, 488 passed |
+| quality skill loses risk adjustment and its denominator (an unadjusted comparison ranks case mix) | **1 failed**, 489 passed |
+| financial skill lets charges, payments and cost stand in for one another | **1 failed**, 489 passed |
+| healthcare skills declared under `PROJECT` (drops all three prohibitions *and* the PHI restriction — see §18 on the `MIS` variant) | **9 failed**, 481 passed |
 
 **Notes on reading these numbers**, each found while re-measuring the table
 rather than carrying the previous figures forward. Counted in the heading
@@ -218,16 +225,19 @@ they would go stale, exactly as a count in a test name does:
   something else. Mutation 8's count likewise depends on **which** domain
   is hard-coded, so the row now names it. `policy_for(HR)` failed 7 at
   batch 8, **10** at batch 9, **12** at batch 10, **14** at batch 11,
-  **16** at batch 12 and **19** at batch 13, because the derived
-  assertions grow with the catalog and each new covered domain catches the
-  mutation again. Batch 13 is the first time they grew from a domain that
-  *has* a prohibition rather than one that has none. Either variant proves
-  the derivation is load-bearing; only a named one is reproducible, and
-  only a re-measured one is current.
+  **16** at batch 12, **19** at batch 13 and **20** at batch 14, because
+  the derived assertions grow with the catalog and each new covered domain
+  catches the mutation again. Batch 13 is the first time they grew from a
+  domain that *has* a prohibition rather than one that has none; batch 14
+  added only one because `HR` already prohibits
+  `protected_characteristic_inference`, so hard-coding to it still renders
+  one of healthcare's three. Either variant proves the derivation is
+  load-bearing; only a named one is reproducible, and only a re-measured
+  one is current.
 - **Mutation 6 changes how many tests exist.** The scope-once test is
   parametrized over the distinct `group` values, so collapsing `group` to a
-  constant collapses 13 parameters to 1 and the total drops from 453 to
-  441. The 78 failures are real; the missing 12 were never collected, not
+  constant collapses 14 parameters to 1 and the total drops from 490 to
+  477. The 83 failures are real; the missing 13 were never collected, not
   silently passed.
 
 - **A misdeclaration also shrinks a parametrization, which batch 12 made
@@ -1045,7 +1055,143 @@ are worth naming:
 
 ---
 
-## 18. Adding the next batch
+## 18. Batch 14 (Healthcare): when the supplied scope carries a prohibition
+
+Healthcare & Life Sciences is the most tightly governed domain covered so
+far. `policy_for(HEALTHCARE)` declares three `ProhibitedAction`s —
+clinical decision, medical diagnosis or prescription, protected
+characteristic inference — restricts PHI on top of the personal
+baseline, and sets `aggregation_required=True`, `minimum_group_size=5` and
+an `export_row_limit` of **50**: half the next tightest among covered
+domains, and the lowest in the registry alongside `LEGAL` and
+`RISK_AUDIT`.
+
+### The supplied scope sentence carries its own prohibition
+
+Thirteen batches of supplied prompts have had a purely descriptive "Domain
+scope:" sentence. This one ends **"; never diagnose"**, which overlaps
+`MEDICAL_DIAGNOSIS_OR_PRESCRIPTION` — a prohibition the composer already
+derives from the policy.
+
+It is stored **verbatim anyway**. The alternative was considered and
+rejected, and it is recorded here so a later reader does not "fix" it:
+
+| Option | Why not |
+|---|---|
+| Trim the clause, so the scope line does not overlap the derived block | `DomainSkill.scope` is documented as the supplied sentence verbatim. Editing it would make the catalog misrepresent what was supplied, which is a provenance failure — the thing this series keeps finding to matter most |
+| Keep it, and drop the derived prohibition for this domain | Never. The policy is the owner, and a skill cannot change governance |
+| **Keep it verbatim, pin the policy** | Chosen. The derived block stays the owner and is appended **last**, so it overrides; the scope line is quoted input |
+
+The rule being respected is narrower than "do not mention the territory".
+A second **owner** is what drifts — a clause that asserts a policy fact in
+the project's own voice and can then disagree with the policy. A quoted
+supplied sentence is not that, and the derived block still has the last
+word.
+
+One real risk remains: if the policy ever dropped that prohibition, the
+quoted sentence would go on asserting it. That drift is in the safe
+direction, but it would be **silent**, so
+`test_the_three_prohibitions_are_pinned_so_the_scope_overlap_cannot_go_stale`
+asserts the prohibition is present. That assertion is the entire
+justification for storing the sentence unedited; mutation 33 trims the
+clause and mutation 39 removes the policy, and each has to fail.
+
+### The rule's boundary, found by writing the assertion too broadly
+
+Extending the catalog-wide `test_no_skill_hand_writes_its_prohibitions`
+for this batch, the first version asserted `"protected characteristic" not
+in focus`. It failed — on `marketing.segmentation` (batch 3) and
+`hr.recruitment` (batch 4), which say "never infer a protected
+characteristic from a name, a source or an outcome".
+
+Those are not restatements. They are the **redirect** pattern §12
+established: name the mechanism, pair it with what to analyse instead.
+Outlawing them would have deleted exactly the guards this package asks
+for. The assertions are therefore on the **rendered action phrase** —
+what `_prohibitions_block` actually puts in the prompt — which is what
+the two original literals were all along. The broad version looked
+stricter and was wrong, which is the same lesson §7 records about
+inflated mutation counts: stricter is not the same as correct.
+
+### Two deterministic controls with analytical consequences
+
+The composer puts none of `aggregation_required`, `minimum_group_size` or
+`export_row_limit` in the prompt — they are enforced, not restated
+(§3). But two of them change what an *analysis* may conclude, and that
+is framing, so it belongs to the skills:
+
+- **Suppression.** `governance.suppression` replaces a sensitive measure
+  for a cohort below five with `SUPPRESSED_MASK`
+  (`"[suppressed: group too small]"`), keeping the label and count and
+  never dropping the row. The mask is self-describing, so the risk is not
+  misreading one cell: it is **folding it into a total, or reading it as an
+  absence of events**. A ward with no reported infections and a ward whose
+  rate was withheld are different facts.
+- **The export ceiling.** `governance.result_policy` truncates a result
+  carrying restricted data to 50 rows — for an authorized caller too —
+  and reports `export_limited:N`. The control discloses the truncation;
+  whether a share, ranking or concentration claim gets computed over the
+  remaining rows anyway is framing. **A truncated result is a sample, not
+  a population.**
+
+These are different controls with opposite row behaviour — suppression
+never drops a row, the export ceiling is the one control that does
+([`CLAUDE.md`](../../CLAUDE.md) §5.4) — so the two clauses live on
+different skills, and `test_suppression_and_the_export_ceiling_are_
+different_controls` asserts they have not been merged.
+
+### The clinical line is §12's problem in a new domain
+
+Two supplied skills — Patient Journey and Quality & Compliance — are
+*about* clinical outcomes. Reporting readmission, infection or
+complication rates for a cohort is healthcare operations analytics;
+accounting for why one patient's outcome occurred, or what should be done
+about it, is a clinical decision. So the focus texts **redirect** rather
+than only refuse: "describe how a cohort moved and what the record shows".
+Mutation 34 replaces that with "explain why each patient's outcome
+occurred and what should be done about it".
+
+### Traps read off the subject matter
+
+- **Three clocks, one wait.** Referral, decision-to-treat and appointment
+  give three different waiting times for the same pathway.
+- **Occupancy is a census**, so it cannot be summed across days — batch
+  9's inventory trap in a new domain, and an average must name the time of
+  day it was taken.
+- **A readmission rate is a definition**: its window, its index-admission
+  rule, and whether planned follow-up admissions are counted, which
+  inflates it.
+- **The journey is only observed where the patient stayed.** Care received
+  elsewhere is invisible, so a pathway that looks complete may be someone
+  who went elsewhere. Reading that as an outcome is survivorship bias.
+- **Headcount is not capacity.** A shift covered by a different grade is
+  not the same shift.
+- **Charges, payments and cost are three different numbers**, routinely
+  substituted for one another; and cost per case is not comparable across
+  units without case-mix adjustment.
+- **A rate per device-day is not a rate per patient**, and an unadjusted
+  outcome comparison ranks case mix rather than care.
+- **Incident volume measures reporting culture as much as safety**, so a
+  rise may be better reporting. This is batch 13's instrument lesson and
+  batch 11's record-versus-claim lesson arriving together.
+
+### Mutation 39, and why its first figure was not published
+
+Declared under `MIS`, the misdeclaration failed **16** tests — the
+largest count in the table — and that number is not published, because most of
+it is not evidence about healthcare. `MIS` is the fixture domain several
+selection tests use as their canonical unambiguous single-group domain, so
+colliding a batch into it breaks tests that have nothing to do with this
+policy. The same mutation into `PROJECT` or `MANUFACTURING` fails **9**,
+and 9 is the published figure.
+
+This is §7's first lesson applied to a new case: an inflated count looks
+like stronger evidence while actually testing something else. It was
+caught the same way — by reading the failure list instead of the total.
+
+---
+
+## 19. Adding the next batch
 
 1. Add the **prompt-domain's** scope string once in `catalog.py`. If the
    batch shares a governance domain with an existing one (as Marketing
@@ -1073,7 +1219,7 @@ request.
 
 ---
 
-## 19. Status
+## 20. Status
 
 | Item | State |
 |---|---|
@@ -1091,7 +1237,8 @@ request.
 | Customer Service & Support skills (5 of 5 supplied) | **Registered** |
 | Project & Portfolio Management skills (5 of 5 supplied) | **Registered** |
 | IT Operations & Service Management skills (5 of 5 supplied) | **Registered** |
-| Other 6 domains | **Not registered** — a skill is added when its prompt arrives, never in anticipation |
+| Healthcare & Life Sciences skills (5 of 5 supplied) | **Registered** |
+| Other 5 domains | **Not registered** — a skill is added when its prompt arrives, never in anticipation |
 | Wiring into a live analysis path | **Not done** — see below |
 
 **Deliberately not wired yet.** The composer produces guidance, and nothing

@@ -48,6 +48,7 @@ MANUFACTURING = BusinessDomain.MANUFACTURING
 CUSTOMER_SERVICE = BusinessDomain.CUSTOMER_SERVICE
 PROJECT = BusinessDomain.PROJECT
 IT_OPERATIONS = BusinessDomain.IT_OPERATIONS
+HEALTHCARE = BusinessDomain.HEALTHCARE
 
 #: Covered domains whose policy declares no `ProhibitedAction` at all, so
 #: `composer._prohibitions_block` appends nothing and the shared contract's
@@ -71,6 +72,20 @@ class TestCatalog:
             "sales.product",
             "sales.pricing",
         )
+
+    def test_the_supplied_healthcare_skills_are_registered_in_numeric_order(self):
+        """Supplied 01..05 in order; registered in that order, so the
+        domain default is Healthcare Operations Intelligence."""
+        assert tuple(s.slug for s in ds.skills_for_domain(HEALTHCARE)) == (
+            "healthcare.operations",  # 01
+            "healthcare.patient_journey",  # 02
+            "healthcare.resource",  # 03
+            "healthcare.financial",  # 04
+            "healthcare.quality_compliance",  # 05
+        )
+        default = select_skill(HEALTHCARE)
+        assert default is not None
+        assert default.slug == "healthcare.operations"
 
     def test_the_supplied_it_ops_skills_are_registered_in_numeric_order(self):
         """Supplied 01..05 in order; registered in that order, so the
@@ -235,8 +250,8 @@ class TestCatalog:
         """Four prompt-domains, three governance domains: Marketing shares
         `SALES_MARKETING` with Sales. Inventing a governance domain per
         batch would mean two answers to 'what may this question return'."""
-        assert len({s.group for s in ds.all_skills()}) == 13
-        assert len(ds.covered_domains()) == 12
+        assert len({s.group for s in ds.all_skills()}) == 14
+        assert len(ds.covered_domains()) == 13
 
     def test_the_supplied_mis_skills_are_registered(self):
         assert tuple(s.slug for s in ds.skills_for_domain(MIS)) == (
@@ -294,6 +309,7 @@ class TestCatalog:
             CUSTOMER_SERVICE,
             PROJECT,
             IT_OPERATIONS,
+            HEALTHCARE,
         )
 
     def test_every_uncovered_domain_has_no_skills(self):
@@ -809,12 +825,28 @@ class TestDomainProhibitionsAreDerivedNotRestated:
 
     def test_no_skill_hand_writes_its_prohibitions(self):
         """Structural: if a focus text restated a prohibition verbatim it
-        would be a second owner, free to drift from the policy."""
+        would be a second owner, free to drift from the policy.
+
+        The assertions are on the **rendered action phrase** -- what
+        `composer._prohibitions_block` puts in the prompt -- not on the
+        subject matter. Batch 14 first wrote the broader
+        `"protected characteristic" not in lowered` and it failed on
+        `marketing.segmentation` (batch 3) and `hr.recruitment` (batch 4),
+        both of which say "never infer a protected characteristic from a
+        name, a source or an outcome". That is the *redirect* pattern
+        batch 8 established, not a restatement: it names the mechanism and
+        pairs it with what to analyse instead, and it does not reproduce
+        the policy's own phrasing. Outlawing it would have deleted the
+        guards this package asks for. The narrower rule is the real one.
+        """
         for skill in ds.all_skills():
             lowered = skill.focus.lower()
             assert "individual compensation decision" not in lowered
             assert "unsupported allegation" not in lowered
             assert "credential disclosure" not in lowered
+            assert "clinical decision" not in lowered
+            assert "medical diagnosis or prescription" not in lowered
+            assert "protected characteristic inference" not in lowered
 
 
 class TestSupplyChainCarriesItsOwnGuards:
@@ -1398,6 +1430,190 @@ class TestITOperationsDerivesItsOneProhibition:
         cost = ds.get_skill("it_ops.cost_cloud").focus.lower()
         assert "untagged spend is" in cost
         assert "amortised or as-invoiced" in cost
+
+
+class TestHealthcareIsTheMostTightlyGovernedDomainCovered:
+    """Batch 14. Three prohibitions, PHI, `aggregation_required`,
+    `minimum_group_size=5` and an `export_row_limit` of 50 -- half the next
+    tightest among covered domains.
+
+    Two things here are new to the series.
+
+    First, **the supplied scope sentence itself carries a prohibition**:
+    it ends "; never diagnose", overlapping
+    `ProhibitedAction.MEDICAL_DIAGNOSIS_OR_PRESCRIPTION`, which the
+    composer already derives. It is stored verbatim anyway, for the
+    reasons in `catalog._HEALTHCARE_SCOPE`, and the overlap is pinned here
+    rather than left to be discovered.
+
+    Second, **two deterministic controls have analytical consequences the
+    skills must frame**, because the composer puts none of them in the
+    prompt: small-group suppression replaces a measure with
+    `SUPPRESSED_MASK`, and the export ceiling truncates a restricted
+    result to 50 rows for an authorized caller too.
+    """
+
+    def test_the_three_prohibitions_are_derived_into_every_skills_block(self):
+        """The premise, and the widest derived block in the catalog after
+        HR's five."""
+        actions = {a.value for a in policy_for(HEALTHCARE).prohibited_actions}
+        assert actions == {
+            "clinical_decision",
+            "medical_diagnosis_or_prescription",
+            "protected_characteristic_inference",
+        }
+
+        skills = ds.skills_for_domain(HEALTHCARE)
+        assert len(skills) == 5
+        for skill in skills:
+            result = guidance_for(HEALTHCARE, enabled=True, preferred_slug=skill.slug)
+            assert result is not None
+            text, chosen = result
+            assert chosen.slug == skill.slug
+            for action in actions:
+                assert action.replace("_", " ") in text, (skill.slug, action)
+            assert "Report in aggregate only." in text, skill.slug
+
+    def test_the_three_prohibitions_are_pinned_so_the_scope_overlap_cannot_go_stale(self):
+        """The one real risk of keeping "never diagnose" in the stored
+        scope: if the policy ever dropped
+        `MEDICAL_DIAGNOSIS_OR_PRESCRIPTION`, the quoted sentence would go
+        on asserting it while the derived block no longer did.
+
+        That drift is in the safe direction, but it would be *silent*.
+        This assertion makes it detected instead, which is the whole
+        justification for storing the sentence verbatim.
+        """
+        from governance.domains import ProhibitedAction
+
+        assert (
+            ProhibitedAction.MEDICAL_DIAGNOSIS_OR_PRESCRIPTION
+            in policy_for(HEALTHCARE).prohibited_actions
+        )
+        assert "never diagnose" in ds.get_skill("healthcare.operations").scope.lower()
+
+    def test_the_scope_sentence_is_shared_verbatim_and_the_block_still_overrides(self):
+        """The scope line and the derived block both touch diagnosis, and
+        that is accepted -- but only because the derived block is the owner
+        and comes last. If the ordering inverted, the quoted sentence would
+        be the last word on a policy fact it does not own.
+        """
+        scopes = {s.scope for s in ds.skills_for_domain(HEALTHCARE)}
+        assert len(scopes) == 1, "one scope per prompt-domain, written once"
+
+        result = guidance_for(HEALTHCARE, enabled=True)
+        assert result is not None
+        text, _ = result
+        assert text.index("Analytical scope:") < text.index("Domain constraints")
+        assert text.rstrip().endswith("instead of doing it.")
+
+    def test_no_focus_text_restates_a_derived_prohibition(self):
+        """Batch 4's rule. The focus texts redirect to the cohort question
+        instead of naming the prohibited action, which is also batch 8's
+        rule: a refusal without an alternative is not a skill.
+        """
+        for skill in ds.skills_for_domain(HEALTHCARE):
+            lowered = skill.focus.lower()
+            assert "clinical decision" not in lowered, skill.slug
+            assert "diagnos" not in lowered, skill.slug
+            assert "prescrib" not in lowered, skill.slug
+            assert "protected characteristic" not in lowered, skill.slug
+
+    def test_the_two_clinical_skills_redirect_to_the_cohort_question(self):
+        """Patient Journey and Quality & Compliance are *about* clinical
+        outcomes, which is batch 8's problem in a new domain. Reporting a
+        readmission or infection rate for a cohort is operations
+        analytics; accounting for one patient's outcome is not.
+        """
+        journey = ds.get_skill("healthcare.patient_journey").focus.lower()
+        assert "describe how a cohort moved and what the record shows" in journey
+        assert "never account for why an individual patient" in journey
+
+        quality = ds.get_skill("healthcare.quality_compliance").focus.lower()
+        assert "by unit and cohort" in quality
+        assert "report what was recorded and when" in quality
+
+    def test_the_journey_skill_states_the_export_ceiling_consequence(self):
+        """`governance.result_policy` truncates a restricted result to this
+        domain's `export_row_limit` -- 50 -- for an authorized caller too,
+        and reports `export_limited:N`. The control discloses the
+        truncation; whether a share is computed over the remainder anyway
+        is framing, and that is what this clause addresses.
+        """
+        assert policy_for(HEALTHCARE).export_row_limit == 50
+        focus = ds.get_skill("healthcare.patient_journey").focus.lower()
+        assert "truncated to the domain's export" in focus
+        assert "is a sample, not a population" in focus
+
+    def test_the_quality_skill_states_the_suppression_consequence(self):
+        """`governance.suppression` substitutes `SUPPRESSED_MASK` for a
+        sensitive measure in a cohort below five and keeps the label and
+        count, never dropping the row. The mask is self-describing, so the
+        analytical risk is not misreading one cell -- it is folding it
+        into a total or reading it as an absence of events.
+        """
+        from governance.suppression import SUPPRESSED_MASK
+
+        assert policy_for(HEALTHCARE).minimum_group_size == 5
+        assert "suppressed" in SUPPRESSED_MASK
+
+        focus = ds.get_skill("healthcare.quality_compliance").focus.lower()
+        assert "withheld measure for a small cohort is not a zero" in focus
+        assert "never fold it into a total" in focus
+
+    def test_suppression_and_the_export_ceiling_are_different_controls(self):
+        """Stated as an assertion because conflating them is easy and the
+        consequences differ: suppression never drops a row, while the
+        export ceiling is the one control that does (`CLAUDE.md` 5.4).
+        The two clauses therefore live on different skills.
+        """
+        policy = policy_for(HEALTHCARE)
+        assert policy.minimum_group_size == 5
+        assert policy.export_row_limit == 50
+
+        journey = ds.get_skill("healthcare.patient_journey").focus.lower()
+        quality = ds.get_skill("healthcare.quality_compliance").focus.lower()
+        assert "sample, not a population" in journey
+        assert "sample, not a population" not in quality
+        assert "not a zero" in quality
+        assert "not a zero" not in journey
+
+    def test_the_resource_skill_guards_the_individual_clinician(self):
+        """`minimum_group_size=5` suppresses a measure for a cohort below
+        five; it does nothing about ranking thirty clinicians who each saw
+        two hundred patients. Batch 11 established that boundary; this is
+        the sixth domain where the framing has to carry it.
+        """
+        focus = ds.get_skill("healthcare.resource").focus.lower()
+        assert "never an individual clinician" in focus
+        assert "case mix decides it" in focus
+        assert "harder work reads as slower" in focus
+
+    def test_each_skill_states_the_measurement_trap_its_subject_carries(self):
+        """Read off the subject matter, not from the policy."""
+        operations = ds.get_skill("healthcare.operations").focus.lower()
+        assert "which clock a wait is measured from" in operations
+        assert "point-in-time census and must never be summed" in operations
+        assert "funded or physically" in operations
+
+        journey = ds.get_skill("healthcare.patient_journey").focus.lower()
+        assert "window and its index-admission" in journey
+        assert "planned follow-up admissions" in journey
+        assert "who went elsewhere" in journey
+
+        resource = ds.get_skill("healthcare.resource").focus.lower()
+        assert "headcount is not capacity" in resource
+        assert "covered by a different grade is not the same shift" in resource
+
+        financial = ds.get_skill("healthcare.financial").focus.lower()
+        assert "three different numbers" in financial
+        assert "without case-mix adjustment" in financial
+        assert "stage a denial was measured at" in financial
+
+        quality = ds.get_skill("healthcare.quality_compliance").focus.lower()
+        assert "per device-day is not a rate per patient" in quality
+        assert "ranks case mix rather than care" in quality
+        assert "reporting culture as much as safety" in quality
 
 
 class TestNothingUntrustedReachesThePrompt:

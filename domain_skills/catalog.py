@@ -9,7 +9,8 @@ Batches so far: Sales, MIS / Management Reporting, Marketing, HR,
 eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply
 Chain / Procurement & Logistics, Manufacturing & Operations, Customer
 Service & Support, Project & Portfolio Management, IT Operations &
-Service Management. Every batch has arrived with an identical
+Service Management, Healthcare & Life Sciences. Every batch has arrived
+with an identical
 body and an identical "Domain scope" sentence across its five prompts,
 differing only in the heading — so each *prompt-domain* writes its scope
 once (`_SALES_SCOPE`, `_MIS_SCOPE`, `_MARKETING_SCOPE`) and each skill
@@ -1341,6 +1342,158 @@ IT_OPS_SKILLS: tuple[DomainSkill, ...] = (
     ),
 )
 
+#: The supplied Healthcare prompts' "Domain scope:" sentence, verbatim --
+#: **including its trailing "never diagnose"**, which is the first time a
+#: supplied scope sentence has carried a prohibition of its own.
+#:
+#: Kept verbatim deliberately, and the alternative was considered: trimming
+#: the clause would stop the scope line overlapping
+#: `ProhibitedAction.MEDICAL_DIAGNOSIS_OR_PRESCRIPTION`, which the composer
+#: already derives. It is kept because `DomainSkill.scope` is documented as
+#: the supplied sentence verbatim, so editing it would make the catalog
+#: misrepresent what was supplied -- and because the rule in question
+#: (`CLAUDE.md` §4.8, and this package's "derived, never restated") is
+#: about a second *owner* that can drift. The derived block remains the
+#: owner and is appended last, so it overrides; this line is quoted input.
+#: The residual risk -- the policy dropping that prohibition while the
+#: quoted sentence still asserts it -- is made *detected* rather than
+#: silent by `test_the_three_prohibitions_are_pinned_so_the_scope_overlap_
+#: cannot_go_stale`.
+_HEALTHCARE_SCOPE = (
+    "Analyze healthcare operations, journeys, resources, finance, quality "
+    "and compliance; never diagnose."
+)
+
+#: The most tightly governed domain yet covered. `policy_for(HEALTHCARE)`
+#: declares three `ProhibitedAction`s (clinical decision, medical diagnosis
+#: or prescription, protected characteristic inference), restricts PHI on
+#: top of the personal baseline, sets `aggregation_required=True`,
+#: `minimum_group_size=5` and an `export_row_limit` of **50** -- half the
+#: next tightest among covered domains and the lowest in the registry
+#: alongside LEGAL and RISK_AUDIT.
+#:
+#: Two of those controls have analytical consequences the skills must
+#: frame, because the composer deliberately does not put any of them in
+#: the prompt (`domain_skills/contract.py` on what is enforced instead of
+#: restated):
+#:
+#: - `governance.suppression.SUPPRESSED_MASK` replaces a sensitive measure
+#:   for a cohort below five with "[suppressed: group too small]". It is
+#:   self-describing, so the risk is not misreading one cell but folding it
+#:   into a total or reading it as an absence of events.
+#: - `governance.result_policy`'s export ceiling truncates a result
+#:   carrying restricted data to 50 rows, for an authorized caller too, and
+#:   reports `export_limited:N`. A share, ranking or concentration claim
+#:   computed over those 50 rows describes the truncation, not the cohort.
+#:
+#: The clinical/operational line is this batch's batch-8 problem: two
+#: supplied skills (patient journey, quality and compliance) are *about*
+#: clinical outcomes. Reporting readmission, infection or complication
+#: rates for a cohort is healthcare operations analytics; explaining why
+#: one patient's outcome occurred, or what should be done about it, is a
+#: clinical decision. So the focus texts redirect to the cohort question
+#: rather than only refusing (`CLAUDE.md` §4.2 -- a refusal without an
+#: alternative is not a skill).
+_HEALTHCARE = BusinessDomain.HEALTHCARE
+
+#: Declared in the supplied numeric order (01 operations, 02 patient
+#: journey, 03 resource, 04 financial, 05 quality and compliance), so the
+#: domain default is Healthcare Operations Intelligence (01).
+HEALTHCARE_SKILLS: tuple[DomainSkill, ...] = (
+    DomainSkill(
+        slug="healthcare.operations",
+        title="Healthcare Operations Intelligence",
+        domain=_HEALTHCARE,
+        scope=_HEALTHCARE_SCOPE,
+        focus=(
+            "Throughput and flow: attendances, admissions, discharges, "
+            "waiting times, cancellations and occupancy by site and "
+            "service line. Name which clock a wait is measured from -- "
+            "referral, decision to treat, or appointment -- because the "
+            "same pathway reports three different waits. Occupancy is a "
+            "point-in-time census and must never be summed across days, "
+            "so an average has to name the time of day it was taken. Say "
+            "whether utilisation is against funded or physically "
+            "available capacity."
+        ),
+        dimensions=("site", "service line", "care setting", "admission type", "period"),
+    ),
+    DomainSkill(
+        slug="healthcare.patient_journey",
+        title="Patient Journey Intelligence",
+        domain=_HEALTHCARE,
+        scope=_HEALTHCARE_SCOPE,
+        focus=(
+            "How cohorts move through a pathway: stage-to-stage "
+            "intervals, drop-off, follow-up attendance and readmission. "
+            "A readmission rate needs its window and its index-admission "
+            "rule stated, because counting planned follow-up admissions "
+            "inflates it. This data observes only the care this provider "
+            "recorded, so a pathway that looks complete may be someone "
+            "who went elsewhere -- say so rather than reading it as an "
+            "outcome. Describe how a cohort moved and what the record "
+            "shows; never account for why an individual patient's "
+            "outcome occurred. A result truncated to the domain's export "
+            "ceiling is a sample, not a population, so no share or "
+            "ranking may be computed over it."
+        ),
+        dimensions=("pathway", "cohort", "pathway stage", "care setting", "period"),
+    ),
+    DomainSkill(
+        slug="healthcare.resource",
+        title="Healthcare Resource Intelligence",
+        domain=_HEALTHCARE,
+        scope=_HEALTHCARE_SCOPE,
+        focus=(
+            "Staffing and capacity: establishment against worked hours, "
+            "skill mix, bank and agency usage, theatre and bed capacity, "
+            "and equipment availability. Headcount is not capacity -- "
+            "report skill mix and worked hours, because a shift covered "
+            "by a different grade is not the same shift. Report by unit, "
+            "staff group and grade, never an individual clinician's "
+            "throughput: case mix decides it, so whoever takes the harder "
+            "work reads as slower."
+        ),
+        dimensions=("unit", "staff group", "grade", "shift pattern", "period"),
+    ),
+    DomainSkill(
+        slug="healthcare.financial",
+        title="Healthcare Financial Intelligence",
+        domain=_HEALTHCARE,
+        scope=_HEALTHCARE_SCOPE,
+        focus=(
+            "Payer mix, claim and denial outcomes, cost per case and the "
+            "revenue cycle. Charges, payments and cost are three "
+            "different numbers and must never stand in for one another. "
+            "Cost per case is not comparable across units without "
+            "case-mix adjustment, so name the adjustment or say there is "
+            "none. Give the stage a denial was measured at, since a "
+            "front-end rejection, an adjudicated denial and an overturned "
+            "appeal each count differently."
+        ),
+        dimensions=("payer", "service line", "case-mix group", "denial reason", "period"),
+    ),
+    DomainSkill(
+        slug="healthcare.quality_compliance",
+        title="Healthcare Quality and Compliance Intelligence",
+        domain=_HEALTHCARE,
+        scope=_HEALTHCARE_SCOPE,
+        focus=(
+            "Quality indicators, safety incidents, infection rates, audit "
+            "findings and compliance attainment by unit and cohort. Give "
+            "the denominator and the risk adjustment: a rate per "
+            "device-day is not a rate per patient, and an unadjusted "
+            "outcome comparison ranks case mix rather than care. Incident "
+            "volume measures reporting culture as much as safety, so a "
+            "rise may be better reporting -- report what was recorded and "
+            "when. A withheld measure for a small cohort is not a zero: "
+            "never read it as an absence of events, and never fold it "
+            "into a total."
+        ),
+        dimensions=("indicator", "unit", "cohort", "incident category", "period"),
+    ),
+)
+
 #: Every registered skill, in declaration order. Later batches append their
 #: own tuple here.
 ALL_SKILLS: tuple[DomainSkill, ...] = (
@@ -1357,4 +1510,5 @@ ALL_SKILLS: tuple[DomainSkill, ...] = (
     + CUSTOMER_SERVICE_SKILLS
     + PROJECT_SKILLS
     + IT_OPS_SKILLS
+    + HEALTHCARE_SKILLS
 )
