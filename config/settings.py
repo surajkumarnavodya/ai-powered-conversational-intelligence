@@ -31,7 +31,7 @@ import os
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from dotenv import load_dotenv
 from pydantic import (
@@ -215,6 +215,108 @@ class DatabaseConnectionConfig(BaseModel):
     database legitimately serves several, and expressing that as a list
     avoids forcing an operator to duplicate credentials per tenant.
     """
+
+
+def _parse_mcp_servers() -> tuple[Any, ...]:
+    """Parses `MCP_SERVERS` + per-name `MCP_<NAME>_*` into server specs.
+
+    Exactly the convention `_parse_named_connections` below establishes for
+    `DB_CONNECTIONS`, and for the same reason: `MCP_SERVERS` names an
+    open-ended set of env-var prefixes only known at runtime, which static
+    Pydantic fields cannot express. `_connection_env_prefix` is reused for
+    the name -> prefix mapping so the two features cannot disagree about
+    how a name with spaces or punctuation is normalized.
+
+    Per name `X` (prefix `P`):
+      - `MCP_P_COMMAND`   (required) the executable
+      - `MCP_P_ARGS`      comma-separated argv entries, optional
+      - `MCP_P_PERMISSION` (required) an `agent.authz.Permission` value
+      - `MCP_P_ALLOWED_TOOLS` comma-separated approved tool names.
+        **Omitted means none approved** -- the server is reachable but no
+        tool may be called. That is the correct failing-closed default for
+        an allowlist.
+      - `MCP_P_ENV`       comma-separated `KEY=VALUE` pairs passed to the
+        subprocess. The child receives **exactly** these and nothing else;
+        see `mcp_client/transport.py` on why inheriting this process's own
+        environment would hand a third-party binary every secret in
+        `.env`.
+
+    Returns an empty tuple when `MCP_SERVERS` is unset.
+
+    Raises:
+        ConfigurationError: a blank or duplicate name, two names colliding
+            on one prefix, a missing command or permission, or an
+            unrecognized permission value.
+    """
+    raw_names = _env_str("MCP_SERVERS", "")
+    names = [n.strip() for n in raw_names.split(",") if n.strip()]
+    if not names:
+        return ()
+
+    # Imported here, not at module top: `config.settings` is imported very
+    # early and `agent.authz`/`mcp_client` must not become part of its
+    # import graph for every caller.
+    from mcp_client.types import McpServerSpec
+
+    from agent.authz import Permission
+
+    seen_prefixes: dict[str, str] = {}
+    specs: list[McpServerSpec] = []
+    for name in names:
+        prefix = _connection_env_prefix(name)
+        if prefix in seen_prefixes:
+            raise ConfigurationError(
+                f"MCP_SERVERS names {seen_prefixes[prefix]!r} and {name!r} both map to "
+                f"the same env prefix MCP_{prefix}_* -- use more distinct server names."
+            )
+        seen_prefixes[prefix] = name
+
+        command = _env_str(f"MCP_{prefix}_COMMAND", "").strip()
+        if not command:
+            raise ConfigurationError(
+                f"MCP_SERVERS includes {name!r} but MCP_{prefix}_COMMAND is not set."
+            )
+
+        raw_permission = _env_str(f"MCP_{prefix}_PERMISSION", "").strip()
+        if not raw_permission:
+            raise ConfigurationError(
+                f"MCP_SERVERS includes {name!r} but MCP_{prefix}_PERMISSION is not set. "
+                "Every MCP server needs an explicit permission -- there is no "
+                "unrestricted remote server."
+            )
+        try:
+            permission = Permission(raw_permission)
+        except ValueError:
+            raise ConfigurationError(
+                f"MCP_{prefix}_PERMISSION={raw_permission!r} is not a recognized "
+                "permission. See agent/authz.py::Permission."
+            ) from None
+
+        args = tuple(a for a in _env_str(f"MCP_{prefix}_ARGS", "").split(",") if a.strip())
+        allowed = frozenset(
+            t.strip() for t in _env_str(f"MCP_{prefix}_ALLOWED_TOOLS", "").split(",") if t.strip()
+        )
+
+        env: dict[str, str] = {}
+        for pair in _env_str(f"MCP_{prefix}_ENV", "").split(","):
+            if not pair.strip():
+                continue
+            if "=" not in pair:
+                raise ConfigurationError(f"MCP_{prefix}_ENV entry {pair!r} is not KEY=VALUE.")
+            key, value = pair.split("=", 1)
+            env[key.strip()] = value.strip()
+
+        specs.append(
+            McpServerSpec(
+                name=name,
+                command=command,
+                args=args,
+                permission=permission,
+                allowed_tools=allowed,
+                env=env,
+            )
+        )
+    return tuple(specs)
 
 
 def _parse_named_connections() -> tuple[DatabaseConnectionConfig, ...]:
@@ -2441,6 +2543,24 @@ class Settings(BaseSettings):
     #: validation work. 0 means "follow none".
     rest_max_redirects: int = Field(default=3, ge=0)
 
+    # --- Batch 8 of docs/architecture/implementation-roadmap.md: the MCP
+    # client (`mcp_client/`). Off by default. Enabling the flag without
+    # declaring servers is inert, and a declared server with no
+    # `ALLOWED_TOOLS` can be reached but none of its tools may be called --
+    # both are allowlists, so "unset" means nothing, never everything.
+    #
+    # NOTE: this is the only production feature in this repo that spawns a
+    # subprocess. See mcp_client/transport.py for the two controls that
+    # makes necessary (no shell; no inherited environment, so a
+    # third-party binary never receives DB_PASSWORD or the JWT key).
+    enable_mcp_client: bool = False
+
+    #: Per-exchange timeout with an MCP server, seconds.
+    mcp_request_timeout_seconds: float = Field(default=30.0, gt=0.0)
+
+    #: Cap on one response line from an MCP server, bytes.
+    mcp_max_response_bytes: int = Field(default=1_000_000, gt=0)
+
     # --- Prompt 47 (47_MODEL_ROUTING_COST_OPTIMIZATION_CONTRACT.md):
     # model_routing/'s own tunables -- which locally-installed Ollama model
     # drafts each LLM call the SQL pipeline makes, by complexity, risk,
@@ -3002,6 +3122,14 @@ class Settings(BaseSettings):
     hsts_max_age_seconds: int = Field(default=31_536_000, ge=0)  # 1 year
     project_root: Path = PROJECT_ROOT
     databases: tuple[DatabaseConnectionConfig, ...] = ()
+    #: Parsed from `MCP_SERVERS` + `MCP_<NAME>_*` by
+    #: `_parse_mcp_servers`, same as `databases` above. Typed loosely
+    #: (`tuple[Any, ...]`) rather than as `tuple[McpServerSpec, ...]`
+    #: so `config.settings` does not import `mcp_client` at module
+    #: scope -- this module is imported very early by `api.main`, and
+    #: `mcp_client` pulls in `agent.authz`. Elements are always
+    #: `mcp_client.types.McpServerSpec`.
+    mcp_servers: tuple[Any, ...] = ()
 
     @field_validator("db_type", "web_search_provider", mode="before")
     @classmethod
@@ -3573,7 +3701,10 @@ def get_settings() -> Settings:
             require a fully-configured database connection just to import
             this module.
     """
-    return Settings(databases=_parse_named_connections())
+    return Settings(
+        databases=_parse_named_connections(),
+        mcp_servers=_parse_mcp_servers(),
+    )
 
 
 class _JsonLogFormatter(logging.Formatter):

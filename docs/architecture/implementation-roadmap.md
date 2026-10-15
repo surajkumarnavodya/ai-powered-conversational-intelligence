@@ -40,7 +40,7 @@ built or cannot be verified here.
 | 3 — per-conversation source selection | **done** | `AskRequest.sources` + picker; see [`source-connector-contract.md`](source-connector-contract.md) §8 |
 | 4, 6, 7 — SharePoint/OneDrive, Dataverse, Outlook | blocked (no tenant) | — |
 | 5 — REST/OpenAPI | **done** | `rest/` + `security/outbound_url.py`; see [`source-connector-contract.md`](source-connector-contract.md) §9 |
-| 8 — MCP client | not started | — |
+| 8 — MCP client | **done** | `mcp_client/`; see [`source-connector-contract.md`](source-connector-contract.md) §10 |
 | Teams | not scheduled | — |
 
 Batch 1 shipped the descriptor half live and the connector-lifecycle half
@@ -230,7 +230,7 @@ programme.
 | 5 | REST / OpenAPI | P2 | M | no | SSRF — done, 3 mutations proven |
 | 6 | Dataverse | P2 | L | **yes** | R2 |
 | 7 | Outlook read | P2 | L | **yes** | R2 + injection |
-| 8 | MCP client | P2 | L | no | trust process |
+| 8 | MCP client | P2 | L | no | trust process — done, 5 mutations proven |
 | — | Teams | — | — | **yes + approval** | **not scheduled** |
 | — | Streaming | — | M | no | separate programme |
 
@@ -267,27 +267,33 @@ done. These are the ones this programme touches most:
 
 ## 6. Recommended next action
 
-**Batch 8 — MCP client**, or one of the two decisions Batch 5 surfaced.
+**Every batch that does not need external credentials is now done**
+(0, 1, 3, 5, 8). What is left falls into three groups.
 
-Batches 0, 1, 3 and 5 are done. Batch 8 is the last batch needing no
-external credentials: a real MCP transport behind `agent/tools/`'s
-existing typed contract, with **administrator-controlled trust only** — an
-LLM must never register a remote tool, and tool descriptions and results
-are untrusted data.
+**Ready to do, no credentials needed:**
 
-Two items Batch 5 raised that deserve their own decision rather than being
-folded into a batch:
+- **Batch 2** — adapt the existing sources to the lifecycle half of the
+  contract. Now well motivated: `rest/` is the second real implementer
+  that was the stated reason for deferring it.
+- **Wire `rest/` into routing.** It implements the contract but has no
+  descriptor and no orchestrator node, so nothing can reach it. Wants a
+  deployment with real endpoints to test against.
+- **An MCP HTTP transport.** stdio only today; Streamable HTTP would
+  reuse `security/outbound_url.py` from Batch 5.
+- **Consolidate the three SSRF blocklist copies** — hygiene, not live
+  risk (they are pinned identical by a test), and it has to deal with
+  `tests/test_media_gen.py`'s patch target. See
+  [`source-connector-contract.md`](source-connector-contract.md) §9.1.
+- **Streaming.** Still the one unmet item from the pack's
+  platform-foundation prompt, and independent of this programme.
 
-- **Make `rest/` routable.** It implements the lifecycle contract but has
-  no descriptor and no orchestrator node, so nothing can reach it yet.
-  Wiring it wants a deployment with real endpoints to test against.
-- **Consolidate the three SSRF blocklist copies.** Pinned identical by a
-  test, so this is hygiene rather than a live risk — but it has to deal
-  with `tests/test_media_gen.py`'s patch target (see
-  [`source-connector-contract.md`](source-connector-contract.md) §9.1).
+**Blocked on an Entra tenant and admin consent:** Batches 4, 6 and 7
+(SharePoint/OneDrive, Dataverse, Outlook). Configuration and adapter seams
+can be written; live verification cannot.
 
-Batch 2 is now better motivated: `rest/` is the second real implementer
-that was the stated reason for deferring it.
+**Not scheduled:** Teams — see
+[`data-source-matrix.md`](data-source-matrix.md) §3.4 for the three
+reasons.
 
 Batches 4, 6 and 7 remain blocked on an Entra tenant and admin consent;
 Teams is not scheduled (see

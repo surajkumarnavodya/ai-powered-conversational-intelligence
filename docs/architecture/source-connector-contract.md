@@ -1,4 +1,4 @@
-# Source connector contract — Batches 1, 3 and 5
+# Source connector contract — Batches 1, 3, 5 and 8
 
 **Scope.** The design of `sources/` and `GET /sources`: what the contract
 is, what it deliberately is not, and which invariants it carries. This
@@ -11,8 +11,8 @@ the batch plan in
 [`implementation-roadmap.md`](implementation-roadmap.md).
 
 **Date:** 2026-10-15. **Batches:** 1 (contract + registry), 3
-(per-conversation source selection) and 5 (REST/OpenAPI connector) of the
-source-connectivity roadmap.
+(per-conversation source selection), 5 (REST/OpenAPI connector) and 8
+(MCP client) of the source-connectivity roadmap.
 
 ---
 
@@ -270,6 +270,19 @@ raising, and asserts each is detectably broken.
 | `tests/test_rest_connector.py` | configuration validity, read-only posture, no query interpolation |
 | `tests/test_sources_conformance.py` | `Harness`/`TestUniversalContract`; `RestConnector` enrolled |
 
+### Batch 8
+
+| File | Role |
+|---|---|
+| `mcp_client/types.py` | `McpServerSpec`, `McpToolDescriptor`, `McpToolResult`, errors |
+| `mcp_client/protocol.py` | JSON-RPC 2.0 framing and parsing — pure, no I/O |
+| `mcp_client/transport.py` | stdio subprocess transport (no shell, no inherited env) |
+| `mcp_client/client.py` | initialize / tools/list / tools/call; discards `instructions` |
+| `mcp_client/trust.py` | **the administrator-controlled trust gate** |
+| `config/settings.py` | 3 `mcp_*` settings + `_parse_mcp_servers` (`MCP_SERVERS` + `MCP_<NAME>_*`) |
+| `.env.example` | the operator-facing block |
+| `tests/test_mcp_client.py` | 62 tests: framing, untrusted content, trust gate, transport safety |
+
 ---
 
 ## 8. Batch 3 — per-conversation source selection
@@ -427,22 +440,166 @@ is enrolled in the second. §4's claim is corrected accordingly.
 
 ---
 
-## 10. Next
+## 10. Batch 8 — MCP client
+
+`mcp_client/` is a client **of** operator-declared remote MCP servers.
+Not to be confused with `agent/tools/`, which is MCP-*shaped* so this
+app's own capabilities could one day be exposed *to* an external MCP
+client ([`../TOOLS.md`](../TOOLS.md)) — opposite direction, no shared
+code.
+
+### 10.1 Protocol, verified not assumed
+
+Targets MCP revision **2025-06-18**, whose shapes were verified against
+the specification on 2026-10-15 rather than written from memory:
+`initialize` params (`protocolVersion`, `capabilities`, `clientInfo`),
+`InitializeResult` (including the optional `instructions`), the
+`notifications/initialized` follow-up, `tools/list` pagination via
+`nextCursor`, `tools/call` returning `content` + `isError` (assumed false
+when absent), and stdio's newline-delimited framing with no embedded
+newlines and stderr reserved for logging.
+
+**Known version caveat, deliberately surfaced:** the 2026-07-28 revision
+makes MCP stateless — it removes the handshake entirely and moves protocol
+version and capabilities into per-request `_meta`. A server speaking only
+that revision will not work here, and
+`protocol.negotiate_protocol_version` raises a clear error rather than
+letting the mismatch surface later as a confusing parse failure.
+
+No SDK was added. `mcp` is not installed or pinned, and the protocol layer
+is pure functions with no I/O, so it is exhaustively testable without a
+subprocess. The package is named `mcp_client/` rather than `mcp/` so the
+official SDK can be adopted later without renaming every import site.
+
+### 10.2 The three trust properties
+
+The roadmap's requirement is one line: *administrator-controlled trust
+only — an LLM must never register a remote tool.* `mcp_client/trust.py`
+makes that true by construction.
+
+| Property | How |
+|---|---|
+| **A remote tool is never auto-registered** into `agent.tools.registry.ToolRegistry` | No code path does it. Pinned structurally by an **AST** check that no module in the package imports `agent.tools.registry` or calls `.register(` — a substring grep would have failed on `trust.py`'s own prose and passed on an import hidden inside a function, which is backwards |
+| **An empty per-server allowlist approves nothing** | `McpServerSpec.allowed_tools` defaults to empty, and a server can be configured and reachable while no tool may be called. Matching is exact: approving `read_file` does not approve `read_file_and_delete` |
+| **A server's own metadata cannot widen its access** | The required `Permission` comes from the operator's spec, never from anything the server said. A tool describing itself as needing no permission is describing itself |
+
+Trust and permission are **separate gates**, checked in that order: trust
+first, because no caller attribute can change a missing approval, so there
+is no point resolving permissions. Each refusal has its own audit event,
+because one is a configuration gap an administrator closes and the other
+is a caller reaching past their role.
+
+### 10.3 `instructions` is read and discarded
+
+`InitializeResult.instructions` is a remote-authored string the spec
+describes as telling a client how to use the server. Feeding it to a model
+would make a third party's text part of this app's prompt — prompt
+injection with the reach of whatever consumed it.
+[`CLAUDE.md`](../../CLAUDE.md) §5.5 already settles the general case: the
+prompt registry never hot-swaps a live prompt, "because making a database
+row the system prompt would turn every write into prompt injection with
+full pipeline reach." This is that hazard with a less trustworthy author.
+
+It is logged at debug for operators and never returned. A test asserts it
+reaches no caller.
+
+Tool `description` gets the same treatment one level down: retained for
+operator display, never used as an instruction, and stripped of control
+characters and newlines — a description steers tool choice, and a name
+reaching the audit log with a raw carriage return or ANSI escape could
+forge surrounding output.
+
+### 10.4 Spawning a subprocess — new for this codebase
+
+A sweep of `agent api config db voice media media_gen security` found **no
+`subprocess` import outside `scripts/` and `tests/`**. stdio MCP requires
+one, so this is a new capability class, which is why it is off by default
+and why two controls are not optional details:
+
+- **No shell, ever.** `shell=False` explicitly, command as an argv list.
+  An operator who can edit `.env` can already run code on this host, so
+  this is not a privilege boundary — it is about a stray `;` or `$(...)`
+  in a config value not silently becoming a different command.
+- **The child inherits no environment.** `env` is a complete replacement,
+  not an overlay. This process's `os.environ` holds `DB_PASSWORD`,
+  `RAG_STORE_CONNECTION_STRING`, `JWT_SECRET_KEY` and every other secret
+  in `.env`; `subprocess`'s default (`env=None`) would hand all of it to a
+  third-party binary. [`CLAUDE.md`](../../CLAUDE.md) §5.6 forbids *logging*
+  a connection string — passing it to someone else's process is worse.
+
+stderr is drained on a daemon thread, both because its diagnostics are
+worth having and because a child that fills the stderr pipe buffer blocks
+forever on its next write — a deadlock that looks like a hang.
+
+### 10.5 Mutation evidence
+
+Each applied to live code, then reverted. Clean: `62 passed`.
+
+| Mutation | Result |
+|---|---|
+| allowlist becomes permissive (`return True`) | **7 failed**, 55 passed |
+| allowlist becomes a prefix match | **2 failed**, 60 passed |
+| child inherits this process's environment (`env=None`) | **2 failed**, 60 passed |
+| `shell=True` | **1 failed**, 61 passed |
+| `instructions` stored on the client | **1 failed**, 61 passed |
+
+### 10.6 A Batch 3 regression this batch caught
+
+Running `mypy` across `mcp_client/ agent/orchestrator/ sources/` surfaced
+an error in `_apply_source_selection` — `notice` was inferred as `str`
+from its first assignment, making the later `notice = None` invalid.
+
+**That was introduced in Batch 3 and I missed it**, because that batch's
+type check covered only `sources/` and the `api/` modules it touched, not
+`agent/orchestrator/`. Fixed here by annotating `notice: str | None`. The
+lesson is narrow and worth stating: type-check every package a change
+touches, not just the one the change is *about*.
+
+### 10.7 Deliberately not done
+
+- **No HTTP/SSE transport.** stdio only. Streamable HTTP would reuse
+  [`../../security/outbound_url.py`](../../security/outbound_url.py) from
+  Batch 5 and is the natural next increment.
+- **No admin API or UI** for approving tools. The allowlist is `.env`
+  configuration, which is the strongest form of
+  "administrator-controlled". A UI would need its own authorization story
+  for who may approve a remote tool.
+- **No bridging into `ToolRegistry`.** Deliberate, and the point of §10.2.
+- **No `sampling` capability.** Declared absent, so a server is told not
+  to ask this app to run LLM calls on its behalf.
+- **Not verified against a live MCP server.** No such server exists in
+  this environment. Protocol shapes are spec-verified and the framing is
+  exhaustively unit-tested, but end-to-end behaviour against a real
+  implementation is **unverified** and must not be reported otherwise.
+
+---
+
+## 11. Next
 
 
 
 
 
-Batches 1, 3 and 5 are done. The remaining credential-free work is
-**Batch 8** (a real MCP client, administrator-controlled trust only), and
-two items worth their own decision: wiring `rest/` into the orchestrator so
-it becomes routable, and consolidating the three SSRF blocklist copies
-(§9.1).
 
-**Batch 2** — adapting the existing sources to the lifecycle half of the
-contract — is now better motivated than before: `rest/` is a second real
-implementer to generalize against, which was the stated reason for
-deferring it.
+
+**Every batch in the roadmap that does not need external credentials is
+now done** (0, 1, 3, 5, 8). What remains:
+
+- **Batch 2** — adapt the existing sources to the lifecycle half of the
+  contract. Now well motivated: `rest/` is a second real implementer to
+  generalize against, which was the stated reason for deferring it.
+- **Wire `rest/` into routing** — it implements the contract but has no
+  descriptor and no orchestrator node. Wants a deployment with real
+  endpoints to test against.
+- **An MCP HTTP transport** — would reuse
+  [`../../security/outbound_url.py`](../../security/outbound_url.py).
+- **Consolidate the three SSRF blocklist copies** (§9.1). Pinned
+  identical by a test, so hygiene rather than live risk.
+- **Batches 4, 6, 7** (SharePoint/OneDrive, Dataverse, Outlook) — blocked
+  on an Entra tenant and admin consent. Teams is not scheduled at all
+  ([`data-source-matrix.md`](data-source-matrix.md) §3.4).
+- **Streaming** — still the one unmet item from the pack's
+  platform-foundation prompt, and independent of this programme.
 
 **Batch 4/6/7** (SharePoint/OneDrive, Dataverse, Outlook) stay blocked on
 an Entra tenant and admin consent. Teams is not scheduled at all — see

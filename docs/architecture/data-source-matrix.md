@@ -136,12 +136,12 @@ adapter seam, then mark live verification blocked.
 
 | | REST / OpenAPI | MCP |
 |---|---|---|
-| **Status** | **Flag-gated** (2026-10-15) — `rest/`, off by default, not routable yet | **Partial** — `agent/tools/` is MCP-*shaped*, not an MCP client |
+| **Status** | **Flag-gated** (2026-10-15) — `rest/`, off by default, not routable yet | **Flag-gated** (2026-10-15) — `mcp_client/`, stdio only, off by default |
 | **Existing seam** | `agent/tools/types.py::Tool` already carries name, description, schema, permission, `timeout_seconds`, `RetryPolicy`, audit | same |
-| **What's missing** | OpenAPI spec parsing, per-endpoint auth headers, and a `sources/descriptors.py` entry (so nothing can route to it yet). Host allowlist, redirect/payload validation and read-vs-side-effect classification are **done** — `security/outbound_url.py` | MCP transport, remote server client, trust process |
-| **Security requirements** | SSRF validation re-run **on every use** (not once at registration), destination allowlist, payload cap | tool descriptions and results are **untrusted data**; an LLM must never register a remote tool — administrator-controlled trust only |
+| **What's missing** | OpenAPI spec parsing, per-endpoint auth headers, and a `sources/descriptors.py` entry (so nothing can route to it yet). Host allowlist, redirect/payload validation and read-vs-side-effect classification are **done** — `security/outbound_url.py` | HTTP/SSE transport (stdio only today), an admin UI for approving tools, and live verification against a real server. Transport, client and trust process are **done** |
+| **Security requirements** | SSRF validation re-run **on every use** (not once at registration), destination allowlist, payload cap | tool descriptions, results **and `InitializeResult.instructions`** are untrusted data; an LLM must never register a remote tool — administrator-controlled trust only. Also: no shell, and the subprocess inherits **no** environment (it would otherwise receive every secret in `.env`) |
 | **Side effects** | must be declared and approval-gated | same |
-| **Blocked?** | no — built and tested here | no |
+| **Blocked?** | no — built and tested here | no for the protocol and trust layers; **live end-to-end verification is unverified** (no MCP server in this environment) |
 
 ---
 

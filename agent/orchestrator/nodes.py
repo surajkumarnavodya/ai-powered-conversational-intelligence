@@ -501,6 +501,8 @@ def _apply_source_selection(
     narrowed = [name for name in available if name in keep or name == _ALWAYS_AVAILABLE_SOURCE]
     unavailable = [name for name in selected if name not in available]
 
+    notice: str | None = None
+
     if not narrowed:
         # Every named source is unavailable. Fall back rather than refuse,
         # and say so -- answering silently from sources the caller did not
@@ -514,7 +516,6 @@ def _apply_source_selection(
         )
         return available, notice
 
-    notice = None
     if unavailable:
         friendly = [_SOURCE_DENIAL_LABELS.get(name, name) for name in unavailable]
         notice = (

@@ -553,6 +553,52 @@ blocklist — not just the first, or record ordering would decide. Redirects
 are followed manually with each hop re-validated. See
 [`security/outbound_url.py`](../security/outbound_url.py).
 
+### MCP client (optional, off by default)
+
+A client *of* operator-declared remote MCP servers. Not to be confused
+with [`TOOLS.md`](TOOLS.md)'s `agent/tools/`, which is MCP-*shaped* so this
+app's own capabilities could be exposed *to* an external MCP client --
+opposite direction. See
+[`docs/architecture/source-connector-contract.md`](architecture/source-connector-contract.md)
+Section 10.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ENABLE_MCP_CLIENT` | `false` | Enables `mcp_client/`. |
+| `MCP_REQUEST_TIMEOUT_SECONDS` | `30.0` | Per-exchange wall-clock cap. |
+| `MCP_MAX_RESPONSE_BYTES` | `1000000` | Cap on one response line. |
+| `MCP_SERVERS` | *(empty)* | Comma-separated server names, each with its own `MCP_<NAME>_*` block -- the same convention `DB_CONNECTIONS` uses. |
+
+Per server `X` (prefix from the name, as `DB_<NAME>_*` does it):
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `MCP_X_COMMAND` | yes | The executable. Run as `argv[0]` with **`shell=False`** -- nothing here is interpreted by a shell. |
+| `MCP_X_ARGS` | no | Comma-separated argv entries, each passed verbatim. |
+| `MCP_X_PERMISSION` | yes | The `agent.authz.Permission` a caller needs. No default -- there is no unrestricted remote server. |
+| `MCP_X_ALLOWED_TOOLS` | no | Tool names an administrator has approved. **Omitted means none**: the server is reachable but no tool may be called. Matched exactly -- approving `read_file` does not approve `read_file_and_delete`. |
+| `MCP_X_ENV` | no | `KEY=VALUE` pairs. The subprocess receives **exactly** these and nothing else. |
+
+**Two things to understand before enabling this.**
+
+First, it spawns a subprocess -- the only production feature here that
+does. The command never goes through a shell, and the child does **not**
+inherit this process's environment: it gets only what `MCP_X_ENV` names.
+That matters because this process's environment holds `DB_PASSWORD`,
+`RAG_STORE_CONNECTION_STRING`, `JWT_SECRET_KEY` and every other secret in
+`.env`, and `subprocess`'s default would hand all of it to a third-party
+binary.
+
+Second, everything a server sends is data, never instructions. That
+includes each tool's `description` and the `instructions` string a server
+may return from `initialize` -- the latter is read, logged at debug, and
+**discarded**, because feeding it to a model would be prompt injection
+with full pipeline reach.
+
+Protocol revision **2025-06-18**. A server speaking only the 2026-07-28
+stateless revision (which removes the handshake) is refused with a clear
+error rather than mis-parsed.
+
 ### Voice mode (optional, on by default)
 
 Local speech-to-text/text-to-speech — no cloud API, same posture as
