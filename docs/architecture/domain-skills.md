@@ -9,7 +9,7 @@ recommended in a business domain is
 [`../DATA_PRIVACY_GOVERNANCE_ENGINE.md`](../DATA_PRIVACY_GOVERNANCE_ENGINE.md),
 and a skill cannot change any of it.
 
-**Date:** 2026-10-15. **Batches delivered:** 3 — Sales, MIS / Management Reporting, Marketing (across 2 of 18 governance domains).
+**Date:** 2026-10-15. **Batches delivered:** 4 — Sales, MIS / Management Reporting, Marketing, HR (across 3 of 18 governance domains).
 
 ---
 
@@ -113,7 +113,7 @@ the two distinguishable where it matters (`sales.*` vs a future
 
 `registry.covered_domains()` answers "which of the eighteen are actually
 covered" from the catalog itself, so no document can claim coverage the
-code does not have. **Today: Sales, MIS and Marketing — 15 skills across 2 governance domains.**
+code does not have. **Today: Sales, MIS, Marketing and HR — 20 skills across 3 governance domains.**
 
 A test asserts `covered_domains()` equals exactly the delivered batches, so
 a new domain fails it until this document is updated in the same change —
@@ -165,16 +165,19 @@ caller text, no retrieved document, no database value, no model output.
 
 ## 7. Mutation evidence
 
-Each applied to live code, then reverted. Clean: `129 passed` (3 batches).
+Each applied to live code, then reverted. Clean: `162 passed` (4 batches).
 
 | Mutation | Result |
 |---|---|
-| selection stops filtering by domain (cross-domain leak) | **3 failed**, 126 passed |
-| no longer fails open when the flag is off | **1 failed**, 128 passed |
-| contract gains a format slot | **2 failed**, 127 passed |
-| `GENERAL` (unknown domain) gets guessed framing | **1 failed**, 128 passed |
-| guesses a default across prompt-domains (campaign → Revenue framing) | **2 failed**, 127 passed |
-| `group` stops being derived from the slug | **21 failed**, 106 passed |
+| selection stops filtering by domain (cross-domain leak) | **3 failed**, 159 passed |
+| no longer fails open when the flag is off | **1 failed**, 161 passed |
+| contract gains a format slot | **2 failed**, 160 passed |
+| `GENERAL` (unknown domain) gets guessed framing | **1 failed**, 161 passed |
+| guesses a default across prompt-domains (campaign → Revenue framing) | **2 failed**, 160 passed |
+| `group` stops being derived from the slug | **26 failed**, 133 passed |
+| prohibitions block dropped (HR invited to rank individuals) | **3 failed**, 159 passed |
+| prohibitions hard-coded to one domain instead of derived | **3 failed**, 159 passed |
+| ranking invitation becomes unqualified again | **1 failed**, 161 passed |
 
 Three of those only became real after a vacuous test was fixed. The full
 pattern is in §8; the first two are recorded here because they were found
@@ -248,7 +251,68 @@ reversed.** Each was found by mutation testing, not by review.
 
 ---
 
-## 9. Adding the next batch
+## 9. What batch 4 added: prohibitions derived, not restated
+
+HR is the first domain whose policy actively **contradicts** the shared
+contract. `policy_for(HR)` prohibits five actions, including
+`individual_performance_ranking` — while the contract says "rank top and
+bottom performers". A skill called *Performance Intelligence* sitting in
+that domain is exactly where that collision shows.
+
+Two changes, both structural rather than editorial:
+
+1. **The ranking invitation is qualified.** The bullet now says to rank
+   "when a ranking is meaningful AND not prohibited for this domain — the
+   domain constraints at the end of these instructions override this line."
+2. **A constraint block is appended, derived from `policy_for(domain)`.**
+   It lists that domain's prohibited actions and comes last, so it visibly
+   overrides everything above it.
+
+### Why derived rather than written per skill
+
+The prohibitions are already data with one owner, in
+`governance/domains.py`. Hand-writing them into each focus text would mean
+twenty chances to forget one — and a second copy free to drift from the
+policy the governance engine actually enforces. Deriving them means every
+future domain gets this correct on the day its skills land, with no author
+having to remember.
+
+A test asserts no skill's focus text restates a prohibition verbatim, so
+the single-owner property cannot quietly erode.
+
+**This is defence in depth, not the control.**
+`governance/request_policy.py` and `governance/recommendation_safety.py`
+are what actually refuse a prohibited output. This only stops the model
+being invited to produce one. A domain with no prohibitions (MIS has none)
+appends nothing at all, rather than an empty heading.
+
+### A fourth vacuous test, and a lesson about mutations
+
+Mutation 9 — unqualifying the ranking bullet — **survived twice**:
+
+- First because the test asked "is the phrase present anywhere in the
+  contract?". It was, in the next fragment of the same sentence. Tightened
+  to assert on the ranking **line** itself.
+- Then because the *mutation* was unrealistic: it replaced one of three
+  concatenated source fragments, leaving the rest of the sentence dangling,
+  so the phrase genuinely did survive. Fixed by replacing the whole bullet.
+
+The second case is the more interesting one. **A surviving mutation does
+not always mean the test is weak — sometimes the mutation is wrong.**
+Distinguishing the two is the work; assuming either without looking
+produces a false conclusion in both directions.
+
+### Supplied order is preserved
+
+The HR prompts arrived out of sequence (01, 03, 02, 04, 05) and are
+registered 01→05. That matters beyond tidiness: declaration order decides
+the domain default, so the default is Workforce Intelligence (01), the
+broadest of the five, rather than whichever file happened to be listed
+first.
+
+---
+
+## 10. Adding the next batch
 
 1. Add the **prompt-domain's** scope string once in `catalog.py`. If the
    batch shares a governance domain with an existing one (as Marketing
@@ -263,6 +327,12 @@ reversed.** Each was found by mutation testing, not by review.
 5. If the batch lands in an already-occupied governance domain, check
    whether any test asserts a default for it — that default is now
    deliberately gone.
+6. **Register in the supplied numeric order**, even if the prompts arrive
+   shuffled. Declaration order decides the domain default.
+7. **Read `policy_for(domain)` before writing the focus texts.** If the
+   domain prohibits something the shared contract invites, the constraint
+   block handles it automatically — but a focus text that contradicts the
+   policy is still the author's mistake to avoid.
 
 No other file changes. Validation runs at import, so a malformed skill
 fails the process rather than producing a degraded prompt on some later
@@ -270,7 +340,7 @@ request.
 
 ---
 
-## 10. Status
+## 11. Status
 
 | Item | State |
 |---|---|
@@ -278,7 +348,8 @@ request.
 | Sales skills (5 of 5 supplied) | **Registered** |
 | MIS / Management Reporting skills (5 of 5 supplied) | **Registered** |
 | Marketing skills (5 of 5 supplied) | **Registered** |
-| Other 16 domains | **Not registered** — a skill is added when its prompt arrives, never in anticipation |
+| HR skills (5 of 5 supplied) | **Registered** |
+| Other 15 domains | **Not registered** — a skill is added when its prompt arrives, never in anticipation |
 | Wiring into a live analysis path | **Not done** — see below |
 
 **Deliberately not wired yet.** The composer produces guidance, and nothing

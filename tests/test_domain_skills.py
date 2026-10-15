@@ -18,8 +18,27 @@ from domain_skills.types import DomainSkill, UnknownSkillError
 
 from governance.domains import BusinessDomain
 
+
+def _an_uncovered_domain() -> BusinessDomain:
+    """A governance domain with no declared skills, or skip.
+
+    Resolved at call time rather than hard-coded. HR was used for this
+    until batch 4 registered it, breaking four tests at once; picking the
+    next uncovered domain by hand would just defer the same breakage to the
+    batch after next. Once all eighteen are covered there is no such domain
+    and the tests skip with that as the stated reason, which is accurate
+    rather than a silently weakened assertion.
+    """
+    covered = set(ds.covered_domains())
+    for domain in BusinessDomain:
+        if domain is not BusinessDomain.GENERAL and domain not in covered:
+            return domain
+    pytest.skip("every governance domain now has skills; nothing is uncovered")
+
+
 SALES = BusinessDomain.SALES_MARKETING
 MIS = BusinessDomain.MIS
+HR = BusinessDomain.HR
 
 
 class TestCatalog:
@@ -34,6 +53,21 @@ class TestCatalog:
             "sales.pricing",
         )
 
+    def test_the_supplied_hr_skills_are_registered_in_numeric_order(self):
+        """Declaration order is the supplied 01..05 order, which also
+        decides the domain default -- so the default is Workforce
+        Intelligence (01), the broadest of the five, rather than whichever
+        prompt happened to arrive first."""
+        assert tuple(s.slug for s in ds.skills_for_domain(HR)) == (
+            "hr.workforce",  # 01
+            "hr.attrition",  # 02
+            "hr.recruitment",  # 03
+            "hr.performance",  # 04
+            "hr.risk_scorecard",  # 05
+        )
+        default = select_skill(HR)
+        assert default is not None and default.slug == "hr.workforce"
+
     def test_the_supplied_marketing_skills_are_registered(self):
         """Marketing shares a governance domain with Sales, so it is looked
         up by group rather than by domain."""
@@ -45,12 +79,12 @@ class TestCatalog:
             "marketing.lead_funnel",
         )
 
-    def test_marketing_did_not_add_a_governance_domain(self):
-        """Three batches, still two governance domains. A new prompt-domain
-        does not imply a new governance domain, and inventing one would
-        mean two answers to 'what may this question return'."""
-        assert ds.covered_domains() == (SALES, MIS)
-        assert len({s.group for s in ds.all_skills()}) == 3
+    def test_a_prompt_domain_does_not_imply_a_governance_domain(self):
+        """Four prompt-domains, three governance domains: Marketing shares
+        `SALES_MARKETING` with Sales. Inventing a governance domain per
+        batch would mean two answers to 'what may this question return'."""
+        assert len({s.group for s in ds.all_skills()}) == 4
+        assert len(ds.covered_domains()) == 3
 
     def test_the_supplied_mis_skills_are_registered(self):
         assert tuple(s.slug for s in ds.skills_for_domain(MIS)) == (
@@ -95,7 +129,7 @@ class TestCatalog:
         in `docs/architecture/domain-skills.md` to be updated in the same
         change, instead of drifting behind the code.
         """
-        assert ds.covered_domains() == (SALES, MIS)
+        assert ds.covered_domains() == (SALES, MIS, HR)
 
     def test_the_other_sixteen_domains_have_no_skills(self):
         """An uncovered domain must stay genuinely empty rather than
@@ -158,8 +192,9 @@ class TestLookup:
             assert ds.get_skill(slug).slug == slug
 
     def test_an_unknown_slug_raises_rather_than_defaulting(self):
+        assert not ds.is_registered("nosuchdomain.nosuchskill"), "setup"
         with pytest.raises(UnknownSkillError):
-            ds.get_skill("hr.attrition")
+            ds.get_skill("nosuchdomain.nosuchskill")
 
     def test_the_refusal_does_not_echo_the_requested_slug(self):
         """A refusal must not become an oracle for what exists."""
@@ -172,7 +207,7 @@ class TestLookup:
         assert ds.is_registered("nope") is False
 
     def test_a_domain_with_no_skills_returns_empty_not_an_error(self):
-        assert ds.skills_for_domain(BusinessDomain.HR) == ()
+        assert ds.skills_for_domain(_an_uncovered_domain()) == ()
 
 
 class TestFailsOpen:
@@ -194,7 +229,7 @@ class TestFailsOpen:
         assert guidance_for(MIS, enabled=False) is None
 
     def test_an_uncovered_domain_changes_nothing(self):
-        assert guidance_for(BusinessDomain.HR, enabled=True) is None
+        assert guidance_for(_an_uncovered_domain(), enabled=True) is None
 
     def test_general_changes_nothing(self, monkeypatch):
         """`GENERAL` means "domain unknown". The right response to an
@@ -329,22 +364,22 @@ class TestSkillSelectionCannotCrossDomains:
         import domain_skills.registry as reg
 
         intruder = DomainSkill(
-            slug="hr.attrition",
-            title="Attrition",
-            domain=BusinessDomain.HR,
+            slug="legal.contracts",
+            title="Contracts",
+            domain=BusinessDomain.LEGAL,
             scope="s",
             focus="f",
         )
         monkeypatch.setitem(reg._BY_SLUG, intruder.slug, intruder)
         monkeypatch.setattr(reg, "ALL_SKILLS", (*ds.all_skills(), intruder))
 
-        assert reg.is_registered("hr.attrition") is True, "setup failed"
-        assert reg.get_skill("hr.attrition").domain is BusinessDomain.HR
+        assert reg.is_registered("legal.contracts") is True, "setup failed"
+        assert reg.get_skill("legal.contracts").domain is BusinessDomain.LEGAL
 
-        chosen = select_skill(MIS, preferred_slug="hr.attrition")
+        chosen = select_skill(MIS, preferred_slug="legal.contracts")
         assert chosen is not None
         assert chosen.domain is MIS, "another domain's skill leaked through"
-        assert chosen.slug != "hr.attrition"
+        assert chosen.slug != "legal.contracts"
 
     def test_an_unknown_slug_falls_back_to_the_domain_default(self):
         """On an unambiguous domain. On an ambiguous one it returns None --
@@ -362,7 +397,87 @@ class TestSkillSelectionCannotCrossDomains:
         assert chosen.slug == "sales.pricing"
 
     def test_selection_never_invents_a_skill_for_an_uncovered_domain(self):
-        assert select_skill(BusinessDomain.HR, preferred_slug="sales.revenue") is None
+        assert select_skill(_an_uncovered_domain(), preferred_slug="sales.revenue") is None
+
+
+class TestDomainProhibitionsAreDerivedNotRestated:
+    """HR forbids `individual_performance_ranking` while the shared
+    contract invites "rank top and bottom performers". The constraint is
+    derived from `governance.domains.policy_for`, so it cannot drift from
+    the policy the governance engine actually enforces."""
+
+    def test_hr_guidance_carries_every_prohibition_from_its_policy(self):
+        from governance.domains import policy_for
+
+        result = guidance_for(HR, enabled=True)
+        assert result is not None
+        text, _ = result
+        for action in policy_for(HR).prohibited_actions:
+            phrase = action.value.replace("_", " ")
+            assert phrase in text, f"{action.value} missing from HR guidance"
+
+    def test_the_ranking_invitation_is_qualified_not_absolute(self):
+        """Otherwise the contract would invite exactly the thing HR
+        prohibits.
+
+        Asserted on the ranking LINE, not on the contract as a whole. The
+        loose version -- "is the phrase present anywhere?" -- passed a
+        mutation that unqualified the bullet, because the phrase still
+        appeared in the trailing fragment of the same sentence. Checking
+        the line the invitation actually lives on is what makes this
+        meaningful.
+        """
+        ranking_lines = [
+            line
+            for line in ANALYTICS_CONTRACT.splitlines()
+            if line.lstrip().startswith("- Rank top and bottom performers")
+        ]
+        assert len(ranking_lines) == 1, "expected exactly one ranking bullet"
+        bullet = ranking_lines[0]
+        assert "not prohibited for this domain" in bullet, (
+            "the ranking invitation is unqualified -- it would invite the "
+            "individual ranking HR prohibits"
+        )
+        assert "override this line" in bullet
+
+    def test_the_constraint_block_comes_last_so_it_overrides(self):
+        result = guidance_for(HR, enabled=True)
+        assert result is not None
+        text, _ = result
+        assert text.rstrip().endswith("instead of doing it.")
+        assert text.index("Domain constraints") > text.index("Rank top and bottom")
+
+    def test_a_domain_with_no_prohibitions_appends_nothing(self):
+        """MIS prohibits nothing, so there is no empty block to read past."""
+        from governance.domains import policy_for
+
+        assert policy_for(MIS).prohibited_actions == frozenset()
+        result = guidance_for(MIS, enabled=True)
+        assert result is not None
+        text, _ = result
+        assert "Domain constraints" not in text
+
+    def test_sales_carries_its_own_two_prohibitions(self):
+        """Derived per domain, not a single hard-coded list."""
+        from governance.domains import policy_for
+
+        result = guidance_for(SALES, enabled=True, preferred_slug="sales.revenue")
+        assert result is not None
+        text, _ = result
+        sales_actions = policy_for(SALES).prohibited_actions
+        assert len(sales_actions) == 2
+        for action in sales_actions:
+            assert action.value.replace("_", " ") in text
+        # HR-only prohibitions must not appear.
+        assert "individual performance ranking" not in text
+
+    def test_no_skill_hand_writes_its_prohibitions(self):
+        """Structural: if a focus text restated a prohibition verbatim it
+        would be a second owner, free to drift from the policy."""
+        for skill in ds.all_skills():
+            lowered = skill.focus.lower()
+            assert "individual compensation decision" not in lowered
+            assert "unsupported allegation" not in lowered
 
 
 class TestNothingUntrustedReachesThePrompt:

@@ -5,7 +5,7 @@ lines here; there is deliberately no API route, no admin surface and no
 settings field that can add or edit a skill at runtime — see
 `domain_skills/types.py` on why a skill must stay an in-code constant.
 
-Batches so far: Sales, MIS / Management Reporting, Marketing. Every batch
+Batches so far: Sales, MIS / Management Reporting, Marketing, HR. Every batch
 has arrived with an identical body and an identical "Domain scope" sentence
 across its five prompts, differing only in the heading — so each *prompt-
 domain* writes its scope once (`_SALES_SCOPE`, `_MIS_SCOPE`,
@@ -268,6 +268,98 @@ MARKETING_SKILLS: tuple[DomainSkill, ...] = (
     ),
 )
 
+#: The supplied HR prompts' "Domain scope:" sentence, verbatim. Note it is
+#: the first batch whose own scope names a control ("with privacy
+#: protection") rather than only a subject area.
+_HR_SCOPE = (
+    "Analyze workforce, attrition, recruitment, performance and workforce "
+    "risks with privacy protection."
+)
+
+#: HR is the most constrained domain delivered so far: `policy_for(HR)`
+#: restricts nine categories and prohibits five actions, including
+#: `individual_performance_ranking` -- which the shared contract's "rank top
+#: and bottom performers" line would otherwise invite. That constraint is
+#: appended automatically by `composer._prohibitions_block`, derived from
+#: the policy rather than restated here, so these focus texts do not repeat
+#: it and cannot drift from it.
+_HR = BusinessDomain.HR
+
+#: Declared in the supplied numeric order (01 workforce, 02 attrition,
+#: 03 recruitment, 04 performance, 05 risk scorecard), which is also the
+#: order `select_skill` uses for a domain default -- so the default here is
+#: Workforce Intelligence, the broadest of the five.
+HR_SKILLS: tuple[DomainSkill, ...] = (
+    DomainSkill(
+        slug="hr.workforce",
+        title="Workforce Intelligence",
+        domain=_HR,
+        scope=_HR_SCOPE,
+        focus=(
+            "Headcount and workforce composition in aggregate: size, shape, "
+            "movement in and out, and how these differ by unit, location and "
+            "band. Report groups, never named individuals."
+        ),
+        dimensions=("business unit", "location", "band", "period", "headcount"),
+    ),
+    DomainSkill(
+        slug="hr.attrition",
+        title="Attrition Intelligence",
+        domain=_HR,
+        scope=_HR_SCOPE,
+        focus=(
+            "Leaver rates and patterns across groups and periods: where "
+            "attrition is concentrated and whether it is rising or falling. "
+            "State the denominator and the window, since an attrition rate "
+            "on a small or fast-growing group is volatile. A pattern is "
+            "something to investigate, never a proven cause and never "
+            "grounds for a conclusion about any individual."
+        ),
+        dimensions=("business unit", "tenure band", "period", "location", "reason"),
+    ),
+    DomainSkill(
+        slug="hr.recruitment",
+        title="Recruitment Intelligence",
+        domain=_HR,
+        scope=_HR_SCOPE,
+        focus=(
+            "Hiring pipeline and outcomes in aggregate: open roles, time to "
+            "fill, offer and acceptance rates, and where the funnel stalls. "
+            "Analyse the process, never a candidate -- and never infer a "
+            "protected characteristic from a name, a source or an outcome."
+        ),
+        dimensions=("role", "business unit", "pipeline stage", "source", "period"),
+    ),
+    DomainSkill(
+        slug="hr.performance",
+        title="Performance Intelligence",
+        domain=_HR,
+        scope=_HR_SCOPE,
+        focus=(
+            "Performance **distribution** across teams and units: how ratings "
+            "or scores are spread, how that spread shifts over time, and "
+            "where calibration looks inconsistent between groups. This "
+            "domain prohibits ranking individuals, so report distributions "
+            "and group comparisons; if a question can only be answered by "
+            "ranking people, say so instead."
+        ),
+        dimensions=("business unit", "rating band", "period", "location", "band"),
+    ),
+    DomainSkill(
+        slug="hr.risk_scorecard",
+        title="Workforce Risk Scorecard",
+        domain=_HR,
+        scope=_HR_SCOPE,
+        focus=(
+            "Workforce risk indicators side by side: attrition pressure, "
+            "vacancy exposure, concentration of critical skills and span of "
+            "control. A red indicator flags a group to look at, never a "
+            "person to act on, and never an allegation."
+        ),
+        dimensions=("business unit", "risk indicator", "period", "location", "severity"),
+    ),
+)
+
 #: Every registered skill, in declaration order. Later batches append their
 #: own tuple here.
-ALL_SKILLS: tuple[DomainSkill, ...] = SALES_SKILLS + MIS_SKILLS + MARKETING_SKILLS
+ALL_SKILLS: tuple[DomainSkill, ...] = SALES_SKILLS + MIS_SKILLS + MARKETING_SKILLS + HR_SKILLS
