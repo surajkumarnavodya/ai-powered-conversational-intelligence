@@ -982,6 +982,180 @@ this app's SQL/RAG/web/model/image pipelines. Full design in
   deploying behind one should confirm it honors `Cache-Control:
   private, no-store` for this path prefix rather than overriding it.
 
+## Per-conversation source selection — security controls
+
+`AskRequest.sources` lets a caller restrict one question to named sources
+(`agent/orchestrator/nodes.py::_apply_source_selection`).
+
+**It is a filter, never a grant.** The selection is intersected with what
+standing configuration makes available *and* with what the caller's roles
+permit; the pre-existing role check in `router_node` then runs on whatever
+survives. Naming a source you are not entitled to cannot reach it.
+
+- The result is always a **subset** of what was already available. There is
+  no code path that unions the caller's list into the available set.
+- **An unknown source name is rejected (422).** Whether a source is
+  *configured*, or whether this caller may *use* it, is deliberately **not**
+  answered at the schema layer — that would turn a 422 into an oracle for
+  another tenant's configuration and for the caller's own permissions.
+- An **empty array is rejected**: it is ambiguous between "no restriction"
+  and "no sources at all".
+- A selection that cannot be honoured **does not fail the request**. It falls
+  back to the unrestricted route and discloses why, via
+  `AskResponse.source_selection_notice` (not configured) or the existing
+  `permission_denied_notice` (not permitted). Those stay separate fields
+  because the two have different causes and different remedies.
+- The UI's source picker is an **affordance, not a boundary**. Hiding a
+  source is cosmetic; the server re-decides on every request.
+
+Mutation-tested: replacing the intersection with a union fails 19 tests
+(`tests/test_source_selection.py`).
+
+## Outbound HTTP (`security/outbound_url.py`) — security controls
+
+The SSRF controls used by the REST connector, and the canonical home for any
+new outbound caller.
+
+- **HTTPS only.** No `http`, `file`, `gopher`, `ftp` or `data`. A scheme check
+  is the one control DNS cannot defeat.
+- **A host allowlist, checked *before* DNS.** A non-allowlisted host is
+  refused without this server making any network request on an attacker's
+  behalf — not even a lookup. Matching is exact and case-insensitive, never a
+  suffix: an `example.com` entry does not permit `evil-example.com` or
+  `example.com.evil.net`.
+- **Every resolved address is checked** against the private/loopback/
+  link-local/reserved blocklist — not `addrinfo[0]`. A host with one public
+  and one private record is refused; taking only the first would let record
+  ordering decide.
+- **Redirects are followed manually**, each hop re-validated before it is
+  followed. Without this, validating the original URL would be moot the moment
+  its server returned a redirect to `169.254.169.254`.
+- **Responses are byte-capped while streaming**, checked against a declared
+  `Content-Length` before any body is read *and* against bytes actually
+  received, since a response can omit or lie about that header.
+- Errors carry a fixed `safe_message`; a rejected host or path is never echoed
+  back to the caller.
+
+This is a resolve-then-connect check, not a pinned-IP call — the same
+disclosed scope `media_gen/download.py` and `bi_integration/outbound_safety.py`
+already accept. The allowlist is what makes the rebinding window small: a
+rebind must be served by a host an operator explicitly named.
+
+**Three copies of the blocklist now exist** (this module plus the two above),
+for reasons documented in each. Duplication of a security control is only
+acceptable if divergence cannot go unnoticed, so
+`tests/test_outbound_url.py::TestBlocklistsAreIdentical` asserts all three
+match, plus a second check that the list still covers the ranges that matter.
+Consolidating the two older copies is its own task and is **not done**.
+
+Mutation-tested: dropping per-hop redirect re-validation fails 3 tests;
+dropping the allowlist fails 9; checking only the first resolved address
+fails 1.
+
+## REST/OpenAPI connector (`rest/`, optional, off by default) — security controls
+
+- Off by default (`ENABLE_REST_CONNECTOR`), and **enabling the flag without
+  naming hosts is inert, not open** — an allowlist with no entries permits
+  nothing.
+- **Read-only.** `RestMethod` has `GET` and `HEAD` only; the write verbs are
+  absent rather than present-and-blocked, so adding one is the change that
+  requires review. A `side_effect=True` endpoint is refused on the read path.
+- **A question's text never reaches a URL.** Endpoints are fixed operator
+  configuration; filtering happens on what comes back. Interpolating the
+  question would hand an end user partial control of a server-side request —
+  path traversal, a swapped host, a credential leaked into a query string.
+- **Endpoints are operator configuration only.** There is no API route, and
+  no model-driven path, that creates one.
+- An endpoint naming a host that is not allowlisted makes configuration
+  *invalid* at validation time, rather than silently unreachable.
+- Declaring an endpoint is not itself permission to call its host: every URL
+  is re-validated against `REST_ALLOWED_HOSTS` **on every use**, never once at
+  configuration time.
+- Health checks run the full URL validation but issue **no request**, so a
+  health check cannot become a way to make this server hit an external service
+  repeatedly.
+- **Not routable.** There is no `sources/descriptors.py` entry and no
+  orchestrator node, so `GET /sources` does not advertise it and the router
+  cannot reach it.
+
+## MCP client (`mcp_client/`, optional, off by default) — security controls
+
+A client **of** remote MCP servers. Not to be confused with `agent/tools/`,
+which is MCP-*shaped* so this app's own capabilities could be exposed *to* a
+client — opposite direction, no shared code.
+
+**Trust is administrator-controlled only.**
+
+- **A remote tool is never auto-registered** into
+  `agent.tools.registry.ToolRegistry`. No code path does it, and an AST check
+  in `tests/test_mcp_client.py` asserts no module in the package imports
+  `agent.tools.registry` or calls `.register(`.
+- **An empty per-server allowlist approves nothing.** A server can be
+  configured and reachable while no tool may be called. Matching is exact:
+  approving `read_file` does not approve `read_file_and_delete`.
+- **A server's own metadata cannot widen its access.** The required
+  `Permission` comes from the operator's configuration, never from anything
+  the server said about itself.
+- Trust and permission are **separate gates**, checked in that order. A
+  non-allowlisted tool is refused before any connection is made.
+
+**Everything a server sends is data, never instructions.**
+
+- **`InitializeResult.instructions` is read, logged at debug, and discarded.**
+  The spec describes it as telling a client how to use the server; feeding it
+  to a model would make a third party's text part of this app's prompt —
+  prompt injection with the reach of whatever consumed it.
+- Tool `description` is retained for operator display only, never used as an
+  instruction. Names and descriptions are length-capped and stripped of
+  control characters: a name reaching the audit log with a raw carriage return
+  or ANSI escape could forge surrounding output.
+- No client capabilities are declared. `sampling` in particular would let a
+  remote server ask this app to run LLM calls on its behalf.
+
+**Subprocess handling.** This is the first production code in this repository
+to spawn a subprocess (`agent api config db voice media media_gen security`
+contain no `subprocess` import outside `scripts/` and `tests/`).
+
+- **No shell, ever.** `shell=False` explicitly, command as an argv list. A
+  stray `;` or `$(...)` in a config value is one literal argument.
+- **The child inherits no environment.** `env` is a complete replacement, not
+  an overlay. This process's `os.environ` holds `DB_PASSWORD`,
+  `RAG_STORE_CONNECTION_STRING`, `JWT_SECRET_KEY` and every other secret in
+  `.env`; `subprocess`'s default (`env=None`) would hand all of it to a
+  third-party binary.
+- Responses are line-capped and every exchange is bounded by a timeout.
+
+Mutation-tested: a permissive allowlist fails 7 tests, a prefix-matching
+allowlist 2, an inherited environment 2, `shell=True` 1, and storing
+`instructions` on the client 1.
+
+**Not verified against a live MCP server** — none exists in this environment.
+Protocol shapes are spec-verified and the framing is exhaustively unit-tested,
+but end-to-end behaviour against a real implementation is unverified.
+
+## Streaming (`POST /ask/stream`) — security controls
+
+- **It calls `api.main.ask`**, rather than reimplementing it. Model
+  validation, rate limiting, admission control, the execution envelope,
+  governance and persistence all apply identically because it is the same
+  code — not a second, less-governed way to ask a question.
+- **Progress events carry metadata only.** An event reaches the client *as it
+  happens*, before the result gate runs inside `execute_sql_node`. It carries
+  stage name, attempt, duration, a coarse outcome and an error **category** —
+  never SQL, never a row, never an error message (a message can embed a
+  database identifier or a fragment of the question). The emit signature has
+  nowhere to put one, and a test asserts that.
+- The progress sink is **per-request and bounded**. It is a `ContextVar`, not
+  a module global, so one caller's progress cannot leak into another's stream;
+  and a full buffer drops and counts rather than blocking, so a slow or
+  disconnected reader never applies backpressure into the graph.
+- An unexpected error becomes a generic `error` event. The stream honours the
+  same "never leak internal detail" rule the global handlers enforce for
+  ordinary responses; the traceback goes to the log.
+- **Errors after the stream opens are SSE events, not HTTP statuses.** Once
+  headers are sent the status is already `200`, so a refusal arrives in-band
+  carrying the status it would have been. A client must read the stream.
+
 ## Resource exhaustion / abuse protections
 
 Two independent, deliberately simple protections guard against both

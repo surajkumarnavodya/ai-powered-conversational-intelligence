@@ -6,6 +6,23 @@ good, per this project's own stated principle that accuracy claims should
 be backed by real numbers, not feature-list language (see
 `docs/RESPONSIBLE_AI.md`'s "Overreliance" section).
 
+> ### ⚠️ These numbers predate a fix that changed what they measure
+>
+> **Stale as of 2026-10-15.** Every accuracy figure in this document was
+> measured **before** commit `9706fa1` (2026-10-14), which fixed a defect
+> where *every* Ollama call silently truncated 63% of its prompt —
+> including the system prompt. Generation quality is precisely what this
+> benchmark measures, so these figures are **not representative of current
+> behaviour**, in either direction.
+>
+> They have **not** been re-measured. `scripts/run_benchmark.py` needs a
+> live Ollama and a real `AdventureWorksDW2025` database, neither of which
+> exists in the environment where this note was written
+> (`CLAUDE.md` §7: the benchmark harness is manual and CI never runs it).
+>
+> Treat everything below as **a dated historical record**, not a current
+> accuracy claim. Re-run the benchmark before citing any figure here.
+
 ## Methodology summary
 
 Full detail lives in code (`eval/schema.py`, `eval/evaluators.py`,

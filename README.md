@@ -624,6 +624,13 @@ any of this security work and remains a separate, equally real gap.
   accuracy** — the SQL often runs successfully but returns the wrong
   answer, especially on hard/real-world questions (25% pass rate on each).
   Security-rejection accuracy is 100%.
+
+  **These figures are stale as of 2026-10-15** and have not been
+  re-measured. They were taken before commit `9706fa1` (2026-10-14), which
+  fixed a defect where every Ollama call silently truncated 63% of its
+  prompt, including the system prompt — precisely what this benchmark
+  measures. Re-running needs a live Ollama and a real database; see the
+  banner at the top of [`docs/EVALUATION.md`](docs/EVALUATION.md).
 - **Single-process deployment; multi-replica is not solved.** A 2026-09-26
   hardening pass (see the News entry above and
   [`docs/SCALE_OUT_PROMPT.md`](docs/SCALE_OUT_PROMPT.md)) added real
