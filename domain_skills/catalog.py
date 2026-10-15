@@ -5,7 +5,8 @@ lines here; there is deliberately no API route, no admin surface and no
 settings field that can add or edit a skill at runtime — see
 `domain_skills/types.py` on why a skill must stay an in-code constant.
 
-Batches so far: Sales, MIS / Management Reporting, Marketing, HR. Every batch
+Batches so far: Sales, MIS / Management Reporting, Marketing, HR,
+eCommerce. Every batch
 has arrived with an identical body and an identical "Domain scope" sentence
 across its five prompts, differing only in the heading — so each *prompt-
 domain* writes its scope once (`_SALES_SCOPE`, `_MIS_SCOPE`,
@@ -360,6 +361,97 @@ HR_SKILLS: tuple[DomainSkill, ...] = (
     ),
 )
 
+#: The supplied eCommerce prompts' "Domain scope:" sentence, verbatim.
+_ECOMMERCE_SCOPE = (
+    "Analyze digital funnels, carts, cohorts, categories, promotions and " "channels."
+)
+
+#: `policy_for(ECOMMERCE)` prohibits `sensitive_personal_targeting` and
+#: restricts the customer, payment and banking categories. That constraint
+#: is appended automatically by `composer._prohibitions_block`, so the
+#: focus texts below stay analytical rather than restating it -- but it is
+#: why the cohort and promotion skills are framed around groups and
+#: behaviour rather than around reaching particular people.
+_ECOMMERCE = BusinessDomain.ECOMMERCE
+
+#: Declared in the supplied numeric order (01 funnel, 02 cart, 03 cohort,
+#: 04 category, 05 promotion/channel), so the domain default is Conversion
+#: Funnel Intelligence (01).
+ECOMMERCE_SKILLS: tuple[DomainSkill, ...] = (
+    DomainSkill(
+        slug="ecommerce.conversion_funnel",
+        title="Conversion Funnel Intelligence",
+        domain=_ECOMMERCE,
+        scope=_ECOMMERCE_SCOPE,
+        focus=(
+            "Progression and drop-off through the digital funnel: sessions, "
+            "product views, add-to-cart, checkout and order. Give each "
+            "step's base alongside its rate, and state the window a "
+            "conversion is measured over -- a session-based rate and an "
+            "order-based rate answer different questions and are not "
+            "comparable."
+        ),
+        dimensions=("funnel step", "device", "channel", "period", "category"),
+    ),
+    DomainSkill(
+        slug="ecommerce.cart_abandonment",
+        title="Cart Abandonment Intelligence",
+        domain=_ECOMMERCE,
+        scope=_ECOMMERCE_SCOPE,
+        focus=(
+            "Where and how carts are abandoned: rate by step, device, "
+            "channel and basket value, and what distinguishes an abandoned "
+            "cart from a completed one. Abandonment is a correlation with "
+            "whatever else is present, not a demonstrated cause -- a cart "
+            "left open is not evidence of intent."
+        ),
+        dimensions=("checkout step", "device", "basket value band", "channel", "period"),
+    ),
+    DomainSkill(
+        slug="ecommerce.customer_cohort",
+        title="Customer Cohort Intelligence",
+        domain=_ECOMMERCE,
+        scope=_ECOMMERCE_SCOPE,
+        focus=(
+            "How cohorts behave over time: repeat rate, order frequency and "
+            "value by acquisition period or first category. Report cohorts "
+            "as groups; a cohort too small to be meaningful should be "
+            "reported as such rather than analysed as if it were."
+        ),
+        dimensions=("acquisition cohort", "period", "channel", "category", "repeat rate"),
+    ),
+    DomainSkill(
+        slug="ecommerce.category",
+        title="Category Intelligence",
+        domain=_ECOMMERCE,
+        scope=_ECOMMERCE_SCOPE,
+        focus=(
+            "Category and catalogue performance: demand, conversion, "
+            "returns and contribution by category, and how the mix shifts. "
+            "A category's rate is only interpretable against its base, so "
+            "report both -- a niche category can top a conversion ranking "
+            "on a handful of orders."
+        ),
+        dimensions=("category", "subcategory", "period", "channel", "return rate"),
+    ),
+    DomainSkill(
+        slug="ecommerce.promotion_channel",
+        title="Promotion and Channel Intelligence",
+        domain=_ECOMMERCE,
+        scope=_ECOMMERCE_SCOPE,
+        focus=(
+            "Promotion response and channel contribution: uplift, discount "
+            "cost and channel mix. Separate demand a promotion created from "
+            "demand it merely discounted, and say when the data cannot do "
+            "so. Attribute to a channel only where the data actually links "
+            "the two; otherwise report co-movement and label it."
+        ),
+        dimensions=("promotion", "channel", "category", "period", "discount"),
+    ),
+)
+
 #: Every registered skill, in declaration order. Later batches append their
 #: own tuple here.
-ALL_SKILLS: tuple[DomainSkill, ...] = SALES_SKILLS + MIS_SKILLS + MARKETING_SKILLS + HR_SKILLS
+ALL_SKILLS: tuple[DomainSkill, ...] = (
+    SALES_SKILLS + MIS_SKILLS + MARKETING_SKILLS + HR_SKILLS + ECOMMERCE_SKILLS
+)

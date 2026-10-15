@@ -9,7 +9,7 @@ recommended in a business domain is
 [`../DATA_PRIVACY_GOVERNANCE_ENGINE.md`](../DATA_PRIVACY_GOVERNANCE_ENGINE.md),
 and a skill cannot change any of it.
 
-**Date:** 2026-10-15. **Batches delivered:** 4 — Sales, MIS / Management Reporting, Marketing, HR (across 3 of 18 governance domains).
+**Date:** 2026-10-15. **Batches delivered:** 5 — Sales, MIS / Management Reporting, Marketing, HR, eCommerce (across 4 of 18 governance domains).
 
 ---
 
@@ -113,7 +113,7 @@ the two distinguishable where it matters (`sales.*` vs a future
 
 `registry.covered_domains()` answers "which of the eighteen are actually
 covered" from the catalog itself, so no document can claim coverage the
-code does not have. **Today: Sales, MIS, Marketing and HR — 20 skills across 3 governance domains.**
+code does not have. **Today: Sales, MIS, Marketing, HR and eCommerce — 25 skills across 4 governance domains.**
 
 A test asserts `covered_domains()` equals exactly the delivered batches, so
 a new domain fails it until this document is updated in the same change —
@@ -165,19 +165,21 @@ caller text, no retrieved document, no database value, no model output.
 
 ## 7. Mutation evidence
 
-Each applied to live code, then reverted. Clean: `162 passed` (4 batches).
+Each applied to live code, then reverted. Clean: `190 passed` (5 batches).
+Counts grow with the catalog, which is the point — a guard that covered one
+batch would not stay meaningful as domains land.
 
 | Mutation | Result |
 |---|---|
-| selection stops filtering by domain (cross-domain leak) | **3 failed**, 159 passed |
-| no longer fails open when the flag is off | **1 failed**, 161 passed |
-| contract gains a format slot | **2 failed**, 160 passed |
-| `GENERAL` (unknown domain) gets guessed framing | **1 failed**, 161 passed |
-| guesses a default across prompt-domains (campaign → Revenue framing) | **2 failed**, 160 passed |
-| `group` stops being derived from the slug | **26 failed**, 133 passed |
-| prohibitions block dropped (HR invited to rank individuals) | **3 failed**, 159 passed |
-| prohibitions hard-coded to one domain instead of derived | **3 failed**, 159 passed |
-| ranking invitation becomes unqualified again | **1 failed**, 161 passed |
+| selection stops filtering by domain (cross-domain leak) | **3 failed**, 187 passed |
+| no longer fails open when the flag is off | **1 failed**, 189 passed |
+| contract gains a format slot | **2 failed**, 188 passed |
+| `GENERAL` (unknown domain) gets guessed framing | **1 failed**, 189 passed |
+| guesses a default across prompt-domains (campaign → Revenue framing) | **2 failed**, 188 passed |
+| `group` stops being derived from the slug | **31 failed**, 155 passed |
+| prohibitions block dropped (HR invited to rank individuals) | **4 failed**, 186 passed |
+| prohibitions hard-coded to one domain instead of derived | **4 failed**, 186 passed |
+| ranking invitation becomes unqualified again | **1 failed**, 189 passed |
 
 Three of those only became real after a vacuous test was fixed. The full
 pattern is in §8; the first two are recorded here because they were found
@@ -312,7 +314,34 @@ first.
 
 ---
 
-## 10. Adding the next batch
+## 10. Batch 5 (eCommerce): the process held with no correction
+
+Batches 3 and 4 each forced a change to the model — `group`, then derived
+prohibitions. **Batch 5 needed neither.** eCommerce landed as a pure data
+addition: one scope string, five focus declarations, one tuple appended,
+plus the coverage assertions those batches deliberately made fail.
+
+That is the first evidence the abstraction has settled. It also exercised
+both earlier corrections without special handling:
+
+- Its one prohibition (`sensitive_personal_targeting`) was derived and
+  appended automatically — no author had to know about it.
+- It occupies its own governance domain, so the ambiguity rule did not
+  apply and it has a normal default.
+
+The prompts again arrived shuffled (03, 04, 02, 01, 05) and were registered
+01→05, so the default is Conversion Funnel Intelligence rather than
+whichever file was listed first.
+
+One thing worth watching: the catalog is now the only file that grows per
+batch, and `test_a_prompt_domain_does_not_imply_a_governance_domain`
+hard-codes the group and domain counts. That assertion is cheap to update
+and failing it is the intended signal, but if it ever becomes the *only*
+thing a batch changes, it has stopped earning its place.
+
+---
+
+## 11. Adding the next batch
 
 1. Add the **prompt-domain's** scope string once in `catalog.py`. If the
    batch shares a governance domain with an existing one (as Marketing
@@ -340,7 +369,7 @@ request.
 
 ---
 
-## 11. Status
+## 12. Status
 
 | Item | State |
 |---|---|
@@ -349,7 +378,8 @@ request.
 | MIS / Management Reporting skills (5 of 5 supplied) | **Registered** |
 | Marketing skills (5 of 5 supplied) | **Registered** |
 | HR skills (5 of 5 supplied) | **Registered** |
-| Other 15 domains | **Not registered** — a skill is added when its prompt arrives, never in anticipation |
+| eCommerce skills (5 of 5 supplied) | **Registered** |
+| Other 14 domains | **Not registered** — a skill is added when its prompt arrives, never in anticipation |
 | Wiring into a live analysis path | **Not done** — see below |
 
 **Deliberately not wired yet.** The composer produces guidance, and nothing

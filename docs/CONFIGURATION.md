@@ -576,10 +576,11 @@ would turn every write into prompt injection with full pipeline reach.
 `identity/rbac.py`; what may be returned stays with `governance/`. None of
 those gates reads a skill.
 
-Coverage today is **Sales, MIS / Management Reporting, Marketing and HR** —
-20 skills across 3 governance domains, since Sales and Marketing share
-`SALES_MARKETING`. The other 15 governance domains have none declared — a
-skill is added when its prompt arrives, never in anticipation.
+Coverage today is **Sales, MIS / Management Reporting, Marketing, HR and
+eCommerce** — 25 skills across 4 governance domains, since Sales and
+Marketing share `SALES_MARKETING`. The other 14 governance domains have
+none declared — a skill is added when its prompt arrives, never in
+anticipation.
 
 Guidance for a domain automatically carries that domain's prohibited
 actions, derived from `governance/domains.py`. HR, for example, prohibits

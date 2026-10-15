@@ -39,6 +39,7 @@ def _an_uncovered_domain() -> BusinessDomain:
 SALES = BusinessDomain.SALES_MARKETING
 MIS = BusinessDomain.MIS
 HR = BusinessDomain.HR
+ECOMMERCE = BusinessDomain.ECOMMERCE
 
 
 class TestCatalog:
@@ -52,6 +53,21 @@ class TestCatalog:
             "sales.product",
             "sales.pricing",
         )
+
+    def test_the_supplied_ecommerce_skills_are_registered_in_numeric_order(self):
+        """Supplied as 03, 04, 02, 01, 05; registered 01..05, so the domain
+        default is Conversion Funnel Intelligence rather than whichever
+        file happened to be listed first."""
+        assert tuple(s.slug for s in ds.skills_for_domain(ECOMMERCE)) == (
+            "ecommerce.conversion_funnel",  # 01
+            "ecommerce.cart_abandonment",  # 02
+            "ecommerce.customer_cohort",  # 03
+            "ecommerce.category",  # 04
+            "ecommerce.promotion_channel",  # 05
+        )
+        default = select_skill(ECOMMERCE)
+        assert default is not None
+        assert default.slug == "ecommerce.conversion_funnel"
 
     def test_the_supplied_hr_skills_are_registered_in_numeric_order(self):
         """Declaration order is the supplied 01..05 order, which also
@@ -83,8 +99,8 @@ class TestCatalog:
         """Four prompt-domains, three governance domains: Marketing shares
         `SALES_MARKETING` with Sales. Inventing a governance domain per
         batch would mean two answers to 'what may this question return'."""
-        assert len({s.group for s in ds.all_skills()}) == 4
-        assert len(ds.covered_domains()) == 3
+        assert len({s.group for s in ds.all_skills()}) == 5
+        assert len(ds.covered_domains()) == 4
 
     def test_the_supplied_mis_skills_are_registered(self):
         assert tuple(s.slug for s in ds.skills_for_domain(MIS)) == (
@@ -129,7 +145,7 @@ class TestCatalog:
         in `docs/architecture/domain-skills.md` to be updated in the same
         change, instead of drifting behind the code.
         """
-        assert ds.covered_domains() == (SALES, MIS, HR)
+        assert ds.covered_domains() == (SALES, MIS, HR, ECOMMERCE)
 
     def test_the_other_sixteen_domains_have_no_skills(self):
         """An uncovered domain must stay genuinely empty rather than
@@ -456,6 +472,19 @@ class TestDomainProhibitionsAreDerivedNotRestated:
         assert result is not None
         text, _ = result
         assert "Domain constraints" not in text
+
+    def test_ecommerce_carries_its_single_prohibition(self):
+        """One prohibition, not HR's five and not Sales' two -- proving the
+        block is derived per domain rather than a shared list."""
+        from governance.domains import policy_for
+
+        actions = policy_for(ECOMMERCE).prohibited_actions
+        assert len(actions) == 1
+        result = guidance_for(ECOMMERCE, enabled=True)
+        assert result is not None
+        text, _ = result
+        assert "sensitive personal targeting" in text
+        assert "individual performance ranking" not in text
 
     def test_sales_carries_its_own_two_prohibitions(self):
         """Derived per domain, not a single hard-coded list."""
