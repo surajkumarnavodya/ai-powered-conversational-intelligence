@@ -1,5 +1,6 @@
 {
   "app": {
+    "homeLabel": "Démarrer un nouveau chat",
     "title": "AI-Powered Conversational Intelligence",
     "subtitle": "Posez une question en langage naturel — obtenez du SQL validé et en lecture seule, un tableau de résultats en direct et un graphique choisi automatiquement."
   },
@@ -459,5 +460,18 @@
   },
   "evidence": {
     "insightDetail": "Ceci est un résumé rédigé du résultat. Sa formulation est générée ; ses chiffres sont vérifiés par rapport aux données avant son affichage."
+  },
+  "sources": {
+    "pickerLabel": "Choisir les sources de données",
+    "pickerTitle": "Sources de données",
+    "pickerHelp": "Limitez cette question à des sources précises. Laissez tout décoché pour laisser l'assistant choisir.",
+    "activeCount": "{{count}} source sélectionnée",
+    "activeCount_plural": "{{count}} sources sélectionnées",
+    "clearSelection": "Effacer la sélection",
+    "noneAvailable": "Aucune source disponible.",
+    "loadFailed": "Impossible de charger les sources.",
+    "unavailableHeading": "Non disponible",
+    "notConfigured": "non configurée",
+    "notPermitted": "pas d'accès"
   }
 }

@@ -1,5 +1,6 @@
 {
   "app": {
+    "homeLabel": "Iniciar un chat nuevo",
     "title": "AI-Powered Conversational Intelligence",
     "subtitle": "Haz una pregunta en lenguaje natural — obtén SQL validado y de solo lectura, una tabla de resultados en vivo y un gráfico seleccionado automáticamente."
   },
@@ -459,5 +460,18 @@
   },
   "evidence": {
     "insightDetail": "Este es un resumen escrito del resultado. Su redacción se genera; sus cifras se comprueban con los datos antes de mostrar el resumen."
+  },
+  "sources": {
+    "pickerLabel": "Elegir fuentes de datos",
+    "pickerTitle": "Fuentes de datos",
+    "pickerHelp": "Limita esta pregunta a fuentes específicas. Déjalas sin marcar para que el asistente elija.",
+    "activeCount": "{{count}} fuente seleccionada",
+    "activeCount_plural": "{{count}} fuentes seleccionadas",
+    "clearSelection": "Borrar selección",
+    "noneAvailable": "No hay fuentes disponibles para elegir.",
+    "loadFailed": "No se pudieron cargar las fuentes.",
+    "unavailableHeading": "No disponible",
+    "notConfigured": "no configurada",
+    "notPermitted": "sin acceso"
   }
 }

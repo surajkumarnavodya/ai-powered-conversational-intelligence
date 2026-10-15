@@ -31,8 +31,8 @@ No sample database is bundled with this project. You must have your own database
 ## 2. Step 1: Get the code and set up Python
 
 ```bash
-git clone https://github.com/surajkumarnavodya/text-to-sql-agent-langgraph.git
-cd text-to-sql-agent-langgraph
+git clone https://github.com/surajkumarnavodya/ai-powered-conversational-intelligence.git
+cd ai-powered-conversational-intelligence
 python -m venv .venv
 ```
 

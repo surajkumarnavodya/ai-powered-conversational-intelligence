@@ -13,9 +13,10 @@ import {
 } from 'lucide-react'
 import { useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Outlet } from 'react-router-dom'
+import { Outlet, useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import { useNavigation } from '@/hooks/queries'
+import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import { MobileNav } from './MobileNav'
 import { ScreenMenu, type ScreenMenuGroup } from './ScreenMenu'
@@ -71,6 +72,18 @@ const MENU_GROUPS: { key: 'workspace' | 'review' | 'administration'; labelKey: s
  * it does not own or mount its own dialog. */
 export function AppShell({ children }: { children?: ReactNode } = {}) {
   const { t } = useTranslation()
+  const navigate = useNavigate()
+  const startNewChat = useChatStore((state) => state.startNewChat)
+
+  // The product name doubles as "home": clicking it starts a fresh
+  // conversation and returns to the chat route. Exactly what the
+  // sidebar's "New chat" button does (`Sidebar.tsx::handleNewChat`) --
+  // the same two calls in the same order, so the two entry points cannot
+  // drift into meaning different things.
+  const handleHome = () => {
+    startNewChat()
+    navigate('/')
+  }
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   // Role-based navigation (Prompt 32): the screens this caller may open come
   // from the server (`GET /navigation`, `security/navigation.py`), never from a
@@ -123,10 +136,22 @@ export function AppShell({ children }: { children?: ReactNode } = {}) {
             <MobileNav />
             <SidebarToggle controls={SIDEBAR_ID} className="hidden lg:inline-flex" />
             <div className="flex items-center gap-2">
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-md bg-white">
-                <img src="/favicon.png" alt="" className="h-full w-full object-contain" />
-              </span>
-              <span className="text-sm font-semibold">{t('app.title')}</span>
+              {/* A real <button>, not a <div onClick> or an <a href="/">:
+                  it must be reachable by Tab and activatable by Enter and
+                  Space, and a full-page navigation would discard the
+                  client-side chat state this is meant to reset. */}
+              <button
+                type="button"
+                onClick={handleHome}
+                aria-label={t('app.homeLabel')}
+                title={t('app.homeLabel')}
+                className="flex items-center gap-2 rounded-md px-1 py-0.5 transition-colors hover:bg-[var(--muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+              >
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-md bg-white">
+                  <img src="/favicon.png" alt="" className="h-full w-full object-contain" />
+                </span>
+                <span className="text-sm font-semibold">{t('app.title')}</span>
+              </button>
               <span className="hidden rounded-full bg-[var(--muted)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted-foreground)] sm:inline">
                 {t('header.envIndicator')}
               </span>

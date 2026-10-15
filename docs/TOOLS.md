@@ -16,6 +16,15 @@ useful deliverable — not a partial feature — but it is intentionally the
 *foundation* for later steps (a research-planner upgrade, a future
 external MCP client), not a consumer-facing feature on its own.
 
+**Direction matters, and there are now two packages.** This one is
+MCP-*shaped* so this app's capabilities could be exposed **to** an
+external MCP client. `mcp_client/` is the opposite direction -- a client
+**of** remote MCP servers (Batch 8; see
+[`architecture/source-connector-contract.md`](architecture/source-connector-contract.md)
+Section 10). They share no code, and a remote tool is never registered
+into this package's `ToolRegistry` -- that is pinned by an AST check in
+`tests/test_mcp_client.py`.
+
 ## What this is not
 
 **Not a rewrite of `agent/orchestrator/nodes.py`.** That module's five

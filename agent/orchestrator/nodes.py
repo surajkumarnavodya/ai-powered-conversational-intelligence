@@ -49,6 +49,7 @@ from rag.graph import Citation
 from rag.store import RagStoreNotConfiguredError
 from search.web_search import WebSearchNotConfiguredError
 from security.audit_log import log_security_event
+from sources.registry import all_descriptors, available_descriptors
 
 logger = logging.getLogger(__name__)
 
@@ -56,58 +57,16 @@ logger = logging.getLogger(__name__)
 # judges intent rather than keyword-matching. Order here is also the order
 # offered in the classification prompt, kept stable for readability of the
 # router log line.
-_SOURCE_DESCRIPTIONS: dict[str, str] = {
-    "sql": (
-        "the company's structured databases -- customer data, sales/order "
-        "data, financial/general-ledger data, HR/employee records, or any "
-        "other data that would live in rows and columns"
-    ),
-    "documents": (
-        "general uploaded PDF documents -- the default destination for any "
-        "uploaded document, including HR-adjacent topics like leave, "
-        "holiday, benefits, or onboarding, unless that specific document "
-        "was separately flagged sensitive at upload time (see 'policy' "
-        "below). If the question could plausibly be answered by an "
-        "uploaded PDF on any topic, include this source"
-    ),
-    "policy": (
-        "a separate, access-restricted collection of internal documents "
-        "specifically flagged sensitive at upload time -- compensation, "
-        "disciplinary action, or legal/compliance matters only. Do not "
-        "assume a question merely containing the word 'policy' belongs "
-        "here -- most policy-titled documents (e.g. a leave or holiday "
-        "policy) live in 'documents' instead"
-    ),
-    "web": (
-        "live web search, for current or external information not in any "
-        "of the company's own systems (e.g. today's news, a public fact, "
-        "something outside this company entirely)"
-    ),
-    "generation": (
-        "generating a brand-new image or video artifact that doesn't exist "
-        "yet -- only for a question that explicitly asks to "
-        "create/generate/draw/render/animate/make new media. Never use this "
-        "for retrieving, displaying, or visualizing already-computed data "
-        "-- that's 'sql'/'documents'/'policy'/'web'. Also never use this to "
-        "find an EXISTING photo/video/recording -- that's 'media_search'"
-    ),
-    "media_search": (
-        "finding an EXISTING photo or video already sitting in the "
-        "company's local media library, by describing its visual/audio "
-        "content -- e.g. 'find the photo of the site inspection', 'show "
-        "me the clip where the crane lifts the beam'. Never use this for "
-        "creating brand-new media (that's 'generation') or for structured "
-        "data (that's 'sql')"
-    ),
-    "attachments": (
-        "a file the user attached directly to THIS specific question -- an "
-        "image, PDF, Word/Excel/PowerPoint document, or plain text/CSV/"
-        "JSON file uploaded just now, not anything already stored in the "
-        "company's own systems. Use this whenever the question refers to "
-        "'this file', 'the attached image/document', 'what I just "
-        "uploaded', or similar"
-    ),
-}
+# Derived from `sources/descriptors.py`, which is the single owner of each
+# source's routing description (CLAUDE.md 4.8). This used to be a literal
+# dict here, duplicating facts that also lived in `SOURCE_PERMISSIONS` and
+# in `get_available_sources`'s if-chain -- three structures that could
+# drift, where editing two of three failed silently. The prompt text is
+# unchanged: `tests/test_sources_descriptors.py` pins it character for
+# character, because the classifier LLM reads it and rewording it changes
+# routing. Declaration order is preserved, so the classification prompt
+# offers options in the same order as before.
+_SOURCE_DESCRIPTIONS: dict[str, str] = {d.name: d.description for d in all_descriptors()}
 
 # A real, reported bug this closes: `get_available_sources` always includes
 # "sql" (a database is always configured -- see that function's own
@@ -374,20 +333,15 @@ def get_available_sources(settings: Settings, *, has_attachments: bool = False) 
             depends on the current *request*, not just standing config, so
             it's a parameter rather than another `Settings` flag check.
     """
-    sources = ["sql"]
-    if settings.enable_document_rag and settings.rag_store_connection_string:
-        sources.append("documents")
-    if settings.enable_policy_rag and settings.rag_store_connection_string:
-        sources.append("policy")
-    if settings.enable_web_search and settings.web_search_api_key:
-        sources.append("web")
-    if settings.enable_media_generation and settings.ima_api_key:
-        sources.append("generation")
-    if settings.enable_media_search and settings.media_library_path:
-        sources.append("media_search")
-    if has_attachments and settings.enable_chat_attachments:
-        sources.append("attachments")
-    return sources
+    # Each source's "is it configured" rule now lives on its own
+    # descriptor in `sources/descriptors.py` rather than in this if-chain,
+    # so the rule, the permission and the routing description have one
+    # owner between them (CLAUDE.md 4.8). The logic is unchanged -- a flag
+    # alone still does not make a source available without the config its
+    # module needs -- and `tests/test_sources_descriptors.py` proves this
+    # function returns exactly what the if-chain returned, across every
+    # combination of the six flags involved.
+    return [d.name for d in available_descriptors(settings, has_attachments=has_attachments)]
 
 
 def classify_sources(
@@ -469,11 +423,19 @@ _EXPENSIVE_SOURCES = ("generation", "web")
 # `eval/security_benchmark/detectors.py::detect_unauthorized_privileged_source`
 # can import this dict directly instead of maintaining its own duplicate
 # copy that could silently drift out of sync with the real gate.
+# Derived from `sources/descriptors.py` -- same single-owner reasoning as
+# `_SOURCE_DESCRIPTIONS` above. A descriptor with `permission=None` is
+# absent from this mapping, exactly as it was absent from the hand-written
+# dict, so `router_node`'s existing `SOURCE_PERMISSIONS.get(name)` lookup
+# behaves identically. `tests/test_sources_descriptors.py` pins the mapping
+# against the values this dict held before it was derived.
+#: Exempt from `AskRequest.sources` filtering -- see
+#: `_apply_source_selection`. Named rather than inlined so the exemption
+#: is greppable and there is exactly one of it.
+_ALWAYS_AVAILABLE_SOURCE = "attachments"
+
 SOURCE_PERMISSIONS: dict[str, Permission] = {
-    "policy": Permission.POLICY_RAG_QUERY,
-    "generation": Permission.MEDIA_GENERATE,
-    "web": Permission.WEB_SEARCH,
-    "media_search": Permission.MEDIA_SEARCH,
+    d.name: d.permission for d in all_descriptors() if d.permission is not None
 }
 
 # Plain-language label for each permission-gated source, used only to build
@@ -490,6 +452,78 @@ _SOURCE_DENIAL_LABELS: dict[str, str] = {
     "web": "live web search",
     "media_search": "the media library",
 }
+
+
+def _apply_source_selection(
+    available: list[str], selected: list[str] | None
+) -> tuple[list[str], str | None]:
+    """Narrows `available` to the caller's selection.
+
+    **This is a filter, never a grant.** The result is always a subset of
+    `available`, so a caller naming a source they are not entitled to --
+    or one that is not configured at all -- cannot reach it this way. The
+    role check further down `router_node` then runs unchanged on whatever
+    survives, which is what keeps authorization a server-side decision
+    (`CLAUDE.md` 5.2: a client-supplied value is never a boundary).
+
+    `attachments` is exempt and always kept when available: the caller
+    attached file(s) to this exact question, which is itself an explicit
+    per-request choice, and the attachment feature's own requirement is
+    that an attachment is never silently discarded. A selection that omits
+    it is treated as "also use these other sources", not "throw my file
+    away".
+
+    An unhonorable selection does not fail the request. If nothing
+    survives the intersection, the full `available` set is returned with a
+    notice, mirroring how a role-denied source already falls back to
+    whatever remains rather than refusing outright. Failing here would
+    turn a stale frontend -- or an operator switching a source off -- into
+    an outage for questions that are still perfectly answerable.
+
+    Args:
+        available: Sources standing configuration makes usable, in
+            declaration order (from `get_available_sources`).
+        selected: The caller's `AskRequest.sources`, already validated for
+            name correctness and de-duplicated by `api.schemas`, or None
+            for no restriction.
+
+    Returns:
+        `(sources, notice)`. `sources` preserves `available`'s order, not
+        the caller's, so the classification prompt's option order stays
+        stable regardless of what order a client sends. `notice` is
+        user-facing prose when part of the selection could not be honored,
+        else None.
+    """
+    if not selected:
+        return available, None
+
+    keep = set(selected)
+    narrowed = [name for name in available if name in keep or name == _ALWAYS_AVAILABLE_SOURCE]
+    unavailable = [name for name in selected if name not in available]
+
+    notice: str | None = None
+
+    if not narrowed:
+        # Every named source is unavailable. Fall back rather than refuse,
+        # and say so -- answering silently from sources the caller did not
+        # ask for would be worse than answering with a disclosure.
+        friendly = [_SOURCE_DENIAL_LABELS.get(name, name) for name in unavailable]
+        notice = (
+            f"You restricted this question to {', '.join(friendly)}, which "
+            f"{'is' if len(friendly) == 1 else 'are'} not available on this "
+            "deployment -- it was answered from the sources that are configured "
+            "instead, which may not match what you asked for."
+        )
+        return available, notice
+
+    if unavailable:
+        friendly = [_SOURCE_DENIAL_LABELS.get(name, name) for name in unavailable]
+        notice = (
+            f"{', '.join(friendly)} {'is' if len(friendly) == 1 else 'are'} not "
+            "available on this deployment, so it was left out of this question's "
+            "sources. The rest of your selection was used."
+        )
+    return narrowed, notice
 
 
 def router_node(state: OrchestratorState) -> dict[str, Any]:
@@ -523,6 +557,18 @@ def router_node(state: OrchestratorState) -> dict[str, Any]:
     has_attachments = bool(state.get("pending_attachment_ids"))
     available = get_available_sources(settings, has_attachments=has_attachments)
     question = state["question"]
+
+    # Caller-supplied source restriction (AskRequest.sources). Applied
+    # before the branch below so the short-circuit, the deterministic
+    # attachment pre-check and the LLM classifier all see only the sources
+    # this question is actually allowed to use -- a narrowed selection
+    # therefore also avoids paying for a classification call it does not
+    # need. A filter only; see _apply_source_selection.
+    available, source_selection_notice = _apply_source_selection(
+        available, state.get("selected_sources")
+    )
+    if source_selection_notice:
+        logger.info("[router] source selection partially unhonored: %s", source_selection_notice)
 
     if len(available) <= 1:
         reasoning = f"only {available[0]!r} is configured -- routed without a classification call"
@@ -665,7 +711,11 @@ def router_node(state: OrchestratorState) -> dict[str, Any]:
             sources=sources,
             short_circuited=short_circuited,
         )
-    return {"route_decision": route_decision, "permission_denied_notice": permission_denied_notice}
+    return {
+        "route_decision": route_decision,
+        "permission_denied_notice": permission_denied_notice,
+        "source_selection_notice": source_selection_notice,
+    }
 
 
 _DESTINATION_NODE_NAMES: dict[str, str] = {

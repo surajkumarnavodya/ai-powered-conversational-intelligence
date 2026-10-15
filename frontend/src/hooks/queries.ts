@@ -25,6 +25,7 @@ import {
   getHealth,
   getPerformanceMetrics,
   getSchemaTables,
+  getSources,
   listDocuments,
   refreshSchema,
   uploadDocument,
@@ -138,6 +139,21 @@ export function useRefreshSchema() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['schema-tables'] })
     },
+  })
+}
+
+/** GET /sources, cached. Drives SourcePicker.tsx.
+ *
+ * `staleTime` is generous on purpose: standing source configuration and
+ * the caller's roles both change rarely, and nothing about access depends
+ * on this being fresh -- the server re-decides authorization on every
+ * /ask. A stale picker can only ever offer a source the server then
+ * declines, which it already reports honestly. */
+export function useSources() {
+  return useQuery({
+    queryKey: ['sources'],
+    queryFn: getSources,
+    staleTime: 5 * 60 * 1000,
   })
 }
 

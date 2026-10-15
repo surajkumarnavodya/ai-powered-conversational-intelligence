@@ -78,7 +78,9 @@ the feature's own contract document (§8) rather than inferring from code.
 | Document / policy RAG | SQL Server 2025+/Azure SQL native `VECTOR` (`rag/store.py`), a dedicated connection. Off by default |
 | Web search | Pluggable provider (`search/web_search.py`); Tavily implemented. Off by default |
 | UI | React 19 + Vite + TypeScript + Tailwind + Zustand + @tanstack/react-query + i18next (en/es/fr/hi/mr). Charting is Plotly-figure-JSON in, Chart.js out (`agent/result_charting.py` builds it, `frontend/src/lib/chartAdapter.ts` renders it) |
-| Backend tests | pytest, fully mocked — no real DB, no Ollama |
+| Streaming | SSE via `api/streaming.py` (`POST /ask/stream`) — per-node progress from `agent/progress.py`, then the same `AskResponse`. Calls `api.main.ask`, never a second handler. Token-level streaming is **not** implemented |
+| Outbound HTTP safety | `security/outbound_url.py` — host allowlist checked before DNS, blocklist on every resolved address, redirects re-validated hop by hop |
+| Backend tests | pytest, fully mocked — no real DB, no Ollama. Opt-in live tests in `tests/live/` are deselected by default (`-m 'not live'`) |
 | Frontend tests | vitest + @testing-library/react; oxlint |
 | Python | **3.11 is the target per spec, but this machine only has 3.14**, so `.venv` is built against 3.14. See `docs/architecture/overview.md` for two real 3.14 issues already hit and fixed |
 
@@ -99,7 +101,10 @@ each boundary:** [`docs/architecture/repository-map.md`](docs/architecture/repos
 | `retrieval/` | Business-context vector retrieval (table/column/relationship/glossary/metric/sql_example/documentation/business_concept chunks) |
 | `agent/` | LangGraph nodes (`nodes.py`), graph wiring (`graph.py`), **`sql_validator.py` — the security boundary**, authz, intent, complexity, planning, provenance |
 | `agent/orchestrator/` | The multi-source router and subgraphs, one level *above* `agent/` — never the reverse |
-| `agent/tools/`, `agent/analyst/`, `agent/multiagent/` | MCP-shaped tool registry; the AI Data Analyst loop; the fixed-routing specialist supervisor |
+| `agent/tools/`, `agent/analyst/`, `agent/multiagent/` | MCP-shaped tool registry (this app's capabilities exposed *to* a client); the AI Data Analyst loop; the fixed-routing specialist supervisor |
+| `sources/` | The source-type contract and registry — single owner of each source's routing description, permission and availability. `agent/orchestrator/` derives its tables from here |
+| `rest/` | REST/OpenAPI connector, read-only over allowlisted hosts. Off by default; **not routable yet** (no descriptor, no orchestrator node) |
+| `mcp_client/` | Client *of* remote MCP servers — the opposite direction to `agent/tools/`, no shared code. Off by default. Administrator-controlled trust only |
 | `api/` | The FastAPI app — the REST surface every UI action goes through, and (once `frontend/dist` exists) the server for the dashboard itself |
 | `frontend/` | The React dashboard, the only UI this project ships |
 
@@ -612,10 +617,14 @@ Only when a task is specifically about them — never as a side effect:
 Named so a future session does not rediscover them. Each feature's own
 contract lists its specific limitations; these are the cross-cutting ones.
 
-- **`search/` has no dedicated mocked unit test file.** `tests/test_orchestrator.py`
-  mocks it at the boundary only; the Tavily request construction and response
-  parsing were verified against a real instance during development, not by a
-  regression suite. A real, worthwhile follow-up.
+- ~~**`search/` has no dedicated mocked unit test file.**~~ **Closed.**
+  `tests/test_web_search.py` (14 tests, `httpx.post` mocked throughout) now
+  pins the Tavily request shape, response parsing, empty/missing results,
+  HTTP error propagation, secret non-leakage and `SUPPORTED_SEARCH_PROVIDERS`
+  dispatch. Verified 2026-10-14; the entry had outlived the gap by some time.
+  **Treat every item below as dated** — confirm a gap still exists before
+  acting on it, the same way §13 asks you to measure before claiming a
+  finding is yours.
 - **No per-source query decomposition.** Every routed subgraph receives the
   same full question, so a question that is really two unrelated asks can
   retrieve poorly on both sides.
@@ -640,8 +649,14 @@ contract lists its specific limitations; these are the cross-cutting ones.
   monitoring, schema drift and briefings return documents or exit codes; CLI
   scripts under `scripts/` are the cron entry points. Nothing is emailed,
   posted or messaged.
-- **No streaming.** `POST /ask` is a single request; there is no SSE or
-  WebSocket endpoint, so no mid-run progress signal exists.
+- ~~**No streaming.**~~ **Partly closed 2026-10-15.** `POST /ask/stream`
+  (`api/streaming.py`) emits per-node progress over SSE and then the same
+  `AskResponse` `POST /ask` returns -- it *calls* that handler rather than
+  reimplementing it, so every control applies identically. What is still
+  absent is **token-level** streaming: `agent/llm_client.py` makes one
+  blocking call per step and the generation/insight prompts are
+  benchmark-pinned (§12), so streaming the model's own tokens is a
+  separate, evidence-gated change. No WebSocket endpoint exists.
 - **Process-local state**: rate limiters, circuit breakers, the performance
   rollup, the result cache, the security-event ring buffer and the compiled
   graph/Ollama singletons are all per-worker. A multi-worker deployment has

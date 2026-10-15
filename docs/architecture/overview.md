@@ -958,7 +958,12 @@ for the full per-change writeup, and
 statement" for what's now suitable for multi-instance deployment vs. what
 still isn't (rate limiting, the Chroma schema index, and the compiled-
 graph/Ollama-client singletons are all still process-local; no true
-cross-thread cancellation, streaming, or distributed coordination yet).
+cross-thread cancellation or distributed coordination yet). Streaming is
+no longer on that list: `POST /ask/stream` (`api/streaming.py`) emits
+per-node progress over SSE and then the same `AskResponse` `POST /ask`
+returns — it *calls* that handler rather than reimplementing it, so every
+control applies identically. Token-level streaming of the model's own
+output is still absent.
 
 
 ## Configurable Ollama model selection for Text-to-SQL (2026-09-27)

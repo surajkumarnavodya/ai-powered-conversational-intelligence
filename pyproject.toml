@@ -65,3 +65,12 @@ exclude = ["\\.venv"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+# Live integration tests are opt-in and deselected by default, so the
+# ordinary suite stays fully mocked (CLAUDE.md 7: no real database, no
+# Ollama, no network). Run them explicitly with `-m live` once the
+# relevant credentials are present -- see
+# docs/LIVE_INTEGRATION_TESTING.md.
+addopts = "-m 'not live'"
+markers = [
+  "live: requires real credentials and external infrastructure; opt-in via `-m live`",
+]

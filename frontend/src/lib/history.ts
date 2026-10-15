@@ -251,6 +251,7 @@ function askResponseFromPersistedMessage(
     followup_classification: null,
     followup_resolved_against: null,
     permission_denied_notice: metadata?.permission_denied_notice ?? null,
+    source_selection_notice: metadata?.source_selection_notice ?? null,
     // Prompt 30's analytics fields are not part of the persisted message
     // metadata today, so a reloaded past turn shows no analytics panels --
     // the same disclosed reconstruction gap as the rest of this function's

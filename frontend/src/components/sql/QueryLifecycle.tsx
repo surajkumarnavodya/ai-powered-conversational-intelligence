@@ -58,14 +58,15 @@ import { cn } from '@/lib/utils'
  * ones, so no copy of `SAFETY_VIOLATION_TYPES` is needed (or kept in
  * sync) on the client.
  *
- * **No streaming exists**, so this is final-state rendering. `POST /ask`
- * is a single request that returns once the graph has finished; there is
- * no SSE or WebSocket endpoint anywhere in `api/`, and therefore no
- * observable "currently on stage N" signal while a question is in flight.
- * `running` is used only where it is genuinely observable: the user's own
- * Confirm and Run, which the client itself initiated. The in-flight
- * `/ask` phase keeps `PendingTurn`'s existing "Thinking Ns…" badge rather
- * than a rail with a guessed active stage.
+ * **This remains final-state rendering, deliberately.** `POST /ask/stream`
+ * now exists and does give an observable "currently on stage N" signal
+ * (see `agent/progress.py`), but it is consumed by `PendingTurn`'s
+ * "Thinking Ns… · stage" badge, not here. This rail shows what a finished
+ * run actually did, from `AskResponse.stage_timings` -- evidence, not a
+ * live guess. Driving it from progress events would mean rendering stages
+ * as "reached" before their results were governed, and a retry would make
+ * the rail jump backwards. The two surfaces answer different questions,
+ * and each owns exactly one of them.
  *
  * **Reveals nothing new.** Stage identity comes from this app's own fixed
  * node names, and each reason is a fixed string chosen by outcome class --

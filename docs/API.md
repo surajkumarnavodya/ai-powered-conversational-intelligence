@@ -117,9 +117,47 @@ Request:
     {"question": "prior question", "sql": "SELECT ...", "tables": ["FactInternetSales"], "status": "succeeded"}
   ],
   "enable_insight": true,
-  "model": "qwen2.5:7b"
+  "model": "qwen2.5:7b",
+  "sources": ["sql", "policy"]
 }
 ```
+
+`sources` is optional (from a prior `GET /sources` response's
+`sources[].name`) — omit it to let the router choose from everything
+configured and authorized, which is exactly what every caller from before
+this field existed does.
+
+**It is a filter, never a grant.** The selection is intersected with what
+standing configuration makes available *and* what the caller's role(s)
+permit, so naming a source here can only narrow the route — it can never
+reach a source the caller could not otherwise use. The pre-existing role
+check in `router_node` still runs on whatever survives the filter. See
+`agent/orchestrator/nodes.py::_apply_source_selection`.
+
+Behaviour worth knowing:
+
+- An **unrecognized source name** returns `422` naming the valid options.
+  This leaks nothing: every registered name is already public via
+  `GET /sources`. Whether a source is *configured*, or whether this caller
+  may *use* it, is deliberately **not** answered at this layer — that
+  would turn a 422 into an oracle for configuration and permissions.
+- An **empty array is rejected**. It would be ambiguous between "no
+  restriction" and "no sources at all"; callers omit the field instead.
+- Names are lower-cased and de-duplicated, preserving first-seen order.
+- A selection that **cannot be honored does not fail the request.** If a
+  named source is not configured, the question is answered from the
+  unrestricted route and `source_selection_notice` says so. If the caller
+  lacks permission for it, the existing `permission_denied_notice` says
+  so. Failing instead would turn a stale client — or an operator switching
+  a source off — into an outage for questions that are still answerable.
+- `attachments` is **exempt**: a file attached to this question stays in
+  the route whatever the selection says, because attaching it is itself an
+  explicit per-request choice and an attachment is never silently
+  discarded.
+- Supplying `sources` makes the orchestrator graph run even with
+  `ENABLE_MULTI_SOURCE_ROUTER=false`, for the same reason a non-empty
+  `attachment_ids` does. Omitting it leaves that path completely
+  unchanged.
 
 `model` is optional (from a prior `GET /models` response's `models[].id`) —
 omit it to use the server-configured default (`Settings.ollama_model`);
@@ -881,6 +919,110 @@ declared **or** carried, so a change can add controls but never remove
 them. See `CLAUDE.md`'s "Prompt/agent/policy registry" section and
 `45_PROMPT_AGENT_REGISTRY_CONTRACT.md` for the full design, including
 why a deployed prompt artifact is never loaded as a live system prompt.
+
+### `GET /sources`
+
+Which data sources exist, which are configured, and which this caller may
+route to. Computed from the same descriptor table `agent/orchestrator/`
+routes with and the same permission check `router_node` applies, so the
+frontend never guesses from a role name and cannot disagree with the
+router about what a source is.
+
+```json
+{
+  "sources": [
+    {
+      "name": "policy",
+      "kind": "policy",
+      "description": "a separate, access-restricted collection ...",
+      "capabilities": {
+        "operations": ["ingest", "read", "search"],
+        "supports_citations": true,
+        "supports_pagination": false,
+        "supports_incremental_sync": false,
+        "has_side_effects": false,
+        "preserves_source_acl": false
+      },
+      "configured": true,
+      "authorized": false,
+      "required_permission": "policy_rag_query",
+      "per_request": false
+    }
+  ],
+  "usable": ["sql"],
+  "roles": ["viewer"]
+}
+```
+
+`configured` and `authorized` are reported **separately** on purpose: they
+are different failures with different remedies (an operator fixes one, an
+administrator the other), and collapsing them would leave the UI unable to
+say which. All registered sources are returned, not only the usable ones,
+so a source can be shown as unavailable *with a reason* rather than
+silently omitted.
+
+`per_request: true` means availability depends on the individual request
+rather than standing configuration (`attachments` is usable only when a
+file is attached to that question), so such a source never appears in
+`usable`.
+
+**This endpoint is an affordance, not a boundary.** It changes no access
+decision — `router_node` still filters the LLM's own source selection
+through the permission table before any subgraph runs, and every
+data-touching route re-checks. No secret, connection string or API key
+appears in the response; the only configuration fact exposed is the
+boolean `configured`. Design and invariants:
+[`docs/architecture/source-connector-contract.md`](architecture/source-connector-contract.md).
+
+### `POST /ask/stream`
+
+The SSE counterpart of `POST /ask`. Same request body, same final
+`AskResponse` -- it **calls** that handler rather than reimplementing it,
+so model validation, rate limiting, admission control, the execution
+envelope, governance and persistence all apply identically
+(`api/streaming.py`).
+
+What it adds is per-node progress while the run is still going, so a slow
+multi-source question stops looking hung.
+
+```
+event: open
+data: {"status":"running"}
+
+event: progress
+data: {"stage":"retrieve_schema","attempt":1,"duration_ms":12.5,"outcome":"ok","error_category":null}
+
+event: progress
+data: {"stage":"generate_sql","attempt":1,"duration_ms":903.2,"outcome":"ok","error_category":null}
+
+event: result
+data: { ...the same AskResponse POST /ask returns... }
+
+event: done
+data: {"dropped":0}
+```
+
+| Event | Meaning |
+|---|---|
+| `open` | accepted and started |
+| `progress` | one node finished. **Metadata only** -- stage name, attempt, duration, coarse outcome, error *category*. Never SQL, never a row, never an error message: an event is emitted before the result gate has run, so its payload is deliberately narrow (`agent/progress.py`) |
+| `error` | the run failed; `{status, detail}` carries the HTTP status this would have been |
+| `result` | the complete `AskResponse` |
+| `done` | terminal. `dropped` is how many progress events were discarded because the buffer filled, so a client can say its view is incomplete rather than silently miss steps |
+
+`result` and `error` are mutually exclusive and `done` is always last.
+
+**Errors after the stream opens arrive in-band, not as an HTTP status.**
+Once SSE headers are sent the status is already `200`, so a rate-limit or
+governance refusal comes back as an `error` event. A client must read the
+stream, not just the status. Request-model validation still returns a real
+`422`, because that happens before the stream opens.
+
+**Progress is per-node, not per-token.** The model's own tokens are not
+streamed: `agent/llm_client.py` makes one blocking call per step and the
+generation/insight prompts are benchmark-pinned, so that is a separate
+change. What streams is the pipeline's progress, which is what makes a
+slow run legible.
 
 ### Other routes
 

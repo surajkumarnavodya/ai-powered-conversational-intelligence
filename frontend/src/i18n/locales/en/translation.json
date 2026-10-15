@@ -1,5 +1,6 @@
 {
   "app": {
+    "homeLabel": "Start a new chat",
     "title": "AI-Powered Conversational Intelligence",
     "subtitle": "Ask a question in plain English — get validated, read-only SQL, a live result table, and an auto-picked chart."
   },
@@ -767,5 +768,18 @@
   },
   "evidence": {
     "insightDetail": "This is a written summary of the result. Its wording is generated; its figures are checked against the data before the summary is shown."
+  },
+  "sources": {
+    "pickerLabel": "Choose data sources",
+    "pickerTitle": "Data sources",
+    "pickerHelp": "Limit this question to specific sources. Leave all unchecked to let the assistant choose.",
+    "activeCount": "{{count}} source selected",
+    "activeCount_plural": "{{count}} sources selected",
+    "clearSelection": "Clear selection",
+    "noneAvailable": "No sources are available to choose from.",
+    "loadFailed": "Sources could not be loaded.",
+    "unavailableHeading": "Not available",
+    "notConfigured": "not set up",
+    "notPermitted": "no access"
   }
 }

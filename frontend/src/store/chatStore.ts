@@ -1,7 +1,6 @@
 import { create } from 'zustand'
 import {
   ApiError,
-  askQuestion as apiAskQuestion,
   confirmGeneration as apiConfirmGeneration,
   executeSql,
   submitGoldenExampleFeedback,
@@ -43,6 +42,7 @@ import {
   renameConversationOnServer,
 } from '@/lib/identityApi'
 import type { AskResponse } from '@/lib/types'
+import { askQuestionStreaming } from '@/lib/askStream'
 import { useLocalAuthStore } from './localAuthStore'
 import { useSettingsStore } from './settingsStore'
 
@@ -55,6 +55,17 @@ import { useSettingsStore } from './settingsStore'
 export interface PendingQuestion {
   question: string
   startedAt: number
+  /** The graph node currently running, from `POST /ask/stream`'s progress
+   * events -- the first genuinely observable "where is this up to" signal
+   * this app has had. `null` until the first event arrives, and whenever
+   * streaming is unavailable (an older server, or a proxy that buffers),
+   * in which case the UI falls back to the plain "Thinking Ns…" badge
+   * exactly as before.
+   *
+   * A fixed node name from this app's own graph wiring -- never server
+   * prose, never a model's words. See `agent/progress.py` on why a
+   * progress event carries metadata only. */
+  stage: string | null
 }
 
 /** Result of `tryApplyChartTypeFollowup` -- see that action's own doc for
@@ -305,6 +316,7 @@ function emptyAskResponse(message: string): AskResponse {
     followup_classification: null,
     followup_resolved_against: null,
     permission_denied_notice: null,
+    source_selection_notice: null,
     analytical_result: null,
     forecast_result: null,
     recommendations: [],
@@ -446,7 +458,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       excludedContextEntryIds,
     } = get()
     const startedAt = performance.now()
-    set({ pendingQuestion: { question, startedAt } })
+    set({ pendingQuestion: { question, startedAt, stage: null } })
 
     const attachmentIds = options?.attachmentIds ?? []
     const priorQuestions = queryHistory.map((entry) => entry.question)
@@ -479,7 +491,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       finalState =
         cached ??
-        (await apiAskQuestion(
+        // Streaming: same request, same governed handler, same AskResponse
+        // -- `POST /ask/stream` calls `ask` rather than reimplementing it.
+        // What it adds is per-node progress while the run is still going,
+        // so a slow multi-source question stops looking hung.
+        (await askQuestionStreaming(
           {
             question,
             conversation_history: buildConversationHistory(
@@ -496,9 +512,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // always safe to include even when the user never opened the
             // model picker.
             model: useSettingsStore.getState().selectedModel,
+            // Same cross-store read as `model` above, same reasoning.
+            // null means "no restriction" and is simply omitted, so a user
+            // who never touched the picker sends exactly the request the
+            // frontend sent before it existed.
+            sources: useSettingsStore.getState().selectedSources ?? undefined,
+          },
+          {
+            onProgress: (event) => {
+              // Only advances the label; never replaces the pending turn,
+              // so an out-of-order or duplicated event cannot corrupt
+              // anything the user sees.
+              const pending = get().pendingQuestion
+              if (pending) set({ pendingQuestion: { ...pending, stage: event.stage } })
+            },
           },
           controller.signal,
-        ))
+        )) ?? emptyAskResponse('The agent could not be reached.')
     } catch (error) {
       const message =
         error instanceof DOMException && error.name === 'AbortError'

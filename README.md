@@ -22,9 +22,11 @@
 
 <!-- Newest first, sourced from real commit history. Keep no more than the three most recent entries. -->
 
+- **2026-10-15** — Source connectivity, streaming, and an honest audit of what is actually built. An evidence-based audit found that roughly half of a proposed connector roadmap already existed, and that **no Microsoft 365 connector exists at all** — the new [`docs/architecture/feature-inventory.md`](docs/architecture/feature-inventory.md) records per-capability status with a separate *verification* column, so "implemented" stops implying "proven". Shipped since: a source-type contract (`sources/`) that made each source's description, permission and availability have one owner instead of three drifting literals; per-conversation **source selection** (`AskRequest.sources` plus a picker), which is a filter over RBAC and never a grant — turning the intersection into a union fails 19 tests; a read-only **REST/OpenAPI connector** behind a host allowlist checked before DNS, with redirects re-validated hop by hop; an **MCP client** whose trust model is administrator-controlled only, where an empty allowlist approves nothing and a server's `instructions` field is read and discarded rather than fed to a model; and **SSE streaming** (`POST /ask/stream`) that calls the existing `/ask` handler rather than copying it, so a slow multi-source question shows live per-node progress. Also added opt-in live tests (`tests/live/`, deselected by default) and the Microsoft 365 tenant runbook they will plug into. See [`docs/architecture/source-connector-contract.md`](docs/architecture/source-connector-contract.md) and [`docs/LIVE_INTEGRATION_TESTING.md`](docs/LIVE_INTEGRATION_TESTING.md).
+
 - **2026-10-06** — Added three governed AI-analysis layers, all off by default. An **AI Data Analyst** (`POST /analyst/investigate`) decomposes a business question, runs each part through the same SQL pipeline as `/ask`, and returns an evidence-linked report from a bounded, traced loop. A **multi-agent supervisor** (`POST /analyst/supervise`) routes one turn across typed specialist agents, each limited to its own tools, with circuit breakers, turn budgets and conflict resolution. A benchmark confirms it makes the same SQL and planner calls as the analyst. **Semantic intelligence** (`/semantic-intelligence/*`) finds synonym candidates, ambiguous terms, conflicting metric definitions and metric dependencies in the governed catalog, and queues them for review by risk, with versioned findings and rollback. Every output is labelled as an observed database fact or an AI estimate, and cross-tenant access is refused. See [`33_AI_DATA_ANALYST_AGENT_CONTRACT.md`](33_AI_DATA_ANALYST_AGENT_CONTRACT.md), [`34_MULTI_AGENT_SUPERVISOR_CONTRACT.md`](34_MULTI_AGENT_SUPERVISOR_CONTRACT.md) and [`35_SEMANTIC_INTELLIGENCE_CONTRACT.md`](35_SEMANTIC_INTELLIGENCE_CONTRACT.md).
+
 - **2026-10-03** — Integrated the product into one role-aware application. Navigation used to be decided in the browser from role names, with no route guard, so any signed-in user could type a screen's URL and get a page of refused requests. Navigation and every screen route are now driven by a server decision (`GET /navigation`) built from the same permission checks the API enforces, and a refused URL shows a forbidden page and is audit-logged. Found and closed a real bug from the last prompt: the recommendation page shared its path with the governance API's list route, so a page reload returned JSON. Onboarding publish never created anything the SME dashboard could review; it now files confirmed tables as draft catalog entries, which only a catalog reviewer can approve. Also fixed a 500 on onboarding jobs with no connection details, and a publish failure for any database label containing a space. See [`32_ROLE_BASED_NAVIGATION_CONTRACT.md`](32_ROLE_BASED_NAVIGATION_CONTRACT.md).
-- **2026-10-03** — Shipped the recommendation and action dashboard, the reviewer-facing surface over the governed recommendation APIs built in Prompts 17 and 18, which had no frontend at all. Each suggestion shows its evidence (every claim with its own truth level), confidence, rule or model, and the measurable impact only when the engine actually computed one. Reviewers can accept, partially accept, reject, mark incorrect, resolve, assign an owner, and add notes, with every action recorded in an append-only trail. Found and fixed a real race: two reviewers acting on the same recommendation could both succeed, now a single conditional update, proven by a test that fails if the guard is removed. Owners must be active, same-tenant reviewers, and a refused owner gets the same response whether the account is missing or in another tenant. See [`31_RECOMMENDATION_ACTION_DASHBOARD_CONTRACT.md`](31_RECOMMENDATION_ACTION_DASHBOARD_CONTRACT.md).
 
 <a id="example-usage"></a>
 
@@ -65,9 +67,9 @@ chat + generated-SQL view is still TODO._
 
 Ready to try it? Jump to [Getting Started](#-getting-started) below.
 
-We're glad you're here — [star the repository](https://github.com/surajkumarnavodya/text-to-sql-agent-langgraph)
+We're glad you're here — [star the repository](https://github.com/surajkumarnavodya/ai-powered-conversational-intelligence)
 if you want to keep it on your radar, and open an
-[issue](https://github.com/surajkumarnavodya/text-to-sql-agent-langgraph/issues/new/choose)
+[issue](https://github.com/surajkumarnavodya/ai-powered-conversational-intelligence/issues/new/choose)
 for bugs, questions, or feature ideas.
 
 <a id="what-is-this"></a>
@@ -236,8 +238,8 @@ walkthrough and retry-routing table.
 ### Clone, install, configure
 
 ```bash
-git clone https://github.com/surajkumarnavodya/text-to-sql-agent-langgraph.git
-cd text-to-sql-agent-langgraph
+git clone https://github.com/surajkumarnavodya/ai-powered-conversational-intelligence.git
+cd ai-powered-conversational-intelligence
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\Activate.ps1
 pip install --upgrade pip
@@ -422,6 +424,10 @@ connectivity and reverse-proxy placement.
 | Understand business-context vector retrieval (glossary/metrics/SQL examples) | [`docs/vector-retrieval-design.md`](docs/vector-retrieval-design.md) |
 | Evaluate retrieval quality | [`docs/retrieval-evaluation.md`](docs/retrieval-evaluation.md) |
 | Turn on document RAG, policy RAG, or web search | [`docs/MULTI_SOURCE_GUIDE.md`](docs/MULTI_SOURCE_GUIDE.md) |
+| Understand the source connector contract, the source picker, the REST connector and the MCP client | [`docs/architecture/source-connector-contract.md`](docs/architecture/source-connector-contract.md) |
+| See which capability is actually implemented, and how it was verified | [`docs/architecture/feature-inventory.md`](docs/architecture/feature-inventory.md) |
+| Compare source types by capability, auth model and ACL fidelity | [`docs/architecture/data-source-matrix.md`](docs/architecture/data-source-matrix.md) |
+| Run the opt-in live tests, or set up a Microsoft 365 tenant for them | [`docs/LIVE_INTEGRATION_TESTING.md`](docs/LIVE_INTEGRATION_TESTING.md) |
 | Look up REST API endpoints and auth | [`docs/API.md`](docs/API.md) |
 | Find every `.env` variable | [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) |
 | Deploy with Docker / an external DB or Ollama | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) |
@@ -497,12 +503,76 @@ Source of truth: `db/connection.py::SUPPORTED_DB_TYPES`.
 
 ## 🛟 Get help and file an issue
 
-Use the [issue chooser](https://github.com/surajkumarnavodya/text-to-sql-agent-langgraph/issues/new/choose)
+Use the [issue chooser](https://github.com/surajkumarnavodya/ai-powered-conversational-intelligence/issues/new/choose)
 (bug report / feature request templates under `.github/ISSUE_TEMPLATE/`)
 for usage questions, reproducible bugs, and feature requests.
 
 Follow [`SECURITY.md`](SECURITY.md) to report a suspected security
 vulnerability rather than filing a public issue.
+
+<a id="project-status"></a>
+
+<a id="feature-matrix"></a>
+
+## 🧾 Feature matrix
+
+Status vocabulary is deliberate. **Verification** is the column that
+matters: a capability can be fully implemented and still never have met a
+real provider, and this table says so rather than letting "implemented"
+imply "proven".
+
+| Status | Meaning |
+|---|---|
+| `IMPLEMENTED_AND_TESTED` | wired into a request path, covered by the mocked suite |
+| `IMPLEMENTED_BUT_NOT_FULLY_TESTED` | implemented, but a material path is unverified |
+| `PARTIALLY_IMPLEMENTED` | narrower than the name suggests |
+| `DOCUMENTED_BUT_NOT_IMPLEMENTED` | described somewhere, no implementation |
+| `PLANNED` | agreed, not started |
+
+**Verification**: *mocked* = the fully-mocked pytest suite (no real DB, no
+Ollama). *live* = exercised against real infrastructure. *blocked* = cannot
+be verified here; the reason is named.
+
+### Core pipeline
+
+| Capability | Status | Verification | Docs |
+|---|---|---|---|
+| Text-to-SQL (18-node LangGraph pipeline) | `IMPLEMENTED_AND_TESTED` | mocked; accuracy measured in a dated benchmark (see Known limitations) | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
+| AST SELECT-only SQL validation | `IMPLEMENTED_AND_TESTED` | mocked + `tests/security/` | [`SECURITY.md`](SECURITY.md) |
+| Live schema introspection → ChromaDB | `IMPLEMENTED_AND_TESTED` | mocked | [`docs/architecture/overview.md`](docs/architecture/overview.md) |
+| Multi-database auto-routing | `IMPLEMENTED_AND_TESTED` | mocked | [`docs/architecture/overview.md`](docs/architecture/overview.md) |
+| Result governance / restricted columns | `IMPLEMENTED_AND_TESTED` | mocked | [`docs/DATA_PRIVACY_GOVERNANCE_ENGINE.md`](docs/DATA_PRIVACY_GOVERNANCE_ENGINE.md) |
+| Follow-up questions | `IMPLEMENTED_AND_TESTED` | mocked; per-request, not checkpointed | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
+
+### Sources
+
+| Capability | Status | Verification | Docs |
+|---|---|---|---|
+| SQL databases (PostgreSQL, MySQL, SQL Server, Oracle) | `IMPLEMENTED_AND_TESTED` | mocked; live via `scripts/test_db_connection.py` | [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) |
+| File attachments (PDF/DOCX/XLSX/PPTX/TXT/CSV/JSON) | `IMPLEMENTED_AND_TESTED` | mocked | [`docs/FILE_UPLOAD_SECURITY.md`](docs/FILE_UPLOAD_SECURITY.md) |
+| Document + policy RAG | `IMPLEMENTED_BUT_NOT_FULLY_TESTED` | **blocked** — needs SQL Server 2025+/Azure SQL `VECTOR` | [`docs/MULTI_SOURCE_GUIDE.md`](docs/MULTI_SOURCE_GUIDE.md) |
+| Web search (Tavily) | `IMPLEMENTED_AND_TESTED` | mocked; live opt-in | [`docs/MULTI_SOURCE_GUIDE.md`](docs/MULTI_SOURCE_GUIDE.md) |
+| Media search / generation | `IMPLEMENTED_BUT_NOT_FULLY_TESTED` | image generation confirmed live; video unconfirmed | [`docs/MULTI_SOURCE_GUIDE.md`](docs/MULTI_SOURCE_GUIDE.md) |
+| Per-conversation source selection | `IMPLEMENTED_AND_TESTED` | mocked | [`docs/architecture/source-connector-contract.md`](docs/architecture/source-connector-contract.md) |
+| REST / OpenAPI connector | `PARTIALLY_IMPLEMENTED` | mocked; **not routable** (no descriptor/orchestrator node) | [`docs/architecture/source-connector-contract.md`](docs/architecture/source-connector-contract.md) |
+| MCP client (stdio) | `IMPLEMENTED_BUT_NOT_FULLY_TESTED` | mocked; **never met a real MCP server** | [`docs/architecture/source-connector-contract.md`](docs/architecture/source-connector-contract.md) |
+| SharePoint, OneDrive, Dataverse, Outlook, Teams | `DOCUMENTED_BUT_NOT_IMPLEMENTED` | n/a — **zero implementation files** | [`docs/architecture/data-source-matrix.md`](docs/architecture/data-source-matrix.md) |
+
+### Platform
+
+| Capability | Status | Verification | Docs |
+|---|---|---|---|
+| Identity (local accounts, Argon2id + JWT) | `IMPLEMENTED_AND_TESTED` | mocked | [`docs/AUTHENTICATION.md`](docs/AUTHENTICATION.md) |
+| OIDC sign-in | `IMPLEMENTED_BUT_NOT_FULLY_TESTED` | **blocked** — never run against a live IdP | [`docs/AUTHENTICATION.md`](docs/AUTHENTICATION.md) |
+| RBAC + tenant isolation | `IMPLEMENTED_AND_TESTED` | mocked (294 tenancy tests) | [`docs/MULTI_TENANCY.md`](docs/MULTI_TENANCY.md) |
+| Streaming (SSE, per-node progress) | `IMPLEMENTED_AND_TESTED` | mocked | [`docs/API.md`](docs/API.md) |
+| Token-level LLM streaming | `PLANNED` | n/a | — |
+| Scheduler / background worker / alert delivery | `DOCUMENTED_BUT_NOT_IMPLEMENTED` | n/a — CLI scripts are the cron entry points | [`CLAUDE.md`](CLAUDE.md) |
+| Analytics, forecasting, recommendations | `IMPLEMENTED_BUT_NOT_FULLY_TESTED` | mocked; output quality unmeasured | [`docs/architecture/features-analytics.md`](docs/architecture/features-analytics.md) |
+| Multi-replica deployment | `PLANNED` | n/a — all shared state is per-process | [`docs/SCALE_BASELINE.md`](docs/SCALE_BASELINE.md) |
+
+Opt-in live verification for the credential-blocked rows above:
+[`docs/LIVE_INTEGRATION_TESTING.md`](docs/LIVE_INTEGRATION_TESTING.md).
 
 <a id="project-status"></a>
 
@@ -554,17 +624,32 @@ any of this security work and remains a separate, equally real gap.
   accuracy** — the SQL often runs successfully but returns the wrong
   answer, especially on hard/real-world questions (25% pass rate on each).
   Security-rejection accuracy is 100%.
-- **Local-dev oriented; not yet multi-tenant.** A 2026-09-26 hardening
-  pass (see the News entry above and
+
+  **These figures are stale as of 2026-10-15** and have not been
+  re-measured. They were taken before commit `9706fa1` (2026-10-14), which
+  fixed a defect where every Ollama call silently truncated 63% of its
+  prompt, including the system prompt — precisely what this benchmark
+  measures. Re-running needs a live Ollama and a real database; see the
+  banner at the top of [`docs/EVALUATION.md`](docs/EVALUATION.md).
+- **Single-process deployment; multi-replica is not solved.** A 2026-09-26
+  hardening pass (see the News entry above and
   [`docs/SCALE_OUT_PROMPT.md`](docs/SCALE_OUT_PROMPT.md)) added real
   bounded concurrency/admission control for `/ask` and fixed a genuine
   cross-user isolation gap in attachment ownership, with a measured
-  baseline in [`docs/SCALE_BASELINE.md`](docs/SCALE_BASELINE.md) — but
-  rate limiting, the schema-embedding index, and the compiled-graph/Ollama
-  singletons are all still per-process (no multi-replica story yet), and
-  there's no tenant isolation model. See [`SECURITY.md`](SECURITY.md) and
+  baseline in [`docs/SCALE_BASELINE.md`](docs/SCALE_BASELINE.md). Still
+  per-process, so a multi-worker deployment gets one of each: rate
+  limiters, circuit breakers, the result cache, the schema-embedding
+  index, the security-event ring buffer, and the compiled-graph/Ollama
+  singletons. See [`SECURITY.md`](SECURITY.md) and
   [`docs/PRODUCTION_CHECKLIST.md`](docs/PRODUCTION_CHECKLIST.md) before
-  pointing it at anything sensitive or multi-tenant.
+  pointing it at anything sensitive.
+
+  *(Corrected 2026-10-15: this bullet previously said "not yet
+  multi-tenant … there's no tenant isolation model". That was stale.
+  Tenant isolation is implemented — `security/tenancy.py`,
+  [`docs/MULTI_TENANCY.md`](docs/MULTI_TENANCY.md), 294 passing tests —
+  see the row in the feature matrix below. The per-process limitation
+  above is the part that was, and remains, true.)*
 - **Document/policy RAG requires SQL Server 2025+ or Azure SQL**
   specifically (native `VECTOR` column type), separate from the four
   `DB_TYPE`s the core SQL pipeline supports.

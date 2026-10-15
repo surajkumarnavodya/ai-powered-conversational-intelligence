@@ -4,7 +4,7 @@ import { useElapsedSeconds } from '@/hooks/useElapsedSeconds'
 import { cn } from '@/lib/utils'
 
 type TimingBadgeProps =
-  | { mode: 'pending'; startedAt: number }
+  | { mode: 'pending'; startedAt: number; stage?: string | null }
   | { mode: 'done'; durationMs: number | null }
 
 /** Perplexity/ChatGPT-style "Thinking Ns" -> "Answered in Ns" pill.
@@ -15,6 +15,11 @@ type TimingBadgeProps =
  * static 'Loading' message, show it's actively in progress" request. Once
  * a turn resolves, its card switches to `mode: 'done'` with the actual
  * measured duration -- a plain, static, non-animated summary.
+ *
+ * `stage` (optional, pending only) names the graph node currently running,
+ * from `POST /ask/stream`'s progress events. It is additive: without it
+ * the badge renders exactly as it did before streaming existed, which is
+ * what a deployment on an older server or behind a buffering proxy gets.
  */
 export function TimingBadge(props: TimingBadgeProps) {
   const { t } = useTranslation()
@@ -36,6 +41,14 @@ export function TimingBadge(props: TimingBadgeProps) {
       {props.mode === 'pending' ? (
         <span>
           {t('common.thinking')} {seconds.toFixed(0)}s…
+          {props.stage ? (
+            // A fixed graph-node name, humanised for display. Rendered
+            // only when `POST /ask/stream` actually reported one, so a
+            // deployment without streaming (or behind a buffering proxy)
+            // shows exactly the badge it always did rather than an empty
+            // or guessed stage.
+            <span className="ml-1 opacity-80">· {props.stage.replace(/_/g, ' ')}</span>
+          ) : null}
         </span>
       ) : (
         <span>{t('common.answeredIn', { seconds: seconds.toFixed(1) })}</span>

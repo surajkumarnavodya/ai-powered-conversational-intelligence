@@ -146,6 +146,33 @@ class OrchestratorState(AgentState, total=False):
     # per-request opt-in, not a standing multi-source-routing decision.
     pending_attachment_ids: list[str]
 
+    # Input, set once by run_orchestrated from AskRequest.sources -- the
+    # source name(s) the caller restricted this question to, or None for
+    # "no restriction" (the default, and what every caller predating the
+    # field sends). A non-empty value both narrows what router_node may
+    # route to and, per agent/orchestrator/graph.py's run_orchestrated,
+    # makes this graph run at all even when
+    # Settings.enable_multi_source_router is off -- restricting sources is
+    # a per-request choice, not a standing routing decision, the same way
+    # pending_attachment_ids above already works.
+    #
+    # SECURITY: a FILTER, never a grant. See
+    # agent.orchestrator.nodes._apply_source_selection -- the selection is
+    # intersected with configured-and-available sources, and the
+    # pre-existing role check downstream in router_node still runs
+    # unchanged on whatever survives, so naming a source here can only
+    # narrow the route.
+    selected_sources: list[str] | None
+
+    # Set by router_node when `selected_sources` named a source standing
+    # configuration does not make available, so the route fell back to the
+    # unrestricted set. Deliberately separate from
+    # permission_denied_notice below: "not configured" and "not permitted"
+    # have different causes and different remedies, and one field for both
+    # would leave the caller unable to tell which. None when the selection
+    # was honored in full, or when there was no selection.
+    source_selection_notice: str | None
+
     # Set by router_node -- see RouteDecision above.
     route_decision: RouteDecision | None
 

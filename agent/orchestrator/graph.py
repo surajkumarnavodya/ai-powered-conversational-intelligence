@@ -152,6 +152,7 @@ def run_orchestrated(
     caller_roles: tuple[str, ...] = (),
     caller_subject: str | None = None,
     attachment_ids: list[str] | None = None,
+    selected_sources: list[str] | None = None,
     model: str | None = None,
     tenant_id: str | None = None,
     forecast_horizon: int | None = None,
@@ -198,6 +199,19 @@ def run_orchestrated(
             standing multi-source-routing decision, so it must not require
             also opting into the (unrelated) multi-source router feature.
             See `agent.orchestrator.nodes.attachment_node`/`attachments/graph.py`.
+        selected_sources: Source name(s) this question is restricted to
+            (`AskRequest.sources`), already validated for name correctness
+            by `api.schemas`, or None for no restriction. A non-None value
+            makes this graph run even with
+            `Settings.enable_multi_source_router` off, for the same reason
+            a non-empty `attachment_ids` does -- see the short-circuit
+            below. Threaded to `router_node` via
+            `OrchestratorState["selected_sources"]`.
+
+            SECURITY: a filter, never a grant. See
+            `agent.orchestrator.nodes._apply_source_selection`; the
+            pre-existing role check in `router_node` still runs on
+            whatever survives the filter.
         model: Same shape and meaning as `agent.graph.run_agent`'s parameter
             of the same name -- already validated by `api/main.py`'s `/ask`
             handler before this function is ever called. `None` uses
@@ -240,7 +254,15 @@ def run_orchestrated(
     """
     settings = get_settings()
     has_attachments = bool(attachment_ids)
-    if not settings.enable_multi_source_router and not has_attachments:
+    # A caller-supplied source restriction breaks the short-circuit for the
+    # same reason a non-empty attachment_ids does: there is no other path
+    # that would apply the filter or report an unhonorable selection, and
+    # restricting sources is a per-request choice rather than a standing
+    # routing decision. `sources=None` (every caller predating the field,
+    # and the UI whenever the user has not narrowed anything) still takes
+    # the unchanged direct-to-run_agent path below.
+    has_source_selection = bool(selected_sources)
+    if not settings.enable_multi_source_router and not has_attachments and not has_source_selection:
         return run_agent(
             question,
             conversation_history,
@@ -272,6 +294,8 @@ def run_orchestrated(
         "tenant_id": tenant_id,
         "session_id": session_id,
         "pending_attachment_ids": attachment_ids or [],
+        "selected_sources": selected_sources or None,
+        "source_selection_notice": None,
         "rejection_reason": None,
         "rejection_message": None,
         "rate_limit_message": None,

@@ -312,6 +312,63 @@ default is what makes "put a reverse proxy in front of it" a real
 boundary rather than something a network-reachable port mapping already
 bypassed.
 
+## Streaming (`POST /ask/stream`) behind a reverse proxy
+
+`POST /ask/stream` returns `text/event-stream`. A proxy that buffers
+responses will hold every event until the run finishes, which produces no
+error and no warning — the stream simply arrives all at once, and the
+feature silently does nothing. Plain `POST /ask` is unaffected.
+
+The app already sets the headers that ask a proxy not to buffer:
+
+```
+X-Accel-Buffering: no
+Cache-Control: no-cache, no-store
+Connection: keep-alive
+```
+
+nginx honours `X-Accel-Buffering` automatically. If you have an explicit
+`location` block for the API, make the intent explicit and give the stream
+a read timeout longer than your slowest question:
+
+```nginx
+location /ask/stream {
+    proxy_pass              http://app:8000;
+    proxy_buffering         off;
+    proxy_cache             off;
+    proxy_http_version      1.1;
+    proxy_set_header        Connection "";
+    proxy_read_timeout      300s;   # >= your longest expected run
+}
+```
+
+Other layers worth checking, because each defaults to buffering or to a
+short idle timeout:
+
+| Layer | What to set |
+|---|---|
+| nginx | `proxy_buffering off` (or rely on `X-Accel-Buffering`) |
+| Apache `mod_proxy` | `SetEnv proxy-sendchunked 1`, and raise `ProxyTimeout` |
+| AWS ALB / ELB | raise the idle timeout above your longest run |
+| Cloudflare | buffers by default on some plans; verify before relying on SSE |
+| Any CDN | exclude `/ask/stream` from caching entirely |
+
+**How to confirm it works** — events should arrive progressively, not in one
+burst at the end:
+
+```bash
+curl -N -X POST https://your-host/ask/stream   -H 'Content-Type: application/json'   -H 'Authorization: Bearer <token>'   -d '{"question":"how many orders were there in 2012?"}'
+```
+
+`-N` disables curl's own buffering. You should see `event: open` almost
+immediately, then `event: progress` lines as the pipeline advances, then
+`event: result` and `event: done`. If everything appears at once, something
+between curl and the app is buffering.
+
+A buffering proxy degrades gracefully: the UI falls back to its plain
+"Thinking Ns…" badge with no stage name, and the answer itself is
+unaffected.
+
 ## Horizontal scaling considerations
 
 - **`api` is effectively stateless per-request** (LangGraph rebuilds

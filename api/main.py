@@ -159,6 +159,8 @@ from api.schemas import (
 from api.semantic_catalog import router as semantic_catalog_router
 from api.semantic_intelligence import router as semantic_intelligence_router
 from api.shares import router as shares_router
+from api.sources import router as sources_router
+from api.streaming import router as streaming_router
 from api.tenant_admin import router as tenant_admin_router
 from api.voice import router as voice_router
 from api.workflow import router as workflow_router
@@ -443,6 +445,11 @@ app.include_router(platform_admin_router)
 app.include_router(tenant_admin_router)
 app.include_router(model_routing_router)
 app.include_router(navigation_router)
+app.include_router(sources_router)
+# Registered after `ask` is defined above: api/streaming.py imports it
+# lazily inside the route to avoid a circular import, and calls it so
+# every control on /ask applies identically.
+app.include_router(streaming_router)
 app.include_router(workflow_router)
 app.include_router(artifacts_router)
 
@@ -1022,6 +1029,7 @@ def _ask_response_from_state(
             state.get("followup_resolved_against")
         ),
         permission_denied_notice=_redact_text(state.get("permission_denied_notice"), settings),
+        source_selection_notice=_redact_text(state.get("source_selection_notice"), settings),
         analytical_intent=_analytical_intent_out(state.get("analytical_intent")),
         analytical_plan=_analytical_plan_out(state.get("analytical_plan")),
         governing_metrics=_governing_metrics_out(state.get("governing_metrics")),
@@ -1211,6 +1219,7 @@ def _run_orchestrated_with_timeout(
     max_workers: int,
     on_done: Callable[[], None],
     attachment_ids: list[str] | None = None,
+    selected_sources: list[str] | None = None,
     model: str | None = None,
     tenant_id: str | None = None,
     forecast_horizon: int | None = None,
@@ -1252,6 +1261,7 @@ def _run_orchestrated_with_timeout(
                 caller_roles=caller_roles,
                 caller_subject=caller_subject,
                 attachment_ids=attachment_ids,
+                selected_sources=selected_sources,
                 model=model,
                 tenant_id=tenant_id,
                 forecast_horizon=forecast_horizon,
@@ -1441,6 +1451,7 @@ def ask(
             max_workers=settings.max_concurrent_ask_requests,
             on_done=_release_ask_slots,
             attachment_ids=payload.attachment_ids,
+            selected_sources=payload.sources,
             model=selected_model,
             tenant_id=resolve_tenant_id_for_identity(identity),
             forecast_horizon=payload.forecast_horizon,

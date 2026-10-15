@@ -40,6 +40,10 @@ task actually touches its area.
 | Every configuration setting | [`../CONFIGURATION.md`](../CONFIGURATION.md) | settings reference |
 | Tool/MCP abstraction | [`../TOOLS.md`](../TOOLS.md) | the tool contract |
 | Multi-source setup and use | [`../MULTI_SOURCE_GUIDE.md`](../MULTI_SOURCE_GUIDE.md) | configuring each source |
+| Per-capability implementation **status**, file evidence and priority | [`feature-inventory.md`](feature-inventory.md) | what state a capability is actually in |
+| Source-type **capability/auth/ACL comparison**, including unimplemented sources | [`data-source-matrix.md`](data-source-matrix.md) | per-source-type capabilities, auth model and verification status |
+| Source-connectivity batch plan, prerequisites, rollback | [`implementation-roadmap.md`](implementation-roadmap.md) | sequencing of the connector programme |
+| The `sources/` contract, `GET /sources`, and the descriptor refactor | [`source-connector-contract.md`](source-connector-contract.md) | the connector contract's design and invariants |
 
 ### Features — invariants and known limitations
 
@@ -85,6 +89,7 @@ its own contract (§3).**
 | Risk register | [`../RISK_REGISTER.md`](../RISK_REGISTER.md) |
 | Reliability | [`../RELIABILITY.md`](../RELIABILITY.md) |
 | Troubleshooting | [`../TROUBLESHOOTING.md`](../TROUBLESHOOTING.md) |
+| Opt-in live integration tests and the M365 tenant runbook | [`../LIVE_INTEGRATION_TESTING.md`](../LIVE_INTEGRATION_TESTING.md) |
 
 ### Frontend specifics
 
