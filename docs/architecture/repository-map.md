@@ -292,6 +292,47 @@ runtime, and each feature's own `NN_*_CONTRACT.md` covers its design.
   function dict (`SUPPORTED_SEARCH_PROVIDERS`), shaped exactly like
   `db.connection.SUPPORTED_DB_TYPES` — swapping `WEB_SEARCH_PROVIDER` is a
   `.env` change, not a code change. Only `tavily` is implemented today.
+- `sources/` — the source-type contract and registry. **Single owner of
+  each source's routing description, required permission and
+  "is it configured" rule**: `agent/orchestrator/nodes.py` derives
+  `_SOURCE_DESCRIPTIONS`, `SOURCE_PERMISSIONS` and `get_available_sources`
+  from this table rather than keeping three parallel literals that could
+  drift. `descriptors.py` declares only sources that actually exist;
+  `types.py` also holds a `SourceConnector` lifecycle Protocol with no
+  production implementer yet (`mock.py` + the conformance suite are what
+  stop it being aspirational), and `registry.py` keeps "configured" and
+  "authorized" as separate questions because they have different remedies.
+  Design: `docs/architecture/source-connector-contract.md`.
+- `rest/` — REST/OpenAPI connector: a fixed set of operator-declared HTTPS
+  endpoints, read-only, off by default (`ENABLE_REST_CONNECTOR`). A
+  question's text never reaches a URL — endpoints are fixed and filtering
+  happens on what comes back. **Not routable yet**: no `sources/descriptors.py`
+  entry and no orchestrator node, so `GET /sources` does not advertise it.
+  The SSRF controls live in `security/outbound_url.py`, not here.
+- `mcp_client/` — a client **of** remote MCP servers, over stdio. The
+  opposite direction to `agent/tools/` (which is MCP-*shaped* so this app's
+  own capabilities could be exposed *to* a client) — no shared code, and a
+  remote tool is never registered into the local `ToolRegistry`. Off by
+  default (`ENABLE_MCP_CLIENT`). `trust.py` is the point of the package:
+  administrator-controlled trust only, an empty per-server allowlist
+  approves nothing, and a server's own metadata cannot widen its access.
+  `protocol.py` is pure and I/O-free so the wire format is testable without
+  a subprocess; `transport.py` is the only production code here that spawns
+  one, which is why it passes no shell and inherits no environment.
+- `security/outbound_url.py` — SSRF-safe outbound validation and a bounded
+  JSON GET for *new* callers: HTTPS-only, a host allowlist checked **before**
+  DNS, every resolved address checked against the private/reserved
+  blocklist, and redirects re-validated hop by hop. Two older copies of the
+  blocklist exist (`media_gen/download.py`, `bi_integration/outbound_safety.py`)
+  for documented reasons; `tests/test_outbound_url.py` asserts all three
+  match, so divergence fails CI rather than going unnoticed.
+- `agent/progress.py` — per-node progress events for `POST /ask/stream`.
+  Emitted from `agent/nodes.py::_timed_node`, which already computes stage,
+  attempt, duration and outcome, so no node body knows this exists. With no
+  sink bound — every caller except an SSE stream — it is a contextvar read
+  and an early return. An event carries metadata only: it reaches the client
+  *before* the result gate runs, so it never carries SQL, a row, or an error
+  message.
 - `attachments/` — chat file attachments (images, PDF, DOCX, XLSX, PPTX,
   TXT, MD, CSV, JSON) given directly to the model as context for the
   question that attached them — see "Chat attachments" below for the full

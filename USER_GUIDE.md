@@ -1,5 +1,8 @@
 # User Guide
 
+**Documentation revision: 2026-10-15.** Describes the application as of
+commit `c0f4271`. Features added after that date will not appear here.
+
 A complete walkthrough of the Text-to-SQL Dashboard, covering both what it
 is like to use it and how it actually works. This guide has two parts:
 
@@ -404,6 +407,47 @@ owner directly, not a partial or hedged answer.
 **If a multi-source question comes back wrong or incomplete**, it's
 usually because the question was really two unrelated asks mashed into
 one sentence — try asking each part separately first.
+
+### 16.1 Choosing which sources to use
+
+By default the app decides which sources a question needs. If you would
+rather decide yourself, click the **database icon** next to the chat box
+to open the source picker.
+
+1. Tick the sources you want this question restricted to.
+2. Ask your question as normal.
+3. Click **Clear selection** to go back to letting the app choose.
+
+Things worth knowing:
+
+- **Leaving everything unticked is the default**, and means "let the app
+  choose". It is not the same as "no sources".
+- **The picker can only narrow, never widen.** Your selection is checked
+  on the server against what is configured *and* what your account is
+  permitted to use. Ticking something you are not entitled to does not
+  grant it — this is a convenience control, not a permission control.
+- **Sources you cannot use are still listed, greyed out, with a reason**:
+  *not set up* means your administrator has not configured it, *no access*
+  means your account role does not permit it. Those are different problems
+  with different people to ask.
+- **If a source you picked is not available**, your question is still
+  answered from whatever is available, and the answer says so rather than
+  failing or silently substituting.
+- **An attached file is always used**, whatever the picker says. Attaching
+  a file to a question is itself a choice, and the app will not discard it.
+
+### 16.2 Watching a question's progress
+
+Long questions — especially ones that touch several sources — now show
+what the app is currently doing. The "Thinking 12s…" badge gains the
+current step, for example *"Thinking 12s… · generate sql"*.
+
+This is a progress indicator, not partial output: the answer itself still
+arrives in one piece when the pipeline finishes. The steps shown are the
+app's own fixed pipeline stage names. If you see only "Thinking Ns…"
+without a step, your deployment is either on an older server or behind a
+proxy that buffers responses; nothing is wrong, and the answer is
+unaffected.
 
 ## 17. Voice input and spoken answers
 

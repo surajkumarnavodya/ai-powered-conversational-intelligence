@@ -78,7 +78,9 @@ the feature's own contract document (§8) rather than inferring from code.
 | Document / policy RAG | SQL Server 2025+/Azure SQL native `VECTOR` (`rag/store.py`), a dedicated connection. Off by default |
 | Web search | Pluggable provider (`search/web_search.py`); Tavily implemented. Off by default |
 | UI | React 19 + Vite + TypeScript + Tailwind + Zustand + @tanstack/react-query + i18next (en/es/fr/hi/mr). Charting is Plotly-figure-JSON in, Chart.js out (`agent/result_charting.py` builds it, `frontend/src/lib/chartAdapter.ts` renders it) |
-| Backend tests | pytest, fully mocked — no real DB, no Ollama |
+| Streaming | SSE via `api/streaming.py` (`POST /ask/stream`) — per-node progress from `agent/progress.py`, then the same `AskResponse`. Calls `api.main.ask`, never a second handler. Token-level streaming is **not** implemented |
+| Outbound HTTP safety | `security/outbound_url.py` — host allowlist checked before DNS, blocklist on every resolved address, redirects re-validated hop by hop |
+| Backend tests | pytest, fully mocked — no real DB, no Ollama. Opt-in live tests in `tests/live/` are deselected by default (`-m 'not live'`) |
 | Frontend tests | vitest + @testing-library/react; oxlint |
 | Python | **3.11 is the target per spec, but this machine only has 3.14**, so `.venv` is built against 3.14. See `docs/architecture/overview.md` for two real 3.14 issues already hit and fixed |
 
@@ -99,7 +101,10 @@ each boundary:** [`docs/architecture/repository-map.md`](docs/architecture/repos
 | `retrieval/` | Business-context vector retrieval (table/column/relationship/glossary/metric/sql_example/documentation/business_concept chunks) |
 | `agent/` | LangGraph nodes (`nodes.py`), graph wiring (`graph.py`), **`sql_validator.py` — the security boundary**, authz, intent, complexity, planning, provenance |
 | `agent/orchestrator/` | The multi-source router and subgraphs, one level *above* `agent/` — never the reverse |
-| `agent/tools/`, `agent/analyst/`, `agent/multiagent/` | MCP-shaped tool registry; the AI Data Analyst loop; the fixed-routing specialist supervisor |
+| `agent/tools/`, `agent/analyst/`, `agent/multiagent/` | MCP-shaped tool registry (this app's capabilities exposed *to* a client); the AI Data Analyst loop; the fixed-routing specialist supervisor |
+| `sources/` | The source-type contract and registry — single owner of each source's routing description, permission and availability. `agent/orchestrator/` derives its tables from here |
+| `rest/` | REST/OpenAPI connector, read-only over allowlisted hosts. Off by default; **not routable yet** (no descriptor, no orchestrator node) |
+| `mcp_client/` | Client *of* remote MCP servers — the opposite direction to `agent/tools/`, no shared code. Off by default. Administrator-controlled trust only |
 | `api/` | The FastAPI app — the REST surface every UI action goes through, and (once `frontend/dist` exists) the server for the dashboard itself |
 | `frontend/` | The React dashboard, the only UI this project ships |
 
