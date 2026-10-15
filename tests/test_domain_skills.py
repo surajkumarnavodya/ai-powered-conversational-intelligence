@@ -16,7 +16,7 @@ from domain_skills.composer import compose_guidance, guidance_for, select_skill
 from domain_skills.contract import ANALYTICS_CONTRACT, RESPONSE_SECTIONS
 from domain_skills.types import DomainSkill, UnknownSkillError
 
-from governance.domains import BusinessDomain
+from governance.domains import BusinessDomain, policy_for
 
 
 def _an_uncovered_domain() -> BusinessDomain:
@@ -44,6 +44,17 @@ TRAINING = BusinessDomain.TRAINING
 FINANCE = BusinessDomain.FINANCE
 BFSI = BusinessDomain.BFSI
 SUPPLY_CHAIN = BusinessDomain.SUPPLY_CHAIN
+MANUFACTURING = BusinessDomain.MANUFACTURING
+
+#: Covered domains whose policy declares no `ProhibitedAction` at all, so
+#: `composer._prohibitions_block` appends nothing and the shared contract's
+#: ranking invitation is never narrowed for them. Derived, not hard-coded,
+#: so a future batch landing in such a domain is covered automatically;
+#: `test_the_zero_prohibition_set_is_exactly_the_three_known_domains` stops
+#: the derivation silently emptying.
+ZERO_PROHIBITION_DOMAINS = tuple(
+    d for d in ds.covered_domains() if not policy_for(d).prohibited_actions
+)
 
 
 class TestCatalog:
@@ -57,6 +68,25 @@ class TestCatalog:
             "sales.product",
             "sales.pricing",
         )
+
+    def test_the_supplied_manufacturing_skills_are_registered_in_numeric_order(self):
+        """The prompts arrived 01, 03, 04, 05, 02 and are registered 01..05.
+
+        Declaration order decides the domain default, so it is Production
+        Intelligence (01) rather than whichever file happened to be listed
+        first -- the same reason the HR and eCommerce batches were
+        re-sequenced.
+        """
+        assert tuple(s.slug for s in ds.skills_for_domain(MANUFACTURING)) == (
+            "manufacturing.production",  # 01
+            "manufacturing.oee",  # 02
+            "manufacturing.downtime",  # 03
+            "manufacturing.quality",  # 04
+            "manufacturing.capacity",  # 05
+        )
+        default = select_skill(MANUFACTURING)
+        assert default is not None
+        assert default.slug == "manufacturing.production"
 
     def test_the_supplied_supply_chain_skills_are_registered_in_numeric_order(self):
         """Supplied 01..05 in order; registered in that order, so the
@@ -160,8 +190,8 @@ class TestCatalog:
         """Four prompt-domains, three governance domains: Marketing shares
         `SALES_MARKETING` with Sales. Inventing a governance domain per
         batch would mean two answers to 'what may this question return'."""
-        assert len({s.group for s in ds.all_skills()}) == 9
-        assert len(ds.covered_domains()) == 8
+        assert len({s.group for s in ds.all_skills()}) == 10
+        assert len(ds.covered_domains()) == 9
 
     def test_the_supplied_mis_skills_are_registered(self):
         assert tuple(s.slug for s in ds.skills_for_domain(MIS)) == (
@@ -215,6 +245,7 @@ class TestCatalog:
             FINANCE,
             BFSI,
             SUPPLY_CHAIN,
+            MANUFACTURING,
         )
 
     def test_every_uncovered_domain_has_no_skills(self):
@@ -540,17 +571,29 @@ class TestDomainProhibitionsAreDerivedNotRestated:
         assert text.rstrip().endswith("instead of doing it.")
         assert text.index("Domain constraints") > text.index("Rank top and bottom")
 
-    @pytest.mark.parametrize("domain", [MIS, SUPPLY_CHAIN], ids=lambda d: d.value)
-    def test_a_domain_with_no_prohibitions_appends_nothing(self, domain):
-        """Neither MIS nor SUPPLY_CHAIN declares a `ProhibitedAction`, so
-        there is no empty block to read past.
+    def test_the_zero_prohibition_set_is_exactly_the_three_known_domains(self):
+        """Pins the derivation the test below parametrizes over.
 
-        Parametrized at batch 9: SUPPLY_CHAIN is the second such domain,
-        and the consequence is not cosmetic. With no block appended, the
-        contract's "rank top and bottom performers" invitation is never
-        overridden for these two, which is exactly why the supply-chain
-        skills carry their own guards -- see
-        `TestSupplyChainCarriesItsOwnGuards`.
+        That list is derived from the policy so a future zero-prohibition
+        batch is covered automatically. Derived alone, though, it could
+        silently shrink to nothing and the parametrized test would vanish
+        rather than fail -- so the membership is asserted here.
+        """
+        assert ZERO_PROHIBITION_DOMAINS == (MIS, SUPPLY_CHAIN, MANUFACTURING)
+
+    @pytest.mark.parametrize("domain", ZERO_PROHIBITION_DOMAINS, ids=lambda d: d.value)
+    def test_a_domain_with_no_prohibitions_appends_nothing(self, domain):
+        """None of these declares a `ProhibitedAction`, so there is no
+        empty block to read past.
+
+        Parametrized at batch 9 and derived at batch 10, where
+        MANUFACTURING became the third. The consequence is not cosmetic:
+        with no block appended, the contract's "rank top and bottom
+        performers" invitation is never overridden for any of them. MIS is
+        safe by subject matter -- management reporting is inherently
+        aggregate -- while the other two carry their own guards, in
+        `TestSupplyChainCarriesItsOwnGuards` and
+        `TestManufacturingCarriesItsOwnGuards`.
         """
         from governance.domains import policy_for
 
@@ -808,6 +851,96 @@ class TestSupplyChainCarriesItsOwnGuards:
 
         performance = ds.get_skill("supply_chain.performance").focus.lower()
         assert "cannot be attributed" in performance
+
+
+class TestManufacturingCarriesItsOwnGuards:
+    """Batch 10: the third zero-prohibition domain, and a second boundary.
+
+    The guard half is batch 9's pattern reused rather than rediscovered.
+    `policy_for(MANUFACTURING)` declares no `ProhibitedAction`, so no
+    constraint block is appended and the ranking invitation is never
+    narrowed -- while downtime and defects are routinely recorded against a
+    shift and an operator. `individual_performance_ranking` is prohibited
+    in HR, not here, so the focus texts carry it.
+
+    What is new is where this batch stops. `semantic.metrics.MetricDefinition`
+    owns a metric's `definition`, `formula`, `aggregation` and `grain` under
+    a governance `status`. A focus text that wrote out the OEE formula would
+    be a second owner of a governed fact (`CLAUDE.md` §4.8) -- ungoverned,
+    unversioned, and wrong wherever a plant's approved definition treats
+    planned downtime differently.
+    """
+
+    def test_the_domain_genuinely_appends_no_constraint_block(self):
+        """The premise. If MANUFACTURING ever gains a `ProhibitedAction`
+        the derived block starts covering some of this, and these guards
+        should be revisited rather than silently kept."""
+        assert policy_for(MANUFACTURING).prohibited_actions == frozenset()
+
+        for skill in ds.skills_for_domain(MANUFACTURING):
+            result = guidance_for(MANUFACTURING, enabled=True, preferred_slug=skill.slug)
+            assert result is not None
+            text, chosen = result
+            assert chosen.slug == skill.slug
+            assert "Domain constraints" not in text, skill.slug
+            assert "Rank top and bottom performers" in text, skill.slug
+
+    def test_downtime_and_defects_are_attributed_to_equipment_not_to_a_person(self):
+        """The live risk in this domain: a downtime or scrap record names a
+        shift and an operator, and the unqualified ranking invitation would
+        happily rank them."""
+        downtime = ds.get_skill("manufacturing.downtime").focus.lower()
+        assert "never to a named operator" in downtime
+
+        quality = ds.get_skill("manufacturing.quality").focus.lower()
+        assert "never to the person who ran it" in quality
+
+    def test_the_oee_skill_defers_to_the_approved_definition(self):
+        """It must point at the governed definition, not supply one."""
+        focus = ds.get_skill("manufacturing.oee").focus.lower()
+        assert "use the approved metric definition" in focus
+        assert "governed choice" in focus
+
+    def test_no_skill_writes_out_a_metric_formula(self):
+        """Structural, across the whole catalog: a formula in a focus text
+        would be a second owner for `MetricDefinition.formula`, free to
+        contradict the approved one. The skill names the basis; the
+        semantic layer owns the arithmetic.
+        """
+        for skill in ds.all_skills():
+            lowered = skill.focus.lower()
+            assert "availability x performance" not in lowered
+            assert "availability * performance" not in lowered
+            assert "×" not in lowered, f"{skill.slug} contains a multiplication sign"
+            assert " = " not in lowered, f"{skill.slug} looks like it states a formula"
+            assert "multiplied by" not in lowered
+
+    def test_the_oee_skill_blocks_the_average_of_ratios_error(self):
+        """The single most common arithmetic error in this domain, and one
+        no deterministic control catches: averaging a ratio across lines or
+        periods instead of recomposing it from component totals. A correct
+        and validated SQL statement can still produce it.
+        """
+        focus = ds.get_skill("manufacturing.oee").focus.lower()
+        assert "recomposed from component totals" in focus
+        assert "arithmetically wrong" in focus
+
+    def test_each_skill_states_the_measurement_trap_its_subject_carries(self):
+        """Read off the subject matter, not from the policy."""
+        production = ds.get_skill("manufacturing.production").focus.lower()
+        assert "gross or good units" in production
+
+        downtime = ds.get_skill("manufacturing.downtime").focus.lower()
+        assert "by duration and by frequency separately" in downtime
+        assert "more downtime than the window contains" in downtime
+
+        quality = ds.get_skill("manufacturing.quality").focus.lower()
+        assert "give the denominator" in quality
+        assert "first-pass yield counts a reworked unit as a" in quality
+
+        capacity = ds.get_skill("manufacturing.capacity").focus.lower()
+        assert "theoretical, demonstrated or scheduled" in capacity
+        assert "hides" in capacity
 
 
 class TestNothingUntrustedReachesThePrompt:

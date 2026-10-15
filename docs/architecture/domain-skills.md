@@ -1,7 +1,7 @@
 # Domain analytics skills
 
 **Scope.** The design of `domain_skills/`: what a skill is, the boundaries
-it must respect, and how the next 45 are added. This document owns the
+it must respect, and how the next 40 are added. This document owns the
 **domain-skill contract**.
 
 It does not own domain *policy* — what may be asked, returned or
@@ -9,7 +9,7 @@ recommended in a business domain is
 [`../DATA_PRIVACY_GOVERNANCE_ENGINE.md`](../DATA_PRIVACY_GOVERNANCE_ENGINE.md),
 and a skill cannot change any of it.
 
-**Date:** 2026-10-15. **Batches delivered:** 9 — Sales, MIS / Management Reporting, Marketing, HR, eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply Chain / Procurement & Logistics (across 8 of 18 governance domains).
+**Date:** 2026-10-15. **Batches delivered:** 10 — Sales, MIS / Management Reporting, Marketing, HR, eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply Chain / Procurement & Logistics, Manufacturing & Operations (across 9 of 18 governance domains).
 
 ---
 
@@ -113,7 +113,7 @@ the two distinguishable where it matters (`sales.*` vs a future
 
 `registry.covered_domains()` answers "which of the eighteen are actually
 covered" from the catalog itself, so no document can claim coverage the
-code does not have. **Today: Sales, MIS, Marketing, HR, eCommerce, Training / L&D, Finance, BFSI and Supply Chain — 45 skills across 8 governance domains.**
+code does not have. **Today: Sales, MIS, Marketing, HR, eCommerce, Training / L&D, Finance, BFSI, Supply Chain and Manufacturing — 50 skills across 9 governance domains.**
 
 A test asserts `covered_domains()` equals exactly the delivered batches, so
 a new domain fails it until this document is updated in the same change —
@@ -165,26 +165,30 @@ caller text, no retrieved document, no database value, no model output.
 
 ## 7. Mutation evidence
 
-Each applied to live code, then reverted. Clean: `311 passed` (9 batches).
+Each applied to live code, then reverted. Clean: `346 passed` (10 batches).
 Counts grow with the catalog, which is the point — a guard that covered one
 batch would not stay meaningful as domains land.
 
 | Mutation | Result |
 |---|---|
-| selection stops filtering by domain — `select_skill` honours a slug registered in *any* domain (cross-domain leak) | **3 failed**, 308 passed |
-| no longer fails open when the flag is off | **1 failed**, 310 passed |
-| contract gains a format slot | **2 failed**, 309 passed |
-| `GENERAL` (unknown domain) gets guessed framing | **1 failed**, 310 passed |
-| guesses a default across prompt-domains (campaign → Revenue framing) | **2 failed**, 309 passed |
-| `group` stops being derived from the slug (returns a constant) | **51 failed**, 252 passed, 8 no longer collected |
-| prohibitions block dropped (HR invited to rank individuals) | **7 failed**, 304 passed |
-| prohibitions hard-coded to one domain instead of derived (`policy_for(HR)`) | **10 failed**, 301 passed |
-| ranking invitation becomes unqualified again | **1 failed**, 310 passed |
-| BFSI lending skill loses its redirect (refusal with no alternative) | **1 failed**, 310 passed |
-| BFSI skills declared under `FINANCE` (prohibitions silently halve) | **6 failed**, 305 passed |
-| supply-chain supplier skill loses its accusation guard | **1 failed**, 310 passed |
-| supply-chain logistics skill loses its individual-level guard | **1 failed**, 310 passed |
-| supply-chain skills declared under `MANUFACTURING` (its listed neighbour) | **4 failed**, 307 passed |
+| selection stops filtering by domain — `select_skill` honours a slug registered in *any* domain (cross-domain leak) | **3 failed**, 343 passed |
+| no longer fails open when the flag is off | **1 failed**, 345 passed |
+| contract gains a format slot | **2 failed**, 344 passed |
+| `GENERAL` (unknown domain) gets guessed framing | **1 failed**, 345 passed |
+| guesses a default across prompt-domains (campaign → Revenue framing) | **2 failed**, 344 passed |
+| `group` stops being derived from the slug (returns a constant) | **56 failed**, 281 passed, 9 no longer collected |
+| prohibitions block dropped (HR invited to rank individuals) | **7 failed**, 339 passed |
+| prohibitions hard-coded to one domain instead of derived (`policy_for(HR)`) | **12 failed**, 334 passed |
+| ranking invitation becomes unqualified again | **1 failed**, 345 passed |
+| BFSI lending skill loses its redirect (refusal with no alternative) | **1 failed**, 345 passed |
+| BFSI skills declared under `FINANCE` (prohibitions silently halve) | **6 failed**, 340 passed |
+| supply-chain supplier skill loses its accusation guard | **1 failed**, 345 passed |
+| supply-chain logistics skill loses its individual-level guard | **1 failed**, 345 passed |
+| supply-chain skills declared under `MANUFACTURING` (its listed neighbour) | **7 failed**, 338 passed (was 4 at batch 9 — see §13) |
+| OEE skill loses the average-of-ratios constraint | **1 failed**, 345 passed |
+| OEE skill writes out the formula (a second owner for `MetricDefinition.formula`) | **2 failed**, 344 passed |
+| manufacturing downtime skill loses its operator guard | **1 failed**, 345 passed |
+| manufacturing skills declared under `SUPPLY_CHAIN` (the reverse copy-paste) | **7 failed**, 338 passed |
 
 **Two notes on reading these numbers**, both found while re-measuring the
 table at batch 8 rather than carrying the previous figures forward:
@@ -196,17 +200,25 @@ table at batch 8 rather than carrying the previous figures forward:
   assertions that have nothing to do with the cross-domain guard. The
   inflated count would look like stronger evidence while actually testing
   something else. Mutation 8's count likewise depends on **which** domain
-  is hard-coded, so the row now names it. At batch 8 `policy_for(HR)`
-  failed 7 and `policy_for(SALES_MARKETING)` failed 6; at batch 9 the HR
-  variant fails **10**, because the zero-prohibition assertion is now
-  parametrized over both MIS and `SUPPLY_CHAIN` and catches it twice more.
-  Either variant proves the derivation is load-bearing; only a named one is
-  reproducible, and only a re-measured one is current.
+  is hard-coded, so the row now names it. `policy_for(HR)` failed 7 at
+  batch 8, **10** at batch 9 and **12** at batch 10, because the
+  zero-prohibition assertion is derived over every such covered domain and
+  each new one catches the mutation again. Either variant proves the
+  derivation is load-bearing; only a named one is reproducible, and only a
+  re-measured one is current.
 - **Mutation 6 changes how many tests exist.** The scope-once test is
   parametrized over the distinct `group` values, so collapsing `group` to
-  a constant collapses 9 parameters to 1 and the
-  total drops from 311 to 303. The 51 failures are real; the missing 8 were
+  a constant collapses 10 parameters to 1 and the
+  total drops from 346 to 337. The 56 failures are real; the missing 9 were
   never collected, not silently passed.
+
+- **A mutation's meaning can change under you.** Mutation 14 failed 4 tests
+  at batch 9 and fails 7 at batch 10 — not because a guard was added, but
+  because `MANUFACTURING` stopped being an empty domain. The same edit now
+  collides two prompt-domains in one governance domain instead of quietly
+  moving one, so the ambiguity refusal fires too. Carrying the old figure
+  forward would have published a number that no longer described the
+  mutation.
 
 Three of those only became real after a vacuous test was fixed. The full
 pattern is in §8; the first two are recorded here because they were found
@@ -575,13 +587,24 @@ the realistic copy-paste error, since manufacturing is this domain's one
 listed `cross_domain_allowed` neighbour and the subject matter adjoins it.
 
 The BFSI equivalent (mutation 11) was caught partly because prohibitions
-silently halved. **Here that signal does not exist**: `MANUFACTURING`
-prohibits nothing either, so not one prohibition test notices. What catches
-it is the coverage assertion, the registration assertion, and the two new
-supply-chain tests, which stop finding their domain — 4 failures. The
-lesson is that a batch landing in a zero-prohibition domain has one fewer
-line of defence than previous batches did, which is the reason this
-section's guards are tested directly rather than inferred.
+silently halved. **At batch 9 that signal did not exist**: `MANUFACTURING`
+prohibits nothing either, so not one prohibition test noticed. What caught
+it was the coverage assertion, the registration assertion, and the two new
+supply-chain tests, which stopped finding their domain — 4 failures. The
+lesson was that a batch landing in a zero-prohibition domain has one fewer
+line of defence than previous batches did, which is why this section's
+guards are tested directly rather than inferred.
+
+**Batch 10 changed what this mutation means, and the figure moved with
+it.** `MANUFACTURING` is no longer an empty domain, so the same edit no
+longer quietly relocates a batch — it collides two prompt-domains inside
+one governance domain, exactly as Marketing did with Sales at batch 3. The
+ambiguity refusal fires as well, and the derived zero-prohibition set loses
+a member, so it now fails **7** tests and collects one case fewer. The
+mutation is unchanged; the codebase around it is not. This is recorded
+rather than silently overwritten because it is the clearest example in this
+document of why §7's figures are re-measured each batch instead of carried
+forward.
 
 Worth recording for the next batch: the misdeclaration would also have
 **quietly changed what the result gate restricts**, since `SUPPLY_CHAIN`
@@ -591,7 +614,100 @@ grants nothing and reads nothing from the policy except its prohibitions.
 
 ---
 
-## 14. Adding the next batch
+## 14. Batch 10 (Manufacturing): where the metric layer stops
+
+Batch 10 lands in `MANUFACTURING` — the domain batch 9 used as its
+cautionary mutation. It has **two halves, and only one of them is new.**
+
+### The half that is reused, not rediscovered
+
+`policy_for(MANUFACTURING)` declares one restricted category (proprietary,
+plus the unavoidable baseline) and **no `ProhibitedAction`**, making it the
+third zero-prohibition domain after MIS and `SUPPLY_CHAIN`. So no
+constraint block is appended and the ranking invitation is never narrowed,
+and the live risk is the same shape as batch 9's drivers: **downtime and
+scrap are recorded against a shift and an operator.**
+`individual_performance_ranking` is prohibited in HR, not here.
+
+So the batch-9 pattern applies unchanged — `manufacturing.downtime`
+attributes to "equipment, reason and shift pattern, never to a named
+operator", and `manufacturing.quality` puts a defect on "a process,
+material or machine, never to the person who ran it". This is the second
+piece of evidence (after batch 5) that the abstraction has settled: a
+recurring problem was handled by applying the existing pattern rather than
+changing the model.
+
+The premise test is now **derived** rather than hard-coded.
+`ZERO_PROHIBITION_DOMAINS` is computed from the policy, so the next batch
+landing in such a domain is covered automatically — with
+`test_the_zero_prohibition_set_is_exactly_the_three_known_domains` pinning
+the membership, because a derived list that silently empties would make the
+parametrized test *vanish* rather than fail. Mutation 18 confirms that
+guard is not theoretical: it shrinks the set and the pin catches it.
+
+### The half that is new: a skill must not define a metric
+
+`semantic.metrics.MetricDefinition` owns a governed metric's `definition`,
+`formula`, `aggregation` — its docstring names `"derived ratio"` — and
+`grain`, under a `MetricStatus` and a version. OEE is exactly such a
+metric, and it is the most over-defined number in this domain.
+
+So writing `OEE = availability × performance × quality` into a focus text
+would create a **second owner for a governed fact** ([`CLAUDE.md`](../../CLAUDE.md)
+§4.8): an ungoverned, unversioned copy, in the one place a reviewer cannot
+see it, that would silently contradict an approved definition wherever a
+plant treats planned downtime or changeovers differently. The skill
+therefore points *at* the definition instead of supplying one — "use the
+approved metric definition rather than assuming one: whether planned
+downtime, changeovers and no-demand time sit inside the denominator is a
+governed choice that changes the number."
+
+This is the same line batch 7 drew between a policy and a skill, now drawn
+between the **metric layer** and a skill:
+
+| Owner | Owns |
+|---|---|
+| `governance/domains.py` | what may be asked, returned, recommended |
+| `semantic/metrics.py` | what a metric *is* — definition, formula, aggregation, grain |
+| `domain_skills/` | how to frame an analysis, and which basis to state |
+
+`test_no_skill_writes_out_a_metric_formula` enforces it across the whole
+catalog, not just this batch, so no future skill can quietly become a
+metric definition. Mutation 16 writes the formula in and fails 2 tests.
+
+### The arithmetic error no deterministic control catches
+
+OEE is a ratio, and the dominant failure in this domain is **averaging it**
+across lines, shifts or periods instead of recomposing it from component
+totals. A sum of ratios is not a ratio of sums.
+
+This is worth stating plainly because it is *not* something the platform
+can catch for the model. `agent/sql_validator.py` will happily pass
+`AVG(oee)`; it is valid, read-only, single-statement SELECT. The result
+gate will return it. Every deterministic control does its job, and the
+number is still wrong. That is precisely the category a skill exists to
+address — framing an analysis — and precisely why a skill is never
+described here as a control.
+
+### Analytical constraints this batch carries
+
+- **Gross versus good units.** Counting reworked or scrapped pieces as
+  output overstates every ratio built on top of it.
+- **Rank downtime by duration and by frequency separately.** The leading
+  reason by one is routinely not the leading reason by the other, and
+  overlapping events on parallel equipment must not sum to more downtime
+  than the window contains.
+- **Name the quality denominator.** Units produced, inspected and shipped
+  give three different rates, and only inspected units support a detection
+  rate. First-pass yield counts a reworked unit as a failure; final yield
+  does not.
+- **A line's capacity is its constraint's capacity.** An average
+  utilisation across work centres hides the one that governs output, and
+  theoretical, demonstrated and scheduled capacity rarely agree.
+
+---
+
+## 15. Adding the next batch
 
 1. Add the **prompt-domain's** scope string once in `catalog.py`. If the
    batch shares a governance domain with an existing one (as Marketing
@@ -619,7 +735,7 @@ request.
 
 ---
 
-## 15. Status
+## 16. Status
 
 | Item | State |
 |---|---|
@@ -633,7 +749,8 @@ request.
 | Finance & Corporate Functions skills (5 of 5 supplied) | **Registered** |
 | BFSI skills (5 of 5 supplied) | **Registered** |
 | Supply Chain / Procurement & Logistics skills (5 of 5 supplied) | **Registered** |
-| Other 10 domains | **Not registered** — a skill is added when its prompt arrives, never in anticipation |
+| Manufacturing & Operations skills (5 of 5 supplied) | **Registered** |
+| Other 9 domains | **Not registered** — a skill is added when its prompt arrives, never in anticipation |
 | Wiring into a live analysis path | **Not done** — see below |
 
 **Deliberately not wired yet.** The composer produces guidance, and nothing

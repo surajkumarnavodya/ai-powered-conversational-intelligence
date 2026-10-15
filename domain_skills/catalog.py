@@ -7,7 +7,8 @@ settings field that can add or edit a skill at runtime — see
 
 Batches so far: Sales, MIS / Management Reporting, Marketing, HR,
 eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply
-Chain / Procurement & Logistics. Every batch has arrived with an identical
+Chain / Procurement & Logistics, Manufacturing & Operations. Every batch
+has arrived with an identical
 body and an identical "Domain scope" sentence across its five prompts,
 differing only in the heading — so each *prompt-domain* writes its scope
 once (`_SALES_SCOPE`, `_MIS_SCOPE`, `_MARKETING_SCOPE`) and each skill
@@ -842,6 +843,126 @@ SUPPLY_CHAIN_SKILLS: tuple[DomainSkill, ...] = (
     ),
 )
 
+#: The supplied Manufacturing prompts' "Domain scope:" sentence, verbatim.
+_MANUFACTURING_SCOPE = "Analyze production, OEE, downtime, quality and capacity."
+
+#: The third zero-prohibition domain, after MIS and SUPPLY_CHAIN -- so the
+#: batch-9 pattern applies again and is reused here rather than
+#: rediscovered: `policy_for(MANUFACTURING)` declares one restricted
+#: category (proprietary, plus the unavoidable baseline) and not one
+#: `ProhibitedAction`, so no constraint block is appended and the shared
+#: contract's ranking invitation is never narrowed for this domain.
+#:
+#: Downtime and defects are routinely recorded against a shift and an
+#: operator, which makes `individual_performance_ranking` -- prohibited in
+#: HR, not here -- the live risk, exactly as driver data was at batch 9.
+#: The downtime and quality focus texts therefore attribute to equipment,
+#: reason, process and material, never to the person who ran the machine.
+#: `governance/result_policy.py` is still the control; the focus text only
+#: stops the model being invited to ask.
+#:
+#: What *is* new at batch 10 is the other boundary this batch runs into:
+#: `semantic.metrics.MetricDefinition` owns a metric's `definition`,
+#: `formula`, `aggregation` (its docstring names "derived ratio") and
+#: `grain`, under a governance `status`. So a skill must never define OEE.
+#: Writing the formula into a focus text would create a second owner for a
+#: governed fact (`CLAUDE.md` §4.8) -- an ungoverned, unversioned copy that
+#: would contradict an approved definition wherever a plant counts
+#: planned downtime differently. The skill's job is to insist the approved
+#: definition and its denominator are named, and that a ratio is recomposed
+#: from component totals instead of averaged.
+_MANUFACTURING = BusinessDomain.MANUFACTURING
+
+#: Declared in the supplied numeric order (01 production, 02 OEE, 03
+#: downtime, 04 quality, 05 capacity) even though the prompts arrived
+#: 01, 03, 04, 05, 02 -- declaration order decides the domain default, so
+#: it is Production Intelligence (01) rather than whichever file was listed
+#: first.
+MANUFACTURING_SKILLS: tuple[DomainSkill, ...] = (
+    DomainSkill(
+        slug="manufacturing.production",
+        title="Production Intelligence",
+        domain=_MANUFACTURING,
+        scope=_MANUFACTURING_SCOPE,
+        focus=(
+            "Output and schedule attainment: volume against plan, product "
+            "mix and yield across lines and plants. State whether a volume "
+            "is gross or good units -- counting reworked or scrapped pieces "
+            "as output overstates every ratio built on top of it. Give the "
+            "plan version a shortfall is measured against."
+        ),
+        dimensions=("plant", "line", "product", "shift pattern", "period"),
+    ),
+    DomainSkill(
+        slug="manufacturing.oee",
+        title="OEE Intelligence",
+        domain=_MANUFACTURING,
+        scope=_MANUFACTURING_SCOPE,
+        focus=(
+            "Overall equipment effectiveness and its availability, "
+            "performance and quality components. Use the approved metric "
+            "definition rather than assuming one: whether planned downtime, "
+            "changeovers and no-demand time sit inside the denominator is a "
+            "governed choice that changes the number. It is a ratio, so it "
+            "has to be recomposed from component totals -- averaging it "
+            "across lines, shifts or periods is arithmetically wrong. "
+            "Report the components next to it, because one figure cannot "
+            "say which of them moved."
+        ),
+        dimensions=("equipment", "line", "oee component", "shift pattern", "period"),
+    ),
+    DomainSkill(
+        slug="manufacturing.downtime",
+        title="Downtime Intelligence",
+        domain=_MANUFACTURING,
+        scope=_MANUFACTURING_SCOPE,
+        focus=(
+            "Downtime and where it concentrates: event count, duration, "
+            "mean time between failures and to repair, and which reasons "
+            "dominate. Rank by duration and by frequency separately, since "
+            "the leading reason by one is routinely not the leading reason "
+            "by the other. Overlapping events on parallel equipment must "
+            "not be summed into more downtime than the window contains. "
+            "Attribute downtime to equipment, reason and shift pattern, "
+            "never to a named operator."
+        ),
+        dimensions=("equipment", "downtime reason", "line", "shift pattern", "period"),
+    ),
+    DomainSkill(
+        slug="manufacturing.quality",
+        title="Quality Intelligence",
+        domain=_MANUFACTURING,
+        scope=_MANUFACTURING_SCOPE,
+        focus=(
+            "Defects, scrap and rework: defect rate, first-pass yield, "
+            "scrap cost and which defect modes dominate. Give the "
+            "denominator -- units produced, inspected and shipped yield "
+            "three different rates, and only inspected units support a "
+            "detection rate. First-pass yield counts a reworked unit as a "
+            "failure while final yield does not, so name which is reported. "
+            "A defect belongs to a process, material or machine, never to "
+            "the person who ran it."
+        ),
+        dimensions=("defect mode", "product", "process step", "line", "period"),
+    ),
+    DomainSkill(
+        slug="manufacturing.capacity",
+        title="Capacity Intelligence",
+        domain=_MANUFACTURING,
+        scope=_MANUFACTURING_SCOPE,
+        focus=(
+            "Capacity, utilisation and the constraint: demonstrated against "
+            "nameplate capacity, utilisation by work centre, and where the "
+            "bottleneck sits. A line's capacity is its constraint's "
+            "capacity, so an average utilisation across work centres hides "
+            "the one work centre that governs output. Say whether a "
+            "capacity figure is theoretical, demonstrated or scheduled, "
+            "because the three rarely agree."
+        ),
+        dimensions=("work centre", "plant", "product family", "constraint", "period"),
+    ),
+)
+
 #: Every registered skill, in declaration order. Later batches append their
 #: own tuple here.
 ALL_SKILLS: tuple[DomainSkill, ...] = (
@@ -854,4 +975,5 @@ ALL_SKILLS: tuple[DomainSkill, ...] = (
     + FINANCE_SKILLS
     + BFSI_SKILLS
     + SUPPLY_CHAIN_SKILLS
+    + MANUFACTURING_SKILLS
 )
