@@ -1,7 +1,7 @@
 # Domain analytics skills
 
 **Scope.** The design of `domain_skills/`: what a skill is, the boundaries
-it must respect, and how the next 40 are added. This document owns the
+it must respect, and how the next 35 are added. This document owns the
 **domain-skill contract**.
 
 It does not own domain *policy* — what may be asked, returned or
@@ -9,7 +9,7 @@ recommended in a business domain is
 [`../DATA_PRIVACY_GOVERNANCE_ENGINE.md`](../DATA_PRIVACY_GOVERNANCE_ENGINE.md),
 and a skill cannot change any of it.
 
-**Date:** 2026-10-15. **Batches delivered:** 10 — Sales, MIS / Management Reporting, Marketing, HR, eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply Chain / Procurement & Logistics, Manufacturing & Operations (across 9 of 18 governance domains).
+**Date:** 2026-10-15. **Batches delivered:** 11 — Sales, MIS / Management Reporting, Marketing, HR, eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply Chain / Procurement & Logistics, Manufacturing & Operations, Customer Service & Support (across 10 of 18 governance domains).
 
 ---
 
@@ -113,7 +113,7 @@ the two distinguishable where it matters (`sales.*` vs a future
 
 `registry.covered_domains()` answers "which of the eighteen are actually
 covered" from the catalog itself, so no document can claim coverage the
-code does not have. **Today: Sales, MIS, Marketing, HR, eCommerce, Training / L&D, Finance, BFSI, Supply Chain and Manufacturing — 50 skills across 9 governance domains.**
+code does not have. **Today: Sales, MIS, Marketing, HR, eCommerce, Training / L&D, Finance, BFSI, Supply Chain, Manufacturing and Customer Service — 55 skills across 10 governance domains.**
 
 A test asserts `covered_domains()` equals exactly the delivered batches, so
 a new domain fails it until this document is updated in the same change —
@@ -165,30 +165,33 @@ caller text, no retrieved document, no database value, no model output.
 
 ## 7. Mutation evidence
 
-Each applied to live code, then reverted. Clean: `346 passed` (10 batches).
+Each applied to live code, then reverted. Clean: `380 passed` (11 batches).
 Counts grow with the catalog, which is the point — a guard that covered one
 batch would not stay meaningful as domains land.
 
 | Mutation | Result |
 |---|---|
-| selection stops filtering by domain — `select_skill` honours a slug registered in *any* domain (cross-domain leak) | **3 failed**, 343 passed |
-| no longer fails open when the flag is off | **1 failed**, 345 passed |
-| contract gains a format slot | **2 failed**, 344 passed |
-| `GENERAL` (unknown domain) gets guessed framing | **1 failed**, 345 passed |
-| guesses a default across prompt-domains (campaign → Revenue framing) | **2 failed**, 344 passed |
-| `group` stops being derived from the slug (returns a constant) | **56 failed**, 281 passed, 9 no longer collected |
-| prohibitions block dropped (HR invited to rank individuals) | **7 failed**, 339 passed |
-| prohibitions hard-coded to one domain instead of derived (`policy_for(HR)`) | **12 failed**, 334 passed |
-| ranking invitation becomes unqualified again | **1 failed**, 345 passed |
-| BFSI lending skill loses its redirect (refusal with no alternative) | **1 failed**, 345 passed |
-| BFSI skills declared under `FINANCE` (prohibitions silently halve) | **6 failed**, 340 passed |
-| supply-chain supplier skill loses its accusation guard | **1 failed**, 345 passed |
-| supply-chain logistics skill loses its individual-level guard | **1 failed**, 345 passed |
-| supply-chain skills declared under `MANUFACTURING` (its listed neighbour) | **7 failed**, 338 passed (was 4 at batch 9 — see §13) |
-| OEE skill loses the average-of-ratios constraint | **1 failed**, 345 passed |
-| OEE skill writes out the formula (a second owner for `MetricDefinition.formula`) | **2 failed**, 344 passed |
-| manufacturing downtime skill loses its operator guard | **1 failed**, 345 passed |
-| manufacturing skills declared under `SUPPLY_CHAIN` (the reverse copy-paste) | **7 failed**, 338 passed |
+| selection stops filtering by domain — `select_skill` honours a slug registered in *any* domain (cross-domain leak) | **3 failed**, 377 passed |
+| no longer fails open when the flag is off | **1 failed**, 379 passed |
+| contract gains a format slot | **2 failed**, 378 passed |
+| `GENERAL` (unknown domain) gets guessed framing | **1 failed**, 379 passed |
+| guesses a default across prompt-domains (campaign → Revenue framing) | **2 failed**, 378 passed |
+| `group` stops being derived from the slug (returns a constant) | **61 failed**, 309 passed, 10 no longer collected |
+| prohibitions block dropped (HR invited to rank individuals) | **7 failed**, 373 passed |
+| prohibitions hard-coded to one domain instead of derived (`policy_for(HR)`) | **14 failed**, 366 passed |
+| ranking invitation becomes unqualified again | **1 failed**, 379 passed |
+| BFSI lending skill loses its redirect (refusal with no alternative) | **1 failed**, 379 passed |
+| BFSI skills declared under `FINANCE` (prohibitions silently halve) | **6 failed**, 374 passed |
+| supply-chain supplier skill loses its accusation guard | **1 failed**, 379 passed |
+| supply-chain logistics skill loses its individual-level guard | **1 failed**, 379 passed |
+| supply-chain skills declared under `MANUFACTURING` (its listed neighbour) | **7 failed**, 372 passed (was 4 at batch 9 — see §13) |
+| OEE skill loses the average-of-ratios constraint | **1 failed**, 379 passed |
+| OEE skill writes out the formula (a second owner for `MetricDefinition.formula`) | **2 failed**, 378 passed |
+| manufacturing downtime skill loses its operator guard | **1 failed**, 379 passed |
+| manufacturing skills declared under `SUPPLY_CHAIN` (the reverse copy-paste) | **7 failed**, 372 passed |
+| complaint skill loses its provenance guard (an allegation becomes a finding) | **1 failed**, 379 passed |
+| contact-centre skill loses its agent-level guard | **2 failed**, 378 passed |
+| customer-service skills declared under `SALES_MARKETING` (its listed neighbour) | **4 failed**, 375 passed |
 
 **Two notes on reading these numbers**, both found while re-measuring the
 table at batch 8 rather than carrying the previous figures forward:
@@ -201,15 +204,15 @@ table at batch 8 rather than carrying the previous figures forward:
   inflated count would look like stronger evidence while actually testing
   something else. Mutation 8's count likewise depends on **which** domain
   is hard-coded, so the row now names it. `policy_for(HR)` failed 7 at
-  batch 8, **10** at batch 9 and **12** at batch 10, because the
-  zero-prohibition assertion is derived over every such covered domain and
-  each new one catches the mutation again. Either variant proves the
+  batch 8, **10** at batch 9, **12** at batch 10 and **14** at batch 11,
+  because the zero-prohibition assertion is derived over every such covered
+  domain and each new one catches the mutation again. Either variant proves the
   derivation is load-bearing; only a named one is reproducible, and only a
   re-measured one is current.
 - **Mutation 6 changes how many tests exist.** The scope-once test is
   parametrized over the distinct `group` values, so collapsing `group` to
-  a constant collapses 10 parameters to 1 and the
-  total drops from 346 to 337. The 56 failures are real; the missing 9 were
+  a constant collapses 11 parameters to 1 and the
+  total drops from 380 to 370. The 61 failures are real; the missing 10 were
   never collected, not silently passed.
 
 - **A mutation's meaning can change under you.** Mutation 14 failed 4 tests
@@ -707,7 +710,93 @@ described here as a control.
 
 ---
 
-## 15. Adding the next batch
+## 15. Batch 11 (Customer Service): the record versus what it claims
+
+Customer Service is the **fourth** zero-prohibition domain, and the one
+where that matters most. `policy_for(CUSTOMER_SERVICE)` declares no
+`ProhibitedAction`, so the ranking invitation reaches it unnarrowed — and
+one of the five supplied skills, Contact Center Intelligence, is *about*
+per-agent productivity measures. Batch 9 met this risk with delivery
+drivers and batch 10 with machine operators; here it is the subject of the
+prompt rather than a side effect of it.
+
+### What the deterministic controls actually cover here
+
+Unlike `SUPPLY_CHAIN` and `MANUFACTURING`, this domain does engage the
+result gate: `minimum_group_size=5`, and PII, SPI and customer data
+restricted. It would be easy — and wrong — to conclude the problem is
+therefore handled.
+
+`governance/suppression.py` suppresses a **sensitive measure for a group
+below the threshold**, keeping the group label and the count visible. So
+twenty agents who each handled four hundred contacts are not small groups:
+nothing suppresses a ranking of them, and an authorised caller sees the
+measure. The deterministic controls bound *disclosure*. Whether a
+per-person ranking is a sound answer to the question at all is analysis
+framing, and that is the only part a skill addresses.
+
+`test_small_group_suppression_does_not_cover_the_ranking_risk` states that
+boundary as an assertion rather than a comment, so neither side is credited
+with the other's work. The guard itself follows batch 8's rule that a
+refusal without an alternative is not a skill — it says what to report
+instead (queue, interval, channel and team) and *why* handle time is the
+wrong basis for judging a person: it tracks the mix of contacts someone
+received, so ranking people on it penalises whoever took the hard work.
+
+### The new problem: a record is not its contents
+
+Every batch so far analysed **measurements** — quantities the business
+produced. A ticket or a complaint is different in kind: it is a **third
+party's claim**, stored as data.
+
+`agent.provenance.DataTruthLevel` makes the distinction precise, and
+[`CLAUDE.md`](../../CLAUDE.md) §4.4 makes it mandatory. The
+`DATABASE_FACT` is *that a complaint was logged, in a category, on a date*.
+That the product was defective, the team at fault, or the named agent rude
+is **not** a fact in the result — it is what the complaint alleges.
+Collapsing the two presents an allegation as an observed fact.
+
+Batch 8 is the precedent: "a rule firing is a control output, not a
+finding." But there the signal was machine-generated. Here a **person**
+made it, and frequently about another person — so a complaint restated as
+a finding is simultaneously an unsupported allegation and a claim about an
+identifiable individual, in a domain whose policy prohibits neither. That
+is why this guard is tested on its own rather than folded in with the
+measurement traps:
+
+```
+"A complaint record is evidence that a complaint was made, not that its
+ content is correct ... never restate what a complaint alleges as an
+ established finding against a product, a team or a named employee.
+ Report an upheld or rejected outcome only where the data records one."
+```
+
+The last clause matters as much as the first: where the data *does* record
+an outcome, reporting it is correct and required. The guard is against
+inventing a verdict, not against reporting one.
+
+Mutation 19 removes it and replaces it with the plausible-sounding "report
+which products and teams the complaints show to be at fault" — which is
+exactly the sentence a well-meaning author would write.
+
+### Analytical constraints this batch carries
+
+- **Count a ticket once.** Reopens, merges and splits make volume and
+  resolution rate disagree unless the counting rule is stated, and
+  resolution time taken from closed tickets alone leaves out the hardest
+  cases, which are still open.
+- **An SLA clock is a definition, not a measurement.** Calendar versus
+  business hours, and whether time waiting on the customer is excluded,
+  decide whether the *same* tickets pass or breach. Attainment is measured
+  against the target in force when the ticket was raised, and in-flight
+  tickets already past target are breaches rather than omissions.
+- **Service and churn is reverse-causality bait.** They move together, and
+  this data cannot establish the direction: unhappy customers contact
+  support, which is not the same as support contact causing them to leave.
+
+---
+
+## 16. Adding the next batch
 
 1. Add the **prompt-domain's** scope string once in `catalog.py`. If the
    batch shares a governance domain with an existing one (as Marketing
@@ -735,7 +824,7 @@ request.
 
 ---
 
-## 16. Status
+## 17. Status
 
 | Item | State |
 |---|---|
@@ -750,7 +839,8 @@ request.
 | BFSI skills (5 of 5 supplied) | **Registered** |
 | Supply Chain / Procurement & Logistics skills (5 of 5 supplied) | **Registered** |
 | Manufacturing & Operations skills (5 of 5 supplied) | **Registered** |
-| Other 9 domains | **Not registered** — a skill is added when its prompt arrives, never in anticipation |
+| Customer Service & Support skills (5 of 5 supplied) | **Registered** |
+| Other 8 domains | **Not registered** — a skill is added when its prompt arrives, never in anticipation |
 | Wiring into a live analysis path | **Not done** — see below |
 
 **Deliberately not wired yet.** The composer produces guidance, and nothing

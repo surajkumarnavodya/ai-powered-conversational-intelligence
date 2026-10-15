@@ -45,6 +45,7 @@ FINANCE = BusinessDomain.FINANCE
 BFSI = BusinessDomain.BFSI
 SUPPLY_CHAIN = BusinessDomain.SUPPLY_CHAIN
 MANUFACTURING = BusinessDomain.MANUFACTURING
+CUSTOMER_SERVICE = BusinessDomain.CUSTOMER_SERVICE
 
 #: Covered domains whose policy declares no `ProhibitedAction` at all, so
 #: `composer._prohibitions_block` appends nothing and the shared contract's
@@ -68,6 +69,20 @@ class TestCatalog:
             "sales.product",
             "sales.pricing",
         )
+
+    def test_the_supplied_customer_service_skills_are_registered_in_numeric_order(self):
+        """Supplied 01..05 in order; registered in that order, so the
+        domain default is Customer Support Intelligence."""
+        assert tuple(s.slug for s in ds.skills_for_domain(CUSTOMER_SERVICE)) == (
+            "customer_service.support",  # 01
+            "customer_service.sla",  # 02
+            "customer_service.complaint",  # 03
+            "customer_service.contact_center",  # 04
+            "customer_service.service_retention",  # 05
+        )
+        default = select_skill(CUSTOMER_SERVICE)
+        assert default is not None
+        assert default.slug == "customer_service.support"
 
     def test_the_supplied_manufacturing_skills_are_registered_in_numeric_order(self):
         """The prompts arrived 01, 03, 04, 05, 02 and are registered 01..05.
@@ -190,8 +205,8 @@ class TestCatalog:
         """Four prompt-domains, three governance domains: Marketing shares
         `SALES_MARKETING` with Sales. Inventing a governance domain per
         batch would mean two answers to 'what may this question return'."""
-        assert len({s.group for s in ds.all_skills()}) == 10
-        assert len(ds.covered_domains()) == 9
+        assert len({s.group for s in ds.all_skills()}) == 11
+        assert len(ds.covered_domains()) == 10
 
     def test_the_supplied_mis_skills_are_registered(self):
         assert tuple(s.slug for s in ds.skills_for_domain(MIS)) == (
@@ -246,6 +261,7 @@ class TestCatalog:
             BFSI,
             SUPPLY_CHAIN,
             MANUFACTURING,
+            CUSTOMER_SERVICE,
         )
 
     def test_every_uncovered_domain_has_no_skills(self):
@@ -571,15 +587,26 @@ class TestDomainProhibitionsAreDerivedNotRestated:
         assert text.rstrip().endswith("instead of doing it.")
         assert text.index("Domain constraints") > text.index("Rank top and bottom")
 
-    def test_the_zero_prohibition_set_is_exactly_the_three_known_domains(self):
+    def test_the_zero_prohibition_set_is_exactly_the_known_domains(self):
         """Pins the derivation the test below parametrizes over.
 
         That list is derived from the policy so a future zero-prohibition
         batch is covered automatically. Derived alone, though, it could
         silently shrink to nothing and the parametrized test would vanish
         rather than fail -- so the membership is asserted here.
+
+        Named without a count, deliberately: the previous name said
+        "three" and batch 11 made it four. A count in a test name goes
+        stale exactly as `test_the_other_sixteen_domains_have_no_skills`
+        did, and for the same reason -- the body derives what the name
+        hard-codes.
         """
-        assert ZERO_PROHIBITION_DOMAINS == (MIS, SUPPLY_CHAIN, MANUFACTURING)
+        assert ZERO_PROHIBITION_DOMAINS == (
+            MIS,
+            SUPPLY_CHAIN,
+            MANUFACTURING,
+            CUSTOMER_SERVICE,
+        )
 
     @pytest.mark.parametrize("domain", ZERO_PROHIBITION_DOMAINS, ids=lambda d: d.value)
     def test_a_domain_with_no_prohibitions_appends_nothing(self, domain):
@@ -591,9 +618,10 @@ class TestDomainProhibitionsAreDerivedNotRestated:
         with no block appended, the contract's "rank top and bottom
         performers" invitation is never overridden for any of them. MIS is
         safe by subject matter -- management reporting is inherently
-        aggregate -- while the other two carry their own guards, in
-        `TestSupplyChainCarriesItsOwnGuards` and
-        `TestManufacturingCarriesItsOwnGuards`.
+        aggregate -- while the others carry their own guards, in
+        `TestSupplyChainCarriesItsOwnGuards`,
+        `TestManufacturingCarriesItsOwnGuards` and
+        `TestCustomerServiceCarriesItsOwnGuards`.
         """
         from governance.domains import policy_for
 
@@ -941,6 +969,104 @@ class TestManufacturingCarriesItsOwnGuards:
         capacity = ds.get_skill("manufacturing.capacity").focus.lower()
         assert "theoretical, demonstrated or scheduled" in capacity
         assert "hides" in capacity
+
+
+class TestCustomerServiceCarriesItsOwnGuards:
+    """Batch 11: the fourth zero-prohibition domain, and the sharpest one.
+
+    An entire supplied skill -- Contact Center Intelligence -- is *about*
+    per-agent productivity measures, in a domain whose policy prohibits
+    `individual_performance_ranking` not at all. Batch 9 met this with
+    delivery drivers and batch 10 with machine operators; here it is the
+    subject of the prompt rather than a side effect of it.
+
+    This domain does engage the result gate, unlike the previous two:
+    `minimum_group_size=5` and PII/SPI/customer restrictions. The tests
+    below are deliberately scoped to what that does *not* cover, so the
+    guards are not credited with work the deterministic controls do, nor
+    the controls with work they do not.
+
+    The new problem is provenance. A ticket or complaint is a third
+    party's claim, so the `DATABASE_FACT` is that it was logged -- never
+    that its content is true (`CLAUDE.md` §4.4).
+    """
+
+    def test_the_domain_genuinely_appends_no_constraint_block(self):
+        """The premise. If CUSTOMER_SERVICE ever gains a `ProhibitedAction`
+        the derived block starts covering some of this, and these guards
+        should be revisited rather than silently kept."""
+        assert policy_for(CUSTOMER_SERVICE).prohibited_actions == frozenset()
+
+        for skill in ds.skills_for_domain(CUSTOMER_SERVICE):
+            result = guidance_for(CUSTOMER_SERVICE, enabled=True, preferred_slug=skill.slug)
+            assert result is not None
+            text, chosen = result
+            assert chosen.slug == skill.slug
+            assert "Domain constraints" not in text, skill.slug
+            assert "Rank top and bottom performers" in text, skill.slug
+
+    def test_small_group_suppression_does_not_cover_the_ranking_risk(self):
+        """Why the focus guard is still needed in a domain that *does*
+        engage the result gate.
+
+        `governance.suppression` suppresses a sensitive measure for a group
+        below `minimum_group_size` and keeps the label and count. Twenty
+        agents who each handled hundreds of contacts are not small groups,
+        so nothing suppresses a ranking of them, and an authorised caller
+        sees the measure. The controls bound disclosure; whether a
+        per-person ranking is a sound answer is framing.
+        """
+        policy = policy_for(CUSTOMER_SERVICE)
+        assert policy.minimum_group_size == 5, "premise: this domain sets a threshold"
+        assert policy.prohibited_actions == frozenset(), "premise: no action is prohibited"
+
+        focus = ds.get_skill("customer_service.contact_center").focus.lower()
+        assert "rather than individual agents" in focus
+
+    def test_the_contact_center_skill_gives_a_reason_not_just_a_refusal(self):
+        """Batch 8's lesson: a guard with no alternative is a refusal. This
+        one has to say what to report instead, and why handle time is the
+        wrong basis for judging a person.
+        """
+        focus = ds.get_skill("customer_service.contact_center").focus.lower()
+        assert "queue, interval, channel" in focus
+        assert "penalises whoever took the hard work" in focus
+
+    def test_a_complaint_is_reported_as_logged_not_as_established(self):
+        """The provenance guard. A complaint record is evidence a complaint
+        was made; its content is an allegation, frequently about a named
+        employee. Restating it as a finding would present a third party's
+        claim as a `DATABASE_FACT`.
+        """
+        focus = ds.get_skill("customer_service.complaint").focus.lower()
+        assert "evidence that a complaint was made, not that its content is correct" in focus
+        assert "never restate what a complaint alleges as an established finding" in focus
+        assert "only where the data records one" in focus
+
+    def test_the_guards_are_not_a_restatement_of_a_prohibition(self):
+        """They must read as analytical guidance rather than a hand-written
+        copy of a `ProhibitedAction`, which would be a second owner for a
+        fact `governance/domains.py` owns.
+        """
+        for skill in ds.skills_for_domain(CUSTOMER_SERVICE):
+            lowered = skill.focus.lower()
+            assert "individual performance ranking" not in lowered
+            assert "unsupported allegation" not in lowered
+            assert "prohibit" not in lowered
+
+    def test_each_skill_states_the_measurement_trap_its_subject_carries(self):
+        """Read off the subject matter, not from the policy."""
+        support = ds.get_skill("customer_service.support").focus.lower()
+        assert "count a ticket once" in support
+        assert "reopens, merges and splits" in support
+
+        sla = ds.get_skill("customer_service.sla").focus.lower()
+        assert "calendar or business hours" in sla
+        assert "target in force when the ticket was raised" in sla
+
+        retention = ds.get_skill("customer_service.service_retention").focus.lower()
+        assert "correlation whose direction this data cannot establish" in retention
+        assert "which is not the same as support contact causing them to leave" in retention
 
 
 class TestNothingUntrustedReachesThePrompt:

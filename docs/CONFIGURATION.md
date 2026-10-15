@@ -578,10 +578,11 @@ those gates reads a skill.
 
 Coverage today is **Sales, MIS / Management Reporting, Marketing, HR,
 eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply
-Chain / Procurement & Logistics and Manufacturing & Operations** — 50
-skills across 9 governance domains, since Sales and Marketing share
-`SALES_MARKETING`. The other 9 governance domains have none declared — a
-skill is added when its prompt arrives, never in anticipation.
+Chain / Procurement & Logistics, Manufacturing & Operations and Customer
+Service & Support** — 55 skills across 10 governance domains, since Sales
+and Marketing share `SALES_MARKETING`. The other 8 governance domains have
+none declared — a skill is added when its prompt arrives, never in
+anticipation.
 
 Guidance for a domain automatically carries that domain's prohibited
 actions, derived from `governance/domains.py`. HR, for example, prohibits

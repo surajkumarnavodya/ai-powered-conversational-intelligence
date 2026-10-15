@@ -7,8 +7,8 @@ settings field that can add or edit a skill at runtime — see
 
 Batches so far: Sales, MIS / Management Reporting, Marketing, HR,
 eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply
-Chain / Procurement & Logistics, Manufacturing & Operations. Every batch
-has arrived with an identical
+Chain / Procurement & Logistics, Manufacturing & Operations, Customer
+Service & Support. Every batch has arrived with an identical
 body and an identical "Domain scope" sentence across its five prompts,
 differing only in the heading — so each *prompt-domain* writes its scope
 once (`_SALES_SCOPE`, `_MIS_SCOPE`, `_MARKETING_SCOPE`) and each skill
@@ -963,6 +963,140 @@ MANUFACTURING_SKILLS: tuple[DomainSkill, ...] = (
     ),
 )
 
+#: The supplied Customer Service prompts' "Domain scope:" sentence, verbatim.
+_CUSTOMER_SERVICE_SCOPE = (
+    "Analyze tickets, SLAs, complaints, contact centers and service/retention."
+)
+
+#: The fourth zero-prohibition domain, and the one where that matters most.
+#: `policy_for(CUSTOMER_SERVICE)` declares no `ProhibitedAction`, so no
+#: constraint block is appended and the ranking invitation is never
+#: narrowed -- while an entire supplied skill, Contact Center Intelligence,
+#: is *about* per-agent productivity measures. This is the sharpest form of
+#: the risk batch 9 first met with delivery drivers.
+#:
+#: Unlike SUPPLY_CHAIN and MANUFACTURING, this domain does engage the
+#: result gate: `minimum_group_size=5` plus PII, SPI and customer
+#: restrictions. Be precise about what that covers.
+#: `governance.suppression` suppresses a *sensitive measure* for a group
+#: below five and keeps the label and count visible. It therefore does
+#: nothing about ranking twenty agents who each handled four hundred
+#: contacts: that is not a small group, and an authorised caller sees the
+#: measure. The deterministic controls bound disclosure; whether a
+#: per-person ranking is a sound answer at all is analysis framing, which
+#: is what the focus texts below address.
+#:
+#: The genuinely new problem here is provenance. A ticket or complaint
+#: record is a *third party's claim*, not a measurement: the
+#: `DATABASE_FACT` is that a complaint was logged in a category, never
+#: that its content is correct (`agent.provenance.DataTruthLevel`,
+#: `CLAUDE.md` §4.4). Batch 8's "a rule firing is a control output, not a
+#: finding" is the precedent, but there the signal was machine-generated.
+#: Here a person made it, and often about another person -- so a complaint
+#: restated as fact is simultaneously an unsupported allegation and a
+#: claim about an identifiable individual, in a domain whose policy
+#: prohibits neither.
+_CUSTOMER_SERVICE = BusinessDomain.CUSTOMER_SERVICE
+
+#: Declared in the supplied numeric order (01 support, 02 SLA, 03
+#: complaint, 04 contact centre, 05 service and retention), so the domain
+#: default is Customer Support Intelligence (01).
+CUSTOMER_SERVICE_SKILLS: tuple[DomainSkill, ...] = (
+    DomainSkill(
+        slug="customer_service.support",
+        title="Customer Support Intelligence",
+        domain=_CUSTOMER_SERVICE,
+        scope=_CUSTOMER_SERVICE_SCOPE,
+        focus=(
+            "Demand and resolution across queues: ticket volume, backlog, "
+            "first-contact resolution, reopen rate and satisfaction by "
+            "queue and channel. Count a ticket once -- reopens, merges and "
+            "splits make volume and resolution rate disagree unless the "
+            "counting rule is stated. Resolution time taken from closed "
+            "tickets alone leaves out the hardest cases, which are still "
+            "open."
+        ),
+        dimensions=("queue", "channel", "priority", "ticket category", "period"),
+    ),
+    DomainSkill(
+        slug="customer_service.sla",
+        title="SLA Intelligence",
+        domain=_CUSTOMER_SERVICE,
+        scope=_CUSTOMER_SERVICE_SCOPE,
+        focus=(
+            "Attainment against commitment: met and breached volumes, "
+            "attainment rate, and where breaches concentrate. Say whether "
+            "the clock runs on calendar or business hours and whether time "
+            "waiting on the customer is excluded, because the same tickets "
+            "pass or breach on that choice alone. Measure against the "
+            "target in force when the ticket was raised, and count "
+            "in-flight tickets already past target as breaches rather than "
+            "omitting them."
+        ),
+        dimensions=("sla target", "priority", "queue", "breach reason", "period"),
+    ),
+    DomainSkill(
+        slug="customer_service.complaint",
+        title="Complaint Intelligence",
+        domain=_CUSTOMER_SERVICE,
+        scope=_CUSTOMER_SERVICE_SCOPE,
+        focus=(
+            "Complaint volume, category mix, concentration and time to "
+            "resolve. A complaint record is evidence that a complaint was "
+            "made, not that its content is correct: report categories and "
+            "counts as logged, and never restate what a complaint alleges "
+            "as an established finding against a product, a team or a "
+            "named employee. Report an upheld or rejected outcome only "
+            "where the data records one."
+        ),
+        dimensions=(
+            "complaint category",
+            "product",
+            "channel",
+            "resolution outcome",
+            "period",
+        ),
+    ),
+    DomainSkill(
+        slug="customer_service.contact_center",
+        title="Contact Center Intelligence",
+        domain=_CUSTOMER_SERVICE,
+        scope=_CUSTOMER_SERVICE_SCOPE,
+        focus=(
+            "Contact centre operations: offered and handled volume, service "
+            "level, abandonment, average handle time, occupancy and "
+            "forecast accuracy by interval. Report queue, interval, channel "
+            "and team rather than individual agents -- handle time tracks "
+            "the mix of contacts someone received, so ranking people on it "
+            "penalises whoever took the hard work. Name the denominator "
+            "behind occupancy and utilisation."
+        ),
+        dimensions=("queue", "interval", "channel", "team", "period"),
+    ),
+    DomainSkill(
+        slug="customer_service.service_retention",
+        title="Service and Retention Intelligence",
+        domain=_CUSTOMER_SERVICE,
+        scope=_CUSTOMER_SERVICE_SCOPE,
+        focus=(
+            "How service experience relates to retention: churn and renewal "
+            "by service history, repeat-contact rate, and the revenue at "
+            "risk in affected accounts. Service quality and churn moving "
+            "together is a correlation whose direction this data cannot "
+            "establish -- unhappy customers contact support, which is not "
+            "the same as support contact causing them to leave. State the "
+            "population and the window a churn rate is measured over."
+        ),
+        dimensions=(
+            "segment",
+            "service experience band",
+            "tenure band",
+            "product",
+            "period",
+        ),
+    ),
+)
+
 #: Every registered skill, in declaration order. Later batches append their
 #: own tuple here.
 ALL_SKILLS: tuple[DomainSkill, ...] = (
@@ -976,4 +1110,5 @@ ALL_SKILLS: tuple[DomainSkill, ...] = (
     + BFSI_SKILLS
     + SUPPLY_CHAIN_SKILLS
     + MANUFACTURING_SKILLS
+    + CUSTOMER_SERVICE_SKILLS
 )
