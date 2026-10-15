@@ -47,6 +47,7 @@ SUPPLY_CHAIN = BusinessDomain.SUPPLY_CHAIN
 MANUFACTURING = BusinessDomain.MANUFACTURING
 CUSTOMER_SERVICE = BusinessDomain.CUSTOMER_SERVICE
 PROJECT = BusinessDomain.PROJECT
+IT_OPERATIONS = BusinessDomain.IT_OPERATIONS
 
 #: Covered domains whose policy declares no `ProhibitedAction` at all, so
 #: `composer._prohibitions_block` appends nothing and the shared contract's
@@ -70,6 +71,20 @@ class TestCatalog:
             "sales.product",
             "sales.pricing",
         )
+
+    def test_the_supplied_it_ops_skills_are_registered_in_numeric_order(self):
+        """Supplied 01..05 in order; registered in that order, so the
+        domain default is IT Service Intelligence, the broadest."""
+        assert tuple(s.slug for s in ds.skills_for_domain(IT_OPERATIONS)) == (
+            "it_ops.service",  # 01
+            "it_ops.incident",  # 02
+            "it_ops.change",  # 03
+            "it_ops.application_performance",  # 04
+            "it_ops.cost_cloud",  # 05
+        )
+        default = select_skill(IT_OPERATIONS)
+        assert default is not None
+        assert default.slug == "it_ops.service"
 
     def test_the_supplied_project_skills_are_registered_in_numeric_order(self):
         """Supplied 01..05 in order; registered in that order, so the
@@ -220,8 +235,8 @@ class TestCatalog:
         """Four prompt-domains, three governance domains: Marketing shares
         `SALES_MARKETING` with Sales. Inventing a governance domain per
         batch would mean two answers to 'what may this question return'."""
-        assert len({s.group for s in ds.all_skills()}) == 12
-        assert len(ds.covered_domains()) == 11
+        assert len({s.group for s in ds.all_skills()}) == 13
+        assert len(ds.covered_domains()) == 12
 
     def test_the_supplied_mis_skills_are_registered(self):
         assert tuple(s.slug for s in ds.skills_for_domain(MIS)) == (
@@ -278,6 +293,7 @@ class TestCatalog:
             MANUFACTURING,
             CUSTOMER_SERVICE,
             PROJECT,
+            IT_OPERATIONS,
         )
 
     def test_every_uncovered_domain_has_no_skills(self):
@@ -624,6 +640,11 @@ class TestDomainProhibitionsAreDerivedNotRestated:
             CUSTOMER_SERVICE,
             PROJECT,
         )
+        # Batch 13 deliberately does *not* join this list: IT_OPERATIONS
+        # prohibits `credential_disclosure`, so it gets a derived block.
+        # Asserted here rather than only in `TestITOperationsDerivesItsOne
+        # Prohibition`, because this is the tuple that would silently grow.
+        assert IT_OPERATIONS not in ZERO_PROHIBITION_DOMAINS
 
     @pytest.mark.parametrize("domain", ZERO_PROHIBITION_DOMAINS, ids=lambda d: d.value)
     def test_a_domain_with_no_prohibitions_appends_nothing(self, domain):
@@ -793,6 +814,7 @@ class TestDomainProhibitionsAreDerivedNotRestated:
             lowered = skill.focus.lower()
             assert "individual compensation decision" not in lowered
             assert "unsupported allegation" not in lowered
+            assert "credential disclosure" not in lowered
 
 
 class TestSupplyChainCarriesItsOwnGuards:
@@ -1208,6 +1230,174 @@ class TestProjectCarriesItsOwnGuards:
         resource = ds.get_skill("project.resource_capacity").focus.lower()
         assert "many-to-many" in resource
         assert "counts the same person once per project" in resource
+
+
+class TestITOperationsDerivesItsOneProhibition:
+    """Batch 13 is the inverse of batches 9-12.
+
+    Those domains prohibited nothing, so the focus texts had to carry the
+    risk alone. `policy_for(IT_OPERATIONS)` prohibits exactly one action --
+    `credential_disclosure` -- and it is the one backed by an *absolute*
+    control: `governance.classification.NEVER_DISCLOSED_CATEGORIES` holds
+    `CREDENTIAL` back from every caller including an admin, with no role
+    that unlocks it (`CLAUDE.md` 5.4). So the block is derived and no focus
+    text restates it, exactly as BFSI's four are.
+
+    What the skills carry instead is the provenance of a machine-generated
+    measure. Batch 11 analysed a third party's claim and batch 12 a
+    self-assessment by the measured party; here the number is an instrument
+    reading whose instrument was configured by the team being measured.
+    """
+
+    def test_the_single_prohibition_is_derived_into_every_skills_block(self):
+        """The premise. One prohibition, derived -- not five, and not
+        none."""
+        actions = {a.value for a in policy_for(IT_OPERATIONS).prohibited_actions}
+        assert actions == {"credential_disclosure"}
+
+        skills = ds.skills_for_domain(IT_OPERATIONS)
+        # Without this the loop empties when the batch is declared under
+        # another domain and the test passes vacuously -- the batch-12
+        # lesson, applied on arrival rather than after a mutation.
+        assert len(skills) == 5
+        for skill in skills:
+            result = guidance_for(IT_OPERATIONS, enabled=True, preferred_slug=skill.slug)
+            assert result is not None
+            text, chosen = result
+            assert chosen.slug == skill.slug
+            assert "This domain prohibits: credential disclosure." in text, skill.slug
+
+    def test_it_is_the_narrowest_non_empty_block_in_the_catalog(self):
+        """Proves the block is derived per domain rather than being one
+        constant: HR renders five prohibitions, BFSI four and this domain
+        exactly one, from the same code path.
+        """
+        counts = {
+            domain: len(policy_for(domain).prohibited_actions)
+            for domain in (HR, BFSI, IT_OPERATIONS)
+        }
+        assert counts[IT_OPERATIONS] == 1
+        assert counts[IT_OPERATIONS] < counts[BFSI] < counts[HR]
+
+        result = guidance_for(IT_OPERATIONS, enabled=True)
+        assert result is not None
+        text, _ = result
+        # One action phrased, so no separator -- a hand-written block would
+        # not track that.
+        assert "; " not in text.split("This domain prohibits: ")[1].split(".")[0]
+
+    def test_the_ranking_invitation_is_narrowed_here_unlike_batches_9_to_12(self):
+        """The structural difference from the previous four batches, stated
+        as an assertion rather than a comment.
+
+        `_prohibitions_block` appends "Report in aggregate only" whenever a
+        domain prohibits anything at all. IT_OPERATIONS does, so unlike
+        SUPPLY_CHAIN, MANUFACTURING, CUSTOMER_SERVICE and PROJECT the
+        contract's "rank top and bottom performers" invitation *is*
+        overridden here. That is why the per-skill individual guard below
+        is reinforcement rather than the only line.
+        """
+        result = guidance_for(IT_OPERATIONS, enabled=True)
+        assert result is not None
+        text, _ = result
+        assert "Report in aggregate only." in text
+        assert text.index("Domain constraints") > text.index("Rank top and bottom")
+
+        for zero in ZERO_PROHIBITION_DOMAINS:
+            other = guidance_for(zero, enabled=True)
+            assert other is not None
+            assert "Report in aggregate only." not in other[0], zero.value
+
+    def test_no_focus_text_restates_the_credential_prohibition(self):
+        """Derived, never restated -- the batch-4 rule. A second owner
+        could drift from the policy the governance engine enforces, and
+        here it would also imply the skill is the control, which it is
+        not: `governance/result_policy.py` withholds the category whatever
+        any prompt says.
+        """
+        for skill in ds.skills_for_domain(IT_OPERATIONS):
+            lowered = skill.focus.lower()
+            assert "credential" not in lowered, skill.slug
+            assert "password" not in lowered, skill.slug
+            assert "secret" not in lowered, skill.slug
+
+    def test_a_machine_generated_count_carries_the_configuration_that_produced_it(self):
+        """The new provenance step. An incident count is partly a property
+        of the alerting threshold and the deduplication rule, so a fall in
+        volume can be a configuration change rather than a quieter estate.
+        """
+        focus = ds.get_skill("it_ops.incident").focus.lower()
+        assert "alerting threshold and the deduplication" in focus
+        assert "configuration change rather than a quieter estate" in focus
+        assert "say which rules were in force" in focus
+
+    def test_availability_is_reported_as_a_definition_before_a_measurement(self):
+        """Planned-maintenance treatment alone decides whether the same
+        outage breaches, so the exclusion windows have to be named."""
+        focus = ds.get_skill("it_ops.service").focus.lower()
+        assert "availability is a definition" in focus
+        assert "name the exclusion windows" in focus
+
+    def test_the_change_skill_refuses_to_turn_a_sequence_into_a_cause(self):
+        """Change-and-incident data is the most tempting place in this
+        domain to cross the CORRELATION/cause line, and a time-window
+        linkage manufactures the relationship it then measures.
+        """
+        focus = ds.get_skill("it_ops.change").focus.lower()
+        assert "linkage rule stated" in focus
+        assert "manufactures the relationship it then measures" in focus
+        assert "is a sequence" in focus
+
+    def test_the_application_skill_blocks_the_average_of_percentiles_error(self):
+        """Batch 10's average-of-ratios error has a sibling here: a
+        percentile is not a mean and cannot be averaged across windows or
+        instances. A correct, validated SQL statement still produces it.
+        """
+        focus = ds.get_skill("it_ops.application_performance").focus.lower()
+        assert "percentile cannot be" in focus
+        assert "averaged across windows or instances" in focus
+        assert "recomputed from" in focus
+
+    def test_the_incident_skill_still_guards_the_individual_assignee(self):
+        """Reinforcement, not the only line (see the narrowing test above).
+        Assignee-level restoration time is the most common bad ask in this
+        domain, and queue mix decides it.
+        """
+        focus = ds.get_skill("it_ops.incident").focus.lower()
+        assert "never ranking the individual assignee" in focus
+        assert "queue mix decides their numbers" in focus
+
+    def test_the_cost_skill_does_not_invite_a_configuration_or_payload_body(self):
+        """Framing, explicitly **not** a control.
+
+        `governance.result_policy` classifies the *returned column names*,
+        so it withholds a column named like a secret. A secret pasted into
+        a free-text `message` or configuration-value column is not caught
+        by that name inference, and `security/injection_patterns.py` is
+        detection rather than a boundary (`CLAUDE.md` 5.5). Asking for
+        counts, classes and cost rather than payload bodies does not close
+        that gap -- it just stops the model being invited into it.
+        """
+        focus = ds.get_skill("it_ops.cost_cloud").focus.lower()
+        assert "report resource counts, classes and cost" in focus
+        assert "not the contents of resource configuration or log" in focus
+
+    def test_each_skill_states_the_measurement_trap_its_subject_carries(self):
+        """Read off the subject matter, not from the policy."""
+        service = ds.get_skill("it_ops.service").focus.lower()
+        assert "weakest link it" in service
+        assert "not the average of its components'" in service
+
+        change = ds.get_skill("it_ops.change").focus.lower()
+        assert "emergency against planned mix" in change
+
+        application = ds.get_skill("it_ops.application_performance").focus.lower()
+        assert "unmonitored component" in application
+        assert "reads as healthy" in application
+
+        cost = ds.get_skill("it_ops.cost_cloud").focus.lower()
+        assert "untagged spend is" in cost
+        assert "amortised or as-invoiced" in cost
 
 
 class TestNothingUntrustedReachesThePrompt:

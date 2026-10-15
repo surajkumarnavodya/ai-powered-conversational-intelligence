@@ -8,8 +8,8 @@ settings field that can add or edit a skill at runtime — see
 Batches so far: Sales, MIS / Management Reporting, Marketing, HR,
 eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply
 Chain / Procurement & Logistics, Manufacturing & Operations, Customer
-Service & Support, Project & Portfolio Management. Every batch has arrived
-with an identical
+Service & Support, Project & Portfolio Management, IT Operations &
+Service Management. Every batch has arrived with an identical
 body and an identical "Domain scope" sentence across its five prompts,
 differing only in the heading — so each *prompt-domain* writes its scope
 once (`_SALES_SCOPE`, `_MIS_SCOPE`, `_MARKETING_SCOPE`) and each skill
@@ -1211,6 +1211,136 @@ PROJECT_SKILLS: tuple[DomainSkill, ...] = (
     ),
 )
 
+#: The supplied IT Operations prompts' "Domain scope:" sentence, verbatim.
+_IT_OPS_SCOPE = "Analyze IT services, incidents, changes, applications, cloud and IT cost."
+
+#: The first covered domain whose prohibition is backed by an *absolute*
+#: control. `policy_for(IT_OPERATIONS)` prohibits exactly one action --
+#: `credential_disclosure` -- and restricts `DataCategory.CREDENTIAL`,
+#: which `governance.classification.NEVER_DISCLOSED_CATEGORIES` withholds
+#: from **every** caller including an admin: no role unlocks it
+#: (`CLAUDE.md` §5.4). So the derived block carries it and no focus text
+#: restates it, exactly as BFSI's four are derived (batch 8).
+#:
+#: That makes this batch the inverse of batches 9-12. There the policy
+#: prohibited nothing and the focus texts had to carry the risk alone;
+#: here the one prohibition is enforced unconditionally, so the skills'
+#: job is narrower: not to invite a question whose only answer is a secret.
+#: `minimum_group_size=0` still applies and ITSM records name the assignee
+#: of a ticket, so the individual-ranking guard arrives for the sixth time
+#: -- but unlike batches 9-12 the derived block *does* append "Report in
+#: aggregate only" here, so that guard is reinforcement rather than the
+#: only line.
+#:
+#: The analytical problem that is genuinely new is the provenance of a
+#: machine-generated measure. Batch 11 analysed a third party's claim and
+#: batch 12 a self-assessment by the measured party; here the number is an
+#: **instrument reading whose instrument was configured by the team being
+#: measured**. An incident count is partly a property of the alerting
+#: threshold and the deduplication rule, and availability is partly a
+#: property of the exclusion windows, so the `DATABASE_FACT` is what the
+#: tooling recorded under its configuration
+#: (`agent.provenance.DataTruthLevel`).
+_IT_OPS = BusinessDomain.IT_OPERATIONS
+
+#: Declared in the supplied numeric order (01 IT service, 02 incident, 03
+#: change management, 04 application performance, 05 IT cost and cloud),
+#: so the domain default is IT Service Intelligence (01) -- the broadest.
+IT_OPS_SKILLS: tuple[DomainSkill, ...] = (
+    DomainSkill(
+        slug="it_ops.service",
+        title="IT Service Intelligence",
+        domain=_IT_OPS,
+        scope=_IT_OPS_SCOPE,
+        focus=(
+            "Service portfolio health: request and incident volume per "
+            "service, fulfilment time, and availability against "
+            "commitment by service tier. Availability is a definition "
+            "before it is a measurement -- name the exclusion windows and "
+            "the measurement source, because planned-maintenance "
+            "treatment alone decides whether the same outage breaches. A "
+            "service is only as available as the weakest link it "
+            "genuinely depends on, so a dependency chain's health is not "
+            "the average of its components'."
+        ),
+        dimensions=("service", "service tier", "business unit", "request category", "period"),
+    ),
+    DomainSkill(
+        slug="it_ops.incident",
+        title="Incident Intelligence",
+        domain=_IT_OPS,
+        scope=_IT_OPS_SCOPE,
+        focus=(
+            "Incident volume, severity mix, restoration time and where "
+            "incidents concentrate. An incident count is partly a "
+            "property of the alerting threshold and the deduplication "
+            "rule that produced it, so a fall in volume may be a "
+            "configuration change rather than a quieter estate -- say "
+            "which rules were in force. Separate time to restore service "
+            "from time to close the ticket, because the second is an "
+            "administrative event. Report by service, severity and "
+            "assignment group, never ranking the individual assignee, "
+            "whose queue mix decides their numbers."
+        ),
+        dimensions=("service", "severity", "assignment group", "incident category", "period"),
+    ),
+    DomainSkill(
+        slug="it_ops.change",
+        title="Change Management Intelligence",
+        domain=_IT_OPS,
+        scope=_IT_OPS_SCOPE,
+        focus=(
+            "Change throughput and outcome: volume by type and risk, "
+            "success and rollback rates, emergency against planned mix, "
+            "and lead time to deploy. A change-failure rate needs its "
+            "linkage rule stated -- whether an incident was tied to a "
+            "change by a reviewer or by a time window, because a time "
+            "window manufactures the relationship it then measures. A "
+            "change followed by an incident is a sequence; calling the "
+            "change its cause needs the linkage the data records."
+        ),
+        dimensions=("change type", "risk category", "service", "approval path", "period"),
+    ),
+    DomainSkill(
+        slug="it_ops.application_performance",
+        title="Application Performance Intelligence",
+        domain=_IT_OPS,
+        scope=_IT_OPS_SCOPE,
+        focus=(
+            "Application responsiveness and reliability: latency, error "
+            "rate, throughput and saturation by application and "
+            "environment. Name the percentile and report the "
+            "distribution, because a mean response time hides the tail "
+            "users actually experience -- and a percentile cannot be "
+            "averaged across windows or instances, only recomputed from "
+            "the underlying observations. State the monitoring coverage "
+            "behind any figure, since an unmonitored component "
+            "contributes nothing to an error rate and so reads as "
+            "healthy."
+        ),
+        dimensions=("application", "environment", "transaction type", "percentile", "period"),
+    ),
+    DomainSkill(
+        slug="it_ops.cost_cloud",
+        title="IT Cost and Cloud Intelligence",
+        domain=_IT_OPS,
+        scope=_IT_OPS_SCOPE,
+        focus=(
+            "IT and cloud spend: cost by account, service and resource "
+            "class, committed against on-demand, idle and unattached "
+            "resources, and unit cost over time. Give the tagging "
+            "coverage behind any allocation, because untagged spend is "
+            "not absent spend -- it lands wherever the default sends it "
+            "and quietly flatters every allocated figure. Say whether "
+            "cost is amortised or as-invoiced, since commitments move "
+            "spend between periods. Report resource counts, classes and "
+            "cost, not the contents of resource configuration or log "
+            "payloads."
+        ),
+        dimensions=("cloud account", "service", "resource class", "allocation tag", "period"),
+    ),
+)
+
 #: Every registered skill, in declaration order. Later batches append their
 #: own tuple here.
 ALL_SKILLS: tuple[DomainSkill, ...] = (
@@ -1226,4 +1356,5 @@ ALL_SKILLS: tuple[DomainSkill, ...] = (
     + MANUFACTURING_SKILLS
     + CUSTOMER_SERVICE_SKILLS
     + PROJECT_SKILLS
+    + IT_OPS_SKILLS
 )
