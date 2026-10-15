@@ -3,6 +3,7 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { useChatStore } from '@/store/chatStore'
 import { useLocalAuthStore } from '@/store/localAuthStore'
 import * as navigationApi from '@/lib/navigationApi'
 import { serveNavigation } from '@/test/navigationFixtures'
@@ -219,5 +220,63 @@ describe('AppShell Tenant Admin nav gating', () => {
     signOut()
     await renderAndSettle()
     expect(await findScreenItem(/tenant admin/i)).toBeNull()
+  })
+
+  describe('the product name is a home link', () => {
+    it('is a real button, reachable by keyboard', async () => {
+      // Not a <div onClick>: a non-button would be invisible to Tab and
+      // to a screen reader, which is the usual way "make this clickable"
+      // goes wrong.
+      signOut()
+      await renderAndSettle()
+      expect(screen.getByRole('button', { name: /start a new chat/i })).toBeInTheDocument()
+    })
+
+    it('starts a fresh conversation when clicked', async () => {
+      signOut()
+      await renderAndSettle()
+
+      // Dirty the store so "fresh" is observable rather than vacuous.
+      useChatStore.setState({ pendingQuestion: { question: 'x', startedAt: 1, stage: null } })
+      await userEvent.click(screen.getByRole('button', { name: /start a new chat/i }))
+
+      expect(useChatStore.getState().pendingQuestion).toBeNull()
+    })
+
+    it('leaves the store exactly where startNewChat leaves it', async () => {
+      // An equivalence assertion rather than a spy: AppShell captures
+      // `startNewChat` at render time, so spying on the store afterwards
+      // would watch a function the component never calls and pass for the
+      // wrong reason. Comparing end state cannot drift that way -- if the
+      // header's click ever stopped matching the sidebar's New chat, the
+      // two snapshots would differ.
+      signOut()
+      await renderAndSettle()
+
+      useChatStore.setState({ pendingQuestion: { question: 'x', startedAt: 1, stage: null } })
+      const idBefore = useChatStore.getState().activeConversationId
+      await userEvent.click(screen.getByRole('button', { name: /start a new chat/i }))
+      const afterClick = useChatStore.getState()
+
+      useChatStore.setState({ pendingQuestion: { question: 'y', startedAt: 2, stage: null } })
+      useChatStore.getState().startNewChat()
+      const afterDirectCall = useChatStore.getState()
+
+      expect(afterClick.pendingQuestion).toEqual(afterDirectCall.pendingQuestion)
+      expect(afterClick.queryHistory).toEqual(afterDirectCall.queryHistory)
+      // `activeConversationId` is a fresh id per call, so it is compared by
+      // *having changed* rather than by value -- two new conversations are
+      // supposed to differ.
+      expect(afterClick.activeConversationId).toBeTruthy()
+      expect(afterClick.activeConversationId).not.toBe(idBefore)
+    })
+
+    it('still shows the product name', async () => {
+      signOut()
+      await renderAndSettle()
+      expect(
+        screen.getByText('AI-Powered Conversational Intelligence'),
+      ).toBeInTheDocument()
+    })
   })
 })

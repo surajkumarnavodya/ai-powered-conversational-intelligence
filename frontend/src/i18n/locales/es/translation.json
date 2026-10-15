@@ -1,5 +1,6 @@
 {
   "app": {
+    "homeLabel": "Iniciar un chat nuevo",
     "title": "AI-Powered Conversational Intelligence",
     "subtitle": "Haz una pregunta en lenguaje natural — obtén SQL validado y de solo lectura, una tabla de resultados en vivo y un gráfico seleccionado automáticamente."
   },

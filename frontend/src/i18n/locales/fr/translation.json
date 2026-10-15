@@ -1,5 +1,6 @@
 {
   "app": {
+    "homeLabel": "Démarrer un nouveau chat",
     "title": "AI-Powered Conversational Intelligence",
     "subtitle": "Posez une question en langage naturel — obtenez du SQL validé et en lecture seule, un tableau de résultats en direct et un graphique choisi automatiquement."
   },

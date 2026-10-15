@@ -9,7 +9,7 @@ guess which of two copies to update, or accidentally leaves one stale.
 
 | Action | Single owner/location | Behavior |
 |---|---|---|
-| New chat | Sidebar (`Sidebar.tsx`) | `chatStore.startNewChat()` — resets to a fresh, unsaved conversation; persisted to the server only once a question is actually asked |
+| New chat | Sidebar (`Sidebar.tsx`) **and the header product name** (`AppShell.tsx`) | `chatStore.startNewChat()` then `navigate('/')` — resets to a fresh, unsaved conversation; persisted to the server only once a question is actually asked. Two entry points deliberately: the sidebar button is the explicit control, and the product name is the "click the logo to go home" convention every web app has, which users try regardless of whether it works. Both run the identical two calls, and `AppShell.test.tsx` asserts the resulting store state matches, so they cannot drift into meaning different things |
 | Chat-history search | Sidebar (`ConversationSearch`/`useChatSearch`) | Debounced `GET /chat/search`, scoped server-side to the authenticated user; falls back to client-side title filtering only when no local-auth session exists |
 | Sidebar collapse/expand | Header (`SidebarToggle`, one instance) | Toggles `settingsStore.sidebarCollapsed` — desktop-only (`>=lg`); below `lg` the sidebar is always the `MobileNav` drawer instead, which this control doesn't affect |
 | Mobile navigation drawer | Header (`MobileNav`, `<lg` only) | Opens the same `Sidebar` component as an off-canvas drawer; closes itself after New Chat / selecting a conversation (`onNavigate`) |
