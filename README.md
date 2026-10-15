@@ -67,9 +67,9 @@ chat + generated-SQL view is still TODO._
 
 Ready to try it? Jump to [Getting Started](#-getting-started) below.
 
-We're glad you're here — [star the repository](https://github.com/surajkumarnavodya/text-to-sql-agent-langgraph)
+We're glad you're here — [star the repository](https://github.com/surajkumarnavodya/ai-powered-conversational-intelligence)
 if you want to keep it on your radar, and open an
-[issue](https://github.com/surajkumarnavodya/text-to-sql-agent-langgraph/issues/new/choose)
+[issue](https://github.com/surajkumarnavodya/ai-powered-conversational-intelligence/issues/new/choose)
 for bugs, questions, or feature ideas.
 
 <a id="what-is-this"></a>
@@ -238,8 +238,8 @@ walkthrough and retry-routing table.
 ### Clone, install, configure
 
 ```bash
-git clone https://github.com/surajkumarnavodya/text-to-sql-agent-langgraph.git
-cd text-to-sql-agent-langgraph
+git clone https://github.com/surajkumarnavodya/ai-powered-conversational-intelligence.git
+cd ai-powered-conversational-intelligence
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\Activate.ps1
 pip install --upgrade pip
@@ -503,7 +503,7 @@ Source of truth: `db/connection.py::SUPPORTED_DB_TYPES`.
 
 ## 🛟 Get help and file an issue
 
-Use the [issue chooser](https://github.com/surajkumarnavodya/text-to-sql-agent-langgraph/issues/new/choose)
+Use the [issue chooser](https://github.com/surajkumarnavodya/ai-powered-conversational-intelligence/issues/new/choose)
 (bug report / feature request templates under `.github/ISSUE_TEMPLATE/`)
 for usage questions, reproducible bugs, and feature requests.
 
