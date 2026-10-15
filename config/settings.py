@@ -2543,6 +2543,19 @@ class Settings(BaseSettings):
     #: validation work. 0 means "follow none".
     rest_max_redirects: int = Field(default=3, ge=0)
 
+    # --- Domain analytics skills (`domain_skills/`). Off by default. When
+    # on, a question routed to a domain that has a declared skill gets an
+    # ADDITIONAL system message framing the analysis -- never a change to
+    # `agent/llm_client.py`'s benchmark-pinned prompts, whose exact wording
+    # `docs/EVALUATION.md`'s accuracy numbers were measured against.
+    #
+    # An accuracy aid, so it fails open: a domain with no declared skill,
+    # or an unknown domain, changes nothing. Skills are in-code constants
+    # (`domain_skills/catalog.py`) and cannot be added or edited at
+    # runtime -- a database row that becomes a system prompt would turn
+    # every write into prompt injection (CLAUDE.md 5.5).
+    enable_domain_skills: bool = False
+
     # --- Batch 8 of docs/architecture/implementation-roadmap.md: the MCP
     # client (`mcp_client/`). Off by default. Enabling the flag without
     # declaring servers is inert, and a declared server with no
