@@ -9,7 +9,7 @@ recommended in a business domain is
 [`../DATA_PRIVACY_GOVERNANCE_ENGINE.md`](../DATA_PRIVACY_GOVERNANCE_ENGINE.md),
 and a skill cannot change any of it.
 
-**Date:** 2026-10-15. **Batches delivered:** 5 — Sales, MIS / Management Reporting, Marketing, HR, eCommerce (across 4 of 18 governance domains).
+**Date:** 2026-10-15. **Batches delivered:** 6 — Sales, MIS / Management Reporting, Marketing, HR, eCommerce, Training / L&D (across 5 of 18 governance domains).
 
 ---
 
@@ -113,7 +113,7 @@ the two distinguishable where it matters (`sales.*` vs a future
 
 `registry.covered_domains()` answers "which of the eighteen are actually
 covered" from the catalog itself, so no document can claim coverage the
-code does not have. **Today: Sales, MIS, Marketing, HR and eCommerce — 25 skills across 4 governance domains.**
+code does not have. **Today: Sales, MIS, Marketing, HR, eCommerce and Training / L&D — 30 skills across 5 governance domains.**
 
 A test asserts `covered_domains()` equals exactly the delivered batches, so
 a new domain fails it until this document is updated in the same change —
@@ -165,21 +165,21 @@ caller text, no retrieved document, no database value, no model output.
 
 ## 7. Mutation evidence
 
-Each applied to live code, then reverted. Clean: `190 passed` (5 batches).
+Each applied to live code, then reverted. Clean: `218 passed` (6 batches).
 Counts grow with the catalog, which is the point — a guard that covered one
 batch would not stay meaningful as domains land.
 
 | Mutation | Result |
 |---|---|
-| selection stops filtering by domain (cross-domain leak) | **3 failed**, 187 passed |
-| no longer fails open when the flag is off | **1 failed**, 189 passed |
-| contract gains a format slot | **2 failed**, 188 passed |
-| `GENERAL` (unknown domain) gets guessed framing | **1 failed**, 189 passed |
-| guesses a default across prompt-domains (campaign → Revenue framing) | **2 failed**, 188 passed |
-| `group` stops being derived from the slug | **31 failed**, 155 passed |
-| prohibitions block dropped (HR invited to rank individuals) | **4 failed**, 186 passed |
-| prohibitions hard-coded to one domain instead of derived | **4 failed**, 186 passed |
-| ranking invitation becomes unqualified again | **1 failed**, 189 passed |
+| selection stops filtering by domain (cross-domain leak) | **3 failed**, 215 passed |
+| no longer fails open when the flag is off | **1 failed**, 217 passed |
+| contract gains a format slot | **2 failed**, 216 passed |
+| `GENERAL` (unknown domain) gets guessed framing | **1 failed**, 217 passed |
+| guesses a default across prompt-domains (campaign → Revenue framing) | **2 failed**, 216 passed |
+| `group` stops being derived from the slug | **36 failed**, 177 passed |
+| prohibitions block dropped (HR invited to rank individuals) | **5 failed**, 213 passed |
+| prohibitions hard-coded to one domain instead of derived | **5 failed**, 213 passed |
+| ranking invitation becomes unqualified again | **1 failed**, 217 passed |
 
 Three of those only became real after a vacuous test was fixed. The full
 pattern is in §8; the first two are recorded here because they were found
@@ -339,6 +339,22 @@ hard-codes the group and domain counts. That assertion is cheap to update
 and failing it is the intended signal, but if it ever becomes the *only*
 thing a batch changes, it has stopped earning its place.
 
+### Batch 6 (Training / L&D) confirmed it
+
+A second consecutive data-only batch. Training is the sharpest test the
+derived-prohibitions design has had so far: it prohibits **a strict subset
+of HR's** — `individual_employment_action` and
+`individual_performance_ranking`, two of HR's five. A shared or cached list
+would leak the other three, so a test asserts the subset relationship holds
+*and* that none of HR's extra prohibitions appears in Training's guidance.
+
+Its focus texts also carry the batch's real analytical risk, read off the
+subject rather than the policy: **training impact is the skill most likely
+to be misread**, because people *choose* training, so trained and untrained
+groups differ before any training happens. That skill says to report the
+comparison as a correlation and to claim impact only where the data shows a
+genuine before-and-after on a comparable group.
+
 ---
 
 ## 11. Adding the next batch
@@ -379,7 +395,8 @@ request.
 | Marketing skills (5 of 5 supplied) | **Registered** |
 | HR skills (5 of 5 supplied) | **Registered** |
 | eCommerce skills (5 of 5 supplied) | **Registered** |
-| Other 14 domains | **Not registered** — a skill is added when its prompt arrives, never in anticipation |
+| Training / L&D skills (5 of 5 supplied) | **Registered** |
+| Other 13 domains | **Not registered** — a skill is added when its prompt arrives, never in anticipation |
 | Wiring into a live analysis path | **Not done** — see below |
 
 **Deliberately not wired yet.** The composer produces guidance, and nothing

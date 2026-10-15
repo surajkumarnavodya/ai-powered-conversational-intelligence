@@ -40,6 +40,7 @@ SALES = BusinessDomain.SALES_MARKETING
 MIS = BusinessDomain.MIS
 HR = BusinessDomain.HR
 ECOMMERCE = BusinessDomain.ECOMMERCE
+TRAINING = BusinessDomain.TRAINING
 
 
 class TestCatalog:
@@ -53,6 +54,20 @@ class TestCatalog:
             "sales.product",
             "sales.pricing",
         )
+
+    def test_the_supplied_training_skills_are_registered_in_numeric_order(self):
+        """Supplied as 02, 03, 04, 05, 01; registered 01..05, so the domain
+        default is Training Completion Intelligence."""
+        assert tuple(s.slug for s in ds.skills_for_domain(TRAINING)) == (
+            "training.completion",  # 01
+            "training.skill_gap",  # 02
+            "training.impact",  # 03
+            "training.engagement",  # 04
+            "training.certification",  # 05
+        )
+        default = select_skill(TRAINING)
+        assert default is not None
+        assert default.slug == "training.completion"
 
     def test_the_supplied_ecommerce_skills_are_registered_in_numeric_order(self):
         """Supplied as 03, 04, 02, 01, 05; registered 01..05, so the domain
@@ -99,8 +114,8 @@ class TestCatalog:
         """Four prompt-domains, three governance domains: Marketing shares
         `SALES_MARKETING` with Sales. Inventing a governance domain per
         batch would mean two answers to 'what may this question return'."""
-        assert len({s.group for s in ds.all_skills()}) == 5
-        assert len(ds.covered_domains()) == 4
+        assert len({s.group for s in ds.all_skills()}) == 6
+        assert len(ds.covered_domains()) == 5
 
     def test_the_supplied_mis_skills_are_registered(self):
         assert tuple(s.slug for s in ds.skills_for_domain(MIS)) == (
@@ -145,7 +160,7 @@ class TestCatalog:
         in `docs/architecture/domain-skills.md` to be updated in the same
         change, instead of drifting behind the code.
         """
-        assert ds.covered_domains() == (SALES, MIS, HR, ECOMMERCE)
+        assert ds.covered_domains() == (SALES, MIS, HR, ECOMMERCE, TRAINING)
 
     def test_the_other_sixteen_domains_have_no_skills(self):
         """An uncovered domain must stay genuinely empty rather than
@@ -472,6 +487,24 @@ class TestDomainProhibitionsAreDerivedNotRestated:
         assert result is not None
         text, _ = result
         assert "Domain constraints" not in text
+
+    def test_training_carries_a_subset_of_hrs_prohibitions(self):
+        """Training prohibits two of HR's five. A domain with a strict
+        subset is the sharpest test of per-domain derivation: a shared or
+        cached list would leak the other three."""
+        from governance.domains import policy_for
+
+        training_actions = {a.value for a in policy_for(TRAINING).prohibited_actions}
+        hr_actions = {a.value for a in policy_for(HR).prohibited_actions}
+        assert training_actions < hr_actions, "expected a strict subset"
+
+        result = guidance_for(TRAINING, enabled=True)
+        assert result is not None
+        text, _ = result
+        for action in training_actions:
+            assert action.replace("_", " ") in text
+        for leaked in hr_actions - training_actions:
+            assert leaked.replace("_", " ") not in text, f"{leaked} leaked from HR"
 
     def test_ecommerce_carries_its_single_prohibition(self):
         """One prohibition, not HR's five and not Sales' two -- proving the

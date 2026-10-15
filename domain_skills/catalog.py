@@ -6,7 +6,7 @@ settings field that can add or edit a skill at runtime — see
 `domain_skills/types.py` on why a skill must stay an in-code constant.
 
 Batches so far: Sales, MIS / Management Reporting, Marketing, HR,
-eCommerce. Every batch
+eCommerce, Training / L&D. Every batch
 has arrived with an identical body and an identical "Domain scope" sentence
 across its five prompts, differing only in the heading — so each *prompt-
 domain* writes its scope once (`_SALES_SCOPE`, `_MIS_SCOPE`,
@@ -450,8 +450,95 @@ ECOMMERCE_SKILLS: tuple[DomainSkill, ...] = (
     ),
 )
 
+#: The supplied Training / L&D prompts' "Domain scope:" sentence, verbatim.
+_TRAINING_SCOPE = "Analyze training completion, skills, impact, engagement and " "certifications."
+
+#: `policy_for(TRAINING)` prohibits `individual_employment_action` and
+#: `individual_performance_ranking`, and restricts the employee,
+#: performance and credential categories. Both prohibitions are appended
+#: automatically by `composer._prohibitions_block`, so the focus texts
+#: below stay analytical -- but it is why every one of them is framed
+#: around cohorts, teams and courses rather than around learners.
+_TRAINING = BusinessDomain.TRAINING
+
+#: Declared in the supplied numeric order (01 completion, 02 skill gap,
+#: 03 impact, 04 engagement, 05 certification), so the domain default is
+#: Training Completion Intelligence (01).
+TRAINING_SKILLS: tuple[DomainSkill, ...] = (
+    DomainSkill(
+        slug="training.completion",
+        title="Training Completion Intelligence",
+        domain=_TRAINING,
+        scope=_TRAINING_SCOPE,
+        focus=(
+            "Completion and progress in aggregate: rates by course, team "
+            "and period, and where mandatory training is behind. Give the "
+            "enrolled base alongside the rate, and state whether a course "
+            "assigned mid-period is counted -- a completion rate over an "
+            "open enrolment window understates itself."
+        ),
+        dimensions=("course", "business unit", "period", "mandatory flag", "cohort"),
+    ),
+    DomainSkill(
+        slug="training.skill_gap",
+        title="Skill Gap Intelligence",
+        domain=_TRAINING,
+        scope=_TRAINING_SCOPE,
+        focus=(
+            "Gaps between required and held skills at team and role level: "
+            "which capabilities are thin, where coverage is concentrated in "
+            "few people, and how that has moved. A gap describes a team's "
+            "coverage, never an individual's shortfall."
+        ),
+        dimensions=("skill", "role", "business unit", "proficiency level", "period"),
+    ),
+    DomainSkill(
+        slug="training.impact",
+        title="Training Impact Intelligence",
+        domain=_TRAINING,
+        scope=_TRAINING_SCOPE,
+        focus=(
+            "Whether trained groups differ from untrained ones on measured "
+            "outcomes. This is the skill most likely to be misread: people "
+            "choose training, so trained and untrained groups differ before "
+            "any training happens. Report the comparison and label it a "
+            "correlation; claim impact only where the data shows a genuine "
+            "before-and-after on a comparable group, and say so when it "
+            "does not."
+        ),
+        dimensions=("course", "cohort", "outcome metric", "period", "business unit"),
+    ),
+    DomainSkill(
+        slug="training.engagement",
+        title="Training Engagement Intelligence",
+        domain=_TRAINING,
+        scope=_TRAINING_SCOPE,
+        focus=(
+            "How learners interact with content in aggregate: starts, "
+            "drop-off point, time spent and repeat attempts by course and "
+            "team. Low engagement with a course is a signal about the "
+            "course, not a judgement about the people who took it."
+        ),
+        dimensions=("course", "module", "business unit", "period", "drop-off point"),
+    ),
+    DomainSkill(
+        slug="training.certification",
+        title="Certification Intelligence",
+        domain=_TRAINING,
+        scope=_TRAINING_SCOPE,
+        focus=(
+            "Certification coverage and currency across teams: how many "
+            "hold a certification, how many lapse and when, and where "
+            "expiry clusters. Report counts and coverage by group; an "
+            "expiring certification is a scheduling exposure for the team, "
+            "not a finding about the holder."
+        ),
+        dimensions=("certification", "business unit", "expiry window", "role", "period"),
+    ),
+)
+
 #: Every registered skill, in declaration order. Later batches append their
 #: own tuple here.
 ALL_SKILLS: tuple[DomainSkill, ...] = (
-    SALES_SKILLS + MIS_SKILLS + MARKETING_SKILLS + HR_SKILLS + ECOMMERCE_SKILLS
+    SALES_SKILLS + MIS_SKILLS + MARKETING_SKILLS + HR_SKILLS + ECOMMERCE_SKILLS + TRAINING_SKILLS
 )
