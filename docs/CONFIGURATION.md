@@ -577,9 +577,9 @@ would turn every write into prompt injection with full pipeline reach.
 those gates reads a skill.
 
 Coverage today is **Sales, MIS / Management Reporting, Marketing, HR,
-eCommerce, Training / L&D and Finance & Corporate Functions** — 35 skills
-across 6 governance domains, since Sales and Marketing share
-`SALES_MARKETING`. The other 12 governance domains have none declared — a
+eCommerce, Training / L&D, Finance & Corporate Functions and BFSI** — 40
+skills across 7 governance domains, since Sales and Marketing share
+`SALES_MARKETING`. The other 11 governance domains have none declared — a
 skill is added when its prompt arrives, never in anticipation.
 
 Guidance for a domain automatically carries that domain's prohibited

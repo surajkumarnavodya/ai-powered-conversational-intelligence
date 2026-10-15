@@ -1,7 +1,7 @@
 # Domain analytics skills
 
 **Scope.** The design of `domain_skills/`: what a skill is, the boundaries
-it must respect, and how the next 85 are added. This document owns the
+it must respect, and how the next 50 are added. This document owns the
 **domain-skill contract**.
 
 It does not own domain *policy* — what may be asked, returned or
@@ -9,7 +9,7 @@ recommended in a business domain is
 [`../DATA_PRIVACY_GOVERNANCE_ENGINE.md`](../DATA_PRIVACY_GOVERNANCE_ENGINE.md),
 and a skill cannot change any of it.
 
-**Date:** 2026-10-15. **Batches delivered:** 7 — Sales, MIS / Management Reporting, Marketing, HR, eCommerce, Training / L&D, Finance & Corporate Functions (across 6 of 18 governance domains).
+**Date:** 2026-10-15. **Batches delivered:** 8 — Sales, MIS / Management Reporting, Marketing, HR, eCommerce, Training / L&D, Finance & Corporate Functions, BFSI (across 7 of 18 governance domains).
 
 ---
 
@@ -113,7 +113,7 @@ the two distinguishable where it matters (`sales.*` vs a future
 
 `registry.covered_domains()` answers "which of the eighteen are actually
 covered" from the catalog itself, so no document can claim coverage the
-code does not have. **Today: Sales, MIS, Marketing, HR, eCommerce, Training / L&D and Finance — 35 skills across 6 governance domains.**
+code does not have. **Today: Sales, MIS, Marketing, HR, eCommerce, Training / L&D, Finance and BFSI — 40 skills across 7 governance domains.**
 
 A test asserts `covered_domains()` equals exactly the delivered batches, so
 a new domain fails it until this document is updated in the same change —
@@ -165,21 +165,43 @@ caller text, no retrieved document, no database value, no model output.
 
 ## 7. Mutation evidence
 
-Each applied to live code, then reverted. Clean: `247 passed` (7 batches).
+Each applied to live code, then reverted. Clean: `277 passed` (8 batches).
 Counts grow with the catalog, which is the point — a guard that covered one
 batch would not stay meaningful as domains land.
 
 | Mutation | Result |
 |---|---|
-| selection stops filtering by domain (cross-domain leak) | **3 failed**, 244 passed |
-| no longer fails open when the flag is off | **1 failed**, 246 passed |
-| contract gains a format slot | **2 failed**, 245 passed |
-| `GENERAL` (unknown domain) gets guessed framing | **1 failed**, 246 passed |
-| guesses a default across prompt-domains (campaign → Revenue framing) | **2 failed**, 245 passed |
-| `group` stops being derived from the slug | **41 failed**, 200 passed |
-| prohibitions block dropped (HR invited to rank individuals) | **6 failed**, 241 passed |
-| prohibitions hard-coded to one domain instead of derived | **6 failed**, 241 passed |
-| ranking invitation becomes unqualified again | **1 failed**, 246 passed |
+| selection stops filtering by domain — `select_skill` honours a slug registered in *any* domain (cross-domain leak) | **3 failed**, 274 passed |
+| no longer fails open when the flag is off | **1 failed**, 276 passed |
+| contract gains a format slot | **2 failed**, 275 passed |
+| `GENERAL` (unknown domain) gets guessed framing | **1 failed**, 276 passed |
+| guesses a default across prompt-domains (campaign → Revenue framing) | **2 failed**, 275 passed |
+| `group` stops being derived from the slug (returns a constant) | **46 failed**, 224 passed, 7 no longer collected |
+| prohibitions block dropped (HR invited to rank individuals) | **7 failed**, 270 passed |
+| prohibitions hard-coded to one domain instead of derived (`policy_for(HR)`) | **7 failed**, 270 passed |
+| ranking invitation becomes unqualified again | **1 failed**, 276 passed |
+| BFSI lending skill loses its redirect (refusal with no alternative) | **1 failed**, 276 passed |
+| BFSI skills declared under `FINANCE` (prohibitions silently halve) | **6 failed**, 271 passed |
+
+**Two notes on reading these numbers**, both found while re-measuring the
+table at batch 8 rather than carrying the previous figures forward:
+
+- **A mutation has to be named precisely enough to reproduce.** Mutation 1
+  must be applied to `composer.select_skill`. Applying the same idea to
+  `registry.skills_for_domain` instead — the helper every catalog test also
+  calls — yields *26 failed, 251 passed*, because it breaks registration
+  assertions that have nothing to do with the cross-domain guard. The
+  inflated count would look like stronger evidence while actually testing
+  something else. Mutation 8's count likewise depends on **which** domain
+  is hard-coded, so the row now names it: `policy_for(HR)` fails 7, while
+  `policy_for(SALES_MARKETING)` fails 6 (HR's own assertion fails in the
+  second case but not the first). Either proves the derivation is
+  load-bearing; only a named one is reproducible.
+- **Mutation 6 changes how many tests exist.** The scope-once test is
+  parametrized over the distinct `group` values, so collapsing `group` to
+  a constant collapses 8 parameters to 1 and the
+  total drops from 277 to 270. The 46 failures are real; the missing 7 were
+  never collected, not silently passed.
 
 Three of those only became real after a vacuous test was fixed. The full
 pattern is in §8; the first two are recorded here because they were found
@@ -400,7 +422,73 @@ All read off the subject matter, none from the policy:
 
 ---
 
-## 12. Adding the next batch
+## 12. Batch 8 (BFSI): when the skill is named after the prohibition
+
+BFSI is the sharpest collision so far between what a batch asks for and
+what its domain policy allows. `policy_for(BFSI)` prohibits four actions:
+
+```
+credit_or_loan_decision
+fraud_accusation
+individualized_financial_advice
+unsupported_allegation
+```
+
+Three of the five supplied skills are named after one of them. "Loan and
+Credit Intelligence" sounds like it should decide whether to lend; "Fraud
+and Risk Intelligence" sounds like it should identify fraudsters;
+"Collections and Delinquency Intelligence" invites both. The first,
+"Banking Customer Intelligence", sits next to
+`individualized_financial_advice`.
+
+Nothing about the mechanism changed — all four are policy-backed, so
+`composer._prohibitions_block` carries them automatically and no skill
+restates one. What this batch had to get right is the **other half**: a
+derived block says what must not be done, and if the focus text says
+nothing else, the skill is a refusal with no alternative. Each of the three
+is therefore redirected to the *portfolio* version of its subject, which is
+both the legitimate analytical question and the one the data can actually
+answer:
+
+| Skill | Prohibited reading | What the focus text asks for instead |
+|---|---|---|
+| `bfsi.loan_credit` | whether an applicant should be lent to | approval/decline rates, exposure by grade, vintage performance |
+| `bfsi.fraud_risk` | who committed fraud | alert volumes, hit and false-positive rates, case ageing |
+| `bfsi.collections` | what kind of borrower this is | bucket distribution, roll rates, cure and recovery |
+
+A separate test pins each redirect, and mutation 10 removes one of them:
+the lending skill loses "never assesses whether any applicant or borrower
+should be lent to" and becomes "a general-purpose credit skill". That fails
+one test, which is the evidence the redirect is load-bearing rather than
+decorative prose.
+
+### Analytical constraints this batch carries
+
+Read off the subject matter, not from the policy:
+
+- **A rule firing is a control output, not a finding.** Alerts and
+  confirmed cases are reported as separate measures, because collapsing
+  them turns a detection rate into an accusation count.
+- **Vintages must be compared at equal months on book.** A young vintage
+  always looks better than a mature one; comparing them at a single date
+  reads as an improvement that is purely seasoning.
+- **Claims development.** A recent period's loss ratio is understated until
+  claims mature, so reported-vs-incurred has to be stated.
+- **Delinquency bucket boundaries.** Roll rates are meaningless without
+  them.
+
+### Why mutation 11 matters
+
+The second new mutation declares the BFSI skills under
+`BusinessDomain.FINANCE` instead — a realistic copy-paste error, since the
+previous batch is Finance and the subject matter overlaps. Finance
+prohibits one action; BFSI prohibits four. The mutation would therefore
+**silently drop three prohibitions** while every skill still looked
+correctly declared. It fails 6 tests.
+
+---
+
+## 13. Adding the next batch
 
 1. Add the **prompt-domain's** scope string once in `catalog.py`. If the
    batch shares a governance domain with an existing one (as Marketing
@@ -428,7 +516,7 @@ request.
 
 ---
 
-## 13. Status
+## 14. Status
 
 | Item | State |
 |---|---|
@@ -440,7 +528,8 @@ request.
 | eCommerce skills (5 of 5 supplied) | **Registered** |
 | Training / L&D skills (5 of 5 supplied) | **Registered** |
 | Finance & Corporate Functions skills (5 of 5 supplied) | **Registered** |
-| Other 12 domains | **Not registered** — a skill is added when its prompt arrives, never in anticipation |
+| BFSI skills (5 of 5 supplied) | **Registered** |
+| Other 11 domains | **Not registered** — a skill is added when its prompt arrives, never in anticipation |
 | Wiring into a live analysis path | **Not done** — see below |
 
 **Deliberately not wired yet.** The composer produces guidance, and nothing

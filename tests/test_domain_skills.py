@@ -42,6 +42,7 @@ HR = BusinessDomain.HR
 ECOMMERCE = BusinessDomain.ECOMMERCE
 TRAINING = BusinessDomain.TRAINING
 FINANCE = BusinessDomain.FINANCE
+BFSI = BusinessDomain.BFSI
 
 
 class TestCatalog:
@@ -55,6 +56,20 @@ class TestCatalog:
             "sales.product",
             "sales.pricing",
         )
+
+    def test_the_supplied_bfsi_skills_are_registered_in_numeric_order(self):
+        """Supplied 01..05 in order; registered in that order, so the domain
+        default is Banking Customer Intelligence."""
+        assert tuple(s.slug for s in ds.skills_for_domain(BFSI)) == (
+            "bfsi.banking_customer",  # 01
+            "bfsi.loan_credit",  # 02
+            "bfsi.insurance",  # 03
+            "bfsi.fraud_risk",  # 04
+            "bfsi.collections",  # 05
+        )
+        default = select_skill(BFSI)
+        assert default is not None
+        assert default.slug == "bfsi.banking_customer"
 
     def test_the_supplied_finance_skills_are_registered_in_numeric_order(self):
         """Supplied as 01, 02, 03, 05, 04; registered 01..05, so the domain
@@ -129,8 +144,8 @@ class TestCatalog:
         """Four prompt-domains, three governance domains: Marketing shares
         `SALES_MARKETING` with Sales. Inventing a governance domain per
         batch would mean two answers to 'what may this question return'."""
-        assert len({s.group for s in ds.all_skills()}) == 7
-        assert len(ds.covered_domains()) == 6
+        assert len({s.group for s in ds.all_skills()}) == 8
+        assert len(ds.covered_domains()) == 7
 
     def test_the_supplied_mis_skills_are_registered(self):
         assert tuple(s.slug for s in ds.skills_for_domain(MIS)) == (
@@ -175,11 +190,26 @@ class TestCatalog:
         in `docs/architecture/domain-skills.md` to be updated in the same
         change, instead of drifting behind the code.
         """
-        assert ds.covered_domains() == (SALES, MIS, HR, ECOMMERCE, TRAINING, FINANCE)
+        assert ds.covered_domains() == (
+            SALES,
+            MIS,
+            HR,
+            ECOMMERCE,
+            TRAINING,
+            FINANCE,
+            BFSI,
+        )
 
-    def test_the_other_sixteen_domains_have_no_skills(self):
+    def test_every_uncovered_domain_has_no_skills(self):
         """An uncovered domain must stay genuinely empty rather than
-        quietly inheriting another domain's framing."""
+        quietly inheriting another domain's framing.
+
+        Named without a count on purpose: this was
+        `test_the_other_sixteen_domains_have_no_skills`, correct at batch 2
+        and stale from batch 3 onward, because the body derives the
+        uncovered set from the catalog while the name hard-coded it. The
+        assertion was never wrong -- only its name was.
+        """
         covered = set(ds.covered_domains())
         for domain in BusinessDomain:
             if domain not in covered:
@@ -502,6 +532,68 @@ class TestDomainProhibitionsAreDerivedNotRestated:
         assert result is not None
         text, _ = result
         assert "Domain constraints" not in text
+
+    def test_bfsi_carries_all_four_of_its_prohibitions(self):
+        """BFSI is the first domain whose own skills are *named after* the
+        actions it prohibits -- "Loan and Credit Intelligence" against
+        `credit_or_loan_decision`, "Fraud and Risk Intelligence" against
+        `fraud_accusation`. The block must carry all four regardless of
+        which skill is selected, so this checks every BFSI skill rather
+        than only the default.
+        """
+        from governance.domains import policy_for
+
+        actions = {a.value for a in policy_for(BFSI).prohibited_actions}
+        assert actions == {
+            "credit_or_loan_decision",
+            "fraud_accusation",
+            "individualized_financial_advice",
+            "unsupported_allegation",
+        }
+
+        for skill in ds.skills_for_domain(BFSI):
+            result = guidance_for(BFSI, enabled=True, preferred_slug=skill.slug)
+            assert result is not None
+            text, chosen = result
+            assert chosen.slug == skill.slug
+            for action in actions:
+                assert action.replace("_", " ") in text, f"{action} missing for {skill.slug}"
+
+    def test_the_bfsi_prohibitions_are_not_a_restatement_of_another_domains(self):
+        """Derived per domain: BFSI must not inherit HR's employment
+        actions or Finance's compensation one, both of which a shared or
+        cached list would leak."""
+        from governance.domains import policy_for
+
+        bfsi_actions = {a.value for a in policy_for(BFSI).prohibited_actions}
+        other = {a.value for a in policy_for(HR).prohibited_actions} | {
+            a.value for a in policy_for(FINANCE).prohibited_actions
+        }
+        result = guidance_for(BFSI, enabled=True)
+        assert result is not None
+        text, _ = result
+        for leaked in other - bfsi_actions:
+            assert leaked.replace("_", " ") not in text, f"{leaked} leaked into BFSI"
+
+    def test_the_three_bfsi_skills_named_after_a_prohibition_redirect_to_the_portfolio(
+        self,
+    ):
+        """The derived block says what must not be done; the focus text has
+        to say what to do instead, or the skill is only a refusal. Each of
+        the three invites a prohibited action by name, so each is pinned to
+        the aggregate question it legitimately answers.
+        """
+        lending = ds.get_skill("bfsi.loan_credit").focus.lower()
+        assert "portfolio" in lending
+        assert "never assesses whether any applicant or borrower" in lending
+
+        fraud = ds.get_skill("bfsi.fraud_risk").focus.lower()
+        assert "never describe anyone as having committed fraud" in fraud
+        assert "reason to investigate" in fraud
+
+        collections = ds.get_skill("bfsi.collections").focus.lower()
+        assert "portfolio state" in collections
+        assert "never a judgement about a borrower" in collections
 
     def test_finance_does_not_derive_a_prohibition_it_does_not_have(self):
         """Finance prohibits only `individual_compensation_decision`. It

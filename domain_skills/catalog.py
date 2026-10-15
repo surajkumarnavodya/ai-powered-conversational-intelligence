@@ -6,10 +6,10 @@ settings field that can add or edit a skill at runtime — see
 `domain_skills/types.py` on why a skill must stay an in-code constant.
 
 Batches so far: Sales, MIS / Management Reporting, Marketing, HR,
-eCommerce, Training / L&D, Finance & Corporate Functions. Every batch
-has arrived with an identical body and an identical "Domain scope" sentence
-across its five prompts, differing only in the heading — so each *prompt-
-domain* writes its scope once (`_SALES_SCOPE`, `_MIS_SCOPE`,
+eCommerce, Training / L&D, Finance & Corporate Functions, BFSI. Every
+batch has arrived with an identical body and an identical "Domain scope"
+sentence across its five prompts, differing only in the heading — so each
+*prompt-domain* writes its scope once (`_SALES_SCOPE`, `_MIS_SCOPE`,
 `_MARKETING_SCOPE`) and each skill carries only its own focus.
 
 **Marketing shares `BusinessDomain.SALES_MARKETING` with Sales** but has a
@@ -632,6 +632,107 @@ FINANCE_SKILLS: tuple[DomainSkill, ...] = (
     ),
 )
 
+#: The supplied BFSI prompts' "Domain scope:" sentence, verbatim. It is the
+#: only scope so far that names its own control regime ("with strict
+#: financial-data controls").
+_BFSI_SCOPE = (
+    "Analyze banking, lending, insurance, fraud/risk and collections with "
+    "strict financial-data controls."
+)
+
+#: The sharpest collision between supplied skills and domain policy so far.
+#: `policy_for(BFSI)` prohibits `credit_or_loan_decision`,
+#: `fraud_accusation`, `individualized_financial_advice` and
+#: `unsupported_allegation` -- and three of the five supplied skills are
+#: *named after* one of those actions. "Loan and Credit Intelligence" sounds
+#: like it should decide whether to lend; "Fraud and Risk Intelligence"
+#: sounds like it should identify fraudsters.
+#:
+#: The prohibitions themselves are derived by
+#: `composer._prohibitions_block` and are never restated below. What the
+#: focus texts do instead is redirect each skill to the *portfolio* version
+#: of its subject, which is both the legitimate analytical question and the
+#: one the data can actually answer.
+_BFSI = BusinessDomain.BFSI
+
+#: Declared in the supplied numeric order (01 banking customer, 02 loan and
+#: credit, 03 insurance, 04 fraud and risk, 05 collections), so the domain
+#: default is Banking Customer Intelligence (01).
+BFSI_SKILLS: tuple[DomainSkill, ...] = (
+    DomainSkill(
+        slug="bfsi.banking_customer",
+        title="Banking Customer Intelligence",
+        domain=_BFSI,
+        scope=_BFSI_SCOPE,
+        focus=(
+            "Portfolio view of customers and product holding: segment mix, "
+            "balances, product penetration and attrition across the book. "
+            "Describe how segments behave; never produce guidance addressed "
+            "to a customer about what they should do with their money."
+        ),
+        dimensions=("segment", "product", "tenure band", "channel", "period"),
+    ),
+    DomainSkill(
+        slug="bfsi.loan_credit",
+        title="Loan and Credit Intelligence",
+        domain=_BFSI,
+        scope=_BFSI_SCOPE,
+        focus=(
+            "Credit portfolio quality in aggregate: approval and decline "
+            "rates, exposure by grade or product, and vintage performance "
+            "as books season. Vintages must be compared at the same months "
+            "on book -- a young vintage always looks better than a mature "
+            "one. This describes how a portfolio is performing; it never "
+            "assesses whether any applicant or borrower should be lent to."
+        ),
+        dimensions=("product", "risk grade", "vintage", "channel", "period"),
+    ),
+    DomainSkill(
+        slug="bfsi.insurance",
+        title="Insurance Intelligence",
+        domain=_BFSI,
+        scope=_BFSI_SCOPE,
+        focus=(
+            "Policy and claims portfolio: loss ratio, claims frequency and "
+            "severity, persistency and lapse. State whether claims are "
+            "reported or incurred and whether development is complete -- a "
+            "recent period's loss ratio is understated until claims mature. "
+            "This describes the book, not the merits of any single claim."
+        ),
+        dimensions=("product line", "cohort", "claim status", "period", "channel"),
+    ),
+    DomainSkill(
+        slug="bfsi.fraud_risk",
+        title="Fraud and Risk Intelligence",
+        domain=_BFSI,
+        scope=_BFSI_SCOPE,
+        focus=(
+            "How detection and risk controls are performing: alert volumes, "
+            "hit and false-positive rates, case ageing and where exposure "
+            "concentrates. A rule firing is a control output, not a finding: "
+            "report alerts and confirmed-case counts as separate measures, "
+            "and never describe anyone as having committed fraud. An "
+            "unusual pattern is a reason to investigate, nothing more."
+        ),
+        dimensions=("alert type", "channel", "case status", "period", "exposure"),
+    ),
+    DomainSkill(
+        slug="bfsi.collections",
+        title="Collections and Delinquency Intelligence",
+        domain=_BFSI,
+        scope=_BFSI_SCOPE,
+        focus=(
+            "Delinquency and recovery across the book: bucket distribution, "
+            "roll rates between buckets, cure and recovery rates, and where "
+            "arrears concentrate. Give the bucket definitions, since roll "
+            "rates are meaningless without them. Delinquency is a portfolio "
+            "state to be worked, never a judgement about a borrower's "
+            "character or intent."
+        ),
+        dimensions=("delinquency bucket", "product", "vintage", "period", "channel"),
+    ),
+)
+
 #: Every registered skill, in declaration order. Later batches append their
 #: own tuple here.
 ALL_SKILLS: tuple[DomainSkill, ...] = (
@@ -642,4 +743,5 @@ ALL_SKILLS: tuple[DomainSkill, ...] = (
     + ECOMMERCE_SKILLS
     + TRAINING_SKILLS
     + FINANCE_SKILLS
+    + BFSI_SKILLS
 )
