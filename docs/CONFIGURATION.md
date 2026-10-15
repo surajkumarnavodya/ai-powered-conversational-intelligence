@@ -553,6 +553,38 @@ blocklist — not just the first, or record ordering would decide. Redirects
 are followed manually with each hop re-validated. See
 [`security/outbound_url.py`](../security/outbound_url.py).
 
+### Domain analytics skills (optional, off by default)
+
+Frames an analysis using a declared skill for the question's business
+domain. See
+[`docs/architecture/domain-skills.md`](architecture/domain-skills.md).
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ENABLE_DOMAIN_SKILLS` | `false` | Appends an additional system message framing the analysis, when the routed domain has a declared skill. |
+
+**An accuracy aid, so it fails open.** A domain with no declared skill, an
+unknown domain (`GENERAL`), or the flag off all change nothing — the
+analysis proceeds exactly as it did before.
+
+**Skills are in-code constants** (`domain_skills/catalog.py`) and cannot be
+added or edited at runtime. There is no API route, no admin surface and no
+setting that introduces one: a database row that becomes a system prompt
+would turn every write into prompt injection with full pipeline reach.
+
+**A skill grants nothing.** Authorization stays with `agent/authz.py` and
+`identity/rbac.py`; what may be returned stays with `governance/`. None of
+those gates reads a skill.
+
+Coverage today is **Sales, MIS / Management Reporting and Marketing** —
+15 skills across 2 governance domains, since Sales and Marketing share
+`SALES_MARKETING`. The other 16 governance domains have none declared — a
+skill is added when its prompt arrives, never in anticipation.
+
+A domain holding two prompt-domains (as `SALES_MARKETING` does) produces
+**no** skill framing unless a specific skill is named, rather than guessing
+between them.
+
 ### MCP client (optional, off by default)
 
 A client *of* operator-declared remote MCP servers. Not to be confused

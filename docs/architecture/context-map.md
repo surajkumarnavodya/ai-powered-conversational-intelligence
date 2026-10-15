@@ -44,6 +44,7 @@ task actually touches its area.
 | Source-type **capability/auth/ACL comparison**, including unimplemented sources | [`data-source-matrix.md`](data-source-matrix.md) | per-source-type capabilities, auth model and verification status |
 | Source-connectivity batch plan, prerequisites, rollback | [`implementation-roadmap.md`](implementation-roadmap.md) | sequencing of the connector programme |
 | The `sources/` contract, `GET /sources`, and the descriptor refactor | [`source-connector-contract.md`](source-connector-contract.md) | the connector contract's design and invariants |
+| Domain analytics skills: what a skill is, its boundaries, and how the next batch is added | [`domain-skills.md`](domain-skills.md) | the domain-skill contract |
 
 ### Features — invariants and known limitations
 
