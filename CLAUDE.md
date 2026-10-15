@@ -644,8 +644,14 @@ contract lists its specific limitations; these are the cross-cutting ones.
   monitoring, schema drift and briefings return documents or exit codes; CLI
   scripts under `scripts/` are the cron entry points. Nothing is emailed,
   posted or messaged.
-- **No streaming.** `POST /ask` is a single request; there is no SSE or
-  WebSocket endpoint, so no mid-run progress signal exists.
+- ~~**No streaming.**~~ **Partly closed 2026-10-15.** `POST /ask/stream`
+  (`api/streaming.py`) emits per-node progress over SSE and then the same
+  `AskResponse` `POST /ask` returns -- it *calls* that handler rather than
+  reimplementing it, so every control applies identically. What is still
+  absent is **token-level** streaming: `agent/llm_client.py` makes one
+  blocking call per step and the generation/insight prompts are
+  benchmark-pinned (§12), so streaming the model's own tokens is a
+  separate, evidence-gated change. No WebSocket endpoint exists.
 - **Process-local state**: rate limiters, circuit breakers, the performance
   rollup, the result cache, the security-event ring buffer and the compiled
   graph/Ollama singletons are all per-worker. A multi-worker deployment has

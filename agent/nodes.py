@@ -75,6 +75,7 @@ from agent.llm_client import (
     review_sql_against_plan_from_llm,
 )
 from agent.plan_validator import validate_plan
+from agent.progress import emit_progress
 from agent.rate_limit import (
     LLM_CALL_LIMIT_MESSAGE,
     get_database_execution_limiter,
@@ -275,6 +276,19 @@ def _timed_node(stage: str) -> Callable[[Callable[[AgentState], dict[str, Any]]]
             }
             result = dict(result)
             result["stage_timings"] = [timing]
+            # Streaming progress. A contextvar read and an early return
+            # when nothing is listening -- which is every caller except an
+            # SSE stream -- so the default path pays nothing. Reuses the
+            # values already computed above rather than measuring again,
+            # and deliberately carries no SQL, row, or error *message*:
+            # see agent/progress.py on why an event's payload is narrow.
+            emit_progress(
+                stage,
+                attempt=attempt_number,
+                duration_ms=duration_ms,
+                outcome=outcome,
+                error_category=outcome_category,
+            )
             return result
 
         return wrapper

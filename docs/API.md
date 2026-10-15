@@ -974,6 +974,56 @@ appears in the response; the only configuration fact exposed is the
 boolean `configured`. Design and invariants:
 [`docs/architecture/source-connector-contract.md`](architecture/source-connector-contract.md).
 
+### `POST /ask/stream`
+
+The SSE counterpart of `POST /ask`. Same request body, same final
+`AskResponse` -- it **calls** that handler rather than reimplementing it,
+so model validation, rate limiting, admission control, the execution
+envelope, governance and persistence all apply identically
+(`api/streaming.py`).
+
+What it adds is per-node progress while the run is still going, so a slow
+multi-source question stops looking hung.
+
+```
+event: open
+data: {"status":"running"}
+
+event: progress
+data: {"stage":"retrieve_schema","attempt":1,"duration_ms":12.5,"outcome":"ok","error_category":null}
+
+event: progress
+data: {"stage":"generate_sql","attempt":1,"duration_ms":903.2,"outcome":"ok","error_category":null}
+
+event: result
+data: { ...the same AskResponse POST /ask returns... }
+
+event: done
+data: {"dropped":0}
+```
+
+| Event | Meaning |
+|---|---|
+| `open` | accepted and started |
+| `progress` | one node finished. **Metadata only** -- stage name, attempt, duration, coarse outcome, error *category*. Never SQL, never a row, never an error message: an event is emitted before the result gate has run, so its payload is deliberately narrow (`agent/progress.py`) |
+| `error` | the run failed; `{status, detail}` carries the HTTP status this would have been |
+| `result` | the complete `AskResponse` |
+| `done` | terminal. `dropped` is how many progress events were discarded because the buffer filled, so a client can say its view is incomplete rather than silently miss steps |
+
+`result` and `error` are mutually exclusive and `done` is always last.
+
+**Errors after the stream opens arrive in-band, not as an HTTP status.**
+Once SSE headers are sent the status is already `200`, so a rate-limit or
+governance refusal comes back as an `error` event. A client must read the
+stream, not just the status. Request-model validation still returns a real
+`422`, because that happens before the stream opens.
+
+**Progress is per-node, not per-token.** The model's own tokens are not
+streamed: `agent/llm_client.py` makes one blocking call per step and the
+generation/insight prompts are benchmark-pinned, so that is a separate
+change. What streams is the pipeline's progress, which is what makes a
+slow run legible.
+
 ### Other routes
 
 `POST /execute` (SQL "Confirm and Run" equivalent), `POST /schema/refresh`,

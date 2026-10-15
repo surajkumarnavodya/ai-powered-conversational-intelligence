@@ -17,7 +17,11 @@ export function PendingTurn({ pendingQuestion }: { pendingQuestion: PendingQuest
         <ChatMessage message={{ role: 'user', content: pendingQuestion.question }} />
       </div>
       <div className="pl-10">
-        <TimingBadge mode="pending" startedAt={pendingQuestion.startedAt} />
+        <TimingBadge
+          mode="pending"
+          startedAt={pendingQuestion.startedAt}
+          stage={pendingQuestion.stage}
+        />
       </div>
     </div>
   )

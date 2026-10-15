@@ -89,6 +89,7 @@ its own contract (§3).**
 | Risk register | [`../RISK_REGISTER.md`](../RISK_REGISTER.md) |
 | Reliability | [`../RELIABILITY.md`](../RELIABILITY.md) |
 | Troubleshooting | [`../TROUBLESHOOTING.md`](../TROUBLESHOOTING.md) |
+| Opt-in live integration tests and the M365 tenant runbook | [`../LIVE_INTEGRATION_TESTING.md`](../LIVE_INTEGRATION_TESTING.md) |
 
 ### Frontend specifics
 

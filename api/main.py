@@ -160,6 +160,7 @@ from api.semantic_catalog import router as semantic_catalog_router
 from api.semantic_intelligence import router as semantic_intelligence_router
 from api.shares import router as shares_router
 from api.sources import router as sources_router
+from api.streaming import router as streaming_router
 from api.tenant_admin import router as tenant_admin_router
 from api.voice import router as voice_router
 from api.workflow import router as workflow_router
@@ -445,6 +446,10 @@ app.include_router(tenant_admin_router)
 app.include_router(model_routing_router)
 app.include_router(navigation_router)
 app.include_router(sources_router)
+# Registered after `ask` is defined above: api/streaming.py imports it
+# lazily inside the route to avoid a circular import, and calls it so
+# every control on /ask applies identically.
+app.include_router(streaming_router)
 app.include_router(workflow_router)
 app.include_router(artifacts_router)
 

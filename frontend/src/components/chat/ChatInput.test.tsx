@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ToastProvider } from '@/components/ui/toast'
 import * as api from '@/lib/api'
+import * as askStream from '@/lib/askStream'
 import type { AskResponse, HealthResponse } from '@/lib/types'
 import { useChatStore } from '@/store/chatStore'
 import { ChatInput } from './ChatInput'
@@ -126,7 +127,7 @@ describe('ChatInput -- attachment composer lifecycle', () => {
   })
 
   it('clears the pending attachment chip automatically once the backend accepts and answers the request', async () => {
-    vi.spyOn(api, 'askQuestion').mockResolvedValue(makeAskResponse())
+    vi.spyOn(askStream, 'askQuestionStreaming').mockResolvedValue(makeAskResponse())
     const user = userEvent.setup()
     renderChatInput()
 
@@ -140,14 +141,15 @@ describe('ChatInput -- attachment composer lifecycle', () => {
 
     // The actual server-assigned attachment id was sent, not a blob URL or
     // bare filename -- the composer wouldn't have anything else to send.
-    expect(api.askQuestion).toHaveBeenCalledWith(
+    expect(askStream.askQuestionStreaming).toHaveBeenCalledWith(
       expect.objectContaining({ attachment_ids: ['att_1'] }),
+      expect.anything(),
       expect.anything(),
     )
   })
 
   it('clears the composer even when the agent itself fails to answer -- the request still reached the backend', async () => {
-    vi.spyOn(api, 'askQuestion').mockResolvedValue(
+    vi.spyOn(askStream, 'askQuestionStreaming').mockResolvedValue(
       makeAskResponse({ status: 'failed', failure_explanation: 'The request failed.' }),
     )
     const user = userEvent.setup()
@@ -161,7 +163,7 @@ describe('ChatInput -- attachment composer lifecycle', () => {
   })
 
   it('preserves the attachment for retry when the request never reaches the backend', async () => {
-    vi.spyOn(api, 'askQuestion').mockRejectedValue(new Error('network down'))
+    vi.spyOn(askStream, 'askQuestionStreaming').mockRejectedValue(new Error('network down'))
     const user = userEvent.setup()
     renderChatInput()
 
@@ -169,14 +171,14 @@ describe('ChatInput -- attachment composer lifecycle', () => {
     await user.type(screen.getByLabelText(/ask a question/i), 'Describe it')
     await user.click(screen.getByRole('button', { name: /send/i }))
 
-    await waitFor(() => expect(api.askQuestion).toHaveBeenCalled())
+    await waitFor(() => expect(askStream.askQuestionStreaming).toHaveBeenCalled())
     // Still there -- a client-side/network failure never reached the
     // backend, so the user shouldn't have to re-select the file to retry.
     expect(screen.getByText('notes.txt')).toBeInTheDocument()
   })
 
   it('clears the composer only once, even though the same file could otherwise still be resolved after clearing', async () => {
-    vi.spyOn(api, 'askQuestion').mockResolvedValue(makeAskResponse())
+    vi.spyOn(askStream, 'askQuestionStreaming').mockResolvedValue(makeAskResponse())
     const user = userEvent.setup()
     renderChatInput()
 
@@ -186,7 +188,7 @@ describe('ChatInput -- attachment composer lifecycle', () => {
 
     await waitFor(() => expect(screen.queryByText('notes.txt')).not.toBeInTheDocument())
     expect(api.uploadAttachments).toHaveBeenCalledTimes(1)
-    expect(api.askQuestion).toHaveBeenCalledTimes(1)
+    expect(askStream.askQuestionStreaming).toHaveBeenCalledTimes(1)
   })
 })
 

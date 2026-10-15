@@ -126,7 +126,7 @@ Prompt 2 proposes building these. They exist.
 | Execution budgets / deadlines / cancellation | Live | commit `fc8adf4` "server-owned execution envelope"; `docs/HARNESS_RUNTIME_CONTRACT.md` | already built |
 | Observability, correlation IDs, audit | Live | `observability/`; [`../OBSERVABILITY.md`](../OBSERVABILITY.md) | already built |
 | Evaluation platform | Live | `eval/`, `eval_platform/` | already built |
-| **Streaming** | **Absent** (disclosed) | No `StreamingResponse`, `EventSourceResponse`, `text/event-stream` or `WebSocket` anywhere in `api/*.py` | genuinely new | 
+| **Streaming** | **Live** (2026-10-15), per-node not per-token | `api/streaming.py` (`POST /ask/stream`), `agent/progress.py`; `tests/test_api_streaming.py`, `tests/test_progress.py`; frontend `lib/askStream.ts` | token-level streaming still absent | 
 
 **Conclusion for Prompt 2: little to implement.** Its only substantial
 unmet item is streaming, which is a disclosed gap, not an oversight.
@@ -158,7 +158,7 @@ Each is a finding of this audit, not a restatement of an existing doc.
 | R2 | M365 connectors cannot be end-to-end verified here. Writing them without a tenant risks fabricated scopes, which master instruction #4 forbids | **High** (process risk) | 0 Graph files; no tenant credentials in this environment | config + adapter seam only; mark live verification **blocked** |
 | R3 | **[`CLAUDE.md`](../../CLAUDE.md) §13 carries a stale gap entry.** It states "`search/` has no dedicated mocked unit test file ... A real, worthwhile follow-up." That follow-up was **already done** | Medium (doc accuracy) | `tests/test_web_search.py` — 236 lines, 14 tests, `httpx.post` mocked throughout, covering request shape, response parsing, empty/missing results, HTTP error propagation, secret non-leakage and provider dispatch. Its own docstring says it closes that gap | **correct §13.** The gap is closed |
 | R4 | ~~Adding user-selected sources to `AskRequest` touches the router's permission filter~~ **Closed 2026-10-15.** The selection is intersected, never unioned; `_apply_source_selection` returns a subset of what configuration already allows and the role check still runs downstream | **High** (security) — **mitigated** | `tests/test_source_selection.py::TestSelectionCannotGrant`; mutating the intersection to a union fails 19 tests | done — keep the mutation evidence in [`source-connector-contract.md`](source-connector-contract.md) §8.2 |
-| R5 | No streaming means no mid-run progress signal, so a long multi-source run looks hung | Medium (UX) | §5 | out of scope until prioritised |
+| R5 | ~~No streaming means no mid-run progress signal~~ **Closed 2026-10-15.** `POST /ask/stream` emits per-node progress; the UI shows the running stage in its pending badge | Medium (UX) — **mitigated** | `api/streaming.py`, `agent/progress.py`, `frontend/src/lib/askStream.ts` | done — token-level streaming remains out of scope |
 
 **A note on R3, because it cuts both ways.** This audit initially recorded
 the missing-test gap on [`CLAUDE.md`](../../CLAUDE.md) §13's authority and
