@@ -577,10 +577,10 @@ would turn every write into prompt injection with full pipeline reach.
 those gates reads a skill.
 
 Coverage today is **Sales, MIS / Management Reporting, Marketing, HR,
-eCommerce and Training / L&D** — 30 skills across 5 governance domains,
-since Sales and Marketing share `SALES_MARKETING`. The other 13 governance
-domains have none declared — a skill is added when its prompt arrives,
-never in anticipation.
+eCommerce, Training / L&D and Finance & Corporate Functions** — 35 skills
+across 6 governance domains, since Sales and Marketing share
+`SALES_MARKETING`. The other 12 governance domains have none declared — a
+skill is added when its prompt arrives, never in anticipation.
 
 Guidance for a domain automatically carries that domain's prohibited
 actions, derived from `governance/domains.py`. HR, for example, prohibits

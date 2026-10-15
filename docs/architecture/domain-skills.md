@@ -9,7 +9,7 @@ recommended in a business domain is
 [`../DATA_PRIVACY_GOVERNANCE_ENGINE.md`](../DATA_PRIVACY_GOVERNANCE_ENGINE.md),
 and a skill cannot change any of it.
 
-**Date:** 2026-10-15. **Batches delivered:** 6 — Sales, MIS / Management Reporting, Marketing, HR, eCommerce, Training / L&D (across 5 of 18 governance domains).
+**Date:** 2026-10-15. **Batches delivered:** 7 — Sales, MIS / Management Reporting, Marketing, HR, eCommerce, Training / L&D, Finance & Corporate Functions (across 6 of 18 governance domains).
 
 ---
 
@@ -113,7 +113,7 @@ the two distinguishable where it matters (`sales.*` vs a future
 
 `registry.covered_domains()` answers "which of the eighteen are actually
 covered" from the catalog itself, so no document can claim coverage the
-code does not have. **Today: Sales, MIS, Marketing, HR, eCommerce and Training / L&D — 30 skills across 5 governance domains.**
+code does not have. **Today: Sales, MIS, Marketing, HR, eCommerce, Training / L&D and Finance — 35 skills across 6 governance domains.**
 
 A test asserts `covered_domains()` equals exactly the delivered batches, so
 a new domain fails it until this document is updated in the same change —
@@ -165,21 +165,21 @@ caller text, no retrieved document, no database value, no model output.
 
 ## 7. Mutation evidence
 
-Each applied to live code, then reverted. Clean: `218 passed` (6 batches).
+Each applied to live code, then reverted. Clean: `247 passed` (7 batches).
 Counts grow with the catalog, which is the point — a guard that covered one
 batch would not stay meaningful as domains land.
 
 | Mutation | Result |
 |---|---|
-| selection stops filtering by domain (cross-domain leak) | **3 failed**, 215 passed |
-| no longer fails open when the flag is off | **1 failed**, 217 passed |
-| contract gains a format slot | **2 failed**, 216 passed |
-| `GENERAL` (unknown domain) gets guessed framing | **1 failed**, 217 passed |
-| guesses a default across prompt-domains (campaign → Revenue framing) | **2 failed**, 216 passed |
-| `group` stops being derived from the slug | **36 failed**, 177 passed |
-| prohibitions block dropped (HR invited to rank individuals) | **5 failed**, 213 passed |
-| prohibitions hard-coded to one domain instead of derived | **5 failed**, 213 passed |
-| ranking invitation becomes unqualified again | **1 failed**, 217 passed |
+| selection stops filtering by domain (cross-domain leak) | **3 failed**, 244 passed |
+| no longer fails open when the flag is off | **1 failed**, 246 passed |
+| contract gains a format slot | **2 failed**, 245 passed |
+| `GENERAL` (unknown domain) gets guessed framing | **1 failed**, 246 passed |
+| guesses a default across prompt-domains (campaign → Revenue framing) | **2 failed**, 245 passed |
+| `group` stops being derived from the slug | **41 failed**, 200 passed |
+| prohibitions block dropped (HR invited to rank individuals) | **6 failed**, 241 passed |
+| prohibitions hard-coded to one domain instead of derived | **6 failed**, 241 passed |
+| ranking invitation becomes unqualified again | **1 failed**, 246 passed |
 
 Three of those only became real after a vacuous test was fixed. The full
 pattern is in §8; the first two are recorded here because they were found
@@ -357,7 +357,50 @@ genuine before-and-after on a comparable group.
 
 ---
 
-## 11. Adding the next batch
+## 11. Batch 7 (Finance): where a policy stops and a skill starts
+
+Finance made explicit a line the earlier batches only implied. It prohibits
+exactly **one** action, `individual_compensation_decision`. It does **not**
+prohibit `unsupported_allegation`.
+
+That matters because AR/AP analysis carries an obvious accusation risk: a
+late or disputed balance is easy to report as though it were bad faith. The
+governance engine will not stop that for this domain, because this domain's
+policy does not list it.
+
+So the rule is now stated rather than assumed:
+
+| Kind of constraint | Where it lives |
+|---|---|
+| A **policy-backed prohibition** | Derived automatically from `policy_for(domain)`. Never restated in a skill — a test enforces that |
+| An **analytical risk the policy does not cover** | The skill's own `focus` text |
+
+The AR/AP skill therefore says a late balance is "a collections and process
+matter… never as evidence of bad faith, misconduct or fraud by the
+counterparty", and a test asserts that guard is present — because nothing
+else would supply it.
+
+Two tests pin the boundary from both sides: one asserts
+`unsupported_allegation` does **not** appear in Finance's derived block
+(it would be a fabricated prohibition), and the other asserts the AR/AP
+focus carries the guard itself.
+
+### Other analytical constraints this batch carries
+
+All read off the subject matter, none from the policy:
+
+- **Period basis.** A part-closed period compared against a closed one
+  shows a decline that is purely an artefact of timing.
+- **Budget phasing.** An evenly phased budget against lumpy actuals
+  produces a variance that reverses next period.
+- **Ageing buckets.** The same ledger looks very different on 30/60/90 than
+  on 45/90, so the boundaries have to be stated.
+- **Consolidation basis.** A group figure built on different translation
+  rates is not comparable period to period.
+
+---
+
+## 12. Adding the next batch
 
 1. Add the **prompt-domain's** scope string once in `catalog.py`. If the
    batch shares a governance domain with an existing one (as Marketing
@@ -385,7 +428,7 @@ request.
 
 ---
 
-## 12. Status
+## 13. Status
 
 | Item | State |
 |---|---|
@@ -396,7 +439,8 @@ request.
 | HR skills (5 of 5 supplied) | **Registered** |
 | eCommerce skills (5 of 5 supplied) | **Registered** |
 | Training / L&D skills (5 of 5 supplied) | **Registered** |
-| Other 13 domains | **Not registered** — a skill is added when its prompt arrives, never in anticipation |
+| Finance & Corporate Functions skills (5 of 5 supplied) | **Registered** |
+| Other 12 domains | **Not registered** — a skill is added when its prompt arrives, never in anticipation |
 | Wiring into a live analysis path | **Not done** — see below |
 
 **Deliberately not wired yet.** The composer produces guidance, and nothing

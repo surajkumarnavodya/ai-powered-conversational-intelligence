@@ -6,7 +6,7 @@ settings field that can add or edit a skill at runtime — see
 `domain_skills/types.py` on why a skill must stay an in-code constant.
 
 Batches so far: Sales, MIS / Management Reporting, Marketing, HR,
-eCommerce, Training / L&D. Every batch
+eCommerce, Training / L&D, Finance & Corporate Functions. Every batch
 has arrived with an identical body and an identical "Domain scope" sentence
 across its five prompts, differing only in the heading — so each *prompt-
 domain* writes its scope once (`_SALES_SCOPE`, `_MIS_SCOPE`,
@@ -537,8 +537,109 @@ TRAINING_SKILLS: tuple[DomainSkill, ...] = (
     ),
 )
 
+#: The supplied Finance prompts' "Domain scope:" sentence, verbatim.
+_FINANCE_SCOPE = "Analyze financial performance, budgets, costs, AR/AP, risk and " "corporate KPIs."
+
+#: `policy_for(FINANCE)` prohibits exactly one action,
+#: `individual_compensation_decision`, and restricts the financial,
+#: payment and banking categories. Notably it does **not** prohibit
+#: `unsupported_allegation` -- so the accusation risk that AR/AP analysis
+#: carries (a slow payer reported as though it were misconduct) is handled
+#: in that skill's own focus text rather than by the derived constraint
+#: block. That is the line between the two: a policy-backed prohibition is
+#: derived and never restated, while an analytical risk the policy does not
+#: cover belongs to the skill.
+_FINANCE = BusinessDomain.FINANCE
+
+#: Declared in the supplied numeric order (01 performance, 02 budget/cost,
+#: 03 AR/AP, 04 risk/cost, 05 corporate KPI), so the domain default is
+#: Financial Performance Intelligence (01).
+FINANCE_SKILLS: tuple[DomainSkill, ...] = (
+    DomainSkill(
+        slug="finance.performance",
+        title="Financial Performance Intelligence",
+        domain=_FINANCE,
+        scope=_FINANCE_SCOPE,
+        focus=(
+            "Revenue, cost and margin performance against prior period and "
+            "plan: what moved, by how much, and which lines drive it. State "
+            "the basis -- which period close, and whether figures are "
+            "actual, accrued or forecast -- because a part-closed period "
+            "compared against a closed one shows a decline that is an "
+            "artefact of timing."
+        ),
+        dimensions=("period", "entity", "cost centre", "account", "currency"),
+    ),
+    DomainSkill(
+        slug="finance.budget_cost",
+        title="Budget and Cost Intelligence",
+        domain=_FINANCE,
+        scope=_FINANCE_SCOPE,
+        focus=(
+            "Spend against budget and the shape of cost: variance by cost "
+            "centre and category, run-rate against remaining budget, and "
+            "where cost is concentrated. Say how the budget is phased -- an "
+            "evenly phased budget compared against lumpy actuals produces a "
+            "variance that reverses next period -- and state the basis of a "
+            "variance percentage, since one on a near-zero budget is "
+            "arithmetically unstable."
+        ),
+        dimensions=("cost centre", "category", "period", "budget line", "entity"),
+    ),
+    DomainSkill(
+        slug="finance.ar_ap",
+        title="AR AP Intelligence",
+        domain=_FINANCE,
+        scope=_FINANCE_SCOPE,
+        focus=(
+            "Receivables and payables position: ageing profile, days "
+            "outstanding, and where balance is concentrated by counterparty "
+            "or period. Give the ageing bucket boundaries, since the same "
+            "ledger looks very different on 30/60/90 than on 45/90. "
+            "A late or disputed balance is a collections and process "
+            "matter: report it as an exposure to follow up, never as "
+            "evidence of bad faith, misconduct or fraud by the counterparty."
+        ),
+        dimensions=("counterparty", "ageing bucket", "period", "entity", "currency"),
+    ),
+    DomainSkill(
+        slug="finance.risk_cost",
+        title="Enterprise Risk and Cost Intelligence",
+        domain=_FINANCE,
+        scope=_FINANCE_SCOPE,
+        focus=(
+            "Financial exposure and its concentration: where risk or cost "
+            "clusters by counterparty, currency, entity or contract, and "
+            "how that has moved. A risk indicator describes exposure, not a "
+            "loss that has happened and not one that will -- report it as "
+            "something to size and monitor."
+        ),
+        dimensions=("risk category", "entity", "counterparty", "period", "exposure"),
+    ),
+    DomainSkill(
+        slug="finance.corporate_kpi",
+        title="Corporate KPI Intelligence",
+        domain=_FINANCE,
+        scope=_FINANCE_SCOPE,
+        focus=(
+            "Corporate financial KPIs side by side: standing, trend and "
+            "movement against target across entities and functions. State "
+            "the consolidation basis and the currency treatment, because a "
+            "group figure built on different translation rates is not "
+            "comparable period to period."
+        ),
+        dimensions=("kpi", "entity", "period", "currency", "function"),
+    ),
+)
+
 #: Every registered skill, in declaration order. Later batches append their
 #: own tuple here.
 ALL_SKILLS: tuple[DomainSkill, ...] = (
-    SALES_SKILLS + MIS_SKILLS + MARKETING_SKILLS + HR_SKILLS + ECOMMERCE_SKILLS + TRAINING_SKILLS
+    SALES_SKILLS
+    + MIS_SKILLS
+    + MARKETING_SKILLS
+    + HR_SKILLS
+    + ECOMMERCE_SKILLS
+    + TRAINING_SKILLS
+    + FINANCE_SKILLS
 )

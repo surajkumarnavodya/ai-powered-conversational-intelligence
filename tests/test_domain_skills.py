@@ -41,6 +41,7 @@ MIS = BusinessDomain.MIS
 HR = BusinessDomain.HR
 ECOMMERCE = BusinessDomain.ECOMMERCE
 TRAINING = BusinessDomain.TRAINING
+FINANCE = BusinessDomain.FINANCE
 
 
 class TestCatalog:
@@ -54,6 +55,20 @@ class TestCatalog:
             "sales.product",
             "sales.pricing",
         )
+
+    def test_the_supplied_finance_skills_are_registered_in_numeric_order(self):
+        """Supplied as 01, 02, 03, 05, 04; registered 01..05, so the domain
+        default is Financial Performance Intelligence."""
+        assert tuple(s.slug for s in ds.skills_for_domain(FINANCE)) == (
+            "finance.performance",  # 01
+            "finance.budget_cost",  # 02
+            "finance.ar_ap",  # 03
+            "finance.risk_cost",  # 04
+            "finance.corporate_kpi",  # 05
+        )
+        default = select_skill(FINANCE)
+        assert default is not None
+        assert default.slug == "finance.performance"
 
     def test_the_supplied_training_skills_are_registered_in_numeric_order(self):
         """Supplied as 02, 03, 04, 05, 01; registered 01..05, so the domain
@@ -114,8 +129,8 @@ class TestCatalog:
         """Four prompt-domains, three governance domains: Marketing shares
         `SALES_MARKETING` with Sales. Inventing a governance domain per
         batch would mean two answers to 'what may this question return'."""
-        assert len({s.group for s in ds.all_skills()}) == 6
-        assert len(ds.covered_domains()) == 5
+        assert len({s.group for s in ds.all_skills()}) == 7
+        assert len(ds.covered_domains()) == 6
 
     def test_the_supplied_mis_skills_are_registered(self):
         assert tuple(s.slug for s in ds.skills_for_domain(MIS)) == (
@@ -160,7 +175,7 @@ class TestCatalog:
         in `docs/architecture/domain-skills.md` to be updated in the same
         change, instead of drifting behind the code.
         """
-        assert ds.covered_domains() == (SALES, MIS, HR, ECOMMERCE, TRAINING)
+        assert ds.covered_domains() == (SALES, MIS, HR, ECOMMERCE, TRAINING, FINANCE)
 
     def test_the_other_sixteen_domains_have_no_skills(self):
         """An uncovered domain must stay genuinely empty rather than
@@ -487,6 +502,36 @@ class TestDomainProhibitionsAreDerivedNotRestated:
         assert result is not None
         text, _ = result
         assert "Domain constraints" not in text
+
+    def test_finance_does_not_derive_a_prohibition_it_does_not_have(self):
+        """Finance prohibits only `individual_compensation_decision`. It
+        does NOT prohibit `unsupported_allegation`, so that must not appear
+        in its derived block -- the AR/AP accusation risk is handled in
+        that skill's own focus text instead.
+
+        This is the line between the two mechanisms: a policy-backed
+        prohibition is derived and never restated, while an analytical risk
+        the policy does not cover belongs to the skill.
+        """
+        from governance.domains import policy_for
+
+        actions = {a.value for a in policy_for(FINANCE).prohibited_actions}
+        assert actions == {"individual_compensation_decision"}
+
+        result = guidance_for(FINANCE, enabled=True)
+        assert result is not None
+        text, _ = result
+        assert "individual compensation decision" in text
+        assert "unsupported allegation" not in text
+
+    def test_the_ar_ap_skill_carries_the_accusation_guard_itself(self):
+        """Since the policy does not cover it, the skill must -- a late
+        balance reported as evidence of bad faith is the realistic failure
+        here."""
+        skill = ds.get_skill("finance.ar_ap")
+        lowered = skill.focus.lower()
+        assert "collections" in lowered
+        assert "never as evidence of bad faith" in lowered
 
     def test_training_carries_a_subset_of_hrs_prohibitions(self):
         """Training prohibits two of HR's five. A domain with a strict
