@@ -183,7 +183,9 @@ claimed as done. Ordered as the plan's §9 orders them.
 | Frontend types | `npx tsc --noEmit -p tsconfig.app.json` | Clean |
 | Frontend lint | `npm run lint` | Exit 0; warnings only, all pre-existing, none in a changed file |
 | Frontend build | `npm run build` | Succeeds (chunk-size warning pre-existing) |
-| Backend | `pytest` | **7134 passed, 11 deselected** — unchanged; no backend file was modified in this pass |
+| Backend | `pytest` | **7197 passed, 11 deselected** (7:01). No backend file was modified in this pass — `git diff --name-only` over the whole range touches only `frontend/` and `docs/`. The rise from 7134 is a parallel session's Construction & Capital Works domain-skills batch, not this work |
+| Backend lint | `ruff check .` | 1 finding, pre-existing (`agent/multiagent/agents.py` I001) |
+| Backend format | `black --check .` | Clean, 1632 files |
 
 Not run, and not claimed: the execution-accuracy benchmark, the security
 benchmark, `scripts/integration_test.py`, and any browser or live-database
