@@ -19,10 +19,13 @@ export function DialogContent({
 }: ComponentProps<typeof DialogPrimitive.Content> & { showCloseButton?: boolean }) {
   return (
     <DialogPrimitive.Portal>
-      {/* Fully opaque -- deliberately NOT bg-black/40 or --card. --card carries
-          a translucent "glass" alpha channel in dark mode (see index.css),
-          and a 40%-opacity backdrop lets page content show through around
-          the panel. A modal must occlude the entire page behind it. */}
+      {/* A translucent scrim, deliberately NOT --card and deliberately not
+          fully opaque either. --card carries a "glass" alpha channel in
+          dark mode, which is what once let page content show *through the
+          panel* -- that is fixed by --modal-surface below, not by this.
+          Dimming rather than blacking out is the point of a scrim: the
+          page should recede behind the dialog, not disappear. See
+          index.css on why the two were conflated originally. */}
       <DialogPrimitive.Overlay
         className="fixed inset-0 bg-[var(--modal-backdrop)] transition-opacity duration-[var(--duration-base)]"
         style={{ zIndex: 'var(--z-modal)' }}

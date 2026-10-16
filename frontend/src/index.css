@@ -116,10 +116,21 @@
   /* Modal-specific surfaces -- deliberately NOT --card. --card carries a
      translucent "glass" alpha channel in dark mode (see the dark override
      below) intended for surfaces meant to sit atop other content, like
-     message bubbles. A modal that's meant to fully occlude the page behind
-     it needs a guaranteed fully-opaque panel/backdrop regardless of theme,
-     so it gets its own tokens instead of inheriting --card's transparency. */
-  --modal-backdrop: #05050a;
+     message bubbles. A modal panel must never let anything show through
+     it regardless of theme, so it gets its own guaranteed-opaque token
+     instead of inheriting --card's transparency.
+
+     The *backdrop* is a different question from the *panel*, and the two
+     were conflated when these tokens were introduced (docs/functional-ui
+     -audit.md 1.5). The bug being fixed then was content showing through
+     the panel in dark mode, which --modal-surface below is what actually
+     fixes; the backdrop was made fully opaque in the same pass and that
+     part went further than the bug required, blacking the page out
+     entirely. A scrim is meant to dim what is behind it, not delete it --
+     seeing the page recede is what tells you the dialog is a layer over
+     your work rather than a new screen. So: translucent here, opaque for
+     the panel. */
+  --modal-backdrop: rgb(5 5 10 / 0.55);
   --modal-surface: #ffffff;
   /* Floating menus (dropdown, popover, toast): opaque, so page content never shows through. */
   --popover-surface: #ffffff;
@@ -165,10 +176,16 @@
   --input: #17152a;
   --header: #100e1f;
 
+  /* A little more opaque than the light scrim. The page behind is already
+     dark here, so an identical alpha reads as a faint tint rather than as
+     dimming, and the panel stops standing out from it. */
+  --modal-backdrop: rgb(5 5 10 / 0.65);
+
   /* Same hue as --card's dark value, alpha channel removed -- --card's
      transparency here is deliberate ("glass" surfaces like message
-     bubbles), but a modal panel meant to fully occlude the page must never
-     let the backdrop/page show through it. */
+     bubbles), but a modal panel must never let the backdrop or the page
+     show through it. This is the half of the 2026-09-19 fix that was
+     load-bearing, and it is unchanged. */
   --modal-surface: #151324;
   --popover-surface: #151324;
 

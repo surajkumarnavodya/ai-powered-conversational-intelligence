@@ -49,13 +49,20 @@ describe('Dialog', () => {
 
   // Regression coverage for the 2026-09-19 dark-mode background-bleed-through
   // bug (docs/settings-modal-visual-bug.md): the backdrop used to be
-  // `bg-black/40` (40% opaque -- page content visible through it) and the
-  // panel used `bg-[var(--card)]`, which carries a translucent "glass" alpha
-  // channel in dark mode (`--card: #15132485` in index.css) -- so the panel
-  // itself let background content bleed through too. Both must now use the
-  // dedicated, always-fully-opaque `--modal-backdrop`/`--modal-surface`
-  // tokens instead.
-  it('renders a fully opaque backdrop, never a translucent bg-black overlay', async () => {
+  // `bg-black/40` and the panel used `bg-[var(--card)]`, which carries a
+  // translucent "glass" alpha channel in dark mode (`--card: #15132485` in
+  // index.css) -- so the panel itself let background content bleed through.
+  // Both must use the dedicated `--modal-backdrop`/`--modal-surface` tokens
+  // instead of ad hoc values.
+  //
+  // What each token guarantees is **not** the same, and was conflated until
+  // 2026-10-16. `--modal-surface` is fully opaque in both themes and that is
+  // what fixes bleed-through; `--modal-backdrop` is a translucent scrim, so
+  // the page dims rather than disappearing. These assertions pin the tokens
+  // being used, deliberately not their alpha -- a scrim's exact opacity is a
+  // design value that may be tuned, while "the modal must not reach for
+  // --card or a bare bg-black" is the property worth holding.
+  it('draws its backdrop from the dedicated token, never a bare bg-black overlay', async () => {
     render(<TestDialog />)
     await userEvent.click(screen.getByRole('button', { name: 'Open settings' }))
 
