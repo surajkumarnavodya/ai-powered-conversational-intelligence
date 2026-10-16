@@ -53,6 +53,7 @@ ENERGY = BusinessDomain.ENERGY
 RISK_AUDIT = BusinessDomain.RISK_AUDIT
 LEGAL = BusinessDomain.LEGAL
 REAL_ESTATE = BusinessDomain.REAL_ESTATE
+CONSTRUCTION = BusinessDomain.CONSTRUCTION
 
 #: Covered domains whose policy declares no `ProhibitedAction` at all, so
 #: `composer._prohibitions_block` appends nothing and the shared contract's
@@ -85,6 +86,21 @@ class TestCatalog:
             "real_estate.facilities_maintenance",
             "real_estate.financial",
         )
+
+    def test_the_derived_construction_skills_are_registered_in_declared_order(self):
+        """No prompt supplied this batch, so the order is a decision
+        rather than a reading of "01..05" -- recorded here because the
+        first declared skill is what `select_skill` makes the default."""
+        assert tuple(s.slug for s in ds.skills_for_domain(CONSTRUCTION)) == (
+            "construction.cost",
+            "construction.programme",
+            "construction.procurement",
+            "construction.quality",
+            "construction.safety",
+        )
+        default = select_skill(CONSTRUCTION)
+        assert default is not None
+        assert default.slug == "construction.cost"
 
     def test_the_supplied_legal_skills_are_registered_in_numeric_order(self):
         """The prompts arrived shuffled (01, 03, 02, 04, 05); numeric order
@@ -308,14 +324,17 @@ class TestCatalog:
         this question return'.
 
         The gap of one has been constant since batch 3 and is the whole
-        point of `DomainSkill.group`. Batch 18 is where the counts stop
-        moving: ninety skills across eighteen prompt-domains, which is
-        the figure `domain_skills/types.py` has used as its example since
-        batch 1.
+        point of `DomainSkill.group`. Batch 18 is where the *supplied*
+        counts stopped moving: ninety skills across eighteen
+        prompt-domains and seventeen governance domains. The derived
+        Construction batch adds one of each and five skills, and the gap
+        of one survives it -- Construction brought its own governance
+        domain with it, so it is the first batch since Marketing to move
+        both counts together.
         """
-        assert len({s.group for s in ds.all_skills()}) == 18
-        assert len(ds.covered_domains()) == 17
-        assert len(ds.all_skills()) == 90
+        assert len({s.group for s in ds.all_skills()}) == 19
+        assert len(ds.covered_domains()) == 18
+        assert len(ds.all_skills()) == 95
 
     def test_the_supplied_mis_skills_are_registered(self):
         assert tuple(s.slug for s in ds.skills_for_domain(MIS)) == (
@@ -378,6 +397,7 @@ class TestCatalog:
             RISK_AUDIT,
             LEGAL,
             REAL_ESTATE,
+            CONSTRUCTION,
         )
 
     def test_the_only_domain_left_uncovered_is_the_deliberate_one(self):
@@ -2049,15 +2069,18 @@ class TestRiskAuditIsWhereTheSubjectMatterIsTheProhibition:
             if ProhibitedAction.LIABILITY_DETERMINATION in policy.prohibited_actions
             and domain is not BusinessDomain.GENERAL
         }
-        assert declaring == {LEGAL, RISK_AUDIT}
+        # CONSTRUCTION joined them later, deriving the same action for a
+        # third reason: delay and defect attribution is settled under a
+        # contract, never read off a progress table.
+        assert declaring == {LEGAL, RISK_AUDIT, CONSTRUCTION}
 
         covered_deriving = [
             d
             for d in ds.covered_domains()
             if ProhibitedAction.LIABILITY_DETERMINATION in policy_for(d).prohibited_actions
         ]
-        # Both are covered now; RISK_AUDIT is still the earlier batch.
-        assert covered_deriving == [RISK_AUDIT, LEGAL]
+        # All three are covered now; RISK_AUDIT is still the earliest batch.
+        assert covered_deriving == [RISK_AUDIT, LEGAL, CONSTRUCTION]
 
     def test_the_domain_restricts_its_own_subject_matter_and_nothing_else_does(self):
         """Every covered domain so far restricted a side-channel -- PII in
@@ -3130,14 +3153,21 @@ class TestRealEstateIsWhereTheAssetIsTheIdentifier:
         the only member without skills and
         `test_the_only_domain_left_uncovered_is_the_deliberate_one`
         covers why.
+
+        The milestone is about the *supplied* series, so it is asserted
+        net of the later, derived Construction batch rather than being
+        quietly restated as ninety-five -- that would lose the fact this
+        test was written to record.
         """
-        assert len(ds.all_skills()) == 90
+        supplied = [s for s in ds.all_skills() if s.domain is not CONSTRUCTION]
+        assert len(supplied) == 90
+        assert len(ds.all_skills()) == 95
         counts = {
             group: len([s for s in ds.all_skills() if s.group == group])
             for group in {s.group for s in ds.all_skills()}
         }
         assert set(counts.values()) == {5}
-        assert len(counts) == 18
+        assert len(counts) == 19
         assert len(ds.skills_for_domain(SALES)) == 10
 
 
@@ -3303,3 +3333,196 @@ class TestTheGuardsAreNotVacuous:
         hostile = "Analyse {user_input} carefully."
         assert "{" in hostile
         assert "{" not in ANALYTICS_CONTRACT
+
+
+class TestConstructionIsTheDerivedBatch:
+    """Batch 19 -- the only batch in the catalog with no supplied prompt.
+
+    Two things are therefore worth pinning that no other batch needs: that
+    the derived policy is strictly stricter than the neighbours it was
+    reasoned from (a derivation may add protection, never remove it), and
+    that the batch still obeys every rule the supplied batches established.
+    """
+
+    def test_the_derived_policy_is_stricter_than_both_neighbours(self):
+        """`CONSTRUCTION` was derived from `PROJECT` (capital work) and
+        `REAL_ESTATE` (the built asset). A derivation that landed looser
+        than its source would be the one genuinely dangerous outcome of
+        inventing a policy, so it is asserted rather than reviewed.
+        """
+        derived = policy_for(CONSTRUCTION)
+        for neighbour in (policy_for(PROJECT), policy_for(BusinessDomain.REAL_ESTATE)):
+            assert (
+                derived.effective_restricted_categories >= neighbour.effective_restricted_categories
+            )
+            assert derived.prohibited_actions >= neighbour.prohibited_actions
+        assert derived.minimum_group_size >= policy_for(PROJECT).minimum_group_size
+
+    def test_it_is_the_first_policy_to_carry_both_pairs(self):
+        """The two individual-decision actions come from `HR`'s reasoning,
+        the two attribution ones from `RISK_AUDIT`'s. No supplied domain
+        declares all four, which is what makes this batch's constraint
+        block the longest in the catalog."""
+        from governance.domains import DOMAIN_POLICIES
+
+        four = {
+            ProhibitedAction.INDIVIDUAL_EMPLOYMENT_ACTION,
+            ProhibitedAction.INDIVIDUAL_PERFORMANCE_RANKING,
+            ProhibitedAction.LIABILITY_DETERMINATION,
+            ProhibitedAction.UNSUPPORTED_ALLEGATION,
+        }
+        assert policy_for(CONSTRUCTION).prohibited_actions == four
+
+        others = {
+            domain
+            for domain, policy in DOMAIN_POLICIES.items()
+            if domain not in (CONSTRUCTION, BusinessDomain.GENERAL)
+            and policy.prohibited_actions >= four
+        }
+        assert others == set()
+
+    def test_all_four_prohibitions_are_derived_into_every_skills_block(self):
+        """The composer owns them, so every skill gets all four without
+        any focus text mentioning one."""
+        for skill in ds.skills_for_domain(CONSTRUCTION):
+            text = compose_guidance(skill)
+            assert "This domain prohibits" in text, skill.slug
+            for action in policy_for(CONSTRUCTION).prohibited_actions:
+                assert action.value.replace("_", " ") in text, (skill.slug, action)
+
+    def test_no_focus_text_restates_a_derived_prohibition(self):
+        """Batch 4's rule, and this domain is where it bites hardest: the
+        question a construction dataset invites is "whose fault was it",
+        which is two of the four derived actions in one sentence. A
+        restatement here would be a second owner free to drift
+        (`CLAUDE.md` section 4.8)."""
+        for skill in ds.skills_for_domain(CONSTRUCTION):
+            lowered = skill.focus.lower()
+            for banned in (
+                "liabilit",
+                "allegation",
+                "prohibit",
+                "individual performance",
+                "employment action",
+            ):
+                assert banned not in lowered, (skill.slug, banned)
+
+    def test_every_skill_redirects_rather_than_only_refusing(self):
+        """Batch 8's rule. Each skill names the narrower question it
+        answers instead, because in this domain the thing it will not say
+        is frequently the thing that was asked."""
+        redirects = {
+            "construction.cost": "report by package and cost code and state the basis",
+            "construction.programme": (
+                "describe a slip as what the record shows rather than as a conclusion "
+                "about who caused it"
+            ),
+            "construction.procurement": "report by package, tender event and procurement route",
+            "construction.quality": (
+                "report what was raised, against which element, by which inspection and when, "
+                "rather than concluding whose work produced it"
+            ),
+            "construction.safety": "report by site, trade and period",
+        }
+        for slug, phrase in redirects.items():
+            assert phrase in " ".join(ds.get_skill(slug).focus.split()).lower(), slug
+
+    def test_every_skill_carries_the_unsettled_figure(self):
+        """This batch's distinguishing analytical problem: almost nothing
+        is final when it is recorded, so a recent period is provisional
+        and a period comparison is partly a comparison of settlement
+        states. Each skill must name its own version of that, not inherit
+        it from the catalog comment."""
+        unsettled = {
+            "construction.cost": "the most recent periods understate",
+            "construction.programme": "percent complete is a claim, not a measurement",
+            "construction.procurement": "a position at a date and not a settled total",
+            "construction.quality": "a closure is a reported state",
+            "construction.safety": "recent periods are provisional",
+        }
+        for slug, phrase in unsettled.items():
+            assert phrase in " ".join(ds.get_skill(slug).focus.split()).lower(), slug
+
+    def test_only_the_safety_skill_states_the_suppression_consequence(self):
+        """`minimum_group_size=5` is real here, not a declared zero that
+        falls back (the correction batch 17 made to the `PROJECT`
+        comment). One skill explains what a suppressed crew-level cut
+        looks like; a second would be a second owner of the same fact."""
+        assert policy_for(CONSTRUCTION).minimum_group_size == 5
+
+        stating = [
+            s.slug
+            for s in ds.skills_for_domain(CONSTRUCTION)
+            if "minimum group size" in s.focus.lower()
+        ]
+        assert stating == ["construction.safety"]
+        safety = " ".join(ds.get_skill("construction.safety").focus.split())
+        assert "its label and count but no measure" in safety
+        assert "not missing data" in safety
+
+    def test_the_focus_texts_claim_no_cross_domain_join(self):
+        """A construction question sits next to HR (the people), FINANCE
+        (the ledger) and SUPPLY_CHAIN (the materials), and
+        `cross_domain_allowed` is empty for this policy, so no skill may
+        invite a join it cannot authorize."""
+        assert policy_for(CONSTRUCTION).cross_domain_allowed == frozenset()
+        for skill in ds.skills_for_domain(CONSTRUCTION):
+            lowered = skill.focus.lower()
+            assert "join" not in lowered, skill.slug
+            assert "payroll" not in lowered, skill.slug
+
+    def test_the_batch_does_not_derive_a_prohibition_it_does_not_have(self):
+        """Batch 7's check. A cost-overrun question is exactly where
+        someone would reach for `fraud_accusation`, and it belongs to
+        BFSI."""
+        policy = policy_for(CONSTRUCTION)
+        assert ProhibitedAction.FRAUD_ACCUSATION not in policy.prohibited_actions
+        result = guidance_for(CONSTRUCTION, enabled=True)
+        assert result is not None
+        text, _ = result
+        assert "fraud accusation" not in text
+        for skill in ds.skills_for_domain(CONSTRUCTION):
+            assert "fraud" not in skill.focus.lower(), skill.slug
+
+    def test_construction_vocabulary_detects_this_domain_and_steals_no_other(self):
+        """The pattern deliberately leaves `project`, `milestone`,
+        `defect` and `work order` to the domains that already claim them,
+        so the detector must still route those questions where they
+        went before."""
+        from governance.domain_detection import detect_domain
+
+        # One question per distinct part of the pattern, so dropping any
+        # one term fails a case rather than being covered by a sibling --
+        # the first relies on the domain's own name and nothing else.
+        for question in (
+            "construction cost by package",
+            "open snags by trade on the riverside jobsite",
+            "subcontract award values by package",
+            "certified progress claims this quarter",
+            "near miss reports by site this month",
+            "toolbox talk attendance this week",
+            "scaffold inspections outstanding",
+        ):
+            assert detect_domain(question=question).domain is CONSTRUCTION, question
+
+        assert detect_domain(question="show project milestones by portfolio").domain is PROJECT
+        assert (
+            detect_domain(question="defect rates on the production line").domain
+            is BusinessDomain.MANUFACTURING
+        )
+        assert (
+            detect_domain(question="supplier purchase orders this month").domain
+            is BusinessDomain.SUPPLY_CHAIN
+        )
+
+    def test_schema_evidence_routes_a_construction_table(self):
+        """Schema outranks wording, and these are the table names a
+        construction estate actually carries."""
+        from governance.domain_detection import detect_domain
+
+        detection = detect_domain(
+            question="how many are open",
+            schema_names=["SubcontractPackage", "site_diary", "snag_item"],
+        )
+        assert detection.domain is CONSTRUCTION
+        assert detection.confident

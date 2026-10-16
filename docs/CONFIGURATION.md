@@ -601,9 +601,13 @@ eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply
 Chain / Procurement & Logistics, Manufacturing & Operations, Customer
 Service & Support, Project & Portfolio Management, IT Operations &
 Service Management, Healthcare & Life Sciences, Energy, Utilities &
-Sustainability, Risk, Audit & Controls, Legal, Secretarial & Governance
-and Real Estate & Facilities** — 90 skills across 17 governance domains,
-since Sales and Marketing share `SALES_MARKETING`. `EXECUTIVE` has none
+Sustainability, Risk, Audit & Controls, Legal, Secretarial & Governance,
+Real Estate & Facilities and Construction & Capital Works** — 95 skills
+across 18 of the 19 governance domains, since Sales and Marketing share
+`SALES_MARKETING`. Construction is the one batch with no supplied prompt
+behind it: its skills and its governance policy were derived, which
+`domain_skills/catalog.py` and `governance/domains.py` both record at the
+point of declaration. `EXECUTIVE` has none
 declared, and deliberately so: its one supplied prompt is registered as
 `mis.executive_kpi`, under the domain the batch was supplied with, and the
 two policies are measured identical. Coverage is read from the catalog by

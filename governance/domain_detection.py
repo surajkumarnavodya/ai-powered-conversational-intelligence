@@ -192,6 +192,25 @@ _DOMAIN_PATTERNS: tuple[tuple[BusinessDomain, re.Pattern[str]], ...] = (
             r"|\brent\b|building|floor[-_]?plan|\bsqft\b"
         ),
     ),
+    # Deliberately avoids four words a construction question really does
+    # use -- `project`, `milestone`, `defect` and `work order` -- because
+    # each is already another domain's pattern (`PROJECT` for the first
+    # two, `MANUFACTURING` for the last two). Sharing them would turn
+    # ordinary construction questions into ties rather than detections.
+    # What is left is vocabulary no other domain claims: the contract
+    # instruments, the site itself, and the trades.
+    (
+        BusinessDomain.CONSTRUCTION,
+        _p(
+            r"construction|subcontract|\bcontractor|\bjobsite\b|job[-_\s]?site"
+            r"|site[-_\s]?diary|\bboq\b|bill[-_\s]?of[-_\s]?quantit|\btender\b"
+            r"|variation[-_\s]?order|\bsnag|punch[-_\s]?list"
+            r"|practical[-_\s]?completion|scaffold|formwork|\brebar\b"
+            r"|\bconcrete[-_\s]?pour|excavat|progress[-_\s]?claim"
+            r"|interim[-_\s]?certificat|\bltifr\b|near[-_\s]?miss"
+            r"|toolbox[-_\s]?talk|permit[-_\s]?to[-_\s]?work"
+        ),
+    ),
     (
         BusinessDomain.ENERGY,
         _p(

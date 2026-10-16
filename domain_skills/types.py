@@ -28,8 +28,8 @@ editable:**
 The supplied domain prompts are near-identical by design — the five Sales
 prompts differ only in their title. So the shared contract lives **once**
 in `domain_skills/contract.py`, and a skill carries only what actually
-varies. Ninety skills therefore cost ninety short declarations, not ninety
-copies of the same thirty lines.
+varies. Ninety-five skills therefore cost ninety-five short declarations, not
+ninety-five copies of the same thirty lines.
 """
 
 from __future__ import annotations

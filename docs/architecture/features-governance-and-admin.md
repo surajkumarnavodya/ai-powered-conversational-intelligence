@@ -2000,7 +2000,7 @@ with the pattern that matched.
 
 **Module map (6 new, 4 extended):** `classification.py`
 (`DataClassification`'s 6 ordered levels x `DataCategory`'s 16 families ->
-`FieldPolicy`), `domains.py` (18 domains + fallback, `DomainPolicy`,
+`FieldPolicy`), `domains.py` (19 domains + fallback, `DomainPolicy`,
 14 `ProhibitedAction`s, `GOVERNANCE_POLICY_VERSION`),
 `domain_detection.py`, `suppression.py` (k-anonymity),
 `recommendation_safety.py`, `telemetry.py`; plus `decisions.py`,

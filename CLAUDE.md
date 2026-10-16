@@ -338,7 +338,9 @@ restriction as a boundary.** Full detail:
 **Read it before changing anything that affects what the platform may be
 asked, may return, or may recommend in a business domain.**
 
-`governance/domains.py` defines 18 domains plus a `GENERAL` fallback, and 14
+`governance/domains.py` defines 19 domains plus a `GENERAL` fallback (the
+mission's 18, plus `CONSTRUCTION`, which was added later and derived from
+its neighbours rather than specified — the enum's own docstring says so), and 14
 `ProhibitedAction` values. The rules that must not regress:
 
 - **No domain policy protects personal data less than the baseline.**

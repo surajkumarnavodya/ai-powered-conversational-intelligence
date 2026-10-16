@@ -43,13 +43,22 @@ GOVERNANCE_POLICY_VERSION = "1.0.0"
 
 
 class BusinessDomain(StrEnum):
-    """The eighteen domains this engine covers, plus a general fallback.
+    """The nineteen domains this engine covers, plus a general fallback.
 
-    `GENERAL` is not a nineteenth domain: it is the policy applied when
+    `GENERAL` is not a twentieth domain: it is the policy applied when
     domain detection is not confident, and it is deliberately the
     *strictest* common denominator for personal data rather than the
     loosest, so an unrecognized question cannot route around a domain
     policy by being unrecognizable.
+
+    Eighteen of the nineteen are the mission's own list. `CONSTRUCTION`
+    is the one later addition, and it is recorded as such rather than
+    folded in silently: it was requested after the series closed, and
+    the policy below was *derived* here from the nearest neighbours
+    (`PROJECT` for capital work, `REAL_ESTATE` for the built asset,
+    `HR` for the people on site) rather than supplied by a prompt. A
+    reader deciding whether to trust the declared prohibitions should
+    know which ones were specified and which were reasoned.
     """
 
     HR = "hr"
@@ -67,6 +76,7 @@ class BusinessDomain(StrEnum):
     PROJECT = "project"
     IT_OPERATIONS = "it_operations"
     REAL_ESTATE = "real_estate"
+    CONSTRUCTION = "construction"
     ENERGY = "energy"
     RISK_AUDIT = "risk_audit"
     EXECUTIVE = "executive"
@@ -382,6 +392,50 @@ DOMAIN_POLICIES: dict[BusinessDomain, DomainPolicy] = {
         domain=BusinessDomain.REAL_ESTATE,
         description="Property, lease, tenant and facilities data.",
         restricted_categories=_PERSONAL | frozenset({DataCategory.CONTRACT}),
+        minimum_group_size=5,
+        export_row_limit=500,
+    ),
+    # Derived, not supplied (see `BusinessDomain`'s docstring). Each
+    # choice below is reasoned from what a construction estate actually
+    # holds, and the reasoning is recorded because nobody can check it
+    # against a source prompt:
+    #
+    # - `CONTRACT`: the domain is contractual throughout -- tenders,
+    #   subcontract packages, rates, variations, retention. Same call
+    #   `PROJECT` and `REAL_ESTATE` already make.
+    # - `EMPLOYEE` and `_PERSONAL`: a site records the people on it, by
+    #   name, including people employed by somebody else. `_PERSONAL` is
+    #   already in the baseline floor and is declared for readability,
+    #   as `REAL_ESTATE` declares it.
+    # - `LIABILITY_DETERMINATION` and `UNSUPPORTED_ALLEGATION`: the
+    #   question this domain invites is "whose fault was the delay or the
+    #   defect", and that is adjudicated under a contract, never derived
+    #   from a progress table. `RISK_AUDIT` prohibits the same pair for
+    #   the same reason.
+    # - The two individual actions: site data is per-person by
+    #   construction -- operative hours, crew output, an injury with a
+    #   name on it -- so the `HR` guard applies to people the
+    #   organisation may not even employ. This is the first policy to
+    #   carry both pairs at once.
+    #
+    # `minimum_group_size=5` because a trade crew is small: a "gang of
+    # three" is three identifiable people. The ceiling matches its
+    # neighbours rather than inventing a number.
+    BusinessDomain.CONSTRUCTION: DomainPolicy(
+        domain=BusinessDomain.CONSTRUCTION,
+        description=(
+            "Construction and capital works: sites, packages, progress, cost, "
+            "subcontracts, quality and site safety."
+        ),
+        restricted_categories=_PERSONAL | frozenset({DataCategory.CONTRACT, DataCategory.EMPLOYEE}),
+        prohibited_actions=frozenset(
+            {
+                ProhibitedAction.INDIVIDUAL_EMPLOYMENT_ACTION,
+                ProhibitedAction.INDIVIDUAL_PERFORMANCE_RANKING,
+                ProhibitedAction.LIABILITY_DETERMINATION,
+                ProhibitedAction.UNSUPPORTED_ALLEGATION,
+            }
+        ),
         minimum_group_size=5,
         export_row_limit=500,
     ),

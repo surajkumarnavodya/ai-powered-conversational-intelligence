@@ -45,6 +45,21 @@ class _Rule:
 
 _VERB = r"(?:show|give|reveal|list|tell|print|display|dump|export|share|send|what\s*(?:is|are|'s))"
 
+#: The two halves of `site_worker_privacy`, named because the rule matches
+#: them in either order -- "operative names" and "the names of the
+#: operatives" are the same question. Deliberately construction-specific
+#: nouns: every rule is matched against every question regardless of the
+#: detected domain, so a broader noun ("worker", "staff") would change
+#: what other domains refuse.
+_SITE_PERSON = (
+    r"(?:operatives?|labou?rers?|tradespe(?:rson|ople)|site\s+workers?|"
+    r"crew\s+members?|subcontractor(?:'s)?\s+(?:workers?|staff|personnel))"
+)
+_WORKER_DETAIL = (
+    r"(?:names?|e-?mails?|phone\s+numbers?|addresses|contact\s+details?|"
+    r"day\s+rates?|hours\s+worked|induction\s+records?)"
+)
+
 _PROMPT_BYPASS_MESSAGE = (
     "Access rules can't be changed from a question. What you can see depends on "
     "your account's permissions."
@@ -128,6 +143,11 @@ _AUDIT_FINDING_MESSAGE = (
 _TENANT_PRIVACY_MESSAGE = (
     "Individual tenant and property-owner details are restricted. I can provide "
     "authorized occupancy, utilization and maintenance analytics."
+)
+_SITE_WORKER_PRIVACY_MESSAGE = (
+    "Individual site-worker details are restricted, including for people employed "
+    "by a subcontractor. I can provide authorized labour, progress and safety "
+    "analytics by trade, package and site."
 )
 _INFRASTRUCTURE_MESSAGE = (
     "Security-sensitive infrastructure and access-control details aren't available "
@@ -260,7 +280,7 @@ _EXTRA_RULES: tuple[_Rule, ...] = (
         category="customer_contact_extraction",
         pattern=re.compile(
             rf"\b{_VERB}\b[^.?!]{{0,40}}\b(?:customers?|clients?|leads?|users?|subscribers?|"
-            r"contacts?)\b[^.?!]{{0,25}}"
+            r"contacts?)\b[^.?!]{0,25}"
             r"\b(?:e-?mails?|e-?mail\s+addresses|phone\s+numbers?|mobile\s+numbers?|"
             r"addresses|contact\s+details?)\b"
             r"|\b(?:customers?|clients?|leads?)'?\s+"
@@ -290,7 +310,7 @@ _EXTRA_RULES: tuple[_Rule, ...] = (
         category="tenant_privacy",
         pattern=re.compile(
             rf"\b{_VERB}\b[^.?!]{{0,40}}\b(?:tenants?|lessees?|occupants?|"
-            r"property\s+owners?|landlords?)\b[^.?!]{{0,25}}"
+            r"property\s+owners?|landlords?)\b[^.?!]{0,25}"
             r"\b(?:names?|e-?mails?|phone\s+numbers?|addresses|contact\s+details?|"
             r"lease\s+terms?)\b"
             r"|\b(?:access\s+control|door\s+access|badge|keycard)\s+"
@@ -299,6 +319,31 @@ _EXTRA_RULES: tuple[_Rule, ...] = (
         ),
         decision=GovernanceDecision.REQUIRE_AUTHORIZATION,
         message=_TENANT_PRIVACY_MESSAGE,
+        permission=Permission.VIEW_RESTRICTED_COLUMNS,
+    ),
+    # The Construction counterpart of `tenant_privacy`, added with that
+    # domain and for a measured reason: "list the names and phone numbers
+    # of every operative on site" was *allowed* here before it existed,
+    # while the identical question about tenants was not. The individual
+    # -decision asks were already covered -- the HR-labelled rules match
+    # on pattern, not on detected domain, so "who should we fire on the
+    # jobsite" and "rank the workers by performance" already refuse --
+    # so this adds the one shape that was genuinely missing rather than
+    # a Construction-labelled copy of refusals that already fire.
+    #
+    # The person nouns are deliberately construction-specific. Every rule
+    # is global, so a broader noun ("worker", "staff") would change what
+    # other domains refuse, which this batch has no business doing.
+    _Rule(
+        domain=BusinessDomain.CONSTRUCTION,
+        category="site_worker_privacy",
+        pattern=re.compile(
+            rf"\b{_VERB}\b[^.?!]{{0,40}}\b{_SITE_PERSON}\b[^.?!]{{0,25}}\b{_WORKER_DETAIL}\b"
+            rf"|\b{_VERB}\b[^.?!]{{0,40}}\b{_WORKER_DETAIL}\b[^.?!]{{0,40}}\b{_SITE_PERSON}\b",
+            re.IGNORECASE,
+        ),
+        decision=GovernanceDecision.REQUIRE_AUTHORIZATION,
+        message=_SITE_WORKER_PRIVACY_MESSAGE,
         permission=Permission.VIEW_RESTRICTED_COLUMNS,
     ),
     _Rule(

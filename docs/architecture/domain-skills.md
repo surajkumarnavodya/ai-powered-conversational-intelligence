@@ -9,7 +9,7 @@ recommended in a business domain is
 [`../DATA_PRIVACY_GOVERNANCE_ENGINE.md`](../DATA_PRIVACY_GOVERNANCE_ENGINE.md),
 and a skill cannot change any of it.
 
-**Date:** 2026-10-16. **Batches delivered:** 17 — Sales, MIS / Management Reporting, Marketing, HR, eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply Chain / Procurement & Logistics, Manufacturing & Operations, Customer Service & Support, Project & Portfolio Management, IT Operations & Service Management, Healthcare & Life Sciences, Energy, Utilities & Sustainability, Risk, Audit & Controls, Legal, Secretarial & Governance (across 16 of 18 governance domains).
+**Date:** 2026-10-16. **Batches delivered:** 19 — Sales, MIS / Management Reporting, Marketing, HR, eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply Chain / Procurement & Logistics, Manufacturing & Operations, Customer Service & Support, Project & Portfolio Management, IT Operations & Service Management, Healthcare & Life Sciences, Energy, Utilities & Sustainability, Risk, Audit & Controls, Legal, Secretarial & Governance, Real Estate & Facilities and Construction & Capital Works (95 skills across 18 of 19 governance domains). **Eighteen of the nineteen batches were supplied as prompts; Construction was derived — see §23.**
 
 ---
 
@@ -1288,7 +1288,7 @@ a ratio across two grains is a new metric rather than a conversion, so
 the denominator's source and grain have to be named.
 
 This is the first batch in which `cross_domain_allowed` mattered at all,
-which is why §23 now says to read it.
+which is why §24 now says to read it.
 
 ### The provenance series reaches a number nobody measured
 
@@ -1652,7 +1652,7 @@ a refusal behind.
 
 ### Two measured findings, both of which contradicted the first draft
 
-§23's checklist step — measure a governance claim before writing it down —
+§24's checklist step — measure a governance claim before writing it down —
 was added by batch 16 after it published a claim the code did not support.
 It earned its place twice here.
 
@@ -1809,7 +1809,7 @@ argument transfers.
 
 ### Four findings, measured before the focus texts were written
 
-§23's checklist steps 9 and 10 exist because two batches running published
+§24's checklist steps 9 and 10 exist because two batches running published
 a claim that was true of the policy and false of the pipeline. All four
 below were measured with `classify_field` and `govern_result_for_domain`,
 and three of them are the opposite of the tidy story.
@@ -2012,12 +2012,178 @@ compares `effective_restricted_categories`, `prohibited_actions` and
 be read as a gap somebody forgot.
 
 What is still absent is the wiring, unchanged by this batch and deliberate
-for the reason §24 gives.
+for the reason §25 gives.
+
+The *supplied* series is what is complete here. §23 adds a nineteenth
+batch that no prompt asked for in this form — Construction — which moves
+the totals to ninety-five skills across nineteen prompt-domains and
+eighteen governance domains, and brought the nineteenth governance domain
+with it.
 
 ---
 
-## 23. Adding the next batch
+## 23. Batch 19 (Construction & Capital Works): the batch with no prompt
 
+Every other section in this document describes five supplied prompts being
+read into five skills. This one does not. Construction was requested after
+the supplied series closed, with no prompt, no "Domain scope:" sentence and
+no governance policy — so the scope, the five skills, the `BusinessDomain`
+member and the `DomainPolicy` were all **derived**, and the documents say
+so at each point of declaration rather than only here:
+[`governance/domains.py`](../../governance/domains.py)'s `BusinessDomain`
+docstring, the `CONSTRUCTION` policy comment, and the `_CONSTRUCTION`
+comment in [`catalog.py`](../../domain_skills/catalog.py).
+
+That matters for review. A supplied batch can be checked against its
+prompt; this one can only be checked against reasoning, so the reasoning is
+written down where the code is, and the one property that makes a wrong
+derivation safe is asserted in a test rather than argued.
+
+### The nineteenth governance domain
+
+`CONSTRUCTION` is the first `BusinessDomain` member added since the
+mission's eighteen. The enum docstring records it as a later addition
+instead of absorbing it, so a reader can still tell which eighteen were
+specified.
+
+The policy was derived from three neighbours, none of which fits alone:
+
+| Source | What it contributed |
+|---|---|
+| `PROJECT` | Capital work: `CONTRACT` and `EMPLOYEE` restricted, a 500-row export ceiling |
+| `REAL_ESTATE` | The built asset, and `minimum_group_size=5` — a real 5, not a declared `0` |
+| `HR` | The individual-decision pair, because a site records people by name |
+| `RISK_AUDIT` | The attribution pair, because "whose fault" is the question this data invites |
+
+The result is the **first policy in the registry to declare all four** of
+`individual_employment_action`, `individual_performance_ranking`,
+`liability_determination` and `unsupported_allegation`, which gives this
+domain the longest derived constraint block in the catalog.
+
+**The guard that makes a derived policy reviewable** is that it may add
+protection and never remove it:
+`test_the_derived_policy_is_stricter_than_both_neighbours` asserts
+`effective_restricted_categories` and `prohibited_actions` are supersets of
+both `PROJECT`'s and `REAL_ESTATE`'s. A derivation that landed *looser*
+than its own source is the one genuinely dangerous outcome of inventing a
+policy, and it is the one thing a reviewer cannot be expected to spot by
+reading prose.
+
+### The distinguishing analytical problem: nothing is final when recorded
+
+The provenance series continues and, for the first time, arrives at all of
+its previous cases at once plus one of its own. Batch 12 had a measure the
+measured party reported; batch 16 had the figure that exists only where
+somebody looked; batch 18 had the opinion struck at a date. A construction
+estate has all three — progress is claimed by the party being paid for it,
+a snag list is as long as the inspection that produced it, a valuation is
+interim — and adds a fourth: **almost every figure is revised later by a
+process outside the data.** A variation is instructed before it is agreed
+and priced after. An injury is classified before the medical outcome is
+known. A cost is accrued against an invoice that has not arrived.
+
+So a recent period is provisional by construction, and a period-on-period
+comparison is partly a comparison between states of settlement. Nothing
+deterministic in this repo can tell a settled figure from an unsettled one;
+the arithmetic is correct either way
+([`CLAUDE.md`](../../CLAUDE.md) §4.4), which is why each skill carries its
+own version of the caveat and a test asserts it does rather than letting
+them inherit it from this section.
+
+### The five skills
+
+| Slug | Title | The thing it will not say |
+|---|---|---|
+| `construction.cost` | Construction Cost Intelligence | Whether a variance is recoverable — it reports the four cost bases and names which one a figure is |
+| `construction.programme` | Programme and Progress Intelligence | Who caused a slip — it reports movement, the measurement method and the data date |
+| `construction.procurement` | Tender and Subcontract Intelligence | That a bid was good value — it reports price beside bid coverage and contract basis |
+| `construction.quality` | Quality and Defect Intelligence | Whose work produced a defect — it reports what was raised, against which element, by which inspection |
+| `construction.safety` | Site Safety Intelligence | That a site with fewer reports is safer — it reports the count beside the rate, naming the hours source and the classification standard |
+
+`construction.cost` is the default because cost is what a capital programme
+is steered by. Declaration order is a **decision** here rather than a
+reading of "01..05", which is why the registration test says so in its
+docstring: `select_skill` takes the first declared skill.
+
+The focus texts name none of the four prohibited actions. The composer owns
+them (`_prohibitions_block`), and in this domain the temptation is at its
+strongest because the prohibition and the subject matter share vocabulary —
+so `test_no_focus_text_restates_a_derived_prohibition` bans the words, and
+`test_every_skill_redirects_rather_than_only_refusing` requires the
+narrower question each skill answers instead. A skill that only refused
+would be useless in the one domain where attribution is what was asked for.
+
+### Detection without stealing another domain's vocabulary
+
+A construction question really does say *project*, *milestone*, *defect*
+and *work order* — and all four already belong to `PROJECT` and
+`MANUFACTURING` in `governance/domain_detection.py`. Sharing them would
+convert ordinary construction questions into ties rather than detections,
+so the pattern deliberately leaves them alone and claims only vocabulary no
+other domain uses: the contract instruments (tender, BOQ, variation order,
+progress claim), the site itself (jobsite, site diary, snag, practical
+completion) and the trades (scaffold, formwork, rebar, excavation).
+
+Two details, both found by measurement rather than review:
+
+- The multi-word terms use `[-_\s]?`, not `[-_]?`. Question text is matched
+  raw, so `progress[-_]?claim` does not match "progress claims" in a
+  sentence. Only `HEALTHCARE`'s `bed[-_\s]?occupanc` had got this right
+  before. **The other patterns still carry the narrower form** and were
+  left alone: widening them would change detection for domains this batch
+  has no business touching.
+- `test_construction_vocabulary_detects_this_domain_and_steals_no_other`
+  asserts both halves — seven construction questions route here, and the
+  project, manufacturing and supply-chain questions still route where they
+  did. One question per distinct part of the pattern, so dropping any one
+  term fails a case instead of being covered by a sibling.
+
+### The request gate, and what adding a domain found there
+
+Construction needed one new request rule and no more. The
+individual-decision asks were already covered, because
+`governance/request_policy.py` matches rules on their pattern and not on
+the detected domain: the HR-labelled `individual_employment_action` and
+`individual_ranking` rules already refuse "who should we fire on the
+jobsite" and "rank the workers by performance". Adding a
+Construction-labelled copy of those would have been a second owner of a
+refusal that already fires.
+
+What was genuinely missing was the privacy shape its neighbour has:
+"list the names and phone numbers of every operative on site" was
+`allow`, while the identical question about tenants was gated. That is
+now `site_worker_privacy`.
+
+Mirroring `tenant_privacy` to write it also found that `tenant_privacy`
+itself had never matched — a brace defect it shared with
+`customer_contact_extraction`. Both are repaired and pinned;
+[`../DATA_PRIVACY_GOVERNANCE_ENGINE.md`](../DATA_PRIVACY_GOVERNANCE_ENGINE.md)
+§7.1 owns that finding.
+
+### What was mutated
+
+Three mutations, each restored:
+
+- **Dropping `UNSUPPORTED_ALLEGATION` from the policy** fails
+  `test_it_is_the_first_policy_to_carry_both_pairs`.
+- **Removing `construction|subcontract` from the detection pattern** failed
+  *nothing* on the first attempt — the other test questions covered it
+  through their own terms. The test was widened until it failed, which is
+  what the second run confirms. Worth recording: the guard was vacuous for
+  the domain's own name until it was measured.
+- **Restating a prohibition in `construction.quality`'s focus** fails both
+  the restatement test and the redirect test, since the restatement
+  replaced the redirect.
+
+---
+
+## 24. Adding the next batch
+
+0. If the batch has **no supplied prompt** (so far only Construction),
+   say so in the catalog comment, in `governance/domains.py` if it brings
+   a new domain, and in this document — and assert that any derived
+   policy is a superset of the policies it was reasoned from. A derived
+   batch that is looser than its source is the failure mode.
 1. Add the **prompt-domain's** scope string once in `catalog.py`. If the
    batch shares a governance domain with an existing one (as Marketing
    does with Sales), that is fine — the scope belongs to the group, not
@@ -2069,7 +2235,7 @@ request.
 
 ---
 
-## 24. Status
+## 25. Status
 
 | Item | State |
 |---|---|
@@ -2092,6 +2258,7 @@ request.
 | Risk, Audit & Controls skills (5 of 5 supplied) | **Registered** |
 | Legal, Secretarial & Governance skills (5 of 5 supplied) | **Registered** |
 | Real Estate & Facilities skills (5 of 5 supplied) | **Registered** |
+| Construction & Capital Works skills (5, derived — no prompt supplied) | **Registered** |
 | `EXECUTIVE` | **No skills, deliberately** — its one supplied prompt is registered as `mis.executive_kpi`; the two policies are measured identical in §22 |
 | Wiring into a live analysis path | **Not done** — see below |
 

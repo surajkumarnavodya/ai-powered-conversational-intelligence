@@ -11,12 +11,19 @@ Chain / Procurement & Logistics, Manufacturing & Operations, Customer
 Service & Support, Project & Portfolio Management, IT Operations &
 Service Management, Healthcare & Life Sciences, Energy, Utilities &
 Sustainability, Risk, Audit & Controls, Legal, Secretarial & Governance,
-Real Estate & Facilities.
-Every batch has arrived with an identical
+Real Estate & Facilities, Construction & Capital Works.
+Every *supplied* batch arrived with an identical
 body and an identical "Domain scope" sentence across its five prompts,
 differing only in the heading — so each *prompt-domain* writes its scope
 once (`_SALES_SCOPE`, `_MIS_SCOPE`, `_MARKETING_SCOPE`) and each skill
 carries only its own focus.
+
+**Construction is the exception to that sentence and to the one below.**
+It was requested after the series closed and no prompt was supplied, so
+its scope, its five skills and its governance policy were derived rather
+than read. The `_CONSTRUCTION` comment and `governance/domains.py` both
+say so at the point of declaration, because a reader cannot check this
+batch against a source the way every other batch can be checked.
 
 **Marketing shares `BusinessDomain.SALES_MARKETING` with Sales** but has a
 different analytical scope. A governance domain answers "what may this
@@ -25,14 +32,15 @@ question return"; it is not a statement about framing. `DomainSkill.group`
 `composer.select_skill` refuses to pick a default when a domain holds more
 than one group rather than guessing.
 
-With Real Estate & Facilities registered, the only `BusinessDomain` member
-left without skills is `EXECUTIVE`, and that one is deliberate rather than
-pending: its single supplied prompt, "Executive KPI Intelligence", is filed
-under `MIS` for the reason the `_MIS` comment below gives. So the series is
-complete at ninety skills across seventeen governance domains, which is the
-count `types.py` has described since batch 1. A skill is still added only
-when its prompt arrives, never in anticipation of one — an empty domain here
-would advertise analysis the platform cannot actually shape.
+The only `BusinessDomain` member left without skills is `EXECUTIVE`, and
+that one is deliberate rather than pending: its single supplied prompt,
+"Executive KPI Intelligence", is filed under `MIS` for the reason the
+`_MIS` comment below gives. The supplied series closed complete at ninety
+skills across seventeen governance domains; with the derived Construction
+batch the catalog now holds **ninety-five skills across eighteen of the
+nineteen governance domains**. A skill is still added only when it is
+asked for, never in anticipation — an empty domain here would advertise
+analysis the platform cannot actually shape.
 """
 
 from __future__ import annotations
@@ -2548,6 +2556,241 @@ REAL_ESTATE_SKILLS: tuple[DomainSkill, ...] = (
     ),
 )
 
+
+_CONSTRUCTION = BusinessDomain.CONSTRUCTION
+
+_CONSTRUCTION_SCOPE = (
+    "Analyze construction and capital works delivery: sites, packages, programme, "
+    "cost, subcontracts, quality and site safety."
+)
+
+#: The nineteenth batch, and the first one **not supplied as a prompt**.
+#: Construction was requested after the series closed, so there is no
+#: numbered prompt behind these five skills and no supplied scope
+#: sentence: both were derived here. The order below is therefore a
+#: choice rather than a reading of "01..05", and Construction Cost
+#: Intelligence is the default because cost is what a capital programme
+#: is steered by -- `composer.select_skill` takes the first declared
+#: skill when a domain holds one group.
+#:
+#: Recorded plainly because every other batch in this file can be checked
+#: against its prompt and this one cannot. `governance.domains` carries
+#: the same note for the policy itself.
+#:
+#: The distinguishing analytical problem continues the provenance series.
+#: Batch 12 had a self-assessment by the measured party, batch 16 had the
+#: figure that exists only where somebody looked, batch 18 had the
+#: opinion-at-a-date. Construction has all three at once and a fourth of
+#: its own: **almost nothing here is final when it is recorded.** Progress
+#: is claimed by the party being paid for it, a valuation is interim, a
+#: variation is instructed before it is agreed and priced after, a snag
+#: list is as long as the inspection that produced it, an injury is
+#: classified before the medical outcome is known, and a cost is accrued
+#: against an invoice that has not arrived. Every one of those is revised
+#: later by a process outside the data, so a recent period is provisional
+#: by construction and a comparison between periods is partly a
+#: comparison between states of settlement. No deterministic control in
+#: this repo can tell a settled figure from an unsettled one -- the
+#: arithmetic is correct either way (`CLAUDE.md` section 4.4), so the
+#: skills carry it.
+#:
+#: `policy_for(CONSTRUCTION)` is the **first policy to derive all four**
+#: of the two individual-decision actions and the two attribution ones,
+#: so `composer._prohibitions_block` appends the longest constraint block
+#: in the catalog. The focus texts below therefore do not name any of the
+#: four: the composer owns them, and a restatement here would be a second
+#: owner free to drift (`CLAUDE.md` section 4.8). What the texts do
+#: instead is name the narrower question that *is* answerable, which is
+#: batch 8's rule -- the subject matter of this domain is attribution, so
+#: a skill that only refused would be useless in it.
+CONSTRUCTION_SKILLS: tuple[DomainSkill, ...] = (
+    DomainSkill(
+        slug="construction.cost",
+        title="Construction Cost Intelligence",
+        domain=_CONSTRUCTION,
+        scope=_CONSTRUCTION_SCOPE,
+        focus=(
+            "What the works have cost and are forecast to cost, by "
+            "package, cost code and site. Committed, incurred, certified "
+            "and forecast are four different figures and must never be "
+            "added or compared as one: an order placed is not a cost "
+            "borne, a valuation certified is an interim assessment of "
+            "work claimed, and a forecast cost to complete is an "
+            "estimate someone produced on an assumption that is rarely "
+            "recorded beside it. Say which of the four a number is. "
+            "Subcontractor invoices and plant hire arrive late and "
+            "accruals are estimates, so the most recent periods "
+            "understate and a month-on-month fall may be posting lag "
+            "rather than spend. Retention held back is not a saving: it "
+            "is money owed on a later date, and releasing it moves cost "
+            "into a period where no work happened. A variance is "
+            "measured against a baseline that may itself have been "
+            "re-approved, so a budget that moved makes a variance read "
+            "better with nothing changing on site -- name the baseline "
+            "and its version. Contingency drawn is not the same as risk "
+            "realised, and escalation and currency bases change what a "
+            "like-for-like comparison means. Report by package and cost "
+            "code and state the basis; where a cost line is one small "
+            "firm's or one self-employed trade's figure, report it at a "
+            "grain that does not stand for a person."
+        ),
+        dimensions=(
+            "package",
+            "cost code",
+            "site",
+            "cost basis",
+            "period",
+        ),
+    ),
+    DomainSkill(
+        slug="construction.programme",
+        title="Programme and Progress Intelligence",
+        domain=_CONSTRUCTION,
+        scope=_CONSTRUCTION_SCOPE,
+        focus=(
+            "Movement against the programme: activity status, float, "
+            "milestone dates and the shape of the S-curve, by package "
+            "and discipline. Percent complete is a claim, not a "
+            "measurement, and it is usually claimed by the party being "
+            "paid for the work; it is produced by different methods on "
+            "the same project -- units installed, value earned, a "
+            "supervisor's judgement -- which are not comparable, so name "
+            "the method and the data date before putting two figures "
+            "side by side. Float belongs to a network rather than to an "
+            "activity, so a critical path changes when the logic is "
+            "edited and an activity can become critical without "
+            "anything happening on site. A re-baselined programme resets "
+            "variance to near zero, so improvement against a baseline "
+            "approved last week is not improvement. Durations are "
+            "planned in working days against a calendar that excludes "
+            "weather, access and permit windows, so elapsed and "
+            "programme time diverge. An early-period S-curve is mostly "
+            "enabling work and predicts little. Report the movement by "
+            "package, discipline and period, stating the method and the "
+            "data date, and describe a slip as what the record shows "
+            "rather than as a conclusion about who caused it."
+        ),
+        dimensions=(
+            "package",
+            "discipline",
+            "milestone",
+            "programme baseline",
+            "period",
+        ),
+    ),
+    DomainSkill(
+        slug="construction.procurement",
+        title="Tender and Subcontract Intelligence",
+        domain=_CONSTRUCTION,
+        scope=_CONSTRUCTION_SCOPE,
+        focus=(
+            "How work was let and what it was let for: tender events, "
+            "bid coverage, award value, variations and the state of each "
+            "package. A tender price is an offer under a set of "
+            "assumptions, not a cost, and the lowest of three is a "
+            "different thing from the lowest of eight -- report bid "
+            "coverage beside price, because a thin field prices risk "
+            "higher and an outlier low bid is as often an incomplete "
+            "scope as a keen one. Lump sum, measured rates and cost plus "
+            "are different bases and their totals are not comparable "
+            "without saying so. An award value is a ceiling on the day "
+            "it was signed: variations move it, and an instructed "
+            "variation that is not yet agreed carries a value somebody "
+            "has estimated, so the sum of package values is a position "
+            "at a date and not a settled total. A package let late shows "
+            "no spend, which reads as underspend rather than as work not "
+            "started. Award, instruction and commencement are three "
+            "dates and only one of them means work began. Report by "
+            "package, tender event and procurement route, and describe a "
+            "counterparty's record as what the data contains; where a "
+            "counterparty is a sole trader or a one-person firm, report "
+            "at a grain that does not stand for that person."
+        ),
+        dimensions=(
+            "package",
+            "tender event",
+            "procurement route",
+            "contract basis",
+            "period",
+        ),
+    ),
+    DomainSkill(
+        slug="construction.quality",
+        title="Quality and Defect Intelligence",
+        domain=_CONSTRUCTION,
+        scope=_CONSTRUCTION_SCOPE,
+        focus=(
+            "What inspection has found and what has been put right, by "
+            "element, package and inspection round. A raised item exists "
+            "because somebody inspected, so the count moves with how "
+            "much inspecting was done: a block with a resident engineer "
+            "will show more items than one nobody walked, and a zero is "
+            "ambiguous between built right, not inspected and not "
+            "recorded. State the inspection coverage before comparing "
+            "two areas. Items raised in progress and items raised at "
+            "handover are different populations -- one is work being "
+            "corrected as it proceeds, the other is work presented as "
+            "finished -- and summing them hides exactly that. A closure "
+            "is a reported state, so a reopened item on the same element "
+            "is the stronger evidence of whether a fix held, and the "
+            "age of open items measures only what nobody closed. "
+            "Severity is a judgement on a scale that differs between "
+            "inspectors and is revised on review, so it ranks rather "
+            "than measures and must not be averaged. Rework cost is "
+            "rarely captured against the item that caused it, so a "
+            "quality total is almost always understated. Report what was "
+            "raised, against which element, by which inspection and "
+            "when, rather than concluding whose work produced it."
+        ),
+        dimensions=(
+            "element",
+            "package",
+            "inspection round",
+            "severity band",
+            "period",
+        ),
+    ),
+    DomainSkill(
+        slug="construction.safety",
+        title="Site Safety Intelligence",
+        domain=_CONSTRUCTION,
+        scope=_CONSTRUCTION_SCOPE,
+        focus=(
+            "Reported safety events and the leading activity around "
+            "them, by site, trade and period. Every figure here is a "
+            "report: a site that encourages reporting records more near "
+            "misses than one where nothing is raised, so a lower count "
+            "is evidence about the reporting culture before it is "
+            "evidence about the site -- never read a fall in reports as "
+            "an improvement without the reporting basis beside it. Near "
+            "misses, first aid cases and lost-time injuries are "
+            "different populations and must not be summed into one "
+            "number. A frequency rate divides events by exposure hours, "
+            "and the hours are the weak half: subcontracted and agency "
+            "hours are often estimated or missing entirely, which "
+            "deflates the denominator and inflates the rate, so name the "
+            "hours source, its coverage and the classification standard "
+            "the numerator used. Classification is revised after medical "
+            "outcome, so recent periods are provisional and a rate will "
+            "move without any new event. Small sites produce unstable "
+            "rates on one event; report the count beside the rate. "
+            "Because the policy sets a minimum group size, a cut fine "
+            "enough to reach a crew can come back with its label and "
+            "count but no measure -- that is the result gate protecting "
+            "the person in the group, not missing data, and the answer "
+            "should say so and move up a grain. Report by site, trade "
+            "and period, and describe an event as what was recorded."
+        ),
+        dimensions=(
+            "site",
+            "trade",
+            "event type",
+            "severity classification",
+            "period",
+        ),
+    ),
+)
+
 #: Every registered skill, in declaration order. Later batches append their
 #: own tuple here.
 ALL_SKILLS: tuple[DomainSkill, ...] = (
@@ -2569,4 +2812,5 @@ ALL_SKILLS: tuple[DomainSkill, ...] = (
     + RISK_AUDIT_SKILLS
     + LEGAL_SKILLS
     + REAL_ESTATE_SKILLS
+    + CONSTRUCTION_SKILLS
 )

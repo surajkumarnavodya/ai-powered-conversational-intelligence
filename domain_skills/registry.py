@@ -58,8 +58,8 @@ def is_registered(slug: str) -> bool:
 def skills_for_domain(domain: BusinessDomain) -> tuple[DomainSkill, ...]:
     """Every skill declared for `domain`, in declaration order.
 
-    An unregistered domain returns an empty tuple rather than raising: most
-    of the eighteen domains have no skills yet, and "this domain has no
+    An unregistered domain returns an empty tuple rather than raising: a
+    domain can sit in the governance enum with no skills declared, and "this domain has no
     specialised framing" is an ordinary state that must degrade to the
     platform's existing behaviour, not an error.
     """
@@ -84,7 +84,7 @@ def groups_for_domain(domain: BusinessDomain) -> tuple[str, ...]:
 def covered_domains() -> tuple[BusinessDomain, ...]:
     """Domains that have at least one declared skill.
 
-    Useful for an honest status surface: it answers "which of the eighteen
+    Useful for an honest status surface: it answers "which of the nineteen
     are actually covered" from the catalog itself, so no document has to
     claim coverage separately and risk drifting from it.
     """
