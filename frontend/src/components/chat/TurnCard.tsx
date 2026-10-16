@@ -116,7 +116,12 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
         <ChatMessage message={{ role: 'user', content: entry.question }} />
       </div>
 
-      <div className="flex flex-col gap-3 pl-10">
+      {/* Full column width, no left inset. The inset used to reserve the
+          width of a left-hand avatar, but the only avatar in a turn sits
+          on the *right* of the question bubble -- so it just stepped the
+          answer 40px in from the composer and the question's own right
+          edge. Everything in a turn now shares one pair of edges. */}
+      <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <TimingBadge mode="done" durationMs={entry.answerDurationMs} />
           <time dateTime={entry.timestamp} className="text-xs text-[var(--muted-foreground)]">

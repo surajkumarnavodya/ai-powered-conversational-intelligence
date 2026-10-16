@@ -62,7 +62,7 @@ export function SourcePicker({ disabled = false }: { disabled?: boolean }) {
     <Popover>
       <PopoverTrigger asChild>
         <Button
-          variant="secondary"
+          variant="ghost"
           size="icon"
           disabled={disabled}
           aria-label={t('sources.pickerLabel')}

@@ -17,7 +17,7 @@ export function KnowledgeSources() {
     // Single full-width scroll region (matches Chat.tsx / ChatGPT's
     // layout) -- <main> in AppShell no longer scrolls itself, so each
     // routed page owns exactly one scrollbar, flush against the browser's
-    // right edge, with content centered inside via max-w-4xl/mx-auto.
+    // right edge, with content centered inside via its own max-w/mx-auto.
     <div className="h-full min-h-0 overflow-y-auto">
       <div className="mx-auto max-w-4xl px-4 py-6">
         <h1 className="text-xl font-bold">📚 {t('knowledge.title')}</h1>

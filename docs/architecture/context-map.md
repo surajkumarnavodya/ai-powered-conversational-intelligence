@@ -97,6 +97,7 @@ its own contract (§3).**
 | Topic | Document |
 |---|---|
 | Design tokens and shared UI primitives | [`../ui-design-system.md`](../ui-design-system.md) |
+| Conversation reading width, responsive breakpoints, device verification | [`../ui-responsive-layout.md`](../ui-responsive-layout.md) |
 | One-action-one-owner table for every shell control | [`../navigation-and-actions.md`](../navigation-and-actions.md) |
 | Chat history UI, search components | [`../chat-history-ui.md`](../chat-history-ui.md), [`../chat-history-search.md`](../chat-history-search.md) |
 | Chat-history data model and what a reload does not restore | [`../chat-history-architecture.md`](../chat-history-architecture.md) |

@@ -14,7 +14,12 @@ export function ChatMessage({ message }: { message: ChatMessageData }) {
         {isUser ? <User className="h-4 w-4" /> : <img src="/favicon.png" alt="" className="h-full w-full object-contain" />}
       </span>
       <div
-        className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-sm ${
+        // Wider share of the line on a phone, where 75% of a 360px
+        // column leaves a question wrapping every four or five words;
+        // back to 75% from `sm` up, where the reading column is wide
+        // enough for the asymmetry to read as alignment rather than
+        // waste.
+        className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-sm sm:max-w-[75%] ${
           isUser
             ? 'bg-[var(--accent)] text-[var(--accent-foreground)]'
             : 'border border-[var(--border)] bg-[var(--card)]'

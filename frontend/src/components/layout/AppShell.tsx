@@ -132,10 +132,12 @@ export function AppShell({ children }: { children?: ReactNode } = {}) {
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="flex h-14 shrink-0 items-center gap-2 border-b border-[var(--border)] bg-[var(--header)] px-4">
+          <header className="flex h-14 shrink-0 items-center gap-1.5 border-b border-[var(--border)] bg-[var(--header)] px-2 sm:gap-2 sm:px-4">
             <MobileNav />
             <SidebarToggle controls={SIDEBAR_ID} className="hidden lg:inline-flex" />
-            <div className="flex items-center gap-2">
+            {/* min-w-0 so the long product title can truncate instead of
+                pushing the nav and avatar off a phone-width header. */}
+            <div className="flex min-w-0 items-center gap-2">
               {/* A real <button>, not a <div onClick> or an <a href="/">:
                   it must be reachable by Tab and activatable by Enter and
                   Space, and a full-page navigation would discard the
@@ -145,23 +147,27 @@ export function AppShell({ children }: { children?: ReactNode } = {}) {
                 onClick={handleHome}
                 aria-label={t('app.homeLabel')}
                 title={t('app.homeLabel')}
-                className="flex items-center gap-2 rounded-md px-1 py-0.5 transition-colors hover:bg-[var(--muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                className="flex min-w-0 items-center gap-2 rounded-md px-1 py-0.5 transition-colors hover:bg-[var(--muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
               >
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-md bg-white">
                   <img src="/favicon.png" alt="" className="h-full w-full object-contain" />
                 </span>
-                <span className="text-sm font-semibold">{t('app.title')}</span>
+                {/* Truncated rather than hidden on a phone: the product
+                    name is the only branding in the header, and the full
+                    string stays available as the button's accessible
+                    name (aria-label) and tooltip. */}
+                <span className="truncate text-sm font-semibold">{t('app.title')}</span>
               </button>
               <span className="hidden rounded-full bg-[var(--muted)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted-foreground)] sm:inline">
                 {t('header.envIndicator')}
               </span>
             </div>
 
-              <nav aria-label="Primary navigation" className="flex min-w-0 flex-1 items-center gap-1">
+              <nav aria-label="Primary navigation" className="flex min-w-0 shrink-0 flex-1 items-center gap-1">
                 {menuGroups.length > 0 && <ScreenMenu groups={menuGroups} />}
               </nav>
 
-            <div className="ml-auto flex items-center gap-1.5">
+            <div className="ml-auto flex shrink-0 items-center gap-1.5">
               <UserMenu onOpenSettings={() => setIsSettingsOpen(true)} triggerRef={userMenuTriggerRef} />
             </div>
           </header>

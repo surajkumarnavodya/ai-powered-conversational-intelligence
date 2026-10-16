@@ -10,6 +10,7 @@ only, and the server re-checks every request.
 ## Contents
 
 - [Frontend UI redesign (2026 UI pass)](#frontend-ui-redesign-2026-ui-pass)
+- [Responsive layout and the conversation reading column](#responsive-layout-and-the-conversation-reading-column)
 - [Analytics & Insights panels in the answered turn (Prompt 30)](#analytics--insights-panels-in-the-answered-turn-prompt-30)
 - [Recommendation & action dashboard (Prompt 31)](#recommendation--action-dashboard-prompt-31)
 - [Role-based navigation, server-driven access & the onboarding→SME bridge (Prompt 32)](#role-based-navigation-server-driven-access--the-onboardingsme-bridge-prompt-32)
@@ -36,6 +37,27 @@ token) — every change is presentation/interaction layer only.
 - [`docs/ui-production-audit.md`](../ui-production-audit.md) — the duplicated-controls fix (`UserMenu.tsx`, sidebar collapse).
 - [`docs/settings-modal-visual-bug.md`](../settings-modal-visual-bug.md) — the dark-mode transparency fix (`--modal-backdrop`/`--modal-surface` tokens).
 - [`docs/navigation-and-actions.md`](../navigation-and-actions.md) — the resulting one-action-one-owner table for every control in the shell.
+
+
+## Responsive layout and the conversation reading column
+A later, presentation-only pass over the same shell: the conversation now
+has **one** reading measure — `--chat-column` (48rem), surfaced as the
+`max-w-chat` utility — shared by the turns, the composer and the shared
+read-only view, with the avatar-width `pl-10` insets removed so a
+question, its answer and the composer line up on one pair of edges. The
+shell adapts at `sm`/`lg`/`xl`: the composer's controls drop below the
+textarea on a phone, the sidebar appears at `lg`, and
+`QuestionNavigator`'s right-edge rail appears only at `xl`, where the
+margin it overlays actually exists.
+
+**Invariant:** the same one as the redesign above — no backend logic, API
+contract, auth flow, SQL validation or chat-persistence behavior changed;
+`/ask` → "Confirm and Run" → governed execution is untouched.
+
+**Authoritative:** [`docs/ui-responsive-layout.md`](../ui-responsive-layout.md)
+— the measure, what shares it, the per-breakpoint table, how it was
+measured across ten viewport widths, and what that verification does
+*not* cover (no real devices, no touch or on-screen-keyboard behaviour).
 
 
 ## Analytics & Insights panels in the answered turn (Prompt 30)
