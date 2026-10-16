@@ -2316,6 +2316,26 @@ class TestTheContractDoesNotClaimToBeTheSecurityBoundary:
         assert "SQL" not in RESPONSE_SECTIONS
         assert "Validation" not in RESPONSE_SECTIONS
 
+    def test_response_sections_omit_domain_metrics_and_entities(self):
+        """The supplied prompts ask for these three as well, and they are
+        omitted for the same reason, which batch 16 noticed was pinned for
+        `SQL`/`Validation` but never written down for them.
+
+        - `Domain` is already in the guidance the composer emits and is
+          decided by routing, not by the model.
+        - `Metrics` and `Relevant Entities` are the semantic layer's
+          facts. `semantic/` owns a `MetricDefinition`, and batch 10
+          established that a skill must not restate a metric
+          (§14) -- having the model list them would be a third,
+          unverified copy of a catalog fact (`CLAUDE.md` §4.8).
+        """
+        for section in ("Domain", "Metrics", "Relevant Entities"):
+            assert section not in RESPONSE_SECTIONS, section
+        # Non-vacuity: the sections that ARE asked for are present, so
+        # this is not passing because the tuple is empty.
+        assert "Intent" in RESPONSE_SECTIONS
+        assert "Data Limitations" in RESPONSE_SECTIONS
+
 
 class TestItIsOffByDefaultAndNotRuntimeEditable:
     def test_the_flag_defaults_off(self):
