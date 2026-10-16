@@ -10,7 +10,7 @@ eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply
 Chain / Procurement & Logistics, Manufacturing & Operations, Customer
 Service & Support, Project & Portfolio Management, IT Operations &
 Service Management, Healthcare & Life Sciences, Energy, Utilities &
-Sustainability. Every batch has arrived with an identical
+Sustainability, Risk, Audit & Controls. Every batch has arrived with an identical
 body and an identical "Domain scope" sentence across its five prompts,
 differing only in the heading — so each *prompt-domain* writes its scope
 once (`_SALES_SCOPE`, `_MIS_SCOPE`, `_MARKETING_SCOPE`) and each skill
@@ -1662,6 +1662,275 @@ ENERGY_SKILLS: tuple[DomainSkill, ...] = (
     ),
 )
 
+#: The supplied Risk & Audit prompts' "Domain scope:" sentence, verbatim.
+#:
+#: The first supplied scope sentence that simply **enumerates its own five
+#: skills** -- enterprise risk, internal audit, controls, operational risk
+#: and business continuity are the titles of prompts 01 to 05. The scope
+#: line therefore narrows nothing for any individual skill, and every
+#: distinction between them has to be carried by `focus`.
+_RISK_AUDIT_SCOPE = (
+    "Analyze enterprise risk, internal audit, controls, operational risk "
+    "and business continuity."
+)
+
+#: The domain where the subject matter *is* the prohibition.
+#:
+#: `policy_for(RISK_AUDIT)` declares two `ProhibitedAction`s, and both bear
+#: on all five skills rather than on one of them:
+#:
+#: - `liability_determination` -- **the first prohibition in this catalog
+#:   that no covered domain has derived before.** Only LEGAL and RISK_AUDIT
+#:   declare it, and LEGAL has no skills.
+#: - `unsupported_allegation` -- already carried by HR, BFSI and LEGAL, but
+#:   incidental in each of them. Here the domain's own professional output
+#:   is an assertion: a finding is the audit function's recorded opinion
+#:   against a stated criterion, a control rating is a conclusion drawn
+#:   from a sample, a risk score is a judgement, a loss attribution is a
+#:   classification someone chose.
+#:
+#: Batch 8 was the first batch whose *skills were named after* a
+#: prohibition; this is the first whose whole vocabulary is. The derived
+#: block (`composer._prohibitions_block`) is what reaches the model, so no
+#: focus text restates either prohibition -- what the focus texts carry is
+#: the redirect: report what was recorded, by whom, and against which
+#: criterion.
+#:
+#: Two further facts about this policy are structural rather than
+#: incidental, and both are asserted in
+#: `tests/test_domain_skills.py::TestRiskAuditIsWhereTheSubjectMatterIsThe
+#: Prohibition` rather than only claimed here:
+#:
+#: - `DataCategory.AUDIT` is restricted by **this domain and no other**,
+#:   and it is this domain's ordinary subject matter --
+#:   `governance.classification`'s `audit_finding` pattern matches
+#:   `audit_finding`, `control_weakness`, `risk_assessment`,
+#:   `remediation_plan` and `non_conformance`. Every covered domain so far
+#:   restricted a side-channel (PII in manufacturing, PHI in healthcare);
+#:   this one restricts the thing it is for.
+#: - **That restriction is nonetheless inert in the result gate**, which
+#:   was measured rather than assumed. The `audit_finding` rule classifies
+#:   at `DataClassification.CONFIDENTIAL`, and all three row-level
+#:   controls -- `result_policy._classification_masks`,
+#:   `result_policy._carries_restricted_data` (the export ceiling) and
+#:   `suppression._is_sensitive_measure` -- require `SENSITIVE` or above.
+#:   So an ordinary findings result is not masked for any role, is not
+#:   truncated by the domain's `export_row_limit` of 50 (the tightest in
+#:   the registry, alongside HEALTHCARE and LEGAL), and its counts are not
+#:   suppressed for a group below `minimum_group_size=5`. Those controls
+#:   engage here only when the result *also* carries personal data, the
+#:   same as in any other domain.
+#:
+#: That is deliberate upstream, not a defect to fix from this package:
+#: `BASELINE_RESTRICTED_CATEGORIES` excludes the commercially confidential
+#: categories on purpose, and `_carries_restricted_data` says in as many
+#: words that the ceiling exists to stop bulk extraction of personal
+#: records rather than to cap ordinary analytics. The consequence for this
+#: batch is the point: the distinguishing thing governance has to say
+#: about a risk question reaches the model as **prompt text** -- the two
+#: derived prohibitions -- and nothing it says operates on the rows. Batch
+#: 15 was a domain where governance said nothing distinguishing at all;
+#: this is one where it says something and the loudest part of it does
+#: nothing at the row level. Either way the framing carries the weight,
+#: which is what this package is for.
+#:
+#: `cross_domain_allowed` is empty in both directions, and no other domain
+#: lists RISK_AUDIT either -- while the entire subject matter of the domain
+#: is other domains' processes: a control over payroll is HR, over payments
+#: is FINANCE, over change is IT_OPERATIONS. `governance/request_policy.py`
+#: owns whether such a join is authorized and this package must not restate
+#: it (see `domain_skills/contract.py`), so no focus text below mentions
+#: authorization or permission.
+_RISK_AUDIT = BusinessDomain.RISK_AUDIT
+
+#: Declared in the supplied numeric order (01 enterprise risk, 02 internal
+#: audit, 03 control effectiveness, 04 operational risk, 05 business
+#: continuity), so the domain default is Enterprise Risk Intelligence (01).
+#:
+#: The distinguishing analytical problem is the next step in the provenance
+#: series the catalog has been accumulating. Batch 11 handled a record of
+#: someone else's claim, batch 12 a self-assessment by the measured party,
+#: batch 13 an instrument reading the measured team configured, batch 15 a
+#: figure nobody measured at all. Here the figure exists **only where
+#: somebody looked**: a finding is raised where an audit went, an exception
+#: is found where a control was tested, a loss is recorded above the
+#: threshold someone set. The measure therefore moves with the amount of
+#: looking rather than with the amount of exposure, and a zero is ambiguous
+#: between clean, untested and undetected. No deterministic control in this
+#: repo can tell those apart -- the counts are arithmetically correct in
+#: every case (`CLAUDE.md` §4.4).
+RISK_AUDIT_SKILLS: tuple[DomainSkill, ...] = (
+    DomainSkill(
+        slug="risk_audit.enterprise_risk",
+        title="Enterprise Risk Intelligence",
+        domain=_RISK_AUDIT,
+        scope=_RISK_AUDIT_SCOPE,
+        focus=(
+            "The risk register in aggregate: inherent and residual "
+            "ratings, movement against appetite, and concentration by "
+            "category, business unit and owning function. A rating is a "
+            "judgement recorded on an ordinal scale, not a measurement, "
+            "so likelihood times impact produces a ranking code rather "
+            "than a quantity -- a 12 is not twice a 6, and such scores "
+            "must never be averaged or summed; count and rank them by "
+            "band instead, naming the scale and its version. Residual "
+            "rating is inherent rating reduced by an assumed control "
+            "effectiveness, so it is a judgement about a judgement, and a "
+            "fall in it can be a re-rating of the controls with no change "
+            "in exposure. The register holds the risks someone "
+            "registered: a short register may be an unmaintained one, not "
+            "a safe business. A risk is an exposure that has not "
+            "occurred, so never report one as an event. Report by owning "
+            "function and never rank named owners by their open risks -- "
+            "whoever maintains the register best records the most."
+        ),
+        dimensions=(
+            "risk category",
+            "business unit",
+            "owning function",
+            "rating band",
+            "period",
+        ),
+    ),
+    DomainSkill(
+        slug="risk_audit.internal_audit",
+        title="Internal Audit Intelligence",
+        domain=_RISK_AUDIT,
+        scope=_RISK_AUDIT_SCOPE,
+        focus=(
+            "Audit plan coverage and execution, findings by rating and "
+            "theme, and remediation ageing. A finding is raised only "
+            "where an audit looked, so a unit with no findings may be an "
+            "unaudited unit rather than a clean one: report finding "
+            "counts against coverage of the plan, and never read a zero "
+            "as an absence of issues. A finding is the audit function's "
+            "recorded opinion against a stated criterion, not an "
+            "established breach -- report what was raised, its rating and "
+            "the criterion it was raised against, and never conclude who "
+            "is at fault or what the finding proves. Ageing runs from a "
+            "due date the owner can revise, so an extended date makes an "
+            "overdue item current with nothing remediated: give the "
+            "original and the current date and say which the ageing uses. "
+            "Closure is management's assertion unless audit validated it, "
+            "so report validated and self-reported closures separately -- "
+            "a closure count measures closure activity, not risk removed. "
+            "Finding counts from audits of different scope and rating "
+            "scale are not comparable."
+        ),
+        dimensions=(
+            "audit engagement",
+            "business unit",
+            "finding rating",
+            "finding theme",
+            "period",
+        ),
+    ),
+    DomainSkill(
+        slug="risk_audit.control_effectiveness",
+        title="Control Effectiveness Intelligence",
+        domain=_RISK_AUDIT,
+        scope=_RISK_AUDIT_SCOPE,
+        focus=(
+            "Control testing outcomes: design against operating "
+            "effectiveness, exception rates, and coverage of the control "
+            "population. Design and operating effectiveness are different "
+            "conclusions -- a control can be well designed and not "
+            "performed -- so never collapse them into one pass rate. A "
+            "conclusion is drawn from a sample over a period, so give the "
+            "sample size and whether the sample was statistical or "
+            "judgemental: one exception in twenty-five is not a four per "
+            "cent population rate, and a judgemental sample cannot be "
+            "projected to the population at all. Untested is not "
+            "effective: report untested controls as their own state and "
+            "never let them fall into a pass-rate denominator. An "
+            "automated control is usually tested once as a configuration "
+            "while a manual one is tested across a sample of occurrences, "
+            "so their pass rates are counts of different things. An "
+            "exception is a deviation from the test criterion and nothing "
+            "more -- it is not proof of loss, of intent, or of who is at "
+            "fault; report it by control and process rather than by the "
+            "person who performed it."
+        ),
+        dimensions=(
+            "control",
+            "control type",
+            "process",
+            "test cycle",
+            "period",
+        ),
+    ),
+    DomainSkill(
+        slug="risk_audit.operational_risk",
+        title="Operational Risk Intelligence",
+        domain=_RISK_AUDIT,
+        scope=_RISK_AUDIT_SCOPE,
+        focus=(
+            "Loss events, incidents, near misses and key risk indicators "
+            "by event type, process and business line. Loss data is "
+            "truncated at a reporting threshold -- only events above it "
+            "are captured -- so every total and average is conditional on "
+            "that threshold and a change to it breaks the series rather "
+            "than changing the risk. Occurrence date, discovery date and "
+            "accounting date give three different series: name which one "
+            "is used, and treat the most recent periods as understated, "
+            "because events are still being discovered and open losses "
+            "are still developing, so a fall at the end of the series is "
+            "usually incompleteness rather than improvement. The "
+            "distribution is dominated by a few severe events, which "
+            "makes a mean uninformative: report frequency and severity "
+            "separately and name the largest events as individual cases. "
+            "A rise in recorded incidents can be better reporting rather "
+            "than more failure, and a near miss or a boundary event is "
+            "classified by judgement. A key risk indicator is a proxy "
+            "someone selected against a threshold someone set, so a "
+            "breach is a signal to investigate, never a measured "
+            "exposure or an established cause. Report by event type, "
+            "process and business line, never attributing an event to a "
+            "named person."
+        ),
+        dimensions=(
+            "event type",
+            "business line",
+            "process",
+            "severity band",
+            "period",
+        ),
+    ),
+    DomainSkill(
+        slug="risk_audit.business_continuity",
+        title="Business Continuity Intelligence",
+        domain=_RISK_AUDIT,
+        scope=_RISK_AUDIT_SCOPE,
+        focus=(
+            "Continuity readiness: criticality tiering, recovery "
+            "objectives, exercise outcomes and dependency concentration. "
+            "A recovery time objective and a recovery point objective are "
+            "targets agreed in a plan, never achieved times, so comparing "
+            "one with an exercise result compares a target with a "
+            "rehearsal. An exercise is planned, scoped and usually "
+            "announced, and a tabletop is not a failover -- give the "
+            "exercise type, and never present a passed exercise as "
+            "demonstrated recoverability under an unplanned event. A "
+            "recovery time measured in an exercise normally starts at "
+            "declaration and so excludes detection and decision time: "
+            "state where the clock starts. Criticality tiers and the "
+            "dependency map are declared by the business, and the map is "
+            "only as complete as what was declared, so an unmapped "
+            "dependency reads as no dependency: report the coverage of "
+            "the mapping alongside any concentration figure, because "
+            "concentration on one site, provider or system is visible "
+            "only inside the boundary that was mapped."
+        ),
+        dimensions=(
+            "business process",
+            "criticality tier",
+            "dependency",
+            "exercise type",
+            "period",
+        ),
+    ),
+)
+
 #: Every registered skill, in declaration order. Later batches append their
 #: own tuple here.
 ALL_SKILLS: tuple[DomainSkill, ...] = (
@@ -1680,4 +1949,5 @@ ALL_SKILLS: tuple[DomainSkill, ...] = (
     + IT_OPS_SKILLS
     + HEALTHCARE_SKILLS
     + ENERGY_SKILLS
+    + RISK_AUDIT_SKILLS
 )

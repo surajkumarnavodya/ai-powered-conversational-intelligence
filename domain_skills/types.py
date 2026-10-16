@@ -64,9 +64,13 @@ class DomainSkill:
     """One analytical focus inside one business domain.
 
     Attributes:
-        slug: Stable identifier, e.g. `"sales.revenue"`. Used in logs and in
-            `GET /domain-skills`. Lower-case, dot-separated; uniqueness is
-            enforced at import by the registry.
+        slug: Stable identifier, e.g. `"sales.revenue"`. Used in logs and
+            as the `preferred_slug` a caller of `composer.guidance_for`
+            may pass. **There is no `GET /domain-skills` route** -- this
+            docstring claimed one until batch 16 checked; the package has
+            no live caller at all (`CLAUDE.md` §1, "built, not wired").
+            Lower-case, dot-separated; uniqueness is enforced at import
+            by the registry.
         title: Human-readable name, from the supplied prompt's own heading.
         domain: The `governance.domains.BusinessDomain` this belongs to.
             Reused rather than introduced: that enum already drives the

@@ -16,7 +16,7 @@ from domain_skills.composer import compose_guidance, guidance_for, select_skill
 from domain_skills.contract import ANALYTICS_CONTRACT, RESPONSE_SECTIONS
 from domain_skills.types import DomainSkill, UnknownSkillError
 
-from governance.domains import BusinessDomain, policy_for
+from governance.domains import BusinessDomain, ProhibitedAction, policy_for
 
 
 def _an_uncovered_domain() -> BusinessDomain:
@@ -50,6 +50,8 @@ PROJECT = BusinessDomain.PROJECT
 IT_OPERATIONS = BusinessDomain.IT_OPERATIONS
 HEALTHCARE = BusinessDomain.HEALTHCARE
 ENERGY = BusinessDomain.ENERGY
+RISK_AUDIT = BusinessDomain.RISK_AUDIT
+LEGAL = BusinessDomain.LEGAL
 
 #: Covered domains whose policy declares no `ProhibitedAction` at all, so
 #: `composer._prohibitions_block` appends nothing and the shared contract's
@@ -73,6 +75,20 @@ class TestCatalog:
             "sales.product",
             "sales.pricing",
         )
+
+    def test_the_supplied_risk_audit_skills_are_registered_in_numeric_order(self):
+        """Supplied 01..05 in order; registered in that order, so the
+        domain default is Enterprise Risk Intelligence."""
+        assert tuple(s.slug for s in ds.skills_for_domain(RISK_AUDIT)) == (
+            "risk_audit.enterprise_risk",  # 01
+            "risk_audit.internal_audit",  # 02
+            "risk_audit.control_effectiveness",  # 03
+            "risk_audit.operational_risk",  # 04
+            "risk_audit.business_continuity",  # 05
+        )
+        default = select_skill(RISK_AUDIT)
+        assert default is not None
+        assert default.slug == "risk_audit.enterprise_risk"
 
     def test_the_supplied_energy_skills_are_registered_in_numeric_order(self):
         """Supplied 01..05 in order; registered in that order, so the
@@ -265,8 +281,8 @@ class TestCatalog:
         """Four prompt-domains, three governance domains: Marketing shares
         `SALES_MARKETING` with Sales. Inventing a governance domain per
         batch would mean two answers to 'what may this question return'."""
-        assert len({s.group for s in ds.all_skills()}) == 15
-        assert len(ds.covered_domains()) == 14
+        assert len({s.group for s in ds.all_skills()}) == 16
+        assert len(ds.covered_domains()) == 15
 
     def test_the_supplied_mis_skills_are_registered(self):
         assert tuple(s.slug for s in ds.skills_for_domain(MIS)) == (
@@ -326,6 +342,7 @@ class TestCatalog:
             IT_OPERATIONS,
             HEALTHCARE,
             ENERGY,
+            RISK_AUDIT,
         )
 
     def test_every_uncovered_domain_has_no_skills(self):
@@ -1884,6 +1901,352 @@ class TestEnergyIsGovernedExactlyLikeManufacturing:
         efficiency = ds.get_skill("energy.efficiency").focus.lower()
         assert "is not the portfolio ratio" in efficiency
         assert "recomposed from the underlying totals" in efficiency
+
+
+class TestRiskAuditIsWhereTheSubjectMatterIsTheProhibition:
+    """Batch 16: the first domain whose own vocabulary is the prohibited
+    vocabulary.
+
+    `policy_for(RISK_AUDIT)` declares two `ProhibitedAction`s and both
+    bear on all five skills rather than on one. One of them,
+    `liability_determination`, has **never been derived into a covered
+    domain before** -- only LEGAL and RISK_AUDIT declare it, and LEGAL has
+    no skills. The other, `unsupported_allegation`, is carried elsewhere
+    but is incidental there; here the domain's professional output *is* an
+    assertion: a finding is a recorded opinion against a criterion, a
+    control rating is a conclusion from a sample, a risk score is a
+    judgement, a loss attribution is a classification someone chose.
+
+    Two further properties are measured here rather than claimed in
+    prose, because the second one is counter-intuitive and the first time
+    this series has written a governance claim that the code did not
+    support:
+
+    - `DataCategory.AUDIT` is restricted by this domain and no other, and
+      it names the domain's ordinary subject matter.
+    - That restriction is nonetheless **inert in the result gate**. The
+      `audit_finding` rule classifies at `CONFIDENTIAL`, while every
+      row-level control keys on `SENSITIVE` or above, so a findings
+      result is not masked, not truncated by the tightest
+      `export_row_limit` in the registry, and not suppressed for a small
+      group. Those controls engage only when personal data is also
+      present -- as in any domain.
+
+    So the distinguishing thing governance has to say here reaches the
+    model as prompt text, and nothing it says touches the rows.
+    """
+
+    def test_both_prohibitions_are_derived_into_every_skills_block(self):
+        policy = policy_for(RISK_AUDIT)
+        assert policy.prohibited_actions == frozenset(
+            {ProhibitedAction.LIABILITY_DETERMINATION, ProhibitedAction.UNSUPPORTED_ALLEGATION}
+        )
+
+        skills = ds.skills_for_domain(RISK_AUDIT)
+        # Non-vacuity: without this the loop empties if the batch is
+        # declared under another domain and the test passes while
+        # asserting nothing (§7's mutation-25 lesson).
+        assert len(skills) == 5
+        for skill in skills:
+            result = guidance_for(RISK_AUDIT, enabled=True, preferred_slug=skill.slug)
+            assert result is not None
+            text, chosen = result
+            assert chosen.slug == skill.slug
+            assert "liability determination" in text, skill.slug
+            assert "unsupported allegation" in text, skill.slug
+            # Last, so it overrides the contract's ranking invitation.
+            assert text.rstrip().endswith("say that plainly instead of doing it."), skill.slug
+
+    def test_liability_determination_reaches_a_covered_domain_for_the_first_time(self):
+        """Pins the claim, and pins it where it would go stale.
+
+        If another domain gains this prohibition the assertion below
+        fails, which is correct: the "first" in the contract document
+        would no longer be the whole story.
+        """
+        from governance.domains import DOMAIN_POLICIES
+
+        declaring = {
+            domain
+            for domain, policy in DOMAIN_POLICIES.items()
+            if ProhibitedAction.LIABILITY_DETERMINATION in policy.prohibited_actions
+            and domain is not BusinessDomain.GENERAL
+        }
+        assert declaring == {LEGAL, RISK_AUDIT}
+        # LEGAL has no skills, so RISK_AUDIT is the only covered domain
+        # that derives it. That is what makes this a first.
+        assert ds.skills_for_domain(LEGAL) == ()
+        assert RISK_AUDIT in ds.covered_domains()
+
+        covered_deriving = [
+            d
+            for d in ds.covered_domains()
+            if ProhibitedAction.LIABILITY_DETERMINATION in policy_for(d).prohibited_actions
+        ]
+        assert covered_deriving == [RISK_AUDIT]
+
+    def test_the_domain_restricts_its_own_subject_matter_and_nothing_else_does(self):
+        """Every covered domain so far restricted a side-channel -- PII in
+        manufacturing, PHI in healthcare. This one restricts the category
+        that names what it is for."""
+        from governance.classification import DataCategory, classify_field
+        from governance.domains import DOMAIN_POLICIES
+
+        restricting = {
+            domain
+            for domain, policy in DOMAIN_POLICIES.items()
+            if DataCategory.AUDIT in policy.restricted_categories
+        }
+        assert restricting == {RISK_AUDIT}
+
+        # And the classifier genuinely puts this domain's own columns in
+        # that category, so the restriction is about real data.
+        for column in (
+            "audit_finding",
+            "control_weakness",
+            "risk_assessment",
+            "remediation_plan",
+            "non_conformance",
+        ):
+            assert classify_field("findings", column).category is DataCategory.AUDIT, column
+
+    def test_that_restriction_is_inert_in_the_result_gate(self):
+        """Measured, not assumed -- and the measurement corrected a claim
+        this batch was about to publish.
+
+        `audit_finding` classifies at `CONFIDENTIAL`; masking, the export
+        ceiling and small-group suppression all require `SENSITIVE` or
+        above. So the domain's signature restriction changes no rows.
+
+        This is deliberate upstream (`BASELINE_RESTRICTED_CATEGORIES`
+        excludes the commercially confidential categories on purpose, and
+        `_carries_restricted_data` exists to stop bulk extraction of
+        personal records rather than to cap ordinary analytics), so it is
+        pinned here rather than 'fixed' from this package. If governance
+        ever raises the `audit_finding` level this fails, and the contract
+        document's §20 should be rewritten rather than the assertion
+        loosened.
+        """
+        from governance.classification import DataClassification, classify_field
+        from governance.result_policy import govern_result_for_domain
+
+        assert (
+            classify_field("findings", "audit_finding").classification
+            is DataClassification.CONFIDENTIAL
+        )
+        assert DataClassification.CONFIDENTIAL < DataClassification.SENSITIVE
+
+        rows = [(f"unit-{i}", f"finding-{i}") for i in range(60)]
+        for roles in (["viewer"], ["analyst"], ["admin"]):
+            governed = govern_result_for_domain(
+                ["business_unit", "audit_finding"], rows, roles, RISK_AUDIT
+            )
+            assert governed.actions == (), roles
+            assert len(governed.rows) == 60, roles
+
+        # Non-vacuity: the same ceiling does fire once personal data is
+        # present, so the assertion above is about the category and not
+        # about a gate that never runs.
+        personal = [(f"person-{i}", f"finding-{i}") for i in range(60)]
+        governed = govern_result_for_domain(
+            ["employee_name", "audit_finding"], personal, ["admin"], RISK_AUDIT
+        )
+        assert "export_limited:10" in governed.actions
+        assert len(governed.rows) == 50
+
+    def test_the_export_ceiling_is_the_tightest_in_the_registry(self):
+        """True of the declared number, whatever the test above says about
+        when it engages. Asserted so a later loosening is visible."""
+        from governance.domains import DOMAIN_POLICIES
+
+        assert policy_for(RISK_AUDIT).export_row_limit == 50
+        assert policy_for(RISK_AUDIT).audit_required is True
+        limits = [
+            p.export_row_limit for p in DOMAIN_POLICIES.values() if p.export_row_limit is not None
+        ]
+        assert min(limits) == 50
+        tightest = {
+            d.value
+            for d, p in DOMAIN_POLICIES.items()
+            if p.export_row_limit == 50 and d is not BusinessDomain.GENERAL
+        }
+        assert tightest == {"healthcare", "legal", "risk_audit"}
+
+    def test_no_focus_text_restates_a_derived_prohibition(self):
+        """The composer owns both prohibitions. A focus text repeating one
+        would be a second owner that can drift (`CLAUDE.md` §4.8), and in
+        this domain the temptation is at its strongest because the subject
+        matter is the same words."""
+        for skill in ds.skills_for_domain(RISK_AUDIT):
+            lowered = skill.focus.lower()
+            assert "unsupported allegation" not in lowered, skill.slug
+            assert "allegation" not in lowered, skill.slug
+            assert "liabilit" not in lowered, skill.slug
+            assert "prohibit" not in lowered, skill.slug
+
+    def test_the_batch_does_not_derive_a_prohibition_it_does_not_have(self):
+        """`fraud_accusation` belongs to BFSI, not here -- and a risk or
+        audit question is exactly where someone would be tempted to
+        hand-write it. Batch 7 made the same check for FINANCE."""
+        policy = policy_for(RISK_AUDIT)
+        assert ProhibitedAction.FRAUD_ACCUSATION not in policy.prohibited_actions
+        assert ProhibitedAction.FRAUD_ACCUSATION in policy_for(BFSI).prohibited_actions
+
+        result = guidance_for(RISK_AUDIT, enabled=True)
+        assert result is not None
+        text, _ = result
+        assert "fraud accusation" not in text
+        for skill in ds.skills_for_domain(RISK_AUDIT):
+            assert "fraud" not in skill.focus.lower(), skill.slug
+
+    def test_no_focus_text_claims_anything_about_a_cross_domain_join(self):
+        """The domain's whole subject is other domains' processes -- a
+        control over payroll is HR, over payments is FINANCE, over change
+        is IT_OPERATIONS -- and `cross_domain_allowed` is empty in both
+        directions. `governance/request_policy.py` owns what happens to
+        such a request and this package must not restate it (§3)."""
+        from governance.domains import DOMAIN_POLICIES, is_cross_domain_allowed
+
+        assert policy_for(RISK_AUDIT).cross_domain_allowed == frozenset()
+        assert [
+            d.value for d, p in DOMAIN_POLICIES.items() if RISK_AUDIT in p.cross_domain_allowed
+        ] == []
+        assert is_cross_domain_allowed(RISK_AUDIT, HR) is False
+        assert is_cross_domain_allowed(RISK_AUDIT, IT_OPERATIONS) is False
+
+        for skill in ds.skills_for_domain(RISK_AUDIT):
+            lowered = skill.focus.lower()
+            assert "authoriz" not in lowered, skill.slug
+            assert "permission" not in lowered, skill.slug
+
+    def test_a_count_here_measures_how_much_looking_was_done(self):
+        """The batch's distinguishing problem, and the next step in the
+        provenance series.
+
+        Batch 11 had a record of someone else's claim, 12 a
+        self-assessment, 13 an instrument reading, 15 a figure nobody
+        measured. Here the figure exists only where somebody looked: a
+        finding where an audit went, an exception where a control was
+        tested, a loss above a threshold someone set. Zero is ambiguous
+        between clean, untested and undetected, and no deterministic
+        control tells them apart -- the arithmetic is correct either way.
+        """
+        audit = ds.get_skill("risk_audit.internal_audit").focus.lower()
+        assert "raised only where an audit looked" in audit
+        assert "may be an unaudited unit rather than a clean one" in audit
+        assert "never read a zero as an absence of issues" in audit
+
+        controls = ds.get_skill("risk_audit.control_effectiveness").focus.lower()
+        assert "untested is not effective" in controls
+        assert "never let them fall into a pass-rate denominator" in controls
+
+        operational = ds.get_skill("risk_audit.operational_risk").focus.lower()
+        assert "truncated at a reporting threshold" in operational
+        assert "better reporting rather than more failure" in operational
+
+        continuity = ds.get_skill("risk_audit.business_continuity").focus.lower()
+        assert "an unmapped dependency reads as no dependency" in continuity
+
+    def test_a_rating_is_framed_as_a_judgement_and_not_as_arithmetic(self):
+        """Batch 12 established that a risk score is a judgement rather
+        than an outcome. What is new here is the ordinal arithmetic:
+        likelihood times impact on an ordinal scale is a ranking code, so
+        averaging or summing it is not a calculation of anything."""
+        focus = ds.get_skill("risk_audit.enterprise_risk").focus.lower()
+        assert "a ranking code rather than a quantity" in focus
+        assert "a 12 is not twice a 6" in focus
+        assert "never be averaged or summed" in focus
+        assert "a judgement about a judgement" in focus
+        assert "re-rating of the controls with no change in exposure" in focus
+        assert "an exposure that has not occurred" in focus
+
+    def test_a_test_conclusion_carries_its_sample(self):
+        """An exception rate from a sample is an inference about a
+        population, and from a judgemental sample it is not even that."""
+        focus = ds.get_skill("risk_audit.control_effectiveness").focus.lower()
+        assert "design and operating effectiveness are different conclusions" in focus
+        assert "statistical or judgemental" in focus
+        assert "not a four per cent population rate" in focus
+        assert "cannot be projected to the population at all" in focus
+
+    def test_the_most_recent_period_is_framed_as_incomplete(self):
+        """Discovery lag makes the newest period of a loss series look
+        best. Reported as improvement it is a false `DATABASE_FACT`
+        (`CLAUDE.md` §4.4), and nothing deterministic catches it."""
+        focus = ds.get_skill("risk_audit.operational_risk").focus.lower()
+        assert "occurrence date, discovery date and accounting date" in focus
+        assert "treat the most recent periods as understated" in focus
+        assert "incompleteness rather than improvement" in focus
+        assert "report frequency and severity separately" in focus
+        assert "a signal to investigate, never a measured" in focus
+
+    def test_a_passed_exercise_is_not_demonstrated_recoverability(self):
+        """A target is not an achievement and a rehearsal is not an
+        event -- the same shape as batch 12's reported-versus-measured,
+        on a different subject."""
+        focus = ds.get_skill("risk_audit.business_continuity").focus.lower()
+        assert "targets agreed in a plan, never achieved times" in focus
+        assert "a tabletop is not a failover" in focus
+        assert "never present a passed exercise as demonstrated recoverability" in focus
+        assert "state where the clock starts" in focus
+
+    def test_the_individual_level_guard_is_present_where_there_is_an_individual(self):
+        """The mirror of batch 15, which reasoned its *absence*.
+
+        A meter is not a person, so ENERGY needed no such guard. A risk
+        owner, an auditee, a control performer and a loss event's operator
+        all are, and each is a plausible thing to rank -- so four of the
+        five skills carry the guard explicitly.
+
+        The domain declares no individual-performance prohibition, so
+        nothing derived covers this. It is the skill's own work.
+        """
+        assert (
+            ProhibitedAction.INDIVIDUAL_PERFORMANCE_RANKING
+            not in policy_for(RISK_AUDIT).prohibited_actions
+        )
+
+        assert (
+            "never rank named owners by their open risks"
+            in ds.get_skill("risk_audit.enterprise_risk").focus.lower()
+        )
+        assert (
+            "never conclude who is at fault"
+            in ds.get_skill("risk_audit.internal_audit").focus.lower()
+        )
+        assert (
+            "rather than by the person who performed it"
+            in ds.get_skill("risk_audit.control_effectiveness").focus.lower()
+        )
+        assert (
+            "never attributing an event to a named person"
+            in ds.get_skill("risk_audit.operational_risk").focus.lower()
+        )
+
+    def test_each_skill_states_the_measurement_trap_its_subject_carries(self):
+        """Read off the subject matter. One is reused rather than
+        rediscovered: batch 9's "a missing row is not a zero" returns as
+        an unmapped continuity dependency and as an unaudited unit."""
+        enterprise = ds.get_skill("risk_audit.enterprise_risk").focus.lower()
+        assert "a short register may be an unmaintained one" in enterprise
+
+        audit = ds.get_skill("risk_audit.internal_audit").focus.lower()
+        assert "a due date the owner can revise" in audit
+        assert "closure is management's assertion unless audit validated it" in audit
+        assert "not risk removed" in audit
+        assert "different scope and rating scale are not comparable" in audit
+
+        controls = ds.get_skill("risk_audit.control_effectiveness").focus.lower()
+        assert "tested once as a configuration" in controls
+        assert "counts of different things" in controls
+
+        operational = ds.get_skill("risk_audit.operational_risk").focus.lower()
+        assert "a change to it breaks the series" in operational
+        assert "which makes a mean uninformative" in operational
+
+        continuity = ds.get_skill("risk_audit.business_continuity").focus.lower()
+        assert "excludes detection and decision time" in continuity
+        assert "coverage of the mapping alongside any concentration figure" in continuity
 
 
 class TestNothingUntrustedReachesThePrompt:
