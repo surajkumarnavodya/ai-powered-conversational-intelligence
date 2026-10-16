@@ -74,6 +74,7 @@ from agent.rate_limit import (
 )
 from agent.result_charting import classify_columns, recommend_chart
 from agent.sql_validator import (
+    describe_sql,
     enforce_row_limit,
     find_unexpected_table_references,
     qualify_table_schema,
@@ -149,6 +150,7 @@ from api.schemas import (
     SchemaRefreshResult,
     SchemaTableOut,
     SourceAnswerOut,
+    SqlJoinOut,
     SqlSummaryOut,
     StageMetricOut,
     StageTimingOut,
@@ -747,7 +749,28 @@ def _sql_summary_out(state: Mapping[str, Any], settings: Settings) -> SqlSummary
     if summary is None:
         return None
     statement_type, referenced_tables = summary
-    return SqlSummaryOut(statement_type=statement_type, referenced_tables=referenced_tables)
+
+    # The structural shape, from the same SQL and the same dialect.
+    # Separately guarded and separately optional: a shape this walk
+    # cannot describe must cost the panel its description, never the
+    # statement type and table list it already had.
+    try:
+        shape = describe_sql(sql) if dialect is None else describe_sql(sql, dialect)
+    except Exception:  # noqa: BLE001 - a presentation field never fails the answer
+        shape = None
+
+    return SqlSummaryOut(
+        statement_type=statement_type,
+        referenced_tables=referenced_tables,
+        joins=(
+            [SqlJoinOut(kind=join.kind, table=join.table) for join in shape.joins] if shape else []
+        ),
+        filter_columns=list(shape.filter_columns) if shape else [],
+        aggregates=list(shape.aggregates) if shape else [],
+        group_by=list(shape.group_by) if shape else [],
+        order_by=list(shape.order_by) if shape else [],
+        is_distinct=bool(shape.is_distinct) if shape else False,
+    )
 
 
 def _stage_timings_out(state: Mapping[str, Any]) -> list[StageTimingOut]:

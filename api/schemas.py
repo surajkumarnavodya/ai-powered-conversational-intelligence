@@ -177,6 +177,20 @@ class AttemptRecordOut(BaseModel):
     will_retry: bool = False
 
 
+class SqlJoinOut(BaseModel):
+    """One join in the generated SQL, as the parser read it.
+
+    Mirrors `agent.sql_validator.SqlJoinFact`. `kind` is the parser's own
+    side/kind (`INNER`, `LEFT`, `RIGHT`, `FULL`, `CROSS`), never inferred
+    from the SQL text.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    kind: str
+    table: str
+
+
 class SqlSummaryOut(BaseModel):
     """What the generated SQL *is* -- its statement shape and the tables it
     actually references.
@@ -196,6 +210,30 @@ class SqlSummaryOut(BaseModel):
 
     statement_type: str
     referenced_tables: list[str] = Field(default_factory=list)
+
+    # --- Structural shape, from `agent.sql_validator.describe_sql` -------
+    # Added additively: every field below is optional with a default, so
+    # an older consumer of this frozen model is unaffected and a turn
+    # whose SQL does not parse simply carries the empty defaults
+    # (`CLAUDE.md` 6.3).
+    #
+    # Read from the same AST `validate_sql` already parsed -- no second
+    # parser, and deliberately no model call: an explanation that
+    # hallucinated a join would sit beside a real validator verdict and
+    # read as authoritative. See `SqlShape` for the three honesty
+    # boundaries this carries, in particular why there is no row limit
+    # here (the `TOP`/`LIMIT` in the SQL a caller sees is this
+    # platform's governance cap, not the query's own intent).
+    joins: list[SqlJoinOut] = Field(default_factory=list)
+    #: Column names appearing in a `WHERE` anywhere in the statement.
+    #: Names only -- never the compared values, which can carry data.
+    filter_columns: list[str] = Field(default_factory=list)
+    aggregates: list[str] = Field(default_factory=list)
+    #: Statement-level `GROUP BY` -- the grain of the result.
+    group_by: list[str] = Field(default_factory=list)
+    #: Statement-level `ORDER BY` only, never a window's internal one.
+    order_by: list[str] = Field(default_factory=list)
+    is_distinct: bool = False
 
 
 class StageTimingOut(BaseModel):

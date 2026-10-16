@@ -98,6 +98,60 @@ export function buildSqlMetadata(
         value: state.sql_summary.referenced_tables.join(', '),
       })
     }
+
+    // The statement's structural shape, read from the AST the validator
+    // already parsed (`agent.sql_validator.describe_sql`) -- never from a
+    // model, so it cannot describe a join the query does not contain.
+    // Each row is omitted when the statement has nothing to say for it,
+    // rather than rendered as an empty "none", so the grid stays short
+    // for the simple queries that are most of them.
+    //
+    // These are structural facts only. What a column *means* is the
+    // semantic layer's to state, and nothing here reports whether the
+    // query ran or what it returned -- that is the status line's.
+    const summary = state.sql_summary
+    if (summary.joins && summary.joins.length > 0) {
+      rows.push({
+        key: 'joins',
+        label: t('sqlIntelligence.joins'),
+        value: summary.joins.map((join) => `${join.kind} ${join.table}`).join(', '),
+      })
+    }
+    if (summary.filter_columns && summary.filter_columns.length > 0) {
+      rows.push({
+        key: 'filterColumns',
+        label: t('sqlIntelligence.filterColumns'),
+        value: summary.filter_columns.join(', '),
+      })
+    }
+    if (summary.aggregates && summary.aggregates.length > 0) {
+      rows.push({
+        key: 'aggregates',
+        label: t('sqlIntelligence.aggregates'),
+        value: summary.aggregates.join(', '),
+      })
+    }
+    if (summary.group_by && summary.group_by.length > 0) {
+      rows.push({
+        key: 'groupBy',
+        label: t('sqlIntelligence.groupBy'),
+        value: summary.group_by.join(', '),
+      })
+    }
+    if (summary.order_by && summary.order_by.length > 0) {
+      rows.push({
+        key: 'orderBy',
+        label: t('sqlIntelligence.orderBy'),
+        value: summary.order_by.join(', '),
+      })
+    }
+    if (summary.is_distinct) {
+      rows.push({
+        key: 'distinct',
+        label: t('sqlIntelligence.distinct'),
+        value: t('sqlIntelligence.distinctRemoved'),
+      })
+    }
   }
   if (showDatabase && state.database) {
     rows.push({ key: 'database', label: t('details.database'), value: state.database })

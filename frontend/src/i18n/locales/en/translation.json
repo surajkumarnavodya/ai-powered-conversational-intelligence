@@ -582,6 +582,13 @@
     "notRun": "not run",
     "metadata": "Query metadata",
     "statementType": "Statement type",
+    "joins": "Joins",
+    "filterColumns": "Filtered on",
+    "aggregates": "Aggregates",
+    "groupBy": "Grouped by",
+    "orderBy": "Ordered by",
+    "distinct": "Duplicate rows",
+    "distinctRemoved": "Removed (DISTINCT)",
     "referencedTables": "Tables referenced",
     "rowCount": "Rows returned",
     "duration": "Execution time"

@@ -364,6 +364,13 @@
     "notRun": "no ejecutada",
     "metadata": "Metadatos de la consulta",
     "statementType": "Tipo de instrucción",
+    "joins": "Uniones",
+    "filterColumns": "Filtrado por",
+    "aggregates": "Agregaciones",
+    "groupBy": "Agrupado por",
+    "orderBy": "Ordenado por",
+    "distinct": "Filas duplicadas",
+    "distinctRemoved": "Eliminadas (DISTINCT)",
     "referencedTables": "Tablas referenciadas",
     "rowCount": "Filas devueltas",
     "duration": "Tiempo de ejecución"

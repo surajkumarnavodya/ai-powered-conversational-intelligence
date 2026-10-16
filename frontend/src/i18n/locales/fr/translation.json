@@ -364,6 +364,13 @@
     "notRun": "non exécutée",
     "metadata": "Métadonnées de la requête",
     "statementType": "Type d'instruction",
+    "joins": "Jointures",
+    "filterColumns": "Filtré sur",
+    "aggregates": "Agrégations",
+    "groupBy": "Groupé par",
+    "orderBy": "Trié par",
+    "distinct": "Lignes en double",
+    "distinctRemoved": "Supprimées (DISTINCT)",
     "referencedTables": "Tables référencées",
     "rowCount": "Lignes renvoyées",
     "duration": "Temps d'exécution"

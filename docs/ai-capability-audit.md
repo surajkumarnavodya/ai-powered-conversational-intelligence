@@ -15,7 +15,9 @@ rows, machine-generated), [`ai-capability-implementation-plan.md`](ai-capability
 ## 1. Executive summary
 
 **Of the 149 catalogue rows, 56 are Core capabilities for this product. Of
-those 56: 42 are Complete, 14 are Partial, and none is Missing.**
+those 56: 43 are Complete, 13 are Partial, and none is Missing.**
+*(Updated 2026-10-17: row 27 closed by Batch 1 — see
+[`ai-capability-implementation-log.md`](ai-capability-implementation-log.md).)*
 
 No Core capability is absent. Every genuine gap is a partial — an existing
 implementation that stops short — which makes this a refinement exercise,
@@ -153,7 +155,7 @@ capabilities, as the brief requires, rather than treated as 14 features.
 
 | # | Capability | Rows | What exists | What stops short |
 |---|---|---|---|---|
-| **A** | **SQL explanation** | 27 | `SqlIntelligencePanel` shows validation + lifecycle; `QueryPlanPanel` shows the analytical plan | No natural-language explanation of the generated SQL |
+| ~~**A**~~ | ~~**SQL explanation**~~ | 27 | **CLOSED 2026-10-17 (Batch 1).** `describe_sql` reads the AST `validate_sql` already parsed; six structural rows added to the existing metadata grid. Deterministic — no LLM call, no new dependency. See the implementation log | — |
 | **B** | **Research depth & verification** | 2, 7, 8 | Web search with synthesis, inline citations, hedging when sources disagree | No verification pass, no multi-step research plan, no iterative retrieval |
 | **C** | **Accessibility assurance** | 60 | Responsive layout, i18n ×5, aria labels, focus management throughout | No automated a11y test, no formal WCAG audit |
 | **D** | **Load / capacity evidence** | 59 | Complete k6 + compose stack in `eval/load/`; CI smoke scenario | Never executed — Docker daemon not running |

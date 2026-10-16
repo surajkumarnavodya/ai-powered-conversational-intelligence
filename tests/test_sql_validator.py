@@ -11,10 +11,12 @@ import pytest
 
 from agent.sql_validator import (
     SAFETY_VIOLATION_TYPES,
+    describe_sql,
     enforce_row_limit,
     qualify_table_schema,
     references_multiple_tables,
     strip_row_limit,
+    summarize_sql,
     validate_sql,
 )
 
@@ -406,3 +408,135 @@ class TestReferencesMultipleTables:
         # validate_sql, which guarantees a Select/Union/Except/Intersect.
         with pytest.raises(TypeError):
             strip_row_limit("INSERT INTO customers VALUES (1)")
+
+
+class TestDescribeSql:
+    """`describe_sql` -- the structural shape behind the SQL panel's
+    description (capability-audit row 27).
+
+    Purely descriptive: it gates nothing, and `validate_sql` remains the
+    only thing that decides whether SQL may run. The tests that matter
+    most here are the ones pinning what it must *not* claim.
+    """
+
+    JOIN_AGG = (
+        "SELECT t.SalesTerritoryRegion, SUM(f.SalesAmount) AS Total, COUNT(*) AS N "
+        "FROM FactInternetSales f "
+        "JOIN DimSalesTerritory t ON f.SalesTerritoryKey = t.SalesTerritoryKey "
+        "LEFT JOIN DimProduct p ON f.ProductKey = p.ProductKey "
+        "WHERE f.OrderDateKey >= 20200101 AND p.Color = 'Red' "
+        "GROUP BY t.SalesTerritoryRegion HAVING SUM(f.SalesAmount) > 100 "
+        "ORDER BY Total DESC"
+    )
+
+    def test_reads_joins_with_their_real_kind(self):
+        shape = describe_sql(self.JOIN_AGG, dialect="tsql")
+        assert shape is not None
+        assert [(j.kind, j.table) for j in shape.joins] == [
+            ("INNER", "DimSalesTerritory"),
+            ("LEFT", "DimProduct"),
+        ]
+
+    def test_a_bare_join_is_inner_which_is_sqls_own_default(self):
+        shape = describe_sql("SELECT 1 FROM a JOIN b ON a.k = b.k", dialect="tsql")
+        assert shape is not None
+        assert [j.kind for j in shape.joins] == ["INNER"]
+
+    def test_reports_filter_columns_but_never_the_compared_values(self):
+        shape = describe_sql(
+            "SELECT 1 FROM t WHERE email = 'alice@example.com' AND age > 30", dialect="tsql"
+        )
+        assert shape is not None
+        assert set(shape.filter_columns) == {"email", "age"}
+        # A predicate can carry data, and this string is rendered in a UI
+        # and may be logged. Names only.
+        assert not any("alice" in column for column in shape.filter_columns)
+
+    def test_finds_a_filter_inside_a_cte_not_only_at_the_top_level(self):
+        # Generated SQL routinely puts the real predicate in a CTE;
+        # reporting "no filters" for such a query would mislead.
+        shape = describe_sql(
+            "WITH r AS (SELECT * FROM DimProduct WHERE Color = 'Red') SELECT * FROM r",
+            dialect="tsql",
+        )
+        assert shape is not None
+        assert "Color" in shape.filter_columns
+
+    def test_deduplicates_an_aggregate_repeated_in_select_and_having(self):
+        # One aggregate to a reader, two nodes to the parser.
+        shape = describe_sql(self.JOIN_AGG, dialect="tsql")
+        assert shape is not None
+        assert shape.aggregates == ("SUM(f.SalesAmount)", "COUNT(*)")
+
+    def test_group_by_is_the_declared_grain(self):
+        shape = describe_sql(self.JOIN_AGG, dialect="tsql")
+        assert shape is not None
+        assert shape.group_by == ("t.SalesTerritoryRegion",)
+
+    def test_order_by_is_statement_level_never_a_windows_internal_one(self):
+        # The regression this test exists for: searching the tree finds a
+        # window's own ORDER BY inside OVER(...) on a statement that has
+        # no ordering of its own, and reporting that as the result's
+        # ordering is wrong.
+        shape = describe_sql(
+            "WITH ranked AS (SELECT ProductKey, "
+            "ROW_NUMBER() OVER (PARTITION BY Color ORDER BY ListPrice DESC) AS rn "
+            "FROM DimProduct) SELECT ProductKey FROM ranked WHERE rn <= 5",
+            dialect="tsql",
+        )
+        assert shape is not None
+        assert shape.order_by == ()
+
+    def test_a_statement_level_order_by_is_still_reported(self):
+        shape = describe_sql("SELECT a FROM t ORDER BY a DESC", dialect="tsql")
+        assert shape is not None
+        assert shape.order_by == ("a DESC",)
+
+    def test_distinct_is_reported_for_a_select(self):
+        assert describe_sql("SELECT DISTINCT a FROM t", dialect="tsql").is_distinct is True
+        assert describe_sql("SELECT a FROM t", dialect="tsql").is_distinct is False
+
+    def test_a_union_is_not_reported_as_distinct(self):
+        # sqlglot sets `distinct` on a set operation to mean UNION rather
+        # than UNION ALL -- a different fact from SELECT DISTINCT.
+        # Reporting it here would mislabel every plain UNION.
+        assert describe_sql("SELECT a FROM t1 UNION SELECT b FROM t2").is_distinct is False
+        assert describe_sql("SELECT a FROM t1 UNION ALL SELECT b FROM t2").is_distinct is False
+
+    @pytest.mark.parametrize("sql", ["", "   ", "SELECT FROM WHERE ((", "not sql at all ((("])
+    def test_unparseable_or_empty_sql_describes_nothing(self, sql):
+        # None, never a partial shape a reader would take as complete.
+        assert describe_sql(sql, dialect="tsql") is None
+
+    def test_reports_no_row_limit_even_though_the_ast_has_one(self):
+        # Deliberate. `validate_sql_node` writes `enforce_row_limit`'s
+        # output back to state["sql"], so the TOP a caller sees is this
+        # platform's governance cap, not the query's intent. Reporting it
+        # as query behaviour would present a control as authorship.
+        shape = describe_sql("SELECT TOP 1000 a FROM t", dialect="tsql")
+        assert shape is not None
+        assert not hasattr(shape, "row_limit")
+
+    def test_bounded_so_one_pathological_query_cannot_grow_the_response(self):
+        wide = " AND ".join(f"c{i} = {i}" for i in range(200))
+        shape = describe_sql(f"SELECT 1 FROM t WHERE {wide}", dialect="tsql")
+        assert shape is not None
+        assert len(shape.filter_columns) <= 12
+
+    def test_summarize_sql_is_unchanged_by_this_addition(self):
+        # describe_sql was added beside summarize_sql rather than widening
+        # it, because api.main and api.artifacts both unpack its tuple.
+        statement_type, tables = summarize_sql(self.JOIN_AGG, dialect="tsql")
+        assert statement_type == "SELECT"
+        assert tables == ["DimProduct", "DimSalesTerritory", "FactInternetSales"]
+
+    def test_describing_sql_never_executes_or_validates_it(self):
+        # A statement the validator would reject still describes cleanly:
+        # this is a presentation helper, not a gate, and must not be
+        # mistaken for one.
+        destructive = "DELETE FROM DimCustomer WHERE 1=1"
+        shape = describe_sql(destructive, dialect="tsql")
+        assert shape is not None
+        assert shape.filter_columns == ()  # `1=1` references no column
+        # The gate is unaffected by anything describe_sql does.
+        assert validate_sql(destructive).is_valid is False

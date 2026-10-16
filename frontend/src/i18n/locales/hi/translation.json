@@ -364,6 +364,13 @@
     "notRun": "निष्पादित नहीं",
     "metadata": "क्वेरी मेटाडेटा",
     "statementType": "कथन प्रकार",
+    "joins": "जॉइन",
+    "filterColumns": "इस पर फ़िल्टर",
+    "aggregates": "समुच्चय",
+    "groupBy": "इसके अनुसार समूहीकृत",
+    "orderBy": "इसके अनुसार क्रमबद्ध",
+    "distinct": "डुप्लिकेट पंक्तियाँ",
+    "distinctRemoved": "हटाई गईं (DISTINCT)",
     "referencedTables": "संदर्भित तालिकाएँ",
     "rowCount": "लौटाई गई पंक्तियाँ",
     "duration": "निष्पादन समय"

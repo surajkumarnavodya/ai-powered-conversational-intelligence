@@ -364,6 +364,13 @@
     "notRun": "अंमलात आणले नाही",
     "metadata": "क्वेरी मेटाडेटा",
     "statementType": "विधान प्रकार",
+    "joins": "जॉइन",
+    "filterColumns": "यावर फिल्टर",
+    "aggregates": "एकत्रित",
+    "groupBy": "यानुसार गट",
+    "orderBy": "यानुसार क्रम",
+    "distinct": "डुप्लिकेट ओळी",
+    "distinctRemoved": "काढल्या (DISTINCT)",
     "referencedTables": "संदर्भित सारणी",
     "rowCount": "परत आलेल्या ओळी",
     "duration": "अंमलबजावणी वेळ"
