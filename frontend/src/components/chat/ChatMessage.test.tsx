@@ -145,6 +145,29 @@ describe('ChatMessage', () => {
     expect(onSubmitEdit).toHaveBeenCalledWith('Revenue by region')
   })
 
+  it('fills the row so the bubble can grow to its max-width', () => {
+    // A layout regression guard, not a style preference. Every caller
+    // wraps this in `<div className="flex justify-end">`, which makes the
+    // root a shrink-to-fit flex item. Without `w-full` the bubble's
+    // `max-w-[75%]` resolved against the root's *content* width, so a
+    // question was capped at 75% of its own natural text width and
+    // wrapped early with most of the row empty beside it. Dropping
+    // `w-full` brings that back, silently and only at certain text
+    // lengths -- which is exactly the kind of bug a test should hold.
+    const { container } = render(
+      <ChatMessage message={{ role: 'user', content: 'Top news of Delhi for today.' }} />,
+    )
+    const root = container.firstElementChild
+    expect(root).toHaveClass('w-full')
+
+    const bubble = root?.querySelector('.max-w-\\[85\\%\\]')
+    expect(bubble).not.toBeNull()
+    // Caps at 75% of the row from `sm` up, and may shrink below its
+    // content rather than overflow a narrow row.
+    expect(bubble).toHaveClass('sm:max-w-[75%]')
+    expect(bubble).toHaveClass('min-w-0')
+  })
+
   it('still renders the question text when not editing', () => {
     render(
       <ChatMessage message={{ role: 'user', content: 'Top regions?' }} onSubmitEdit={vi.fn()} />,

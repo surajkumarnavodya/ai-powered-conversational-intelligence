@@ -71,7 +71,18 @@ export function ChatMessage({
   }
 
   return (
-    <div className={`group flex gap-2.5 ${isUser ? 'flex-row-reverse' : ''}`}>
+    // `w-full` is load-bearing, not cosmetic. All three callers wrap this
+    // in `<div className="flex justify-end">`, which makes this root a
+    // shrink-to-fit flex item -- its width derived from its own content.
+    // The bubble's `max-w-[75%]` below then resolved against *that*, so a
+    // question was capped at 75% of its own natural text width and wrapped
+    // early no matter how much of the column was free (a short question
+    // broke onto a second line with most of the row empty beside it).
+    // Filling the row makes the percentage resolve against the turn column,
+    // which is what it was always meant to mean. `flex-row-reverse` still
+    // packs the avatar and bubble against the right edge, so nothing moves
+    // except how far a question may grow before it wraps.
+    <div className={`group flex w-full gap-2.5 ${isUser ? 'flex-row-reverse' : ''}`}>
       <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--muted)] text-[var(--muted-foreground)]">
         {isUser ? <User className="h-4 w-4" /> : <img src="/favicon.png" alt="" className="h-full w-full object-contain" />}
       </span>
@@ -81,7 +92,13 @@ export function ChatMessage({
         // back to 75% from `sm` up, where the reading column is wide
         // enough for the asymmetry to read as alignment rather than
         // waste.
-        className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-sm sm:max-w-[75%] ${
+        // `min-w-0` lets this shrink below its content when the row runs
+        // out of room. It changes nothing at normal widths -- a flex item
+        // only shrinks once there is overflow -- but on a very narrow
+        // phone the 32px avatar plus an 85% bubble can exceed the row, and
+        // without it the bubble would push past the edge instead of
+        // wrapping.
+        className={`min-w-0 max-w-[85%] rounded-2xl px-3.5 py-2 text-sm sm:max-w-[75%] ${
           isUser
             ? 'bg-[var(--accent)] text-[var(--accent-foreground)]'
             : 'border border-[var(--border)] bg-[var(--card)]'
