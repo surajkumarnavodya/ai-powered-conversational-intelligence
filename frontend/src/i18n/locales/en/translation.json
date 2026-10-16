@@ -164,6 +164,7 @@
     "view": "View",
     "rerun": "Re-run",
     "editQuestion": "Edit",
+    "copyQuestion": "Copy question",
     "submitEdit": "Ask again",
     "sources": "Answered using",
     "followingUpOn": "Following up on",

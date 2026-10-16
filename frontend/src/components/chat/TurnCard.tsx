@@ -19,6 +19,7 @@ import { DownloadAnswerButton } from './DownloadAnswerButton'
 import { AgentExecutionTimeline } from './AgentExecutionTimeline'
 import { SaveArtifactButton } from './ArtifactWorkspace'
 import { FollowUpSuggestions } from './FollowUpSuggestions'
+import { QuestionActions } from './QuestionActions'
 import { ReadAloudButton } from './ReadAloudButton'
 import { RegenerateAnswerButton } from './RegenerateAnswerButton'
 import { ResponseFeedbackWidget } from './ResponseFeedbackWidget'
@@ -123,6 +124,7 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
           message={{ role: 'user', content: entry.question }}
           onSubmitEdit={(edited) => void askQuestion(edited)}
           editDisabled={pendingQuestion !== null}
+          actions={<QuestionActions question={entry.question} />}
         />
       </div>
 

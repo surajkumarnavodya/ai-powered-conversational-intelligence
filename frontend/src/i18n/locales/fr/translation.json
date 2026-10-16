@@ -144,6 +144,7 @@
     "view": "Afficher",
     "rerun": "Relancer",
     "editQuestion": "Modifier",
+    "copyQuestion": "Copier la question",
     "submitEdit": "Reposer la question",
     "sources": "Répondu à l'aide de",
     "followingUpOn": "Suite à",
