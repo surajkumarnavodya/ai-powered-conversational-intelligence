@@ -129,17 +129,26 @@ def _context_budget_chars(settings: Settings | None) -> int:
     return settings.context_budget_max_chars
 
 
-def _decoding_options(settings: Settings, num_predict: int) -> dict[str, object]:
-    """The decoding parameters every Ollama call in this module uses.
+def decoding_options(settings: Settings, num_predict: int) -> dict[str, object]:
+    """The decoding parameters every Ollama call in this application uses.
 
-    One function rather than seven literal dicts, so decoding policy has
-    a single owner. Before this existed each call site repeated
-    `{"num_predict": ..., "temperature": 0.0}` and **nothing set
+    One function rather than a literal dict per call site, so decoding
+    policy has a single owner. Before this existed each call site
+    repeated `{"num_predict": ..., "temperature": 0.0}` and **nothing set
     `num_ctx`** -- which meant every call ran against Ollama's small
     default window regardless of the model's trained context length, and
     long prompts were silently truncated from the start, dropping the
     system prompt. See `docs/INFERENCE_ENGINEERING_BASELINE.md` §1 for
     the measurement.
+
+    Public rather than module-private because `rag/llm.py::call_ollama`
+    -- the shared helper behind the RAG subgraph, the orchestrator's
+    router/web-search/media-search answer steps and the analyst planner
+    -- had the identical `num_ctx` gap and now calls this instead of
+    growing a second, drifting copy. `rag/llm.py` overlays its own
+    `temperature` on top (it takes one per call); everything else is
+    shared, because a per-caller sampling difference would be a
+    per-caller reproducibility difference.
 
     `num_predict` stays per-task: an insight is one or two sentences and
     a SQL statement is not, so their output caps are genuinely
@@ -782,7 +791,7 @@ def generate_insight_from_llm(
                 {"role": "system", "content": _INSIGHT_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            options=_decoding_options(settings, settings.insight_max_tokens),
+            options=decoding_options(settings, settings.insight_max_tokens),
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
         # Provider health signal -- advances the circuit breaker so a
@@ -964,7 +973,7 @@ def generate_sql_from_llm(
                 {"role": "system", "content": _system_prompt(settings.db_type)},
                 {"role": "user", "content": user_prompt},
             ],
-            options=_decoding_options(settings, settings.llm_max_tokens),
+            options=decoding_options(settings, settings.llm_max_tokens),
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
         # Provider health signal -- advances the circuit breaker so a
@@ -1295,7 +1304,7 @@ def generate_query_plan_from_llm(
                 {"role": "system", "content": _PLAN_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            options=_decoding_options(settings, settings.query_plan_max_tokens),
+            options=decoding_options(settings, settings.query_plan_max_tokens),
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
         # Provider health signal -- advances the circuit breaker so a
@@ -1419,7 +1428,7 @@ def review_sql_against_plan_from_llm(
                 {"role": "system", "content": _REVIEW_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            options=_decoding_options(settings, settings.sql_review_max_tokens),
+            options=decoding_options(settings, settings.sql_review_max_tokens),
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
         # Provider health signal -- advances the circuit breaker so a
@@ -1532,7 +1541,7 @@ def review_sql_against_metrics_from_llm(
                 {"role": "system", "content": _METRIC_CONFORMANCE_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            options=_decoding_options(settings, settings.sql_review_max_tokens),
+            options=decoding_options(settings, settings.sql_review_max_tokens),
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
         # Provider health signal -- advances the circuit breaker so a
@@ -1734,7 +1743,7 @@ def generate_analytical_intent_from_llm(
                 {"role": "system", "content": _INTENT_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            options=_decoding_options(settings, settings.intent_classification_max_tokens),
+            options=decoding_options(settings, settings.intent_classification_max_tokens),
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
         # Provider health signal -- advances the circuit breaker so a
@@ -1957,7 +1966,7 @@ def generate_analytical_plan_from_llm(
                 {"role": "system", "content": _ANALYTICAL_PLAN_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            options=_decoding_options(settings, settings.analytical_plan_max_tokens),
+            options=decoding_options(settings, settings.analytical_plan_max_tokens),
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
         # Provider health signal -- advances the circuit breaker so a

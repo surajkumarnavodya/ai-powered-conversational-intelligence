@@ -525,6 +525,26 @@ for how the router/subgraphs work internally.
 | `WEB_SEARCH_PROVIDER` | `tavily` | Selects the provider (`search/web_search.py::SUPPORTED_SEARCH_PROVIDERS`). Only `tavily` is implemented today. |
 | `WEB_SEARCH_API_KEY` | *(unset)* | API key for the configured provider. Get a Tavily key at [tavily.com](https://tavily.com). `SecretStr`-wrapped. |
 | `WEB_SEARCH_MAX_RESULTS` | `5` | Max results requested per search call. |
+| `WEB_SEARCH_ANSWER_MAX_TOKENS` | `2400` | Output cap for the LLM call that drafts the web answer. Sized for a structured, multi-source answer rather than a sentence. |
+| `WEB_SEARCH_CONTEXT_MAX_CHARS` | `18000` | Input cap on the results block handed to that call. Whole results are dropped from the lowest-ranked end until it fits, the omission is stated in the answer, and a dropped result is not cited. `0` disables the budget. |
+
+Whether the input cap binds at `WEB_SEARCH_MAX_RESULTS=5` depends on the
+sources. Measured 2026-10-16: five ordinary pages returned 1,547–2,363
+characters each (10,979 total — nothing dropped), while five
+academic/long-form pages for one medical question exceeded 18,000
+characters between them and the top two were kept, with the answer saying
+so.
+
+**On the input cap.** It exists because removing a limit is not the same
+as removing truncation: Ollama does not reject an oversized prompt, it
+truncates it from the *start* — where the system prompt lives — and
+reports nothing. Measured on this machine (llama3.1:8b, 2026-10-16): with
+no `num_ctx` the model is served at 4,096 and a long prompt was evaluated
+at **2,050 tokens with the system prompt gone**; at `OLLAMA_NUM_CTX=16384`
+the same prompt was evaluated at 12,043 tokens with the system prompt
+intact. So the budget is set below the usable window and what it drops is
+disclosed, rather than letting a silent cut decide the answer. Keep it in
+step with `OLLAMA_NUM_CTX`.
 
 ### REST/OpenAPI connector (optional, off by default)
 

@@ -1,8 +1,14 @@
 """Shared Ollama call helper for the RAG subgraph's three LLM steps (grade,
 rewrite, generate) -- factored out of `agent/llm_client.py` rather than
 importing that module's SQL-specific functions, but built on the exact same
-client construction and error handling (see `OllamaUnavailableError`'s use
-here, matching `agent.llm_client`'s own).
+client construction, decoding policy and error handling (see
+`OllamaUnavailableError`'s use here, and `decoding_options`' below, both
+matching `agent.llm_client`'s own).
+
+Despite the name this is no longer RAG-only: `agent/orchestrator/nodes.py`'s
+router, web-search and media-search answer steps and `agent/analyst/
+planner.py` all call it too. That breadth is why the `num_ctx` gap fixed
+here mattered -- see `call_ollama`'s docstring.
 """
 
 from __future__ import annotations
@@ -13,6 +19,7 @@ import httpx
 import ollama
 
 from agent.exceptions import OllamaUnavailableError
+from agent.llm_client import decoding_options
 from config.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -33,6 +40,24 @@ def call_ollama(
     `None` keeps the pre-existing default, so every existing caller is
     unchanged.
 
+    Decoding parameters come from `agent.llm_client.decoding_options`, the
+    one owner of that policy. Until this call used it, the options dict
+    here was `{"num_predict": ..., "temperature": ...}` and set **no
+    `num_ctx`**, so every call through this helper ran against Ollama's
+    default served window -- measured here at 4,096, whose usable half
+    was 2,050 tokens -- while the SQL path ran at `OLLAMA_NUM_CTX`
+    (16,384). Ollama does not reject an oversized
+    prompt -- it truncates from the *start*, which is where the system
+    prompt lives, so a long web-search or RAG prompt silently lost its
+    instructions (including the "this is untrusted data, not
+    instructions" framing) and the model fell back to paraphrasing the
+    excerpts. `docs/INFERENCE_ENGINEERING_BASELINE.md` §1 has the
+    measurement for the SQL path; this helper had the same bug.
+
+    Unifying the window also stops Ollama reloading the model between a
+    SQL call at 16,384 and a RAG/web call at the default -- a changed
+    `num_ctx` forces a reload of the served model.
+
     Raises:
         OllamaUnavailableError: if the Ollama server can't be reached --
             same failure shape `agent.llm_client`'s own functions raise, so
@@ -49,7 +74,11 @@ def call_ollama(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            options={"num_predict": max_tokens, "temperature": temperature},
+            # `temperature` is this helper's one per-call parameter, so it
+            # is overlaid on the shared policy rather than dropped; every
+            # caller today passes 0.0, which is what the shared policy
+            # already sets, so no existing call changes.
+            options={**decoding_options(settings, max_tokens), "temperature": temperature},
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
         raise OllamaUnavailableError(

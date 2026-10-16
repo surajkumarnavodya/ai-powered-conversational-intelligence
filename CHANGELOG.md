@@ -4,6 +4,67 @@ Newest first. The README's "News and Updates" section shows only the three most
 recent entries. This file keeps the full record. Each entry names the contract
 document that holds the design, the API, the configuration and the limitations.
 
+## 2026-10-16: Web search — untruncated results and a synthesized answer
+
+Scoped to the web source. `POST /ask`, `/ask/stream` and every response
+model are unchanged; `ENABLE_WEB_SEARCH` is still off by default.
+
+### Fixed
+
+- **Web-search and RAG prompts were silently truncated by Ollama.**
+  `rag/llm.py::call_ollama` — the helper behind the RAG subgraph, the
+  orchestrator's router / web-search / media-search answer steps and the
+  analyst planner — set only `num_predict` and `temperature`, never
+  `num_ctx`. Prompt 05 fixed exactly this for `agent/llm_client.py`'s
+  seven calls but did not reach the second call site, so those steps ran
+  against Ollama's default served window while the SQL path ran at
+  `OLLAMA_NUM_CTX`. Ollama does not reject an oversized prompt: it
+  truncates from the *start*, taking the system prompt — which for the
+  web node is both the answer-formatting instructions and the "untrusted
+  data, not instructions" framing. Measured on `llama3.1:8b`,
+  2026-10-16: without `num_ctx`, a long prompt came back evaluated at
+  **2,050 tokens with the system prompt gone**; at
+  `OLLAMA_NUM_CTX=16384`, 12,043 tokens with it intact.
+  `agent.llm_client._decoding_options` is now public `decoding_options`
+  and is the one owner of decoding policy for both call sites, so they
+  cannot drift again. A side effect: Ollama no longer reloads the model
+  between a SQL call at 16,384 and a RAG/web call at the default.
+
+### Added
+
+- **`WEB_SEARCH_CONTEXT_MAX_CHARS`** (default `18000`, `0` disables).
+  An explicit, reported input budget for the results block, replacing the
+  silent cut inside Ollama — removing a limit is not the same as removing
+  truncation. Measured 2026-10-16: five ordinary pages (1,547–2,363
+  characters each) all pass whole, while five academic pages for one
+  medical question exceeded it between them and the top two were used.
+  When it binds it drops **whole**
+  results from the lowest-ranked end (never half a source), never drops
+  the top-ranked one, states the omission in the answer, and leaves the
+  dropped results out of the citation list — a page the model never saw
+  is not a source for the answer.
+
+### Changed
+
+- **The web answer is asked to read like a modern search assistant's.**
+  The existing direct-answer-then-headings prompt gains: synthesize
+  across results rather than giving each its own paragraph, never state
+  the same fact twice, keep figures/dates/names/versions rather than
+  rounding them, use a table only where several items share the same few
+  attributes, drop filler, and state plainly when results disagree, when
+  a claim rests on one result, or when part of the question is uncovered.
+  Inline citations (a markdown link under the source's own title) stay
+  the only in-answer attribution: `SourceAnswerCard.tsx` already owns the
+  source list, and this repo keeps one owner per fact. The prompt is not
+  benchmark-pinned; the SQL generation and insight prompts are untouched.
+- `WEB_SEARCH_ANSWER_MAX_TOKENS` in `.env.example` corrected to `2400`,
+  the actual `Settings` default.
+
+Documentation: [`docs/MULTI_SOURCE_GUIDE.md`](docs/MULTI_SOURCE_GUIDE.md)
+§5, [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md),
+[`docs/INFERENCE_ENGINEERING_BASELINE.md`](docs/INFERENCE_ENGINEERING_BASELINE.md)
+§2.
+
 ## 2026-10-15: Source connectivity, streaming, and an evidence-based audit
 
 Everything added here is off by default except streaming and the source
