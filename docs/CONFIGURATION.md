@@ -601,11 +601,14 @@ eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply
 Chain / Procurement & Logistics, Manufacturing & Operations, Customer
 Service & Support, Project & Portfolio Management, IT Operations &
 Service Management, Healthcare & Life Sciences, Energy, Utilities &
-Sustainability, Risk, Audit & Controls and Legal, Secretarial &
-Governance** — 85 skills across 16 governance domains, since Sales and
-Marketing share `SALES_MARKETING`. The remaining 2 (`REAL_ESTATE`,
-`EXECUTIVE`) have none declared — a skill is added when its prompt
-arrives, never in anticipation.
+Sustainability, Risk, Audit & Controls, Legal, Secretarial & Governance
+and Real Estate & Facilities** — 90 skills across 17 governance domains,
+since Sales and Marketing share `SALES_MARKETING`. `EXECUTIVE` has none
+declared, and deliberately so: its one supplied prompt is registered as
+`mis.executive_kpi`, under the domain the batch was supplied with, and the
+two policies are measured identical. Coverage is read from the catalog by
+`registry.covered_domains()` rather than claimed here, so this paragraph
+cannot drift ahead of the code.
 
 Guidance for a domain automatically carries that domain's prohibited
 actions, derived from `governance/domains.py`. HR, for example, prohibits
