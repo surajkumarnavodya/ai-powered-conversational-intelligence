@@ -478,5 +478,14 @@
     "unavailableHeading": "No disponible",
     "notConfigured": "no configurada",
     "notPermitted": "sin acceso"
+  },
+  "shortcuts": {
+    "title": "Atajos de teclado",
+    "hint": "Funcionan en cualquier lugar excepto mientras escribes en un campo de texto.",
+    "newChat": "Nueva conversación",
+    "toggleSidebar": "Mostrar u ocultar la barra lateral",
+    "openSettings": "Abrir ajustes",
+    "focusComposer": "Ir al cuadro de pregunta",
+    "showHelp": "Mostrar esta lista"
   }
 }

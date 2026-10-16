@@ -478,5 +478,14 @@
     "unavailableHeading": "Non disponible",
     "notConfigured": "non configurée",
     "notPermitted": "pas d'accès"
+  },
+  "shortcuts": {
+    "title": "Raccourcis clavier",
+    "hint": "Ils fonctionnent partout, sauf pendant la saisie dans un champ de texte.",
+    "newChat": "Nouvelle conversation",
+    "toggleSidebar": "Afficher ou masquer la barre latérale",
+    "openSettings": "Ouvrir les paramètres",
+    "focusComposer": "Aller au champ de question",
+    "showHelp": "Afficher cette liste"
   }
 }

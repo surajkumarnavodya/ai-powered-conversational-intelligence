@@ -786,5 +786,14 @@
     "unavailableHeading": "Not available",
     "notConfigured": "not set up",
     "notPermitted": "no access"
+  },
+  "shortcuts": {
+    "title": "Keyboard shortcuts",
+    "hint": "These work anywhere except while you are typing in a text field.",
+    "newChat": "New chat",
+    "toggleSidebar": "Show or hide the sidebar",
+    "openSettings": "Open settings",
+    "focusComposer": "Jump to the question box",
+    "showHelp": "Show this list"
   }
 }

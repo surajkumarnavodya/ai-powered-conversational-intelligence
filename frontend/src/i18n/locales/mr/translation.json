@@ -478,5 +478,14 @@
     "unavailableHeading": "उपलब्ध नाही",
     "notConfigured": "सेट अप नाही",
     "notPermitted": "प्रवेश नाही"
+  },
+  "shortcuts": {
+    "title": "कीबोर्ड शॉर्टकट",
+    "hint": "तुम्ही मजकूर फील्डमध्ये टाइप करत नसताना हे कुठेही चालतात.",
+    "newChat": "नवीन चॅट",
+    "toggleSidebar": "साइडबार दाखवा किंवा लपवा",
+    "openSettings": "सेटिंग्ज उघडा",
+    "focusComposer": "प्रश्न बॉक्सवर जा",
+    "showHelp": "ही यादी दाखवा"
   }
 }

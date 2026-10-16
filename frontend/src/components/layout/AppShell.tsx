@@ -15,12 +15,15 @@ import { useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Outlet, useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
+import { useGlobalShortcuts } from '@/hooks/useGlobalShortcuts'
 import { useNavigation } from '@/hooks/queries'
+import { focusChatComposer } from '@/lib/shortcuts'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import { MobileNav } from './MobileNav'
 import { ScreenMenu, type ScreenMenuGroup } from './ScreenMenu'
 import { SettingsDialog } from './SettingsDialog'
+import { ShortcutHelpDialog } from './ShortcutHelpDialog'
 import { Sidebar } from './Sidebar'
 import { SidebarToggle } from './SidebarToggle'
 import { UserMenu } from './UserMenu'
@@ -85,6 +88,21 @@ export function AppShell({ children }: { children?: ReactNode } = {}) {
     navigate('/')
   }
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [isShortcutHelpOpen, setIsShortcutHelpOpen] = useState(false)
+  const toggleSidebarCollapsed = useSettingsStore((state) => state.toggleSidebarCollapsed)
+
+  // The one global keyboard layer in the app, mounted here because this
+  // is the one component that is always present and already owns the
+  // actions these bind to. Component-level handlers (Enter in the
+  // composer, arrows in the question navigator) are untouched: the hook
+  // refuses to fire while a text field has focus or a modal is open.
+  useGlobalShortcuts({
+    newChat: handleHome,
+    toggleSidebar: toggleSidebarCollapsed,
+    openSettings: () => setIsSettingsOpen(true),
+    focusComposer: focusChatComposer,
+    showHelp: () => setIsShortcutHelpOpen(true),
+  })
   // Role-based navigation (Prompt 32): the screens this caller may open come
   // from the server (`GET /navigation`, `security/navigation.py`), never from a
   // role name read in the browser. While that loads, no review or admin tab is
@@ -120,7 +138,7 @@ export function AppShell({ children }: { children?: ReactNode } = {}) {
           reachability. SettingsDialog itself renders through a Radix Portal
           (see ui/dialog.tsx), so it's not a descendant of this div and is
           never affected by its own inert flag. */}
-      <div className="flex h-full" inert={isSettingsOpen || undefined}>
+      <div className="flex h-full" inert={isSettingsOpen || isShortcutHelpOpen || undefined}>
         <aside
           id={SIDEBAR_ID}
           className={cn(
@@ -191,6 +209,7 @@ export function AppShell({ children }: { children?: ReactNode } = {}) {
         onOpenChange={setIsSettingsOpen}
         triggerRef={userMenuTriggerRef}
       />
+      <ShortcutHelpDialog open={isShortcutHelpOpen} onOpenChange={setIsShortcutHelpOpen} />
     </div>
   )
 }

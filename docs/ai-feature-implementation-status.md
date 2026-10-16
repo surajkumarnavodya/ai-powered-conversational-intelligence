@@ -33,13 +33,13 @@ have (audit §10).
 | Status | Count |
 |---|---|
 | `ASSESSED` (already complete — no code change needed) | 72 |
-| `VERIFIED` (gap closed in this pass) | 3 |
-| `DEFERRED` (gap, planned, not built in this pass) | 22 |
+| `VERIFIED` (gap closed in this pass) | 4 |
+| `DEFERRED` (gap, planned, not built in this pass) | 21 |
 | `BLOCKED` (cannot be built as named) | 3 |
 | **Total** | **100** |
 
-The 3 blocked and 22 deferred together are the 13 missing plus 15
-partially complete from the audit, minus the 3 closed here, plus 023
+The 3 blocked and 21 deferred together are the 13 missing plus 15
+partially complete from the audit, minus the 4 closed here, plus 023
 which is review-gated rather than missing.
 
 ---
@@ -97,6 +97,23 @@ which is review-gated rather than missing.
 | **Performance** | One user-initiated request. Local component state only; no store field added, so nothing new to reset in `freshConversationState` |
 | **Limitations** | Resubmitting **appends** a turn; it does not rewrite history or re-root the conversation. Editing a question whose turn is mid-flight is not offered (`PendingTurn` passes no handler). Branching from an edit (prompt 008) remains a separate, deferred feature |
 
+### 015 — Keyboard Shortcuts · `VERIFIED`
+
+| Field | Value |
+|---|---|
+| **Prompt** | `015_keyboard-shortcuts.md` |
+| **Initial audit status** | PARTIALLY COMPLETE — component-local handlers only (`ChatInput`, `QuestionNavigator`, `ConversationSearch`, `ConversationListItem`, `MediaSearch`); no global layer and nothing discoverable |
+| **Planned** | One global key layer mounted in `AppShell`, plus a `?` help dialog; must not capture keys while a text field or dialog has focus |
+| **Actual** | `lib/shortcuts.ts` declares the bindings as data; `hooks/useGlobalShortcuts.ts` is the single `document` listener; `ShortcutHelpDialog` renders the list from the same array. Five bindings: `Ctrl/⌘+Shift+O` new chat, `Ctrl/⌘+B` sidebar, `Ctrl/⌘+,` settings, `/` focus composer, `?` help |
+| **Files** | `frontend/src/lib/shortcuts.ts` + `.test.ts` (new), `frontend/src/hooks/useGlobalShortcuts.ts` + `.test.tsx` (new), `frontend/src/components/layout/ShortcutHelpDialog.tsx` (new), `AppShell.tsx`, `ChatInput.tsx`, 5 × `translation.json` |
+| **Reused, not rebuilt** | `startNewChat` + the existing `handleHome`, `toggleSidebarCollapsed`, the existing `setIsSettingsOpen`, `ui/dialog.tsx`. No existing component-level handler was changed |
+| **Tests** | 27 new. No duplicate binding; every shortcut has a label key so none can go undocumented; either platform modifier accepted; Shift checked only alongside a modifier (because `?` *is* Shift+/ on a US layout and unshifted elsewhere); Alt always rejected; ignored in input/textarea/select/contenteditable and while a modal is open; **an unclaimed key is not `preventDefault`ed**; listener detaches on unmount; the latest handler runs after a re-render without double-binding |
+| **Results** | `vitest`: **1142 passed, 88 files**. `tsc --noEmit`: clean. `oxlint`: clean on every changed file. `npm run build`: succeeds |
+| **Regression** | None. The hook returns early for any keystroke in a text field, so the composer's Enter/Shift+Enter and the question navigator's arrows are untouched — asserted, not assumed |
+| **Security review** | No new data path, no network call, no permission implication. `preventDefault` is called **only** on a declared shortcut that has a handler, so no browser or assistive-technology binding is swallowed |
+| **Performance** | One listener for the whole app, attached once. Handlers are held in a ref updated in an effect, so a re-render does not detach and re-attach |
+| **Limitations** | Bindings are fixed, not user-remappable. `/` finds the composer by data attribute and is a no-op on a route without one. The platform label (⌘ vs Ctrl) is a user-agent guess — a wrong guess is cosmetic only, since the matcher accepts either modifier |
+
 ---
 
 ## 3. Already complete — no code change (72)
@@ -134,7 +151,6 @@ claimed as done. Ordered as the plan's §9 orders them.
 
 | ID | Feature | Audit status | Why deferred | Priority |
 |---|---|---|---|---|
-| 015 | Keyboard Shortcuts | PARTIALLY COMPLETE | Needs a global key layer that must not capture keys while a textarea or dialog has focus | P2 |
 | 029 | Question Suggestions from Schema | MISSING | Must reuse `recommendation/followups.py`'s classification check so a restricted column is never named | P2 |
 | 030 | New-User Guided Tour | MISSING | Product decision needed on what the tour covers | P2 |
 | 064 | File Preview | PARTIALLY COMPLETE | Should reuse server-side processor output rather than parse in the browser | P2 |
@@ -163,7 +179,7 @@ claimed as done. Ordered as the plan's §9 orders them.
 
 | Check | Command | Result |
 |---|---|---|
-| Frontend unit/component | `npm run test` | **1115 passed, 86 files** (baseline before this work: 1101 / 84) |
+| Frontend unit/component | `npm run test` | **1142 passed, 88 files** (baseline before this work: 1101 / 84) |
 | Frontend types | `npx tsc --noEmit -p tsconfig.app.json` | Clean |
 | Frontend lint | `npm run lint` | Exit 0; warnings only, all pre-existing, none in a changed file |
 | Frontend build | `npm run build` | Succeeds (chunk-size warning pre-existing) |

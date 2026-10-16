@@ -478,5 +478,14 @@
     "unavailableHeading": "उपलब्ध नहीं",
     "notConfigured": "सेट अप नहीं",
     "notPermitted": "पहुँच नहीं"
+  },
+  "shortcuts": {
+    "title": "कीबोर्ड शॉर्टकट",
+    "hint": "ये कहीं भी काम करते हैं, सिवाय इसके कि आप टेक्स्ट फ़ील्ड में टाइप कर रहे हों।",
+    "newChat": "नई चैट",
+    "toggleSidebar": "साइडबार दिखाएं या छिपाएं",
+    "openSettings": "सेटिंग्स खोलें",
+    "focusComposer": "प्रश्न बॉक्स पर जाएं",
+    "showHelp": "यह सूची दिखाएं"
   }
 }

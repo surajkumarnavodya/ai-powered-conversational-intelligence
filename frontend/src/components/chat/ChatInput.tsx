@@ -328,6 +328,11 @@ export function ChatInput({ onSend }: { onSend?: () => void } = {}) {
         <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:gap-0.5">
           <textarea
             ref={textareaRef}
+            // Lets the global `/` shortcut find the composer from
+            // `AppShell`, which renders this several routes deep through
+            // `<Outlet />`. See `lib/shortcuts.ts` on why an attribute
+            // rather than a ref threaded up through context.
+            data-chat-composer=""
             value={displayValue}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
