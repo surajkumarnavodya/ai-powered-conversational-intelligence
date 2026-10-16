@@ -227,6 +227,8 @@
     "thinking": "विचार करत आहे",
     "answeredIn": "{{seconds}} सेकंदात उत्तर दिले",
     "downloadAnswer": "उत्तर डाउनलोड करा",
+    "downloadMarkdown": "Markdown म्हणून डाउनलोड करा",
+    "downloadPdf": "PDF म्हणून डाउनलोड करा",
     "copyAnswer": "उत्तर कॉपी करा",
     "copied": "कॉपी झाले!",
     "exportCsv": "CSV निर्यात करा",

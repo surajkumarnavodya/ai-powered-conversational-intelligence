@@ -433,6 +433,8 @@
     "thinking": "Thinking",
     "answeredIn": "Answered in {{seconds}}s",
     "downloadAnswer": "Download answer",
+    "downloadMarkdown": "Download as Markdown",
+    "downloadPdf": "Download as PDF",
     "copyAnswer": "Copy answer",
     "copied": "Copied!",
     "exportCsv": "Export CSV",

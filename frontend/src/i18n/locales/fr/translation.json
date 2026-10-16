@@ -227,6 +227,8 @@
     "thinking": "Réflexion en cours",
     "answeredIn": "Répondu en {{seconds}}s",
     "downloadAnswer": "Télécharger la réponse",
+    "downloadMarkdown": "Télécharger en Markdown",
+    "downloadPdf": "Télécharger en PDF",
     "copyAnswer": "Copier la réponse",
     "copied": "Copié !",
     "exportCsv": "Exporter en CSV",

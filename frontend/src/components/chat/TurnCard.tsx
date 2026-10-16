@@ -20,6 +20,7 @@ import { AgentExecutionTimeline } from './AgentExecutionTimeline'
 import { SaveArtifactButton } from './ArtifactWorkspace'
 import { FollowUpSuggestions } from './FollowUpSuggestions'
 import { ReadAloudButton } from './ReadAloudButton'
+import { RegenerateAnswerButton } from './RegenerateAnswerButton'
 import { ResponseFeedbackWidget } from './ResponseFeedbackWidget'
 import { SentAttachmentsPreview } from './SentAttachmentsPreview'
 import { SourceLineagePanel } from './SourceLineagePanel'
@@ -131,6 +132,12 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
             <>
               <CopyAnswerButton answer={answerMarkdown} />
               <DownloadAnswerButton question={entry.question} answer={answerMarkdown} />
+              {/* Only on a turn that produced an answer -- `answerMarkdown`
+                  already gates this whole row. Re-running a turn that
+                  failed or needs clarification would just repeat the
+                  failure, and the composer is the right place to retry
+                  that. */}
+              <RegenerateAnswerButton entryId={entry.entryId} />
               <SaveArtifactButton entry={entry} />
               <ResponseFeedbackWidget entryId={entry.entryId} />
               {showReadAloud && <ReadAloudButton text={buildSpokenAnswerText(entry)} />}
