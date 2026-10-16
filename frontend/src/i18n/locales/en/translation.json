@@ -163,6 +163,8 @@
     "liveAnswerReady": "The answer is ready.",
     "view": "View",
     "rerun": "Re-run",
+    "editQuestion": "Edit",
+    "submitEdit": "Ask again",
     "sources": "Answered using",
     "followingUpOn": "Following up on",
     "sourcesLabel": "Sources",

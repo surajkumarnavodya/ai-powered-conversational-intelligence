@@ -143,6 +143,8 @@
     "placeholderEmpty": "एक प्रश्न पूछें और उत्तर पाने के लिए संदेश भेजें...",
     "view": "देखें",
     "rerun": "फिर से चलाएं",
+    "editQuestion": "संपादित करें",
+    "submitEdit": "फिर से पूछें",
     "sources": "इनकी मदद से उत्तर दिया गया",
     "followingUpOn": "इसका अनुवर्ती",
     "sourcesLabel": "स्रोत",

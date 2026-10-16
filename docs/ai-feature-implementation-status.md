@@ -33,13 +33,13 @@ have (audit §10).
 | Status | Count |
 |---|---|
 | `ASSESSED` (already complete — no code change needed) | 72 |
-| `VERIFIED` (gap closed in this pass) | 2 |
-| `DEFERRED` (gap, planned, not built in this pass) | 23 |
+| `VERIFIED` (gap closed in this pass) | 3 |
+| `DEFERRED` (gap, planned, not built in this pass) | 22 |
 | `BLOCKED` (cannot be built as named) | 3 |
 | **Total** | **100** |
 
-The 3 blocked and 23 deferred together are the 13 missing plus 15
-partially complete from the audit, minus the 2 closed here, plus 023
+The 3 blocked and 22 deferred together are the 13 missing plus 15
+partially complete from the audit, minus the 3 closed here, plus 023
 which is review-gated rather than missing.
 
 ---
@@ -80,6 +80,23 @@ which is review-gated rather than missing.
 | **Performance** | Negligible; synchronous, no import cost. The PDF path keeps its dynamic imports |
 | **Limitations** | Exports **one answer**. Exporting a whole conversation is not offered and was not requested by prompt 069 |
 
+### 010 — Edit and Resubmit Question · `VERIFIED`
+
+| Field | Value |
+|---|---|
+| **Prompt** | `010_edit-and-resubmit-question.md` |
+| **Initial audit status** | MISSING — `setEditableSql` edits the **SQL**; `rerunEntry` re-asks **verbatim**; the question itself was not editable |
+| **Planned** | Edit affordance on the user bubble, resubmitting through `askQuestion` as a new turn; opt-in per call site |
+| **Actual** | `ChatMessage` gained two optional props, `onSubmitEdit` and `editDisabled`. With a handler it renders an edit control that swaps the bubble for a textarea with Ask-again / Cancel. Only `TurnCard` passes the handler |
+| **Files** | `frontend/src/components/chat/ChatMessage.tsx`, `ChatMessage.test.tsx` (new), `frontend/src/components/chat/TurnCard.tsx`, 5 × `translation.json` |
+| **Reused, not rebuilt** | `askQuestion` (unchanged), `ExpandableText`, the `pendingQuestion` busy flag, `common.cancel` |
+| **Tests** | 11 new, the first two being the security-relevant ones — no control without a handler, and none on an assistant bubble. Then: draft seeded from current text, submit, cancel restores and does not resurrect an abandoned draft, Escape cancels, Enter submits while Shift+Enter does not, whitespace-only refused, busy state blocks **the keyboard path too**, text trimmed |
+| **Results** | `vitest`: **1115 passed, 86 files** (was 1104/85). `tsc --noEmit`: clean. `oxlint`: no finding in a changed file. `npm run build`: succeeds |
+| **Regression** | None. The two props are optional, so `PendingTurn` and `SharedConversation` render exactly what they rendered before — asserted directly rather than assumed |
+| **Security review** | The reason the props are opt-in. `ChatMessage` is shared with `SharedConversation`, which **a viewer holding no roles at all can open**; a control that appeared there by default would invite an action that caller must not have. The edited text is an ordinary question — `agent.input_guard.sanitize_conversation_history` already treats resent history as untrusted, and every permission check reads the caller's own roles |
+| **Performance** | One user-initiated request. Local component state only; no store field added, so nothing new to reset in `freshConversationState` |
+| **Limitations** | Resubmitting **appends** a turn; it does not rewrite history or re-root the conversation. Editing a question whose turn is mid-flight is not offered (`PendingTurn` passes no handler). Branching from an edit (prompt 008) remains a separate, deferred feature |
+
 ---
 
 ## 3. Already complete — no code change (72)
@@ -117,7 +134,6 @@ claimed as done. Ordered as the plan's §9 orders them.
 
 | ID | Feature | Audit status | Why deferred | Priority |
 |---|---|---|---|---|
-| 010 | Edit and Resubmit Question | MISSING | Frontend-only but touches `ChatMessage.tsx`, shared with `PendingTurn` and `SharedConversation` — a shared view holds **no roles at all**, so the control must be opt-in per call site | P2 |
 | 015 | Keyboard Shortcuts | PARTIALLY COMPLETE | Needs a global key layer that must not capture keys while a textarea or dialog has focus | P2 |
 | 029 | Question Suggestions from Schema | MISSING | Must reuse `recommendation/followups.py`'s classification check so a restricted column is never named | P2 |
 | 030 | New-User Guided Tour | MISSING | Product decision needed on what the tour covers | P2 |
@@ -147,7 +163,7 @@ claimed as done. Ordered as the plan's §9 orders them.
 
 | Check | Command | Result |
 |---|---|---|
-| Frontend unit/component | `npm run test` | **1104 passed, 85 files** |
+| Frontend unit/component | `npm run test` | **1115 passed, 86 files** (baseline before this work: 1101 / 84) |
 | Frontend types | `npx tsc --noEmit -p tsconfig.app.json` | Clean |
 | Frontend lint | `npm run lint` | Exit 0; warnings only, all pre-existing, none in a changed file |
 | Frontend build | `npm run build` | Succeeds (chunk-size warning pre-existing) |

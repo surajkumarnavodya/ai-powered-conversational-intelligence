@@ -143,6 +143,8 @@
     "placeholderEmpty": "Haz una pregunta y envía un mensaje para recibir una respuesta...",
     "view": "Ver",
     "rerun": "Volver a ejecutar",
+    "editQuestion": "Editar",
+    "submitEdit": "Preguntar de nuevo",
     "sources": "Respondido usando",
     "followingUpOn": "Continuando con",
     "sourcesLabel": "Fuentes",

@@ -114,7 +114,16 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
     <div id={`turn-${entry.entryId}`} className="flex scroll-mt-4 flex-col gap-3">
       <SentAttachmentsPreview attachments={entry.sentAttachments} />
       <div className="flex justify-end">
-        <ChatMessage message={{ role: 'user', content: entry.question }} />
+        {/* Editing resubmits as a NEW turn (`askQuestion`), leaving this
+            one on screen -- the transcript stays append-only, which is
+            what `conversation_history` is built from. Opt-in per call
+            site: `PendingTurn` and `SharedConversation` render the same
+            component without this prop and so offer no edit control. */}
+        <ChatMessage
+          message={{ role: 'user', content: entry.question }}
+          onSubmitEdit={(edited) => void askQuestion(edited)}
+          editDisabled={pendingQuestion !== null}
+        />
       </div>
 
       {/* Full column width, no left inset. The inset used to reserve the
