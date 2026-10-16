@@ -52,6 +52,7 @@ HEALTHCARE = BusinessDomain.HEALTHCARE
 ENERGY = BusinessDomain.ENERGY
 RISK_AUDIT = BusinessDomain.RISK_AUDIT
 LEGAL = BusinessDomain.LEGAL
+REAL_ESTATE = BusinessDomain.REAL_ESTATE
 
 #: Covered domains whose policy declares no `ProhibitedAction` at all, so
 #: `composer._prohibitions_block` appends nothing and the shared contract's
@@ -75,6 +76,29 @@ class TestCatalog:
             "sales.product",
             "sales.pricing",
         )
+
+    def test_the_supplied_real_estate_skills_are_registered_in_numeric_order(self):
+        assert tuple(s.slug for s in ds.skills_for_domain(REAL_ESTATE)) == (
+            "real_estate.portfolio",
+            "real_estate.occupancy",
+            "real_estate.lease",
+            "real_estate.facilities_maintenance",
+            "real_estate.financial",
+        )
+
+    def test_the_supplied_legal_skills_are_registered_in_numeric_order(self):
+        """The prompts arrived shuffled (01, 03, 02, 04, 05); numeric order
+        wins, so the domain default is Contract Intelligence."""
+        assert tuple(s.slug for s in ds.skills_for_domain(LEGAL)) == (
+            "legal.contract",  # 01
+            "legal.matter",  # 02
+            "legal.compliance",  # 03
+            "legal.board_secretarial",  # 04
+            "legal.governance_scorecard",  # 05
+        )
+        default = select_skill(LEGAL)
+        assert default is not None
+        assert default.slug == "legal.contract"
 
     def test_the_supplied_risk_audit_skills_are_registered_in_numeric_order(self):
         """Supplied 01..05 in order; registered in that order, so the
@@ -278,11 +302,20 @@ class TestCatalog:
         )
 
     def test_a_prompt_domain_does_not_imply_a_governance_domain(self):
-        """Four prompt-domains, three governance domains: Marketing shares
-        `SALES_MARKETING` with Sales. Inventing a governance domain per
-        batch would mean two answers to 'what may this question return'."""
-        assert len({s.group for s in ds.all_skills()}) == 16
-        assert len(ds.covered_domains()) == 15
+        """Eighteen prompt-domains, seventeen governance domains:
+        Marketing shares `SALES_MARKETING` with Sales. Inventing a
+        governance domain per batch would mean two answers to 'what may
+        this question return'.
+
+        The gap of one has been constant since batch 3 and is the whole
+        point of `DomainSkill.group`. Batch 18 is where the counts stop
+        moving: ninety skills across eighteen prompt-domains, which is
+        the figure `domain_skills/types.py` has used as its example since
+        batch 1.
+        """
+        assert len({s.group for s in ds.all_skills()}) == 18
+        assert len(ds.covered_domains()) == 17
+        assert len(ds.all_skills()) == 90
 
     def test_the_supplied_mis_skills_are_registered(self):
         assert tuple(s.slug for s in ds.skills_for_domain(MIS)) == (
@@ -343,7 +376,41 @@ class TestCatalog:
             HEALTHCARE,
             ENERGY,
             RISK_AUDIT,
+            LEGAL,
+            REAL_ESTATE,
         )
+
+    def test_the_only_domain_left_uncovered_is_the_deliberate_one(self):
+        """Batch 18 is the last of the supplied batches, so this states
+        what remains rather than leaving it to be inferred.
+
+        `EXECUTIVE` has no skills and is not pending: its one supplied
+        prompt, "Executive KPI Intelligence", is registered as
+        `mis.executive_kpi`, because that is the domain the batch was
+        supplied under and because the choice is governance-neutral --
+        the two policies are compared below rather than claimed equal.
+        Asserted here so "seventeen of eighteen" cannot be read as a gap
+        somebody forgot.
+        """
+        covered = set(ds.covered_domains())
+        uncovered = {
+            d for d in BusinessDomain if d is not BusinessDomain.GENERAL and d not in covered
+        }
+        assert uncovered == {BusinessDomain.EXECUTIVE}
+
+        # Governance-neutral, measured rather than asserted in a comment:
+        # whichever of the two the prompt had been filed under, the
+        # composed block and every row-level control would be the same.
+        mis_policy, executive_policy = policy_for(MIS), policy_for(BusinessDomain.EXECUTIVE)
+        assert (
+            mis_policy.effective_restricted_categories
+            == executive_policy.effective_restricted_categories
+        )
+        assert mis_policy.prohibited_actions == executive_policy.prohibited_actions
+        assert mis_policy.minimum_group_size == executive_policy.minimum_group_size
+
+        # And the prompt really is registered, not merely accounted for.
+        assert ds.get_skill("mis.executive_kpi").title == "Executive KPI Intelligence"
 
     def test_every_uncovered_domain_has_no_skills(self):
         """An uncovered domain must stay genuinely empty rather than
@@ -689,6 +756,7 @@ class TestDomainProhibitionsAreDerivedNotRestated:
             CUSTOMER_SERVICE,
             PROJECT,
             ENERGY,
+            REAL_ESTATE,
         )
         # Batch 13 deliberately does *not* join this list: IT_OPERATIONS
         # prohibits `credential_disclosure`, so it gets a derived block.
@@ -712,8 +780,12 @@ class TestDomainProhibitionsAreDerivedNotRestated:
         overlooked). The others carry their own guards, in
         `TestSupplyChainCarriesItsOwnGuards`,
         `TestManufacturingCarriesItsOwnGuards`,
-        `TestCustomerServiceCarriesItsOwnGuards` and
-        `TestProjectCarriesItsOwnGuards`.
+        `TestCustomerServiceCarriesItsOwnGuards`,
+        `TestProjectCarriesItsOwnGuards` and
+        `TestRealEstateIsWhereTheAssetIsTheIdentifier`. REAL_ESTATE is the
+        one that most needs its own, because occupancy is derived from
+        records about identifiable people and `minimum_group_size=5` does
+        not reach an occupant count.
         """
         from governance.domains import policy_for
 
@@ -1957,12 +2029,17 @@ class TestRiskAuditIsWhereTheSubjectMatterIsTheProhibition:
             # Last, so it overrides the contract's ranking invitation.
             assert text.rstrip().endswith("say that plainly instead of doing it."), skill.slug
 
-    def test_liability_determination_reaches_a_covered_domain_for_the_first_time(self):
-        """Pins the claim, and pins it where it would go stale.
+    def test_risk_audit_derived_liability_determination_before_legal_did(self):
+        """Pins the claim, and this is the test going stale on purpose.
 
-        If another domain gains this prohibition the assertion below
-        fails, which is correct: the "first" in the contract document
-        would no longer be the whole story.
+        It was written at batch 16 as "...reaches a covered domain for the
+        first time", asserting `covered_deriving == [RISK_AUDIT]` with the
+        docstring note that another domain gaining skills should fail it.
+        Batch 17 registered LEGAL one batch later and it did fail, which
+        is the guard working rather than a regression. The claim worth
+        keeping is narrower and still true: RISK_AUDIT derived it first,
+        and `covered_domains()` is in declaration order, so the ordering
+        is readable from the catalog itself.
         """
         from governance.domains import DOMAIN_POLICIES
 
@@ -1973,17 +2050,14 @@ class TestRiskAuditIsWhereTheSubjectMatterIsTheProhibition:
             and domain is not BusinessDomain.GENERAL
         }
         assert declaring == {LEGAL, RISK_AUDIT}
-        # LEGAL has no skills, so RISK_AUDIT is the only covered domain
-        # that derives it. That is what makes this a first.
-        assert ds.skills_for_domain(LEGAL) == ()
-        assert RISK_AUDIT in ds.covered_domains()
 
         covered_deriving = [
             d
             for d in ds.covered_domains()
             if ProhibitedAction.LIABILITY_DETERMINATION in policy_for(d).prohibited_actions
         ]
-        assert covered_deriving == [RISK_AUDIT]
+        # Both are covered now; RISK_AUDIT is still the earlier batch.
+        assert covered_deriving == [RISK_AUDIT, LEGAL]
 
     def test_the_domain_restricts_its_own_subject_matter_and_nothing_else_does(self):
         """Every covered domain so far restricted a side-channel -- PII in
@@ -2247,6 +2321,824 @@ class TestRiskAuditIsWhereTheSubjectMatterIsTheProhibition:
         continuity = ds.get_skill("risk_audit.business_continuity").focus.lower()
         assert "excludes detection and decision time" in continuity
         assert "coverage of the mapping alongside any concentration figure" in continuity
+
+
+class TestLegalIsWhereTheProhibitedOutputIsTheQuestion:
+    """Batch 17: the domain whose prohibitions overlap what people ask.
+
+    `policy_for(LEGAL)` declares three `ProhibitedAction`s and they are a
+    **strict superset of batch 16's** -- the first superset in the series,
+    one batch after the set it contains. `legal_conclusion_or_advice` is
+    declared by LEGAL alone and was the last of the fourteen never derived
+    into a covered domain, so registering this batch closes that set.
+
+    The difficulty is not the count. In batch 16 the subject matter was a
+    recorded assertion; here the prohibited output *is* the natural
+    question -- "are we compliant?", "will we win?", "is this clause
+    enforceable?" -- so a skill that only refused would answer nothing
+    (`CLAUDE.md` §4.2, and §12's lesson that a refusal without an
+    alternative is not a skill). Every focus text redirects to the same
+    answerable question instead: what does the record hold, in which
+    field, as of when.
+
+    Two measured findings, both of which contradicted a first draft:
+
+    - The domain's two declared categories behave **oppositely** at the
+      row level. `LEGAL` classifies at `HIGHLY_SENSITIVE` and is genuinely
+      live (masked, and it trips the export ceiling for every caller);
+      `CONTRACT` classifies at `CONFIDENTIAL` and changes no rows, the
+      same inertness batch 16 found for `AUDIT`.
+    - A declared `minimum_group_size=0` is **not** a real zero. Three
+      earlier batch comments said it was.
+    """
+
+    def test_all_three_prohibitions_are_derived_into_every_skills_block(self):
+        policy = policy_for(LEGAL)
+        assert policy.prohibited_actions == frozenset(
+            {
+                ProhibitedAction.LEGAL_CONCLUSION_OR_ADVICE,
+                ProhibitedAction.LIABILITY_DETERMINATION,
+                ProhibitedAction.UNSUPPORTED_ALLEGATION,
+            }
+        )
+
+        skills = ds.skills_for_domain(LEGAL)
+        # Non-vacuity: without this the loop empties when the batch is
+        # declared under another domain and the test passes while
+        # asserting nothing (§7's mutation-25 lesson).
+        assert len(skills) == 5
+        for skill in skills:
+            result = guidance_for(LEGAL, enabled=True, preferred_slug=skill.slug)
+            assert result is not None
+            text, chosen = result
+            assert chosen.slug == skill.slug
+            assert "legal conclusion or advice" in text, skill.slug
+            assert "liability determination" in text, skill.slug
+            assert "unsupported allegation" in text, skill.slug
+            assert text.rstrip().endswith("say that plainly instead of doing it."), skill.slug
+
+    def test_the_prohibitions_are_a_strict_superset_of_batch_16s(self):
+        """Batch 6 was a strict subset of another domain's (§10). This is
+        the first strict superset, and it arrives one batch after the set
+        it contains, which is why the two classes read as a pair."""
+        legal = policy_for(LEGAL).prohibited_actions
+        risk_audit = policy_for(RISK_AUDIT).prohibited_actions
+        assert risk_audit < legal
+        assert legal - risk_audit == frozenset({ProhibitedAction.LEGAL_CONCLUSION_OR_ADVICE})
+
+    def test_legal_conclusion_or_advice_is_this_domains_alone(self):
+        from governance.domains import DOMAIN_POLICIES
+
+        declaring = {
+            domain
+            for domain, policy in DOMAIN_POLICIES.items()
+            if ProhibitedAction.LEGAL_CONCLUSION_OR_ADVICE in policy.prohibited_actions
+            and domain is not BusinessDomain.GENERAL
+        }
+        assert declaring == {LEGAL}
+
+    def test_every_prohibited_action_is_now_derived_by_a_covered_domain(self):
+        """The milestone this batch completes, asserted rather than
+        claimed in prose.
+
+        `legal_conclusion_or_advice` was the last of the fourteen that no
+        covered domain declared -- batch 16 took `liability_determination`
+        and this one takes the last. Every `ProhibitedAction` is now
+        reachable through `composer._prohibitions_block` for at least one
+        registered skill, so the derivation §9 describes is exercised
+        across the whole enum rather than a subset of it.
+
+        If this fails because a new `ProhibitedAction` was added to the
+        enum, that is correct and the right fix is a batch for whichever
+        domain declares it -- not deleting the assertion.
+        """
+        from governance.domains import ALL_PROHIBITED_ACTIONS
+
+        covered = ds.covered_domains()
+        derived: set[ProhibitedAction] = set()
+        for domain in covered:
+            derived |= policy_for(domain).prohibited_actions
+        assert derived == set(ALL_PROHIBITED_ACTIONS)
+
+        # And each really does reach a composed prompt, not just a policy.
+        for action in ALL_PROHIBITED_ACTIONS:
+            phrase = action.value.replace("_", " ")
+            hit = False
+            for domain in covered:
+                if action not in policy_for(domain).prohibited_actions:
+                    continue
+                result = guidance_for(domain, enabled=True)
+                if result is None:
+                    # An ambiguous domain refuses to pick a default
+                    # (§8); name a skill explicitly instead.
+                    skill = ds.skills_for_domain(domain)[0]
+                    result = guidance_for(domain, enabled=True, preferred_slug=skill.slug)
+                assert result is not None
+                if phrase in result[0]:
+                    hit = True
+                    break
+            assert hit, action.value
+
+    def test_a_declared_zero_group_size_is_not_a_real_zero(self):
+        """Measured, and it corrected three comments in this package.
+
+        `governance.domains.minimum_group_size_for` is
+        `policy.minimum_group_size if policy.minimum_group_size else
+        configured_default`, so a declared `0` is falsy and the
+        operator's default applies -- and `GOVERNANCE_MIN_GROUP_SIZE`
+        defaults to 5. The function's own docstring says the opposite
+        ("honored as a real zero, not treated as unset"), so the
+        contradiction lives in `governance/` and is reported rather than
+        fixed from here (`CLAUDE.md` §4.7).
+
+        Pinned because three batch comments in `catalog.py` read the
+        declared zero as "no suppression here" and were wrong. If
+        `governance/` is later fixed to honour the zero, this test fails
+        and those comments become true again -- which is the right way
+        round.
+        """
+        from config.settings import Settings
+        from governance.domains import minimum_group_size_for
+
+        assert policy_for(LEGAL).minimum_group_size == 0
+        assert minimum_group_size_for(LEGAL, 0) == 0
+        assert minimum_group_size_for(LEGAL, 5) == 5
+        # The shipped default is not 0, so this is the live behaviour.
+        assert Settings.model_fields["governance_min_group_size"].default == 5
+        # A domain that declares its own threshold is unaffected.
+        assert minimum_group_size_for(RISK_AUDIT, 0) == 5
+
+    def test_a_small_board_category_is_not_suppressed_so_the_guard_is_framing(self):
+        """What limits suppression here is the classification threshold,
+        not the declared zero.
+
+        A board-composition count is an ordinary integer, so
+        `suppression._is_sensitive_measure` is False and the row is
+        returned intact even with k=5 configured. A board is about ten
+        people, so a one-person category describes an identifiable
+        person and nothing deterministic will hide it -- which is why
+        the scorecard skill carries the guard itself.
+        """
+        from governance.result_policy import govern_result_for_domain
+
+        rows = [("independent", 4), ("executive", 3), ("chair", 1)]
+        for roles in (["viewer"], ["admin"]):
+            governed = govern_result_for_domain(
+                ["director_category", "director_count"], rows, roles, LEGAL, 5
+            )
+            assert governed.actions == (), roles
+            assert list(governed.rows) == rows, roles
+
+        focus = ds.get_skill("legal.governance_scorecard").focus.lower()
+        assert "about ten people" in focus
+        assert "a single-member category describes an identifiable person" in focus
+        assert "counts next to every percentage" in focus
+
+    def test_the_two_declared_categories_behave_oppositely_at_the_row_level(self):
+        """The finding that contradicted this batch's first draft, which
+        had assumed both would be inert as batch 16's `AUDIT` was.
+
+        If governance changes either classification level this fails, and
+        §21 of the contract document should be rewritten rather than the
+        assertion loosened.
+        """
+        from governance.classification import DataCategory, DataClassification, classify_field
+        from governance.result_policy import govern_result_for_domain
+
+        legal_policy = classify_field("matters", "litigation_status")
+        assert legal_policy.category is DataCategory.LEGAL
+        assert legal_policy.classification is DataClassification.HIGHLY_SENSITIVE
+        assert legal_policy.classification >= DataClassification.SENSITIVE
+
+        contract_policy = classify_field("contracts", "contract_value")
+        assert contract_policy.category is DataCategory.CONTRACT
+        assert contract_policy.classification is DataClassification.CONFIDENTIAL
+        assert contract_policy.classification < DataClassification.SENSITIVE
+
+        assert {DataCategory.LEGAL, DataCategory.CONTRACT} <= policy_for(
+            LEGAL
+        ).restricted_categories
+
+        matters = [(f"m-{i}", "open") for i in range(60)]
+        viewer = govern_result_for_domain(
+            ["matter_id", "litigation_status"], matters, ["viewer"], LEGAL
+        )
+        assert "masked_classified_columns:litigation_status" in viewer.actions
+        assert "export_limited:10" in viewer.actions
+        assert len(viewer.rows) == 50
+        # The ceiling applies to an authorized caller too -- holding the
+        # permission means a value may be seen, not extracted in bulk.
+        admin = govern_result_for_domain(
+            ["matter_id", "litigation_status"], matters, ["admin"], LEGAL
+        )
+        assert "export_limited:10" in admin.actions
+        assert len(admin.rows) == 50
+
+        contracts = [(f"c-{i}", 1000) for i in range(60)]
+        for roles in (["viewer"], ["admin"]):
+            governed = govern_result_for_domain(
+                ["contract_id", "contract_value"], contracts, roles, LEGAL
+            )
+            assert governed.actions == (), roles
+            assert len(governed.rows) == 60, roles
+
+    def test_only_the_matter_skill_states_the_truncation_consequence(self):
+        """Because only matter columns actually trip the ceiling. The
+        contract skill deliberately does not carry the clause -- a
+        guard for a control that does not fire there would be noise,
+        and §4.8's one-owner rule cuts both ways.
+        """
+        matter = ds.get_skill("legal.matter").focus.lower()
+        assert "capped at the domain's export ceiling for every caller" in matter
+        assert "treat what came back as a capped extract" in matter
+
+        contract = ds.get_skill("legal.contract").focus.lower()
+        assert "export ceiling" not in contract
+        assert "capped" not in contract
+
+    def test_no_focus_text_restates_a_derived_prohibition(self):
+        """Hardest here of any batch: the derived block's own words are
+        this domain's vocabulary. A restatement would be a second owner
+        free to drift (`CLAUDE.md` §4.8)."""
+        for skill in ds.skills_for_domain(LEGAL):
+            lowered = skill.focus.lower()
+            assert "legal conclusion" not in lowered, skill.slug
+            assert "advice" not in lowered, skill.slug
+            assert "allegation" not in lowered, skill.slug
+            assert "liabilit" not in lowered, skill.slug
+            assert "prohibit" not in lowered, skill.slug
+
+    def test_every_skill_redirects_rather_than_only_refusing(self):
+        """§12's lesson, and the batch it matters most for.
+
+        Each skill names something it will not say *and* the narrower
+        question it answers instead. A refusal with no alternative would
+        make the skill useless in exactly the domain where the
+        prohibited output is what was asked for.
+        """
+        refusals = {
+            "legal.contract": "never say whether a clause is enforceable",
+            "legal.matter": "never weigh the merits",
+            "legal.compliance": "never state whether the organisation is compliant",
+            "legal.board_secretarial": "never as a judgement of how well they served",
+            "legal.governance_scorecard": "never present the composite",
+        }
+        redirects = {
+            "legal.contract": "report what the record holds, in which field and as of when",
+            "legal.matter": "report counts, types, stages and spend",
+            "legal.compliance": "how much of the register is attested, by whom, and as of when",
+            "legal.board_secretarial": "report by body, committee and entity",
+            "legal.governance_scorecard": "report the components beside the total",
+        }
+        skills = ds.skills_for_domain(LEGAL)
+        assert len(skills) == 5
+        for skill in skills:
+            lowered = skill.focus.lower()
+            assert refusals[skill.slug] in lowered, f"{skill.slug}: refusal"
+            assert redirects[skill.slug] in lowered, f"{skill.slug}: redirect"
+
+    def test_no_focus_text_claims_anything_about_a_cross_domain_join(self):
+        from governance.domains import DOMAIN_POLICIES, is_cross_domain_allowed
+
+        assert policy_for(LEGAL).cross_domain_allowed == frozenset()
+        assert [
+            d.value for d, p in DOMAIN_POLICIES.items() if LEGAL in p.cross_domain_allowed
+        ] == []
+        assert is_cross_domain_allowed(LEGAL, FINANCE) is False
+        assert is_cross_domain_allowed(LEGAL, RISK_AUDIT) is False
+
+        for skill in ds.skills_for_domain(LEGAL):
+            lowered = skill.focus.lower()
+            assert "authoriz" not in lowered, skill.slug
+            assert "permission" not in lowered, skill.slug
+
+    def test_a_contract_value_is_framed_as_a_ceiling(self):
+        """The domain's most common arithmetic error: a not-to-exceed
+        figure summed as though it were committed spend."""
+        focus = ds.get_skill("legal.contract").focus.lower()
+        assert "a ceiling rather than an amount earned or spent" in focus
+        assert "authorises, it does not commit" in focus
+        assert "never present it as revenue or cost" in focus
+        assert "give the term or an annualised value" in focus
+
+    def test_an_expiry_date_is_not_the_date_that_governs(self):
+        focus = ds.get_skill("legal.contract").focus.lower()
+        assert "an auto-renewing contract does not expire" in focus
+        assert "the notice deadline is the date that governs" in focus
+        assert "three different dates" in focus
+
+    def test_a_reserve_is_framed_as_an_estimate_not_an_outcome(self):
+        """Batch 12's judgement-not-outcome shape, on a number that also
+        looks like money -- which is what makes it easy to report as
+        fact."""
+        focus = ds.get_skill("legal.matter").focus.lower()
+        assert "an accounting estimate made under a policy" in focus
+        assert "never a prediction of loss" in focus
+        assert "can be a re-estimation rather than an event" in focus
+        assert "outcome codes are not a win rate" in focus
+
+    def test_matter_ageing_and_spend_carry_their_lag(self):
+        """The discovery-lag shape batch 16 found in loss data, arriving
+        twice in one skill for different reasons: when a matter was
+        opened, and when counsel invoiced."""
+        focus = ds.get_skill("legal.matter").focus.lower()
+        assert "when the legal team learned of it" in focus
+        assert "measures the process and not the dispute" in focus
+        assert "outside-counsel invoices arrive late" in focus
+        assert "the most recent periods understate" in focus
+
+    def test_a_completion_rate_is_not_compliance(self):
+        """The clearest case of the batch's problem: the question asked
+        is "are we compliant" and the data answers something narrower."""
+        focus = ds.get_skill("legal.compliance").focus.lower()
+        assert "evidence that a process ran" in focus
+        assert "says the process completed" in focus
+        assert "reads as attested" in focus
+        assert "a permitted deviation rather than a failure" in focus
+        assert "the register's as-of date" in focus
+
+    def test_attendance_and_quorum_carry_their_definitions(self):
+        focus = ds.get_skill("legal.board_secretarial").focus.lower()
+        assert "recorded presence and not participation" in focus
+        assert "proxy or an alternate" in focus
+        assert "quorate with few people present" in focus
+        assert "compares different clocks" in focus
+        assert "dormant and struck-off entities" in focus
+
+    def test_a_composite_score_names_its_framework_and_weighting(self):
+        focus = ds.get_skill("legal.governance_scorecard").focus.lower()
+        assert "the total moves with the weighting" in focus
+        assert "name the framework and its version" in focus
+        assert "differs between codes and jurisdictions" in focus
+        assert "describe form and not function" in focus
+        assert "name the peer set" in focus
+
+    def test_the_privilege_guard_is_this_batchs_own_work(self):
+        """Nothing derived covers it. The prohibitions are about
+        conclusions; privilege is about *content*, and the result gate
+        protects a column classified `legal` but not a free-text summary
+        the model might write from one.
+        """
+        focus = ds.get_skill("legal.matter").focus.lower()
+        assert "never the substance of a matter or the strategy in it" in focus
+        for action in policy_for(LEGAL).prohibited_actions:
+            assert "privileg" not in action.value
+
+
+class TestRealEstateIsWhereTheAssetIsTheIdentifier:
+    """Batch 18: the first covered domain whose subject is a building.
+
+    `policy_for(REAL_ESTATE)` declares no `ProhibitedAction`, so this is
+    the seventh zero-prohibition domain and the contract's ranking
+    invitation reaches it unqualified. Unlike batch 15's ENERGY the policy
+    is not field-identical to any other: the personal baseline plus
+    `CONTRACT`, a declared `minimum_group_size=5`, `export_row_limit=500`.
+
+    Four measured findings, three of them the opposite of the tidy story:
+
+    - **A property's address is classified as personal data** -- PII at
+      SENSITIVE -- because the `address` rule is deliberately unbounded
+      and cannot tell a building from a home. In every other covered
+      domain an address is incidental; here it is the asset's identifier.
+    - **That column is the only thing that opens the export ceiling.**
+      `_carries_restricted_data` needs SENSITIVE *and* a restricted
+      category, so a 600-row portfolio listing is capped only when it
+      selects the address -- and then for an admin too.
+    - **`CONTRACT`, the domain's one non-baseline category, is inert**
+      at `CONFIDENTIAL`. Third time in the series, first time it is the
+      domain's entire declared addition to the baseline.
+    - **Small-grain occupancy is not suppressed.** The declared `5` is a
+      real 5 (unlike batch 17's declared `0`), but suppression keys on
+      the measure's classification and an occupant count is an ordinary
+      integer.
+
+    And two columns a real-estate schema certainly holds -- `tenant_name`
+    and `technician_name` -- are not classified at all, because the
+    `person_name` rule enumerates prefixes and neither is among them. The
+    lease and maintenance skills carry guards nothing deterministic backs,
+    which is reported here rather than fixed from this package.
+    """
+
+    def test_the_domain_genuinely_appends_no_constraint_block(self):
+        """The premise. If REAL_ESTATE ever gains a `ProhibitedAction` the
+        derived block starts covering some of this and these guards should
+        be revisited rather than silently kept."""
+        assert policy_for(REAL_ESTATE).prohibited_actions == frozenset()
+
+        skills = ds.skills_for_domain(REAL_ESTATE)
+        # Non-vacuity: without this the loop empties when the batch is
+        # declared under another domain and the test passes while
+        # asserting nothing (§16's mutation-25 lesson).
+        assert len(skills) == 5
+        for skill in skills:
+            result = guidance_for(REAL_ESTATE, enabled=True, preferred_slug=skill.slug)
+            assert result is not None
+            text, chosen = result
+            assert chosen.slug == skill.slug
+            assert "Domain constraints" not in text, skill.slug
+
+    def test_the_policy_is_not_field_identical_to_any_other_domains(self):
+        """Batch 15's claim does not transfer. ENERGY matched
+        MANUFACTURING field for field, which is what made framing the
+        only differentiator there; this domain's policy is its own, so
+        the derived half of the prompt is not shared with anybody.
+        """
+        from dataclasses import fields
+
+        from governance.domains import DOMAIN_POLICIES
+
+        def signature(policy):
+            return tuple(
+                (f.name, getattr(policy, f.name))
+                for f in fields(policy)
+                if f.name not in ("domain", "description")
+            )
+
+        mine = signature(policy_for(REAL_ESTATE))
+        twins = [
+            d.value
+            for d, p in DOMAIN_POLICIES.items()
+            if d is not REAL_ESTATE and signature(p) == mine
+        ]
+        assert twins == []
+
+        # The two fields that make it unique among the zero-prohibition
+        # domains: a declared threshold and the `CONTRACT` restriction.
+        for other in (SUPPLY_CHAIN, MANUFACTURING, PROJECT, ENERGY):
+            assert policy_for(other).minimum_group_size == 0, other.value
+        assert policy_for(REAL_ESTATE).minimum_group_size == 5
+
+    def test_a_property_address_is_classified_as_personal_data(self):
+        """The finding that shaped the portfolio skill.
+
+        `governance.classification`'s `address` rule is documented as
+        deliberately unbounded -- it has to be, to catch `StreetAddress`
+        and `postal_code` alike -- and it therefore cannot tell a
+        building's location from somebody's home. That is the safe
+        direction to fail, and it has an analytical consequence: the
+        column a property analysis most naturally labels rows with comes
+        back `[restricted]`, so the rows become indistinguishable.
+        """
+        from governance.classification import DataCategory, DataClassification, classify_field
+        from governance.result_policy import govern_result_for_domain
+
+        for column in ("property_address", "site_address", "street", "postal_code"):
+            policy = classify_field("properties", column)
+            assert policy.category is DataCategory.PII, column
+            assert policy.classification is DataClassification.SENSITIVE, column
+            assert policy.classification >= DataClassification.SENSITIVE, column
+
+        # The asset's own non-address identifiers are not restricted, so
+        # the guard the skill gives is actionable rather than a dead end.
+        for column in ("property_id", "property_name", "city", "gross_floor_area"):
+            assert classify_field("properties", column).category is DataCategory.NONE, column
+
+        rows = [(f"{i} High Street", 0.9) for i in range(60)]
+        viewer = govern_result_for_domain(
+            ["property_address", "occupancy_rate"], rows, ["viewer"], REAL_ESTATE, 5
+        )
+        assert "masked_classified_columns:property_address" in viewer.actions
+        assert len(viewer.rows) == 60
+        # Indistinguishable: every row's label is now the same string.
+        assert len({tuple(row)[0] for row in viewer.rows}) == 1
+
+        admin = govern_result_for_domain(
+            ["property_address", "occupancy_rate"], rows, ["admin"], REAL_ESTATE, 5
+        )
+        assert admin.actions == ()
+
+        focus = ds.get_skill("real_estate.portfolio").focus.lower()
+        assert "an address is treated as personal data" in focus
+        assert "every masked row then reads alike" in focus
+        assert "label and group properties by identifier or name" in focus
+        assert "never read two masked rows as one property" in focus
+
+    def test_the_address_is_the_only_column_that_opens_the_export_ceiling(self):
+        """Measured, and it narrows the declared 500 considerably.
+
+        `result_policy._carries_restricted_data` engages the ceiling only
+        when a column classifies at SENSITIVE *and* falls in a category
+        the domain restricts. A property listing keyed by id, and a
+        600-row work-order extract, are therefore returned whole -- the
+        ceiling fires on the address and on nothing else a property
+        analysis naturally selects.
+        """
+        from governance.result_policy import govern_result_for_domain
+
+        assert policy_for(REAL_ESTATE).export_row_limit == 500
+
+        addressed = [(f"{i} High Street", 0.9) for i in range(600)]
+        for roles in (["viewer"], ["admin"]):
+            governed = govern_result_for_domain(
+                ["property_address", "occupancy_rate"], addressed, roles, REAL_ESTATE, 5
+            )
+            # Including an admin: holding the permission means a value
+            # may be seen, not extracted in bulk.
+            assert "export_limited:100" in governed.actions, roles
+            assert len(governed.rows) == 500, roles
+
+        for columns, rows in (
+            (["property_id", "occupancy_rate"], [(f"p-{i}", 0.9) for i in range(600)]),
+            (["work_order_id", "repair_cost"], [(f"w-{i}", 120) for i in range(600)]),
+        ):
+            for roles in (["viewer"], ["admin"]):
+                governed = govern_result_for_domain(columns, rows, roles, REAL_ESTATE, 5)
+                assert governed.actions == (), (columns, roles)
+                assert len(governed.rows) == 600, (columns, roles)
+
+    def test_only_the_portfolio_skill_states_the_truncation_consequence(self):
+        """Because only a listing that selects the address trips it. A
+        guard for a control that does not fire is noise, and §4.8's
+        one-owner rule cuts both ways (batch 17 made the same split
+        between its matter and contract skills).
+        """
+        portfolio = ds.get_skill("real_estate.portfolio").focus.lower()
+        assert "capped at the domain's export ceiling for every caller" in portfolio
+        assert "treat such a result as a capped extract" in portfolio
+
+        for slug in (
+            "real_estate.occupancy",
+            "real_estate.lease",
+            "real_estate.facilities_maintenance",
+            "real_estate.financial",
+        ):
+            focus = ds.get_skill(slug).focus.lower()
+            assert "export ceiling" not in focus, slug
+            assert "capped" not in focus, slug
+
+    def test_the_one_non_baseline_category_this_domain_declares_is_inert(self):
+        """Third time in the series, and the first time it is the whole
+        of the domain's declared addition.
+
+        Batch 16 found `AUDIT` inert and batch 17 found `CONTRACT` inert
+        beside a live `LEGAL`. Here `CONTRACT` is the only category this
+        policy adds to the personal baseline, so every control that
+        actually fires in this domain comes from the baseline
+        `CLAUDE.md` §5.8 unions in -- not from anything the policy says.
+        """
+        from governance.classification import DataCategory, DataClassification, classify_field
+        from governance.result_policy import govern_result_for_domain
+
+        policy = policy_for(REAL_ESTATE)
+        assert policy.restricted_categories == frozenset(
+            {DataCategory.PII, DataCategory.SPI, DataCategory.CONTRACT}
+        )
+        # Declared minus the baseline is exactly the inert one.
+        assert policy.restricted_categories - frozenset(
+            {DataCategory.PII, DataCategory.SPI}
+        ) == frozenset({DataCategory.CONTRACT})
+
+        for column in ("lease_term", "lease_amount", "contract_value", "vendor_rate"):
+            field_policy = classify_field("leases", column)
+            assert field_policy.category is DataCategory.CONTRACT, column
+            assert field_policy.classification is DataClassification.CONFIDENTIAL, column
+            assert field_policy.classification < DataClassification.SENSITIVE, column
+
+        leases = [(f"l-{i}", 1000) for i in range(600)]
+        for roles in (["viewer"], ["admin"]):
+            governed = govern_result_for_domain(
+                ["lease_id", "lease_amount"], leases, roles, REAL_ESTATE, 5
+            )
+            assert governed.actions == (), roles
+            assert len(governed.rows) == 600, roles
+
+    def test_a_declared_five_is_a_real_five_unlike_batch_17s_zero(self):
+        """The other side of batch 17's finding.
+
+        `minimum_group_size_for` is `policy.minimum_group_size if
+        policy.minimum_group_size else configured_default`, so a declared
+        `0` is falsy and the operator's value applies. A declared `5` is
+        truthy, so this domain's threshold holds even if an operator
+        configures none -- which is why the next test is about the
+        classification threshold rather than about k.
+        """
+        from governance.domains import minimum_group_size_for
+
+        assert policy_for(REAL_ESTATE).minimum_group_size == 5
+        assert minimum_group_size_for(REAL_ESTATE, 0) == 5
+        assert minimum_group_size_for(REAL_ESTATE, 5) == 5
+        # The contrast, pinned so the pair cannot drift apart.
+        assert policy_for(LEGAL).minimum_group_size == 0
+        assert minimum_group_size_for(LEGAL, 0) == 0
+
+    def test_small_grain_occupancy_is_not_suppressed_so_the_guard_is_framing(self):
+        """The batch's sharpest guard, and the reason it is framing.
+
+        `suppression._is_sensitive_measure` keys on the *measure's*
+        classification, and an occupant count is an ordinary integer, so
+        a one-occupant floor is returned intact at k=5 for every caller.
+        Occupancy is derived from badge, booking and sensor records about
+        identifiable people, so a fine-grained cell can stand for one
+        person and nothing deterministic will hide it.
+        """
+        from governance.classification import DataCategory, classify_field
+        from governance.result_policy import govern_result_for_domain
+
+        for column in ("occupancy_rate", "desk_utilisation", "headcount", "badge_swipes"):
+            assert classify_field("occupancy", column).category is DataCategory.NONE, column
+
+        rows = [("L1", 42), ("L2", 3), ("L3", 1)]
+        for roles in (["viewer"], ["admin"]):
+            governed = govern_result_for_domain(
+                ["floor", "occupant_count"], rows, roles, REAL_ESTATE, 5
+            )
+            assert governed.actions == (), roles
+            assert list(governed.rows) == rows, roles
+
+        # Suppression is not broken -- it fires when the measure itself
+        # classifies, which is what makes the contrast meaningful.
+        with_name = govern_result_for_domain(
+            ["floor", "employee_name", "occupant_count"],
+            [("L1", "Ann Smith", 42), ("L3", "Bo Lee", 1)],
+            ["admin"],
+            REAL_ESTATE,
+            5,
+        )
+        assert "suppressed_small_groups:1" in with_name.actions
+
+        focus = ds.get_skill("real_estate.occupancy").focus.lower()
+        assert "an occupant count is an ordinary integer" in focus
+        assert "no cell can stand for a single person" in focus
+        assert "give the count beside every percentage" in focus
+        assert "never describe when a named person was present" in focus
+
+    def test_two_person_columns_this_domain_holds_are_not_classified(self):
+        """Where this batch's own work is, measured rather than assumed.
+
+        `person_name` matches an enumerated list of prefixes --
+        `employee_`, `customer_`, `patient_`, `contact_`, `first_`,
+        `last_` and so on -- and neither `tenant_name` nor
+        `technician_name` is among them. A residential tenant and a
+        maintenance engineer are both identifiable people, so the lease
+        and maintenance skills carry guards nothing deterministic backs.
+
+        Reported, not fixed from here: an operator's explicit entry in
+        `config/sensitive_columns.yaml` is the supported route, and
+        editing `governance/classification.py` is a governance change
+        rather than a skill one (`CLAUDE.md` §4.7). If that changes, this
+        test fails and the two guards become redundant -- which is the
+        right way round.
+        """
+        from governance.classification import DataCategory, classify_field
+        from governance.result_policy import govern_result_for_domain
+
+        for table, column in (("leases", "tenant_name"), ("work_orders", "technician_name")):
+            assert classify_field(table, column).category is DataCategory.NONE, column
+
+        # Non-vacuity: the rule does fire for the prefixes it enumerates,
+        # so this is a gap in the list and not a broken classifier.
+        assert classify_field("occupancy", "employee_name").category is DataCategory.PII
+        assert classify_field("leases", "customer_name").category is DataCategory.PII
+
+        governed = govern_result_for_domain(
+            ["tenant_name", "annual_rent"],
+            [("Ann Smith", 24000), ("Acme Ltd", 480000)],
+            ["viewer"],
+            REAL_ESTATE,
+            5,
+        )
+        assert governed.actions == ()
+        assert list(governed.rows[0]) == ["Ann Smith", 24000]
+
+        lease = ds.get_skill("real_estate.lease").focus.lower()
+        assert "a counterparty here may be a person rather than a company" in lease
+        assert "a tenant name is not protected by anything deterministic" in lease
+        assert "report by tenant segment, sector or covenant grade" in lease
+
+        maintenance = ds.get_skill("real_estate.facilities_maintenance").focus.lower()
+        assert "whose names nothing here protects" in maintenance
+        assert "never rank the people who carried out the work" in maintenance
+
+    def test_a_ratio_denominator_crosses_a_boundary_this_policy_does_not_open(self):
+        """Batch 15's shape in a new domain, with one owner.
+
+        Cost or occupancy per head takes its denominator from HR and cost
+        per unit of output takes one from FINANCE or MANUFACTURING;
+        REAL_ESTATE pre-authorizes none of them, in either direction. The
+        request gate owns whether such a join may happen and this package
+        must not restate it (§3) -- only the analytical half belongs
+        here, and it belongs to one skill rather than four.
+        """
+        from governance.domains import is_cross_domain_allowed
+
+        assert policy_for(REAL_ESTATE).cross_domain_allowed == frozenset()
+        for other in (HR, FINANCE, MANUFACTURING):
+            assert is_cross_domain_allowed(REAL_ESTATE, other) is False, other.value
+            assert is_cross_domain_allowed(other, REAL_ESTATE) is False, other.value
+
+        financial = ds.get_skill("real_estate.financial").focus.lower()
+        assert "where a denominator comes from another domain" in financial
+        assert "name its source and grain" in financial
+        assert "a new metric and not a conversion" in financial
+
+        # One owner: the other four do not repeat the clause. Occupancy's
+        # own denominators -- area, desks, seats -- are in-domain, which
+        # is why that skill names those instead.
+        for slug in (
+            "real_estate.portfolio",
+            "real_estate.occupancy",
+            "real_estate.lease",
+            "real_estate.facilities_maintenance",
+        ):
+            assert "another domain" not in ds.get_skill(slug).focus.lower(), slug
+
+    def test_no_focus_text_claims_anything_about_authorization(self):
+        """The portfolio skill states a masking and a truncation
+        consequence, which is the closest this package comes to the
+        boundary. It must describe what the result looks like, never who
+        may see it -- `governance/` owns that.
+        """
+        for skill in ds.skills_for_domain(REAL_ESTATE):
+            lowered = skill.focus.lower()
+            assert "authoriz" not in lowered, skill.slug
+            assert "authoris" not in lowered, skill.slug
+            assert "permission" not in lowered, skill.slug
+            assert "role" not in lowered, skill.slug
+
+    def test_the_guards_are_not_a_restatement_of_a_prohibition(self):
+        for skill in ds.skills_for_domain(REAL_ESTATE):
+            lowered = skill.focus.lower()
+            assert "individual performance ranking" not in lowered, skill.slug
+            assert "unsupported allegation" not in lowered, skill.slug
+            assert "sensitive personal targeting" not in lowered, skill.slug
+            assert "prohibit" not in lowered, skill.slug
+
+    def test_each_skill_states_the_measurement_trap_its_subject_carries(self):
+        """Read off the subject matter. Three are reused rather than
+        rediscovered and are named as such in §24: batch 16's "counted
+        only where somebody looked" reappears as a reactive work order,
+        batch 11's "a record is not its contents" as a closure, and batch
+        10's average-of-ratios error as a portfolio yield.
+        """
+        portfolio = ds.get_skill("real_estate.portfolio").focus.lower()
+        assert "what someone decided counts as one property" in portfolio
+        assert "gross, net lettable, usable, rentable" in portfolio
+        assert "a per-square-metre figure is undefined until the basis is named" in portfolio
+        assert "a total that mixes tenure answers no question" in portfolio
+        assert "a stock and not a flow" in portfolio
+
+        occupancy = ds.get_skill("real_estate.occupancy").focus.lower()
+        assert "two unrelated measures that share the word occupancy" in occupancy
+        assert "a badge records an entry rather than a presence" in occupancy
+        assert "a booking records an intention and not an attendance" in occupancy
+        assert "reads as empty rather than as unknown" in occupancy
+        assert "a peak is an instant and an average hides it" in occupancy
+
+        lease = ds.get_skill("real_estate.lease").focus.lower()
+        assert "rent is not one number" in lease
+        assert "the date that governs the profile is rarely the end date" in lease
+        assert "four different numbers" in lease
+        assert "a market review is an opinion until it is agreed" in lease
+        assert "annualised with its exchange basis and date stated" in lease
+
+        maintenance = ds.get_skill("real_estate.facilities_maintenance").focus.lower()
+        assert "how much was raised and not how much broke" in maintenance
+        assert "a responsive helpdesk looks worse" in maintenance
+        assert "planned and reactive work are different populations" in maintenance
+        assert "a closure is a reported state" in maintenance
+        assert "never average percentiles across sites" in maintenance
+        assert "measures only the jobs nobody closed" in maintenance
+
+        financial = ds.get_skill("real_estate.financial").focus.lower()
+        assert "whose definition varies" in financial
+        assert "use the approved definition and name it rather than composing one" in financial
+        assert "a gross service charge is not the owner's cost" in financial
+        assert "moves with occupancy rather than with efficiency" in financial
+        assert "an opinion at a date produced by a method" in financial
+        assert "not the average of property yields" in financial
+        assert "a restatement is not a movement" in financial
+
+    def test_no_skill_writes_out_a_metric_formula(self):
+        """Batch 10's rule, which this domain tests hardest: net
+        operating income, yield and weighted average unexpired term are
+        all named metrics with approved definitions in `semantic/`, and a
+        skill that spelled one out would be a second owner free to drift
+        (`CLAUDE.md` §4.8).
+        """
+        for skill in ds.skills_for_domain(REAL_ESTATE):
+            focus = skill.focus
+            assert "=" not in focus, skill.slug
+            assert "divided by" not in focus.lower(), skill.slug
+            assert "/" not in focus, skill.slug
+
+    def test_this_batch_completes_the_supplied_series(self):
+        """The milestone, asserted rather than claimed in prose.
+
+        Ninety skills across eighteen prompt-domains and seventeen
+        governance domains, every one of them five skills except
+        `sales_marketing`, which holds two prompt-domains. `EXECUTIVE` is
+        the only member without skills and
+        `test_the_only_domain_left_uncovered_is_the_deliberate_one`
+        covers why.
+        """
+        assert len(ds.all_skills()) == 90
+        counts = {
+            group: len([s for s in ds.all_skills() if s.group == group])
+            for group in {s.group for s in ds.all_skills()}
+        }
+        assert set(counts.values()) == {5}
+        assert len(counts) == 18
+        assert len(ds.skills_for_domain(SALES)) == 10
 
 
 class TestNothingUntrustedReachesThePrompt:

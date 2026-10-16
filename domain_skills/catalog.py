@@ -10,7 +10,9 @@ eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply
 Chain / Procurement & Logistics, Manufacturing & Operations, Customer
 Service & Support, Project & Portfolio Management, IT Operations &
 Service Management, Healthcare & Life Sciences, Energy, Utilities &
-Sustainability, Risk, Audit & Controls. Every batch has arrived with an identical
+Sustainability, Risk, Audit & Controls, Legal, Secretarial & Governance,
+Real Estate & Facilities.
+Every batch has arrived with an identical
 body and an identical "Domain scope" sentence across its five prompts,
 differing only in the heading — so each *prompt-domain* writes its scope
 once (`_SALES_SCOPE`, `_MIS_SCOPE`, `_MARKETING_SCOPE`) and each skill
@@ -23,9 +25,14 @@ question return"; it is not a statement about framing. `DomainSkill.group`
 `composer.select_skill` refuses to pick a default when a domain holds more
 than one group rather than guessing.
 
-The remaining domains are **not** registered yet. A skill is added when its
-prompt arrives, not in anticipation of one — an empty domain here would
-advertise analysis the platform cannot actually shape.
+With Real Estate & Facilities registered, the only `BusinessDomain` member
+left without skills is `EXECUTIVE`, and that one is deliberate rather than
+pending: its single supplied prompt, "Executive KPI Intelligence", is filed
+under `MIS` for the reason the `_MIS` comment below gives. So the series is
+complete at ninety skills across seventeen governance domains, which is the
+count `types.py` has described since batch 1. A skill is still added only
+when its prompt arrives, never in anticipation of one — an empty domain here
+would advertise analysis the platform cannot actually shape.
 """
 
 from __future__ import annotations
@@ -1105,9 +1112,15 @@ _PROJECT_SCOPE = (
 )
 
 #: The fifth zero-prohibition domain. `policy_for(PROJECT)` declares no
-#: `ProhibitedAction` and `minimum_group_size=0`, so neither the derived
-#: constraint block nor small-group suppression applies -- while it does
-#: restrict contract, employee and PII data. Resource allocation is
+#: `ProhibitedAction`, so no derived constraint block is appended -- while
+#: it does restrict contract, employee and PII data.
+#:
+#: This comment used to add "and `minimum_group_size=0`, so small-group
+#: suppression does not apply either". Batch 17 measured that and it is
+#: wrong: `minimum_group_size_for` treats a declared `0` as *unset* and
+#: falls back to `GOVERNANCE_MIN_GROUP_SIZE`, which defaults to 5. What
+#: limits suppression here is the classification threshold, not the
+#: declared zero -- it only reaches a measure at `SENSITIVE` or above. Resource allocation is
 #: per-person by construction, so the individual-ranking guard batch 9
 #: introduced applies again, now for the fifth time, and is reused rather
 #: than restated.
@@ -1227,8 +1240,8 @@ _IT_OPS_SCOPE = "Analyze IT services, incidents, changes, applications, cloud an
 #: prohibited nothing and the focus texts had to carry the risk alone;
 #: here the one prohibition is enforced unconditionally, so the skills'
 #: job is narrower: not to invite a question whose only answer is a secret.
-#: `minimum_group_size=0` still applies and ITSM records name the assignee
-#: of a ticket, so the individual-ranking guard arrives for the sixth time
+#: ITSM records name the assignee of a ticket, so the individual-ranking
+#: guard arrives for the sixth time
 #: -- but unlike batches 9-12 the derived block *does* append "Report in
 #: aggregate only" here, so that guard is reinforcement rather than the
 #: only line.
@@ -1521,9 +1534,14 @@ _ENERGY_SCOPE = "Analyze energy, utilities, sustainability, emissions and effici
 #: conversion.
 #:
 #: `minimum_group_size=0` is deliberate in the registry -- this domain
-#: holds no individual-level data to protect -- so nothing here is
-#: suppressed, and nothing needs an individual-level guard of the kind
-#: batches 9 to 12 carry. A meter is not a person.
+#: holds no individual-level data to protect -- and nothing here needs an
+#: individual-level guard of the kind batches 9 to 12 carry. A meter is
+#: not a person.
+#:
+#: This comment used to conclude "so nothing here is suppressed". Batch 17
+#: measured that and it is wrong: a declared `0` is treated as unset by
+#: `minimum_group_size_for`, so the operator's default (5) applies. The
+#: claim that stands is about the subject matter, not about the threshold.
 _ENERGY = BusinessDomain.ENERGY
 
 #: Declared in the supplied numeric order (01 consumption, 02 utility
@@ -1931,6 +1949,605 @@ RISK_AUDIT_SKILLS: tuple[DomainSkill, ...] = (
     ),
 )
 
+#: The supplied Legal prompts' "Domain scope:" sentence, verbatim.
+#:
+#: The second scope sentence running that simply **enumerates its own five
+#: skills** -- contracts, legal matters, compliance, board actions and
+#: governance are the subjects of prompts 01 to 05, exactly as batch 16's
+#: was. The scope line narrows nothing for any one skill, so every
+#: distinction between them is carried by `focus`.
+_LEGAL_SCOPE = "Analyze contracts, legal matters, compliance, board actions and governance."
+
+#: The domain where the prohibited output is the *question*.
+#:
+#: `policy_for(LEGAL)` declares three `ProhibitedAction`s, and they are a
+#: **strict superset of batch 16's** -- the same `liability_determination`
+#: and `unsupported_allegation`, plus `legal_conclusion_or_advice`. Batch 6
+#: was a strict *subset* of another domain's (Training inside HR); this is
+#: the first strict superset, and it lands one batch after the set it
+#: contains.
+#:
+#: `legal_conclusion_or_advice` is declared by **LEGAL alone**, so this
+#: batch derives it for the first time -- and it was the last of the
+#: fourteen `ProhibitedAction`s never derived into any covered domain.
+#: Registering this batch therefore means every one of them is now carried
+#: by at least one covered domain, which
+#: `test_every_prohibited_action_is_now_derived_by_a_covered_domain`
+#: asserts rather than this comment merely claiming.
+#:
+#: What makes the domain hard is not the count but how far the prohibition
+#: overlaps the questions people actually ask. In batch 16 the subject
+#: matter was a recorded assertion; here the prohibited output *is* the
+#: natural question. "Are we compliant?", "will we win?", "is this clause
+#: enforceable?", "what is our exposure?" each ask for a conclusion in law,
+#: and a skill that only refused would answer nothing (`CLAUDE.md` §4.2,
+#: and the batch-8 lesson that a refusal without an alternative is not a
+#: skill). So every focus text below redirects to the same answerable
+#: question: what does the record hold, in which field, and as of when.
+#:
+#: **The first covered domain whose two declared categories behave
+#: oppositely at the row level**, which was measured rather than assumed
+#: (§23's checklist step, added after batch 16 published a claim the code
+#: did not support):
+#:
+#: - `DataCategory.LEGAL` comes from `governance.classification`'s
+#:   `legal_privileged` rule at **`HIGHLY_SENSITIVE`**, which is *above*
+#:   the `SENSITIVE` threshold every row-level control keys on. So it is
+#:   genuinely live: a column like `litigation_status`, `settlement_amount`
+#:   or `legal_opinion` is masked for a caller without
+#:   `VIEW_RESTRICTED_COLUMNS`, **and** it trips the domain's
+#:   `export_row_limit` of 50 for every caller including an admin.
+#: - `DataCategory.CONTRACT` comes from the `contract_terms` rule at
+#:   `CONFIDENTIAL`, below that threshold, so it changes no rows at all --
+#:   the same inertness batch 16 found for `AUDIT`.
+#:
+#: Measured: a 60-row result of `(matter_id, litigation_status)` comes back
+#: masked and `export_limited:10` at 50 rows for a viewer, and
+#: `export_limited:10` at 50 rows for an admin; a 60-row result of
+#: `(contract_id, contract_value)` comes back untouched for both. So the
+#: matter skill has a truncation consequence to state and the contract
+#: skill does not, and that asymmetry is the opposite of a tidy story --
+#: it is why it is written down here instead of inferred from the policy.
+#:
+#: **On suppression, where this package had been wrong.** LEGAL declares
+#: `minimum_group_size=0`, and three earlier batch comments read that as
+#: "no small-group suppression here". It is not:
+#: `governance.domains.minimum_group_size_for` is
+#: `policy.minimum_group_size if policy.minimum_group_size else
+#: configured_default`, so a declared `0` is falsy and the operator's
+#: `GOVERNANCE_MIN_GROUP_SIZE` applies -- and that setting defaults to
+#: **5**. The function's own docstring says the opposite ("honored as a
+#: real zero, not treated as unset"), so the contradiction is in
+#: `governance/`, not here; `test_a_declared_zero_group_size_is_not_a_real_zero`
+#: pins the behaviour so this package stops repeating the wrong reading,
+#: and the three stale comments are corrected in place.
+#:
+#: What *is* true is narrower and still the reason the scorecard skill
+#: carries its own guard: suppression only touches a measure classified
+#: `SENSITIVE` or above, and a board-composition count is an ordinary
+#: integer. Measured: `(director_category, director_count)` with a
+#: single-director category is returned intact at k=5. A board is about ten
+#: people, so a one-person cell identifies someone and nothing
+#: deterministic will hide it.
+#:
+#: `cross_domain_allowed` is empty in both directions. No focus text
+#: mentions authorization or permission: `governance/request_policy.py`
+#: owns that and this package must not restate it (see
+#: `domain_skills/contract.py`).
+_LEGAL = BusinessDomain.LEGAL
+
+#: Declared in the supplied numeric order (01 contract, 02 legal matter,
+#: 03 compliance, 04 board and secretarial, 05 corporate governance
+#: scorecard), so the domain default is Contract Intelligence (01). The
+#: prompts arrived shuffled (01, 03, 02, 04, 05); numeric order wins.
+LEGAL_SKILLS: tuple[DomainSkill, ...] = (
+    DomainSkill(
+        slug="legal.contract",
+        title="Contract Intelligence",
+        domain=_LEGAL,
+        scope=_LEGAL_SCOPE,
+        focus=(
+            "The contract portfolio in aggregate: counts and value by "
+            "type and counterparty, the renewal and expiry pipeline, "
+            "clause and obligation coverage, and cycle time to execute. "
+            "Contract value is usually a ceiling rather than an amount "
+            "earned or spent -- a maximum or not-to-exceed figure "
+            "authorises, it does not commit -- so never present it as "
+            "revenue or cost, and name the consumed figure separately if "
+            "the data holds one. A total across contracts of different "
+            "terms is not comparable: give the term or an annualised "
+            "value. An expiry date alone misstates the pipeline, because "
+            "an auto-renewing contract does not expire; the notice "
+            "deadline is the date that governs, and effective, signature "
+            "and commencement dates are three different dates. Clause "
+            "coverage reports what was extracted and tagged, so an "
+            "untagged clause reads as an absent one -- give the "
+            "extraction coverage beside any coverage figure. Counterparty "
+            "names are rarely normalised, and entity variants split one "
+            "counterparty across rows, which understates concentration. "
+            "Report what the record holds, in which field and as of when; "
+            "never say whether a clause is enforceable, whether an "
+            "obligation has been breached, or what a term means."
+        ),
+        dimensions=(
+            "contract type",
+            "counterparty",
+            "business unit",
+            "lifecycle stage",
+            "period",
+        ),
+    ),
+    DomainSkill(
+        slug="legal.matter",
+        title="Legal Matter Intelligence",
+        domain=_LEGAL,
+        scope=_LEGAL_SCOPE,
+        focus=(
+            "The matter inventory: volume and stage by matter type and "
+            "jurisdiction, ageing, external spend, and recorded "
+            "outcomes. A recorded exposure or reserve is an accounting "
+            "estimate made under a policy -- never a prediction of loss "
+            "and never an admission -- so a movement in it can be a "
+            "re-estimation rather than an event; report it as the "
+            "estimate it is, with its basis if the data names one. "
+            "Ageing runs from the date a matter was opened, which is when "
+            "the legal team learned of it rather than when the underlying "
+            "events happened, so it measures the process and not the "
+            "dispute. Outcome codes are not a win rate: a settlement is "
+            "not a defeat, a dismissal may be procedural, and any such "
+            "rate needs a definition the record may not carry. External "
+            "spend is incurred, billed and accrued at different times and "
+            "outside-counsel invoices arrive late, so the most recent "
+            "periods understate. Matter columns are among the most "
+            "protected in the platform, and a result carrying them is "
+            "capped at the domain's export ceiling for every caller -- so "
+            "treat what came back as a capped extract and compute no "
+            "count, share or ranking over it without saying that the cap "
+            "applied. Report counts, types, stages and spend, never the "
+            "substance of a matter or the strategy in it; report by "
+            "matter type, jurisdiction and business unit rather than "
+            "ranking the people named in matters; and never weigh the "
+            "merits or forecast how a matter will end."
+        ),
+        dimensions=(
+            "matter type",
+            "jurisdiction",
+            "matter stage",
+            "business unit",
+            "period",
+        ),
+    ),
+    DomainSkill(
+        slug="legal.compliance",
+        title="Compliance Intelligence",
+        domain=_LEGAL,
+        scope=_LEGAL_SCOPE,
+        focus=(
+            "Attainment against the obligations the register records: "
+            "attestation and training completion, policy exceptions, "
+            "recorded incidents and filing timeliness, by obligation and "
+            "business unit. Never state whether the organisation is "
+            "compliant -- what the data supports is narrower and still "
+            "useful: how much of the register is attested, by whom, and "
+            "as of when. A completion rate counts attestations recorded, "
+            "which is evidence that a process ran and not of the "
+            "behaviour it asks for, so a figure at one hundred per cent "
+            "says the process completed. The denominator is whichever "
+            "population someone scoped as in-scope, so anyone outside "
+            "that scope reads as attested; give the scope and its "
+            "coverage. An approved policy exception is a permitted "
+            "deviation rather than a failure, so never add the two "
+            "together. A register is a living document, so an obligation "
+            "added mid-period looks like a new gap -- state the "
+            "register's as-of date. Recorded incidents depend on the "
+            "channel that captured them, so a rise can be better "
+            "reporting rather than worse conduct."
+        ),
+        dimensions=(
+            "obligation",
+            "regulatory framework",
+            "business unit",
+            "attestation cycle",
+            "period",
+        ),
+    ),
+    DomainSkill(
+        slug="legal.board_secretarial",
+        title="Board and Secretarial Intelligence",
+        domain=_LEGAL,
+        scope=_LEGAL_SCOPE,
+        focus=(
+            "Board and committee activity and the statutory record: "
+            "meetings held, attendance and quorum, resolutions, action "
+            "items, filings and the entity register. Attendance is "
+            "recorded presence and not participation, and presence by a "
+            "proxy or an alternate is a different fact to be reported "
+            "separately rather than summed in. Quorum is defined per body "
+            "by the constitution, so a quorum figure needs the rule "
+            "stated -- a meeting can be quorate with few people present. "
+            "Resolutions passed measures activity rather than "
+            "effectiveness, and near-unanimous approval is the norm, so "
+            "an approval rate carries almost no signal. Filing timeliness "
+            "runs against a statutory deadline that differs by "
+            "jurisdiction and entity type, so one days-late figure across "
+            "entities compares different clocks. An action item is closed "
+            "when its owner says so, which records a report of "
+            "completion rather than a verification of it. The entity "
+            "register holds dormant and struck-off entities that inflate "
+            "any count, so state which statuses are included. Report by "
+            "body, committee and entity; where a director's own "
+            "attendance is itself a disclosed statutory figure, report it "
+            "as that record and never as a judgement of how well they "
+            "served."
+        ),
+        dimensions=(
+            "governing body",
+            "committee",
+            "legal entity",
+            "resolution type",
+            "period",
+        ),
+    ),
+    DomainSkill(
+        slug="legal.governance_scorecard",
+        title="Corporate Governance Scorecard",
+        domain=_LEGAL,
+        scope=_LEGAL_SCOPE,
+        focus=(
+            "Governance indicators and their movement against a stated "
+            "framework: board composition and independence, tenure, "
+            "committee structure, policy coverage and disclosure "
+            "timeliness. A scorecard total is a composite of indicators "
+            "someone selected and weighted, so the total moves with the "
+            "weighting -- name the framework and its version, report the "
+            "components beside the total, and never present the composite "
+            "as a measure of how well the organisation is governed or of "
+            "whether it meets a code. Independence is a classification "
+            "against a definition that differs between codes and "
+            "jurisdictions, so say which definition the data uses. "
+            "Structural indicators such as board size or committee count "
+            "describe form and not function. The denominator here is "
+            "about ten people, so one appointment moves a percentage by a "
+            "large step and a single-member category describes an "
+            "identifiable person: report counts next to every percentage, "
+            "and do not break a small body down to a cell that stands for "
+            "one individual. A benchmark compares against a peer set "
+            "someone chose, so name the peer set or say the comparison "
+            "has none."
+        ),
+        dimensions=(
+            "governance framework",
+            "indicator",
+            "governing body",
+            "legal entity",
+            "period",
+        ),
+    ),
+)
+
+#: The supplied Real Estate prompts' "Domain scope:" sentence, verbatim.
+#:
+#: The third scope sentence running that simply **enumerates its own five
+#: skills** -- properties, occupancy, leases, maintenance and property
+#: financials are the subjects of prompts 01 to 05, exactly as batches 16
+#: and 17 were. The scope line narrows nothing for any one skill, so every
+#: distinction between them is carried by `focus`.
+_REAL_ESTATE_SCOPE = "Analyze properties, occupancy, leases, maintenance and property financials."
+
+#: The first covered domain whose subject is a **physical asset**, and the
+#: domain where that turns out to decide which controls fire.
+#:
+#: `policy_for(REAL_ESTATE)` declares no `ProhibitedAction` at all, so
+#: `composer._prohibitions_block` appends nothing and the shared contract's
+#: ranking invitation reaches this domain unqualified -- the seventh
+#: zero-prohibition domain, after MIS, eCommerce, Supply Chain,
+#: Manufacturing, Customer Service, Project and Energy. Unlike batch 15's
+#: ENERGY, the policy is **not** field-identical to any other domain's:
+#: `restricted_categories` is the personal baseline plus `CONTRACT`,
+#: `minimum_group_size` is a declared `5` and `export_row_limit` is 500.
+#:
+#: Four findings, all measured before these focus texts were written (§23's
+#: checklist steps 9 and 10), and three of them the opposite of the tidy
+#: story:
+#:
+#: - **A property's address is classified as personal data.**
+#:   `classify_field("properties", "property_address")` returns
+#:   `DataCategory.PII` at `SENSITIVE` with `MaskingStrategy.MASK`, because
+#:   `governance.classification`'s `address` rule is deliberately unbounded
+#:   and cannot tell a building's location from somebody's home. In every
+#:   other covered domain an address is incidental to the question; here it
+#:   **is** the asset's own identifier. Measured: 60 rows of
+#:   `(property_address, occupancy_rate)` come back with every address
+#:   `[restricted]` for a caller who may not see it -- indistinguishable
+#:   rows -- and in full for an admin. The portfolio skill therefore carries
+#:   the labelling guard itself.
+#: - **That same column is the only thing that opens the export ceiling.**
+#:   `result_policy._carries_restricted_data` engages the ceiling only when
+#:   a column classifies at `SENSITIVE` *and* falls in a category the domain
+#:   restricts. Measured: 600 rows of `(property_address, occupancy_rate)`
+#:   are cut to 500 with `export_limited:100` **for an admin too**, while
+#:   600 rows of `(property_id, occupancy_rate)` and 600 of
+#:   `(work_order_id, repair_cost)` are returned untouched. So the declared
+#:   500 is real but narrow: selecting the address is what truncates a
+#:   portfolio listing, and nothing else a property analysis naturally
+#:   selects does.
+#: - **`CONTRACT`, the domain's one non-baseline category, is inert.**
+#:   `classify_field("leases", "lease_amount")` is `CONTRACT` at
+#:   `CONFIDENTIAL`, one level below the threshold every row-level control
+#:   keys on, so 600 rows of `(lease_id, lease_amount)` are untouched for a
+#:   viewer and an admin alike. That is the third time in the series -- the
+#:   same inertness batch 16 found for `AUDIT` and batch 17 for `CONTRACT`
+#:   itself -- but the first time it is the domain's *entire* declared
+#:   addition to the baseline. Every live control here comes from the
+#:   personal baseline `CLAUDE.md` §5.8 unions in, not from anything this
+#:   policy declares.
+#: - **Small-grain occupancy is not suppressed.** `minimum_group_size=5` is
+#:   declared truthy, so unlike batch 17's LEGAL it is a real 5 whatever
+#:   `GOVERNANCE_MIN_GROUP_SIZE` says. It still does not reach this
+#:   subject: `suppression._is_sensitive_measure` keys on the *measure's*
+#:   classification, and an occupant count is an ordinary integer.
+#:   Measured: `(floor, occupant_count)` with a one-occupant floor is
+#:   returned intact at k=5 for a viewer and an admin. Occupancy is derived
+#:   from badge, booking and sensor records about identifiable people, so
+#:   this is the batch's sharpest guard and the occupancy skill carries it.
+#:
+#: **Where this batch's own work is.** Two columns a real-estate schema
+#: certainly holds are not classified at all:
+#: `classify_field` returns `DataCategory.NONE` at `PUBLIC` for both
+#: `tenant_name` and `technician_name`, because the `person_name` rule
+#: matches an enumerated list of prefixes (`employee_`, `customer_`,
+#: `patient_`, `contact_`, `first_`, `last_`, ...) and neither is in it.
+#: A residential tenant and a maintenance engineer are both identifiable
+#: people, so the lease and maintenance skills carry a counterparty guard
+#: and an assignee guard that no deterministic control backs. This is
+#: reported, not fixed from here: an operator's explicit entry in
+#: `config/sensitive_columns.yaml` is the supported route, and changing
+#: `governance/classification.py` is a governance change, not a skill one
+#: (`CLAUDE.md` §4.7). `test_two_person_columns_this_domain_holds_are_not_classified`
+#: pins the measured behaviour so the guard stops being needed the moment
+#: it is no longer true.
+#:
+#: `cross_domain_allowed` is empty in both directions, and it matters here
+#: the way it did for batch 15: occupancy per head takes its denominator
+#: from HR, and cost per unit of output takes one from FINANCE. Only the
+#: analytical half belongs to a skill -- name the denominator's source and
+#: grain -- because `governance/request_policy.py` owns whether the join
+#: may happen and this package must not restate it (see
+#: `domain_skills/contract.py`).
+_REAL_ESTATE = BusinessDomain.REAL_ESTATE
+
+#: Declared in the supplied numeric order (01 portfolio, 02 occupancy, 03
+#: lease, 04 facilities maintenance, 05 property financial), so the domain
+#: default is Property Portfolio Intelligence (01). The prompts arrived
+#: shuffled (01, 04, 05, 02, 03); numeric order wins.
+REAL_ESTATE_SKILLS: tuple[DomainSkill, ...] = (
+    DomainSkill(
+        slug="real_estate.portfolio",
+        title="Property Portfolio Intelligence",
+        domain=_REAL_ESTATE,
+        scope=_REAL_ESTATE_SCOPE,
+        focus=(
+            "The property portfolio as a stock at a date: how many assets "
+            "of which class and tenure, where, how much area, and what "
+            "changed. A count depends on what someone decided counts as "
+            "one property -- a site, a building, a floor or a unit -- so "
+            "give the grain before any total, because one asset can be "
+            "several rows and several assets one row. Area is the "
+            "denominator almost everything else here divides by and it "
+            "has several definitions -- gross, net lettable, usable, "
+            "rentable with a common-area factor -- so a per-square-metre "
+            "figure is undefined until the basis is named, and two "
+            "properties measured on different bases do not compare. "
+            "Owned and leased assets are different exposures, one "
+            "carrying capital and the other rent, so a total that mixes "
+            "tenure answers no question; split it. The portfolio is a "
+            "stock and not a flow, so a growth figure needs its as-of "
+            "dates and whether the comparison is like-for-like or "
+            "includes what was acquired and disposed in between. One "
+            "column here behaves unlike anywhere else in the platform: a "
+            "property is identified by its address, and an address is "
+            "treated as personal data, so it comes back masked for a "
+            "caller who may not see it and every masked row then reads "
+            "alike -- label and group properties by identifier or name "
+            "rather than by address, never read two masked rows as one "
+            "property, and never report a masked value as a missing one. "
+            "A large listing that selects the address is also capped at "
+            "the domain's export ceiling for every caller, so treat such "
+            "a result as a capped extract and say the cap applied before "
+            "computing any count or share over it."
+        ),
+        dimensions=(
+            "property",
+            "asset class",
+            "tenure",
+            "region",
+            "period",
+        ),
+    ),
+    DomainSkill(
+        slug="real_estate.occupancy",
+        title="Occupancy Intelligence",
+        domain=_REAL_ESTATE,
+        scope=_REAL_ESTATE_SCOPE,
+        focus=(
+            "How much space is let and how much is actually used -- two "
+            "unrelated measures that share the word occupancy. A building "
+            "can be fully let and half used, so never blend a leased "
+            "share with a utilisation rate or let one stand for the "
+            "other: say which is being reported and against which "
+            "denominator, since area, desks and seats give different "
+            "answers and let, vacant, under fit-out, held for disposal "
+            "and sublet need not sum to the whole. Utilisation is not "
+            "observed but inferred from an instrument counting a proxy: a "
+            "badge records an entry rather than a presence, a booking "
+            "records an intention and not an attendance, and a network "
+            "association counts devices. Name the sensing method and its "
+            "coverage, because an uninstrumented floor reads as empty "
+            "rather than as unknown, and a missing day is unknown and not "
+            "zero -- closures, holidays and a part week deflate an "
+            "average unless it is normalised to working days. A peak is "
+            "an instant and an average hides it, so capacity keyed to the "
+            "average under-provides; report both and never sum a peak. "
+            "These records describe identifiable people, and at a fine "
+            "grain a cell stands for one of them: a floor, a "
+            "neighbourhood or a team with few occupants is not an "
+            "aggregate, and nothing deterministic hides it here because "
+            "suppression covers a sensitive measure and an occupant count "
+            "is an ordinary integer. So report at a grain where no cell "
+            "can stand for a single person, give the count beside every "
+            "percentage, and never describe when a named person was "
+            "present or characterise one person's attendance pattern."
+        ),
+        dimensions=(
+            "property",
+            "floor or neighbourhood",
+            "space type",
+            "business unit",
+            "period",
+        ),
+    ),
+    DomainSkill(
+        slug="real_estate.lease",
+        title="Lease Intelligence",
+        domain=_REAL_ESTATE,
+        scope=_REAL_ESTATE_SCOPE,
+        focus=(
+            "The lease portfolio as an obligation and an expiry profile: "
+            "passing rent, escalations, incentives, options and what "
+            "falls due when. Rent is not one number -- a headline rent "
+            "and the effective rent after rent-free periods, fit-out "
+            "contributions and capital incentives are different figures, "
+            "so a comparison across leases with different incentive "
+            "packages is not like-for-like until the basis is given or "
+            "declared unknown. The date that governs the profile is "
+            "rarely the end date: a break clause, a renewal option and a "
+            "holdover each change when space actually returns, and an "
+            "option belongs to whichever side holds it, so an expiry "
+            "chart built on end dates overstates what is known. A "
+            "weighted average unexpired term is four different numbers "
+            "depending on whether it is weighted by rent or by area and "
+            "run to break or to expiry, so name both choices. An "
+            "escalation is contractual rather than forecast: a fixed "
+            "uplift is known, an index-linked one is not until the index "
+            "prints, and a market review is an opinion until it is "
+            "agreed, so never present a modelled future rent as a "
+            "recorded one. Rent per unit area inherits whichever area "
+            "basis the portfolio carries, and a total across leases of "
+            "different lengths or currencies is not a total until it is "
+            "annualised with its exchange basis and date stated. A "
+            "counterparty here may be a person rather than a company and "
+            "a tenant name is not protected by anything deterministic, so "
+            "report by tenant segment, sector or covenant grade rather "
+            "than naming counterparties, and never characterise one "
+            "tenant's payment behaviour or assess a named tenant's "
+            "standing."
+        ),
+        dimensions=(
+            "lease",
+            "tenant segment",
+            "property",
+            "lease event",
+            "period",
+        ),
+    ),
+    DomainSkill(
+        slug="real_estate.facilities_maintenance",
+        title="Facilities Maintenance Intelligence",
+        domain=_REAL_ESTATE,
+        scope=_REAL_ESTATE_SCOPE,
+        focus=(
+            "Maintenance demand, responsiveness and what it costs, by "
+            "asset class, site and trade. A work-order count measures how "
+            "much was raised and not how much broke: a reactive order "
+            "exists because somebody reported a fault, so a site with a "
+            "responsive helpdesk looks worse than one where nothing is "
+            "reported -- state the reporting channel and its coverage "
+            "before comparing sites. Planned and reactive work are "
+            "different populations and must not be summed into one "
+            "volume: more planned work is a schedule being executed, "
+            "more reactive work is a condition, and the ratio between "
+            "them is the signal. A closure is a reported state, so a "
+            "repeat or re-opened order on the same asset is the better "
+            "evidence of whether a fix held. Response and resolution "
+            "clocks are not the same clock as an attainment figure, "
+            "because a target commonly pauses for travel, parts on order, "
+            "access to occupied space and out-of-hours windows -- name "
+            "which clock a figure ran on, and never average percentiles "
+            "across sites. The age of open orders measures only the jobs "
+            "nobody closed, so a site that clears routine work quickly "
+            "can show an older backlog than one that clears nothing; "
+            "report the backlog's size beside its age. A recorded cost "
+            "may be labour only, a standard rate rather than an incurred "
+            "amount, or missing parts entirely, and contractor invoices "
+            "arrive late, so the most recent periods understate. A "
+            "condition or criticality score is a judgement someone "
+            "recorded on a scale that differs between surveyors, so it is "
+            "not arithmetic and should not be averaged across surveys "
+            "without saying so. The work is done by identifiable people "
+            "whose names nothing here protects, so attribute to trade, "
+            "vendor, site and asset class rather than to a named engineer, "
+            "and never rank the people who carried out the work."
+        ),
+        dimensions=(
+            "asset class",
+            "site",
+            "trade",
+            "work order type",
+            "period",
+        ),
+    ),
+    DomainSkill(
+        slug="real_estate.financial",
+        title="Property Financial Intelligence",
+        domain=_REAL_ESTATE,
+        scope=_REAL_ESTATE_SCOPE,
+        focus=(
+            "What the portfolio earns and costs, and what it is carried "
+            "at: income, recoveries, operating cost, capital spend and "
+            "valuation, by property and line. Net operating income is a "
+            "defined figure whose definition varies in exactly the places "
+            "that matter -- which recoveries are in, which costs are "
+            "non-recoverable, whether management fees or capital items "
+            "count -- so use the approved definition and name it rather "
+            "than composing one. Capital and operating spend are "
+            "different bases, and a replacement charged to capital leaves "
+            "the operating result looking better, so say which basis a "
+            "cost figure is on. A gross service charge is not the owner's "
+            "cost: recovery depends on what is recoverable and on how "
+            "much is vacant, so cost per occupied unit area moves with "
+            "occupancy rather than with efficiency. A valuation is an "
+            "opinion at a date produced by a method, and an income-based "
+            "one moves with its yield assumption as much as with the "
+            "income, so name the basis and the as-of date, say whether it "
+            "is a formal valuation, a desktop update or a book figure, "
+            "and never present it as a price that could be realised. A "
+            "yield or capitalisation rate divides two figures struck at "
+            "different moments, and a portfolio yield is not the average "
+            "of property yields -- recompose it from the income and value "
+            "totals. Billing differs by market, in advance or in arrears "
+            "and quarterly or monthly, so an income series needs its "
+            "basis, and recoveries trued up after a year end make recent "
+            "periods provisional, where a restatement is not a movement. "
+            "Any per-unit-area figure inherits the portfolio's area basis "
+            "and any multi-currency total needs its exchange basis and "
+            "date. A single-let property's income is one counterparty's "
+            "figure rather than an aggregate, so where that counterparty "
+            "could be a person, report it at a grain that does not stand "
+            "for one. Where a denominator comes from another domain -- a "
+            "headcount or a unit of output -- name its source and grain, "
+            "because a ratio across two grains is a new metric and not a "
+            "conversion."
+        ),
+        dimensions=(
+            "property",
+            "income or cost line",
+            "measurement basis",
+            "region",
+            "period",
+        ),
+    ),
+)
+
 #: Every registered skill, in declaration order. Later batches append their
 #: own tuple here.
 ALL_SKILLS: tuple[DomainSkill, ...] = (
@@ -1950,4 +2567,6 @@ ALL_SKILLS: tuple[DomainSkill, ...] = (
     + HEALTHCARE_SKILLS
     + ENERGY_SKILLS
     + RISK_AUDIT_SKILLS
+    + LEGAL_SKILLS
+    + REAL_ESTATE_SKILLS
 )

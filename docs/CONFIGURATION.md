@@ -601,10 +601,11 @@ eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply
 Chain / Procurement & Logistics, Manufacturing & Operations, Customer
 Service & Support, Project & Portfolio Management, IT Operations &
 Service Management, Healthcare & Life Sciences, Energy, Utilities &
-Sustainability and Risk, Audit & Controls** — 80 skills across 15
-governance domains, since Sales and Marketing share `SALES_MARKETING`.
-The other 3 governance domains have none declared — a skill is added
-when its prompt arrives, never in anticipation.
+Sustainability, Risk, Audit & Controls and Legal, Secretarial &
+Governance** — 85 skills across 16 governance domains, since Sales and
+Marketing share `SALES_MARKETING`. The remaining 2 (`REAL_ESTATE`,
+`EXECUTIVE`) have none declared — a skill is added when its prompt
+arrives, never in anticipation.
 
 Guidance for a domain automatically carries that domain's prohibited
 actions, derived from `governance/domains.py`. HR, for example, prohibits

@@ -9,7 +9,7 @@ recommended in a business domain is
 [`../DATA_PRIVACY_GOVERNANCE_ENGINE.md`](../DATA_PRIVACY_GOVERNANCE_ENGINE.md),
 and a skill cannot change any of it.
 
-**Date:** 2026-10-16. **Batches delivered:** 16 — Sales, MIS / Management Reporting, Marketing, HR, eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply Chain / Procurement & Logistics, Manufacturing & Operations, Customer Service & Support, Project & Portfolio Management, IT Operations & Service Management, Healthcare & Life Sciences, Energy, Utilities & Sustainability, Risk, Audit & Controls (across 15 of 18 governance domains).
+**Date:** 2026-10-16. **Batches delivered:** 17 — Sales, MIS / Management Reporting, Marketing, HR, eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply Chain / Procurement & Logistics, Manufacturing & Operations, Customer Service & Support, Project & Portfolio Management, IT Operations & Service Management, Healthcare & Life Sciences, Energy, Utilities & Sustainability, Risk, Audit & Controls, Legal, Secretarial & Governance (across 16 of 18 governance domains).
 
 ---
 
@@ -124,7 +124,7 @@ the two distinguishable where it matters (`sales.*` vs a future
 
 `registry.covered_domains()` answers "which of the eighteen are actually
 covered" from the catalog itself, so no document can claim coverage the
-code does not have. **Today: Sales, MIS, Marketing, HR, eCommerce, Training / L&D, Finance, BFSI, Supply Chain, Manufacturing, Customer Service, Project, IT Operations, Healthcare, Energy and Risk & Audit — 80 skills across 15 governance domains.**
+code does not have. **Today: Sales, MIS, Marketing, HR, eCommerce, Training / L&D, Finance, BFSI, Supply Chain, Manufacturing, Customer Service, Project, IT Operations, Healthcare, Energy, Risk & Audit and Legal — 85 skills across 16 governance domains.**
 
 A test asserts `covered_domains()` equals exactly the delivered batches, so
 a new domain fails it until this document is updated in the same change —
@@ -177,7 +177,9 @@ caller text, no retrieved document, no database value, no model output.
 ## 7. Mutation evidence
 
 Each applied to the live catalog or to live code, then reverted. Clean:
-`572 passed` (16 batches). Counts grow with the catalog, which is the point —
+`572 passed` (16 batches). **Batch 18's seven mutations are listed in §22
+instead**, measured against its own `662 passed` baseline — appending them
+here would mix two baselines in one column. Counts grow with the catalog, which is the point —
 a guard that covered one batch would not stay meaningful as domains land.
 Every figure below was re-measured at batch 16; none is carried forward, and
 the harness asserts that each mutation actually applied, so a replacement
@@ -1286,7 +1288,7 @@ a ratio across two grains is a new metric rather than a conversion, so
 the denominator's source and grain have to be named.
 
 This is the first batch in which `cross_domain_allowed` mattered at all,
-which is why §21 now says to read it.
+which is why §23 now says to read it.
 
 ### The provenance series reaches a number nobody measured
 
@@ -1589,7 +1591,432 @@ fails, this section is what should be rewritten.
 
 ---
 
-## 21. Adding the next batch
+## 21. Batch 17 (Legal): when the prohibited output is the question
+
+Legal, Secretarial & Governance is the sixteenth covered governance
+domain. `policy_for(LEGAL)` declares three `ProhibitedAction`s, and they
+are a **strict superset of batch 16's**:
+
+| Prohibition | Also declared by |
+|---|---|
+| `liability_determination` | `RISK_AUDIT` (§20) |
+| `unsupported_allegation` | `HR`, `BFSI`, `RISK_AUDIT` |
+| `legal_conclusion_or_advice` | **nobody else** |
+
+§10 recorded the first strict *subset* (Training inside HR). This is the
+first strict superset, and it lands one batch after the set it contains,
+which is why §20 and this section read as a pair.
+
+### The milestone this closes
+
+`legal_conclusion_or_advice` was the last of the fourteen
+`ProhibitedAction`s that **no covered domain declared**. Batch 16 took
+`liability_determination`; this one takes the last. Every prohibition in
+the enum is now derived into at least one registered domain, so §9's
+derivation is exercised across the whole enum rather than a subset of it.
+
+`test_every_prohibited_action_is_now_derived_by_a_covered_domain` asserts
+it twice over: that the union of covered domains' prohibition sets equals
+`ALL_PROHIBITED_ACTIONS`, and that each one actually appears in a composed
+prompt — not merely in a policy. If a new `ProhibitedAction` is added to
+the enum this fails, and the right fix is a batch for whichever domain
+declares it, not deleting the assertion.
+
+### The difficulty is the overlap, not the count
+
+In §20 the subject matter was a recorded assertion. Here the prohibited
+output **is the natural question**:
+
+- *Are we compliant?* → a conclusion in law
+- *Will we win this case?* → a conclusion in law
+- *Is this clause enforceable?* → a conclusion in law
+- *What is our exposure?* → a conclusion in law
+
+A skill that only refused would answer nothing, in the one domain where
+almost every question lands there. That is §12's lesson at its sharpest —
+a refusal without an alternative is not a skill
+([`CLAUDE.md`](../../CLAUDE.md) §4.2) — so every focus text pairs the
+refusal with the narrower question the data can actually answer:
+
+| Skill | Will not say | Answers instead |
+|---|---|---|
+| Contract | whether a clause is enforceable | what the record holds, in which field, as of when |
+| Matter | how a matter will end, or the merits | counts, types, stages and spend |
+| Compliance | whether the organisation is compliant | how much of the register is attested, by whom, as of when |
+| Board & secretarial | how well a director served | activity by body, committee and entity |
+| Governance scorecard | whether governance is adequate or meets a code | the components beside the total |
+
+`test_every_skill_redirects_rather_than_only_refusing` asserts both halves
+for all five, so a future edit cannot quietly drop the redirect and leave
+a refusal behind.
+
+### Two measured findings, both of which contradicted the first draft
+
+§23's checklist step — measure a governance claim before writing it down —
+was added by batch 16 after it published a claim the code did not support.
+It earned its place twice here.
+
+**One: the domain's two declared categories behave oppositely.** The
+first draft assumed both would be inert, as batch 16 found `AUDIT` to be.
+They are not:
+
+| Declared category | Classifier rule | Level | Effect at the row level |
+|---|---|---|---|
+| `LEGAL` | `legal_privileged` | **`HIGHLY_SENSITIVE`** (40) | **Live** — masked without `VIEW_RESTRICTED_COLUMNS`, *and* trips the `export_row_limit` of 50 for every caller including an admin |
+| `CONTRACT` | `contract_terms` | `CONFIDENTIAL` (20) | **Inert** — below the `SENSITIVE` threshold every row-level control keys on |
+
+Measured: a 60-row `(matter_id, litigation_status)` result returns
+`masked_classified_columns:litigation_status` plus `export_limited:10` at
+50 rows for a viewer, and `export_limited:10` at 50 rows for an admin. A
+60-row `(contract_id, contract_value)` result returns untouched, both
+roles.
+
+So this is the first covered domain where a declared restriction is
+genuinely load-bearing at the row level — and the consequence is
+asymmetric *within* one domain. The matter skill therefore carries the
+truncation clause and the contract skill deliberately does not:
+`test_only_the_matter_skill_states_the_truncation_consequence` asserts the
+absence as well as the presence, because a guard for a control that does
+not fire there would be noise, and §4.8's one-owner rule cuts both ways.
+
+**Two: a declared `minimum_group_size=0` is not a real zero.** This
+package had been wrong about it in three places.
+
+`governance.domains.minimum_group_size_for` is:
+
+```python
+return policy.minimum_group_size if policy.minimum_group_size else configured_default
+```
+
+A declared `0` is falsy, so it is treated as *unset* and the operator's
+`GOVERNANCE_MIN_GROUP_SIZE` applies — and that setting defaults to **5**.
+The function's own docstring says the opposite: "A domain declaring `0`
+means 'no individuals to protect here' and is honored as a real zero, not
+treated as unset." **The docstring and the implementation contradict each
+other, in `governance/`.** That is reported rather than fixed from this
+package: changing it would alter suppression behaviour for the six domains
+that declare `0`, which needs its own change and its own tests
+([`CLAUDE.md`](../../CLAUDE.md) §4.7).
+
+What this package owed was to stop repeating the wrong reading. Three
+comments in `catalog.py` — on PROJECT, IT Operations and ENERGY — said a
+declared zero meant no small-group suppression. All three are corrected in
+place, each saying what was measured rather than quietly dropping the
+claim ([`CLAUDE.md`](../../CLAUDE.md) §6.4).
+`test_a_declared_zero_group_size_is_not_a_real_zero` pins the behaviour,
+and is written so that **if `governance/` is later fixed to honour the
+zero, the test fails and those comments become true again** — which is the
+right way round.
+
+The narrower claim that does stand is why the scorecard skill carries its
+own guard: suppression only reaches a measure classified `SENSITIVE` or
+above, and a board-composition count is an ordinary integer. Measured,
+`(director_category, director_count)` with a single-director category is
+returned intact at k=5. A board is about ten people, so a one-person cell
+describes an identifiable person and nothing deterministic will hide it.
+
+### Traps read off the subject matter
+
+- **A contract value is a ceiling.** A maximum or not-to-exceed figure
+  authorises; it does not commit. Summed as revenue or cost it is the
+  domain's most common arithmetic error, and a total across contracts of
+  different terms is not comparable without the term or an annualised
+  value.
+- **An expiry date is not the date that governs.** An auto-renewing
+  contract does not expire, so the notice deadline is the real deadline —
+  and effective, signature and commencement are three different dates.
+- **Clause coverage reports what was extracted.** An untagged clause reads
+  as an absent one: batch 9's "a missing row is not a zero" again, reused
+  rather than rediscovered, as is the un-normalised counterparty name that
+  splits one party across rows and understates concentration.
+- **A reserve is an estimate that looks like money.** It is set under a
+  policy, so a movement can be a re-estimation rather than an event, and
+  it is neither a prediction of loss nor an admission. Outcome codes are
+  not a win rate: a settlement is not a defeat and a dismissal may be
+  procedural.
+- **Matter data lags twice.** Ageing runs from when the legal team learned
+  of a matter, not when the events happened, so it measures the process;
+  and outside-counsel invoices arrive late, so recent spend understates.
+  Same shape as §20's discovery lag, two different causes in one skill.
+- **A completion rate is not compliance.** It counts attestations
+  recorded, which is evidence a process ran. The denominator is whoever
+  was scoped in, so anyone outside the scope reads as attested; and an
+  approved exception is a permitted deviation, never to be added to
+  failures.
+- **Attendance is presence, not participation**, and a proxy is a
+  different fact. Quorum is defined per body, so a meeting can be quorate
+  with few present; filing timeliness across jurisdictions compares
+  different statutory clocks; and the entity register holds dormant and
+  struck-off entities that inflate any count.
+- **A scorecard total moves with its weighting.** It is a composite of
+  indicators someone selected, so the components belong beside the total,
+  with the framework and version named. Independence is a definition that
+  differs by code; board size and committee count describe form, not
+  function; a benchmark needs its peer set named.
+
+### The guard that is this batch's own work
+
+Privilege. Nothing derived covers it: the three prohibitions are about
+*conclusions*, while privilege is about *content*. The result gate
+protects a column classified `legal`, but not a free-text summary the
+model might compose from one, so the matter skill states it directly —
+report counts, types, stages and spend, never the substance of a matter or
+the strategy in it. `test_the_privilege_guard_is_this_batchs_own_work`
+asserts both the clause and that no `ProhibitedAction` mentions privilege.
+
+### Mutations
+
+Full figures in §7. The two worth naming:
+
+- **Declaring the batch under `RISK_AUDIT`** is the copy-paste this
+  domain invites, because that domain's prohibitions are a subset of this
+  one's. It fails **10** tests, and the list was read rather than
+  predicted — a first draft of this paragraph claimed the derived block
+  was not involved, which the failure list disproved. Two of the three
+  prohibitions survive the move, so the block does not vanish; it loses
+  exactly `legal_conclusion_or_advice`, and that is enough to fail both
+  the three-prohibition assertion and the milestone one. The rest are
+  coverage, the two registration assertions, the prompt-domain count,
+  the redirect assertion, §20's "does not derive a prohibition it does
+  not have" (it now does), and §20's own non-vacuity guard
+  `len(skills) == 5`, which fires because the two batches collide in one
+  governance domain. That makes it a fifth distinct misdeclaration shape
+  after §16's, §17's, §18's and §19's: the first where the moved batch
+  lands on a *subset* of its own prohibitions, so the block is degraded
+  rather than emptied or grown.
+- **Making `minimum_group_size_for` honour a declared zero** is the
+  second mutation in this series applied to `governance/` rather than to
+  `domain_skills/`. It fails the pin above, which is the point: the
+  contradiction is recorded as a *measured current behaviour*, not as an
+  opinion about which side is right.
+
+---
+
+## 22. Batch 18 (Real Estate & Facilities): when the asset is the identifier
+
+The first covered domain whose subject is a **building** rather than a
+person, a process or a financial record — and the domain where that turns
+out to decide which controls fire and which do not.
+
+`policy_for(REAL_ESTATE)` declares no `ProhibitedAction`, so this is the
+seventh zero-prohibition domain and the shared contract's "rank top and
+bottom performers" invitation reaches it unqualified. Unlike batch 15's
+ENERGY, the policy is **not** field-identical to any other domain's: the
+personal baseline plus `CONTRACT`, a declared `minimum_group_size` of 5,
+and an `export_row_limit` of 500. Nothing else in the registry matches that
+combination, so none of batch 15's "framing is the only differentiator"
+argument transfers.
+
+### Four findings, measured before the focus texts were written
+
+§23's checklist steps 9 and 10 exist because two batches running published
+a claim that was true of the policy and false of the pipeline. All four
+below were measured with `classify_field` and `govern_result_for_domain`,
+and three of them are the opposite of the tidy story.
+
+**1. A property's address is classified as personal data.**
+`classify_field("properties", "property_address")` returns
+`DataCategory.PII` at `SENSITIVE` with `MaskingStrategy.MASK`. That is not
+a defect: `governance/classification.py`'s `address` rule is documented as
+deliberately unbounded — it has to be, to catch `StreetAddress` and
+`postal_code` alike — and it cannot tell a building's location from
+somebody's home. Failing in that direction is correct.
+
+What is new is the consequence. In every other covered domain an address is
+incidental to the question; here it **is** the asset's own identifier.
+Measured: 60 rows of `(property_address, occupancy_rate)` come back with
+every address `[restricted]` for a caller who may not see it — so every row
+now carries the same label and the rows are indistinguishable — and in full
+for an admin. `property_id`, `property_name`, `city` and
+`gross_floor_area` are unrestricted, so the guard the portfolio skill
+carries is actionable rather than a dead end: label and group by
+identifier or name, never read two masked rows as one property, and never
+report a masked value as a missing one.
+
+**2. That same column is the only thing that opens the export ceiling.**
+`result_policy._carries_restricted_data` engages the ceiling only when a
+column classifies at `SENSITIVE` *and* falls in a category the domain
+restricts — deliberately, because over-blocking ordinary aggregates is its
+own failure mode. Measured:
+
+| Result | Viewer | Admin |
+|---|---|---|
+| 600 × `(property_address, occupancy_rate)` | masked, `export_limited:100`, 500 rows | `export_limited:100`, 500 rows |
+| 600 × `(property_id, occupancy_rate)` | untouched, 600 rows | untouched, 600 rows |
+| 600 × `(work_order_id, repair_cost)` | untouched, 600 rows | untouched, 600 rows |
+
+So the declared 500 is real but narrow: selecting the address is what
+truncates a portfolio listing, and nothing else a property analysis
+naturally selects does. It applies to an admin too, because holding the
+permission means a value may be seen, not extracted in bulk. Only the
+portfolio skill carries the truncation clause — a guard for a control that
+does not fire is noise, and [`CLAUDE.md`](../../CLAUDE.md) §4.8's
+one-owner rule cuts both ways. Batch 17 made the same split between its
+matter and contract skills.
+
+**3. `CONTRACT`, the domain's one non-baseline category, is inert.**
+`classify_field("leases", "lease_amount")` is `CONTRACT` at
+`CONFIDENTIAL`, one level below the threshold every row-level control keys
+on, so 600 rows of `(lease_id, lease_amount)` are returned untouched for a
+viewer and an admin alike. That is the third time in the series — batch 16
+found `AUDIT` inert and batch 17 found `CONTRACT` inert beside a live
+`LEGAL` — but the **first time it is the domain's entire declared addition
+to the baseline**. Every control that actually fires in this domain comes
+from the personal baseline [`CLAUDE.md`](../../CLAUDE.md) §5.8 unions into
+every policy, not from anything this policy declares.
+
+**4. Small-grain occupancy is not suppressed.** `minimum_group_size=5` is
+declared truthy here, so unlike batch 17's LEGAL it is a real 5 whatever
+`GOVERNANCE_MIN_GROUP_SIZE` says — the two cases are pinned as a pair so
+they cannot drift apart. It still does not reach this subject:
+`suppression._is_sensitive_measure` keys on the **measure's**
+classification, and an occupant count is an ordinary integer. Measured:
+`(floor, occupant_count)` with a one-occupant floor is returned intact at
+k=5 for a viewer and an admin. Suppression is not broken — add
+`employee_name` to the same result and it fires — but occupancy is derived
+from badge, booking and sensor records about identifiable people, so a
+floor, a neighbourhood or a small team is not an aggregate and nothing
+deterministic will hide it. That makes it the sharpest guard in the batch,
+and the occupancy skill carries it: report at a grain where no cell can
+stand for a single person, give the count beside every percentage, and
+never describe when a named person was present.
+
+### Where this batch's own work is
+
+Two columns a real-estate schema certainly holds are not classified at all.
+`classify_field` returns `DataCategory.NONE` at `PUBLIC` for both
+`tenant_name` and `technician_name`, because the `person_name` rule matches
+an enumerated list of prefixes — `employee_`, `customer_`, `patient_`,
+`contact_`, `first_`, `last_` and so on — and neither is among them. The
+rule is not broken: `employee_name` and `customer_name` classify as PII, so
+this is a gap in the list, which the test asserts in both directions.
+
+A residential tenant and a maintenance engineer are both identifiable
+people, so the lease and maintenance skills carry a counterparty guard and
+an assignee guard that **no deterministic control backs**. Measured:
+`(tenant_name, annual_rent)` is returned in full to a viewer.
+
+This is reported, not fixed from here. An operator's explicit entry in
+`config/sensitive_columns.yaml` is the supported route and always wins, and
+editing `governance/classification.py` is a governance change rather than a
+skill one ([`CLAUDE.md`](../../CLAUDE.md) §4.7) — this package has twice
+now recorded a contradiction in `governance/` rather than resolving it from
+the outside (batch 17 did the same for `minimum_group_size_for`). The
+measured behaviour is pinned, so the day the gap closes the test fails and
+the two guards become redundant, which is the right way round.
+
+### The denominator question, with one owner
+
+`cross_domain_allowed` is empty in both directions, and it matters here the
+way it did for batch 15: cost or occupancy per head takes its denominator
+from HR, and cost per unit of output takes one from FINANCE or
+MANUFACTURING. `governance/request_policy.py` owns whether such a join may
+happen and this package must not restate it (§3) — only the analytical half
+belongs here, and it belongs to **one** skill rather than four. It sits in
+`real_estate.financial`, where ratios across grains actually appear, and
+the other four are asserted not to repeat it. Occupancy's own denominators
+— area, desks, seats — are in-domain, which is why that skill names those
+instead.
+
+### Traps read off the subject matter
+
+| Skill | The trap that is its own |
+|---|---|
+| Portfolio | **Area is the denominator everything divides by and it has several definitions** — gross, net lettable, usable, rentable with a common-area factor — so a per-square-metre figure is undefined until the basis is named. A count depends on what someone decided counts as one property; owned and leased are different exposures; the portfolio is a stock and not a flow |
+| Occupancy | **Two unrelated measures share the word**: leased share and physical utilisation. A building can be fully let and half used. Utilisation is inferred from an instrument counting a proxy — a badge records an entry, a booking an intention, a network association a device — so an uninstrumented floor reads as empty rather than unknown |
+| Lease | **Rent is not one number**: headline against effective, after incentives. The date that governs the expiry profile is rarely the end date, because a break, a renewal option or a holdover each change when space returns. A weighted average unexpired term is four numbers depending on the weighting and the basis |
+| Facilities maintenance | **A work-order count measures how much was raised, not how much broke** — a site with a responsive helpdesk looks worse than one where nothing is reported. Planned and reactive work are different populations. The age of open orders measures only the jobs nobody closed |
+| Property financial | **A valuation is an opinion at a date produced by a method**, and an income-based one moves with its yield assumption as much as with the income, so it is never a price that could be realised. A gross service charge is not the owner's cost, so cost per occupied area moves with occupancy rather than efficiency |
+
+**Three traps are reused rather than rediscovered**, and are named as such
+so the series does not look like five new insights where it has three:
+
+- Batch 16's "counted only where somebody looked" reappears as a reactive
+  work order. The shape is identical — a number that exists only where
+  somebody reported — in a subject where the reporter is a building
+  occupant rather than an auditor.
+- Batch 11's "a record is not its contents" reappears as a closure: a work
+  order is closed when someone marks it closed, so a repeat order on the
+  same asset is the better evidence that a fix held.
+- Batch 10's average-of-ratios error reappears as a portfolio yield, which
+  must be recomposed from the income and value totals. Batch 15 reused the
+  same error for intensity, so this is its third appearance; the catalog
+  records it rather than presenting it as new.
+
+Batch 13's "never average percentiles" also carries over directly into
+maintenance response times, and batch 10's rule that **a skill must not
+define a metric** is tested hardest here: net operating income, yield and
+weighted average unexpired term are all named metrics with approved
+definitions in `semantic/`, so the financial skill defers to the approved
+definition and names it rather than composing one. A test asserts no focus
+text in this domain contains `=`, `/` or "divided by".
+
+### Mutations
+
+Measured against this batch's own baseline of **662 passed** for
+`tests/test_domain_skills.py`. The table in §7 carries its figures as of
+batch 16 against a 572-test suite and was not re-measured here, so these
+are listed separately rather than appended to numbers they would not match.
+
+| Mutation | Result |
+|---|---|
+| batch declared under `PROJECT` (the copy-paste this domain invites) | **10 failed**, 651 passed |
+| occupancy skill loses its individual-level guard | **1 failed**, 661 passed |
+| portfolio skill loses the masked-address guard | **1 failed**, 661 passed |
+| portfolio skill loses the export-ceiling clause | **1 failed**, 661 passed |
+| the cross-domain denominator clause is duplicated into the occupancy skill (a second owner) | **1 failed**, 661 passed |
+| `tenant_name`/`technician_name` added to the `person_name` rule in `governance/classification.py` (the reported gap closes) | **1 failed**, 661 passed |
+| the export ceiling stops checking the category in `governance/result_policy.py` (fires on every result) | **4 failed**, 658 passed |
+
+Two are worth naming.
+
+**Declaring the batch under `PROJECT`** is the copy-paste this domain
+invites: PROJECT also prohibits nothing, also restricts `CONTRACT`, and
+also carries a 500-row ceiling. It fails **10**, and the list was read
+rather than predicted. It is the **sixth distinct misdeclaration shape**
+after §16's, §17's, §18's, §19's and §21's, and the first where the target
+domain becomes *ambiguous*: PROJECT would then hold two prompt-domains, so
+`composer.select_skill` refuses to guess a default and `guidance_for`
+returns `None` — which is why
+`test_a_domain_with_no_prohibitions_appends_nothing[project]` and
+`TestProjectCarriesItsOwnGuards`'s premise test fail alongside this
+batch's. Earlier shapes emptied, grew or degraded the derived block; this
+one removes the composed block altogether for the domain that absorbed the
+batch. It also fails §17's "the ranking invitation is narrowed here"
+assertion, for the same reason.
+
+**Removing the category check from `_carries_restricted_data`** is the
+third mutation in this series applied to `governance/` rather than to
+`domain_skills/`. It fails four: this batch's two measured assertions, and
+batch 16's and batch 17's inertness findings. That cross-batch spread is
+the point — three batches have now measured the same threshold from
+different sides, and a single change to the resolver fails all of them,
+which is what makes the "declared is not reached" claim a pinned property
+rather than three separate observations.
+
+### The series is complete
+
+Ninety skills across eighteen prompt-domains and seventeen governance
+domains, five skills each except `SALES_MARKETING`, which holds two
+prompt-domains and so holds ten. Ninety is the figure
+[`domain_skills/types.py`](../../domain_skills/types.py) has used as its
+example since batch 1, and it is now literal rather than illustrative.
+
+`EXECUTIVE` is the only `BusinessDomain` member without skills, and it is
+deliberate rather than pending: its one supplied prompt, "Executive KPI
+Intelligence", is registered as `mis.executive_kpi` because that is the
+domain the batch was supplied under, and the choice is governance-neutral.
+That neutrality is now measured rather than claimed in a comment — the test
+compares `effective_restricted_categories`, `prohibited_actions` and
+`minimum_group_size` for both policies — so "seventeen of eighteen" cannot
+be read as a gap somebody forgot.
+
+What is still absent is the wiring, unchanged by this batch and deliberate
+for the reason §24 gives.
+
+---
+
+## 23. Adding the next batch
 
 1. Add the **prompt-domain's** scope string once in `catalog.py`. If the
    batch shares a governance domain with an existing one (as Marketing
@@ -1623,7 +2050,18 @@ fails, this section is what should be rewritten.
    level below the threshold every row-level control uses (§20). A policy
    field being *declared* is not the same as it being *reached*. If the
    claim survives measurement, pin it with a test; if it does not, say so
-   rather than quietly dropping it.
+   rather than quietly dropping it. Batch 17 needed the step twice (§21),
+   once for the same threshold question in the other direction and once
+   for `minimum_group_size`, where a declared `0` turned out not to be a
+   real zero and three earlier comments in this package had said it was.
+10. **A declared policy field is not the behaviour.** Read the resolver,
+   not just the registry: `minimum_group_size_for` falls back to the
+   operator default when a domain declares `0`, and
+   `result_policy._carries_restricted_data` and
+   `_classification_masks` both key on the *classification level* of the
+   column rather than on the domain's declared category list. Two
+   batches running have found a claim that was true of the policy and
+   false of the pipeline.
 
 No other file changes. Validation runs at import, so a malformed skill
 fails the process rather than producing a degraded prompt on some later
@@ -1631,7 +2069,7 @@ request.
 
 ---
 
-## 22. Status
+## 24. Status
 
 | Item | State |
 |---|---|
@@ -1652,7 +2090,9 @@ request.
 | Healthcare & Life Sciences skills (5 of 5 supplied) | **Registered** |
 | Energy, Utilities & Sustainability skills (5 of 5 supplied) | **Registered** |
 | Risk, Audit & Controls skills (5 of 5 supplied) | **Registered** |
-| Other 3 domains | **Not registered** — a skill is added when its prompt arrives, never in anticipation |
+| Legal, Secretarial & Governance skills (5 of 5 supplied) | **Registered** |
+| Real Estate & Facilities skills (5 of 5 supplied) | **Registered** |
+| `EXECUTIVE` | **No skills, deliberately** — its one supplied prompt is registered as `mis.executive_kpi`; the two policies are measured identical in §22 |
 | Wiring into a live analysis path | **Not done** — see below |
 
 **Deliberately not wired yet.** The composer produces guidance, and nothing
