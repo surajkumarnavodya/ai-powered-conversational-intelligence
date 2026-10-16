@@ -1,7 +1,7 @@
 # Domain analytics skills
 
 **Scope.** The design of `domain_skills/`: what a skill is, the boundaries
-it must respect, and how the next 20 are added. This document owns the
+it must respect, and how the next 15 are added. This document owns the
 **domain-skill contract**.
 
 It does not own domain *policy* — what may be asked, returned or
@@ -9,7 +9,7 @@ recommended in a business domain is
 [`../DATA_PRIVACY_GOVERNANCE_ENGINE.md`](../DATA_PRIVACY_GOVERNANCE_ENGINE.md),
 and a skill cannot change any of it.
 
-**Date:** 2026-10-16. **Batches delivered:** 13 — Sales, MIS / Management Reporting, Marketing, HR, eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply Chain / Procurement & Logistics, Manufacturing & Operations, Customer Service & Support, Project & Portfolio Management, IT Operations & Service Management, Healthcare & Life Sciences (across 13 of 18 governance domains).
+**Date:** 2026-10-16. **Batches delivered:** 15 — Sales, MIS / Management Reporting, Marketing, HR, eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply Chain / Procurement & Logistics, Manufacturing & Operations, Customer Service & Support, Project & Portfolio Management, IT Operations & Service Management, Healthcare & Life Sciences, Energy, Utilities & Sustainability (across 14 of 18 governance domains).
 
 ---
 
@@ -113,7 +113,7 @@ the two distinguishable where it matters (`sales.*` vs a future
 
 `registry.covered_domains()` answers "which of the eighteen are actually
 covered" from the catalog itself, so no document can claim coverage the
-code does not have. **Today: Sales, MIS, Marketing, HR, eCommerce, Training / L&D, Finance, BFSI, Supply Chain, Manufacturing, Customer Service, Project, IT Operations and Healthcare — 70 skills across 13 governance domains.**
+code does not have. **Today: Sales, MIS, Marketing, HR, eCommerce, Training / L&D, Finance, BFSI, Supply Chain, Manufacturing, Customer Service, Project, IT Operations, Healthcare and Energy — 75 skills across 14 governance domains.**
 
 A test asserts `covered_domains()` equals exactly the delivered batches, so
 a new domain fails it until this document is updated in the same change —
@@ -165,52 +165,60 @@ caller text, no retrieved document, no database value, no model output.
 
 ## 7. Mutation evidence
 
-Each applied to live code, then reverted. Clean: `490 passed` (14 batches).
+Each applied to live code, then reverted. Clean: `529 passed` (15 batches).
 Counts grow with the catalog, which is the point — a guard that covered one
 batch would not stay meaningful as domains land. Every figure below was
-re-measured at batch 14; none is carried forward.
+re-measured at batch 15; none is carried forward.
 
 | Mutation | Result |
 |---|---|
-| selection stops filtering by domain — `select_skill` honours a slug registered in *any* domain (cross-domain leak) | **3 failed**, 487 passed |
-| no longer fails open when the flag is off | **1 failed**, 489 passed |
-| contract gains a format slot | **2 failed**, 488 passed |
-| `GENERAL` (unknown domain) gets guessed framing | **1 failed**, 489 passed |
-| guesses a default across prompt-domains (campaign → Revenue framing) | **2 failed**, 488 passed |
-| `group` stops being derived from the slug (returns a constant) | **83 failed**, 394 passed, 13 no longer collected |
-| prohibitions block dropped (HR invited to rank individuals) | **12 failed**, 478 passed |
-| prohibitions hard-coded to one domain instead of derived (`policy_for(HR)`) | **20 failed**, 470 passed |
-| ranking invitation becomes unqualified again | **1 failed**, 489 passed |
-| BFSI lending skill loses its redirect (refusal with no alternative) | **1 failed**, 489 passed |
-| BFSI skills declared under `FINANCE` (prohibitions silently halve) | **6 failed**, 484 passed |
-| supply-chain supplier skill loses its accusation guard | **1 failed**, 489 passed |
-| supply-chain logistics skill loses its individual-level guard | **1 failed**, 489 passed |
-| supply-chain skills declared under `MANUFACTURING` (its listed neighbour) | **10 failed**, 479 passed, 1 no longer collected (was 4 failed at batch 9 — see §13) |
-| OEE skill loses the average-of-ratios constraint | **1 failed**, 489 passed |
-| OEE skill writes out the formula (a second owner for `MetricDefinition.formula`) | **2 failed**, 488 passed |
-| manufacturing downtime skill loses its operator guard | **1 failed**, 489 passed |
-| manufacturing skills declared under `SUPPLY_CHAIN` (the reverse copy-paste) | **10 failed**, 479 passed, 1 no longer collected |
-| complaint skill loses its provenance guard (an allegation becomes a finding) | **1 failed**, 489 passed |
-| contact-centre skill loses its agent-level guard | **2 failed**, 488 passed |
-| customer-service skills declared under `SALES_MARKETING` (its listed neighbour) | **5 failed**, 484 passed, 1 no longer collected |
-| portfolio skill reports percent-complete as measured delivery (a self-assessment becomes a `DATABASE_FACT`) | **1 failed**, 489 passed |
-| risk skill reports a risk score as an outcome rather than a judgement | **1 failed**, 489 passed |
-| resource-capacity skill loses its individual-utilisation guard | **1 failed**, 489 passed |
-| project skills declared under `HR` (a misdeclaration that *adds* five prohibitions — see §16) | **8 failed**, 481 passed, 1 no longer collected |
-| incident skill loses its configuration-provenance clause (a tool reading becomes an observation) | **1 failed**, 489 passed |
-| change skill loses its linkage rule (a sequence becomes a cause) | **1 failed**, 489 passed |
-| application skill loses the average-of-percentiles constraint | **1 failed**, 489 passed |
-| incident skill loses its individual-assignee guard | **1 failed**, 489 passed |
-| a focus text *restates* the derived prohibition (a second owner for `policy_for(IT_OPERATIONS)`) | **2 failed**, 488 passed |
-| IT-ops skills declared under `PROJECT` (a misdeclaration that *drops* the one absolute prohibition — see §17) | **9 failed**, 481 passed |
-| cost skill loses the tagging-coverage trap (untagged spend read as no spend) | **1 failed**, 489 passed |
-| the supplied scope sentence is trimmed of its "never diagnose" clause (the catalog stops matching what was supplied) | **1 failed**, 489 passed |
-| journey skill accounts for an individual patient's outcome (a clinical decision in place of a cohort description) | **1 failed**, 489 passed |
-| journey skill loses the export-ceiling clause (a truncated result read as a population) | **2 failed**, 488 passed |
-| quality skill loses the suppression clause (a withheld measure read as a zero) | **2 failed**, 488 passed |
-| quality skill loses risk adjustment and its denominator (an unadjusted comparison ranks case mix) | **1 failed**, 489 passed |
-| financial skill lets charges, payments and cost stand in for one another | **1 failed**, 489 passed |
-| healthcare skills declared under `PROJECT` (drops all three prohibitions *and* the PHI restriction — see §18 on the `MIS` variant) | **9 failed**, 481 passed |
+| selection stops filtering by domain — `select_skill` honours a slug registered in *any* domain (cross-domain leak) | **3 failed**, 526 passed |
+| no longer fails open when the flag is off | **1 failed**, 528 passed |
+| contract gains a format slot | **2 failed**, 527 passed |
+| `GENERAL` (unknown domain) gets guessed framing | **1 failed**, 528 passed |
+| guesses a default across prompt-domains (campaign → Revenue framing) | **2 failed**, 527 passed |
+| `group` stops being derived from the slug (returns a constant) | **88 failed**, 427 passed, 14 no longer collected |
+| prohibitions block dropped (HR invited to rank individuals) | **12 failed**, 517 passed |
+| prohibitions hard-coded to one domain instead of derived (`policy_for(HR)`) | **23 failed**, 506 passed |
+| ranking invitation becomes unqualified again | **1 failed**, 528 passed |
+| BFSI lending skill loses its redirect (refusal with no alternative) | **1 failed**, 528 passed |
+| BFSI skills declared under `FINANCE` (prohibitions silently halve) | **6 failed**, 523 passed |
+| supply-chain supplier skill loses its accusation guard | **1 failed**, 528 passed |
+| supply-chain logistics skill loses its individual-level guard | **1 failed**, 528 passed |
+| supply-chain skills declared under `MANUFACTURING` (its listed neighbour) | **11 failed**, 517 passed, 1 no longer collected (was 4 failed at batch 9 — see §13) |
+| OEE skill loses the average-of-ratios constraint | **1 failed**, 528 passed |
+| OEE skill writes out the formula (a second owner for `MetricDefinition.formula`) | **2 failed**, 527 passed |
+| manufacturing downtime skill loses its operator guard | **1 failed**, 528 passed |
+| manufacturing skills declared under `SUPPLY_CHAIN` (the reverse copy-paste) | **11 failed**, 517 passed, 1 no longer collected |
+| complaint skill loses its provenance guard (an allegation becomes a finding) | **1 failed**, 528 passed |
+| contact-centre skill loses its agent-level guard | **2 failed**, 527 passed |
+| customer-service skills declared under `SALES_MARKETING` (its listed neighbour) | **5 failed**, 523 passed, 1 no longer collected |
+| portfolio skill reports percent-complete as measured delivery (a self-assessment becomes a `DATABASE_FACT`) | **1 failed**, 528 passed |
+| risk skill reports a risk score as an outcome rather than a judgement | **1 failed**, 528 passed |
+| resource-capacity skill loses its individual-utilisation guard | **1 failed**, 528 passed |
+| project skills declared under `HR` (a misdeclaration that *adds* five prohibitions — see §16) | **8 failed**, 520 passed, 1 no longer collected |
+| incident skill loses its configuration-provenance clause (a tool reading becomes an observation) | **1 failed**, 528 passed |
+| change skill loses its linkage rule (a sequence becomes a cause) | **1 failed**, 528 passed |
+| application skill loses the average-of-percentiles constraint | **1 failed**, 528 passed |
+| incident skill loses its individual-assignee guard | **1 failed**, 528 passed |
+| a focus text *restates* the derived prohibition (a second owner for `policy_for(IT_OPERATIONS)`) | **2 failed**, 527 passed |
+| IT-ops skills declared under `PROJECT` (a misdeclaration that *drops* the one absolute prohibition — see §17) | **9 failed**, 520 passed |
+| cost skill loses the tagging-coverage trap (untagged spend read as no spend) | **1 failed**, 528 passed |
+| the supplied scope sentence is trimmed of its "never diagnose" clause (the catalog stops matching what was supplied) | **1 failed**, 528 passed |
+| journey skill accounts for an individual patient's outcome (a clinical decision in place of a cohort description) | **1 failed**, 528 passed |
+| journey skill loses the export-ceiling clause (a truncated result read as a population) | **2 failed**, 527 passed |
+| quality skill loses the suppression clause (a withheld measure read as a zero) | **2 failed**, 527 passed |
+| quality skill loses risk adjustment and its denominator (an unadjusted comparison ranks case mix) | **1 failed**, 528 passed |
+| financial skill lets charges, payments and cost stand in for one another | **1 failed**, 528 passed |
+| healthcare skills declared under `PROJECT` (drops all three prohibitions *and* the PHI restriction — see §18 on the `MIS` variant) | **9 failed**, 520 passed |
+| consumption skill loses the missing-interval trap (an unread meter read as no consumption) | **1 failed**, 528 passed |
+| emissions skill presents a derived figure as a measured one (the factor set and its vintage go unnamed) | **1 failed**, 528 passed |
+| emissions skill treats the three scopes as additive components of one total (and loses the location/market distinction) | **1 failed**, 528 passed |
+| efficiency skill reports a counterfactual saving as a metered reduction | **1 failed**, 528 passed |
+| efficiency skill loses the cross-domain denominator clause (a ratio across two grains presented as a conversion) | **1 failed**, 528 passed |
+| sustainability skill loses the restated-baseline clause (a change of boundary read as a reduction) | **1 failed**, 528 passed |
+| sustainability skill counts a purchased certificate as energy not used | **1 failed**, 528 passed |
+| energy skills declared under `MANUFACTURING` (a misdeclaration the derived block cannot see — see §19) | **10 failed**, 518 passed, 1 no longer collected |
 
 **Notes on reading these numbers**, each found while re-measuring the table
 rather than carrying the previous figures forward. Counted in the heading
@@ -225,19 +233,22 @@ they would go stale, exactly as a count in a test name does:
   something else. Mutation 8's count likewise depends on **which** domain
   is hard-coded, so the row now names it. `policy_for(HR)` failed 7 at
   batch 8, **10** at batch 9, **12** at batch 10, **14** at batch 11,
-  **16** at batch 12, **19** at batch 13 and **20** at batch 14, because
-  the derived assertions grow with the catalog and each new covered domain
-  catches the mutation again. Batch 13 is the first time they grew from a
-  domain that *has* a prohibition rather than one that has none; batch 14
-  added only one because `HR` already prohibits
+  **16** at batch 12, **19** at batch 13, **20** at batch 14 and **23** at
+  batch 15, because the derived assertions grow with the catalog and each
+  new covered domain catches the mutation again. Batch 13 is the first time
+  they grew from a domain that *has* a prohibition rather than one that has
+  none; batch 14 added only one because `HR` already prohibits
   `protected_characteristic_inference`, so hard-coding to it still renders
-  one of healthcare's three. Either variant proves the derivation is
+  one of healthcare's three. Batch 15 added **three**, which is more than
+  any prohibition-bearing domain has contributed: ENERGY prohibits nothing,
+  so three separate assertions check that *no* block is appended for it and
+  all three fail when one is. Either variant proves the derivation is
   load-bearing; only a named one is reproducible, and only a re-measured
   one is current.
 - **Mutation 6 changes how many tests exist.** The scope-once test is
   parametrized over the distinct `group` values, so collapsing `group` to a
-  constant collapses 14 parameters to 1 and the total drops from 490 to
-  477. The 83 failures are real; the missing 13 were never collected, not
+  constant collapses 15 parameters to 1 and the total drops from 529 to
+  515. The 88 failures are real; the missing 14 were never collected, not
   silently passed.
 
 - **A misdeclaration also shrinks a parametrization, which batch 12 made
@@ -245,7 +256,7 @@ they would go stale, exactly as a count in a test name does:
   `registry.covered_domains()`, so declaring a zero-prohibition batch under
   another domain removes it from that list and
   `test_a_domain_with_no_prohibitions_appends_nothing` loses a parameter.
-  Mutations 14, 18, 21 and 25 each drop one test that way. The figures up to
+  Mutations 14, 18, 21, 25 and 47 each drop one test that way. The figures up to
   batch 11 omitted it (7 failed + 372 passed is 379, not 380, and the
   shortfall went unexplained), so the column now states it. It matters for
   the same reason as mutation 6: a test that is never collected cannot fail,
@@ -261,7 +272,9 @@ they would go stale, exactly as a count in a test name does:
   test passed while the misdeclaration it claims to catch was live. Batch
   12 added `assert len(skills) == 5` to all four. The evidence moved with
   it: mutations 14 and 18 went from 7 failures to **9**, 21 from 4 to
-  **5**, and 25 from 7 to **8**. This is the only vacuous test in this
+  **5**, and 25 from 7 to **8**. Batch 15's Energy class carries the
+  assertion from the start, which is why mutation 47 fails its premise test
+  instead of passing vacuously through it. This is the only vacuous test in this
   package that mutation testing found rather than review — and it was found
   only because §16's claim that "the premise test fails" was checked
   against the failure list instead of the total.
@@ -1191,7 +1204,150 @@ caught the same way — by reading the failure list instead of the total.
 
 ---
 
-## 19. Adding the next batch
+## 19. Batch 15 (Energy): when the policy says nothing at all
+
+Energy, Utilities & Sustainability is the sixth covered domain whose
+policy declares no `ProhibitedAction`. It is also the first where the
+policy says nothing *distinguishing* at all: `policy_for(ENERGY)` is
+**field-identical to `policy_for(MANUFACTURING)`** in everything either
+the composer or the result gate reads.
+
+| Field | `ENERGY` | `MANUFACTURING` |
+|---|---|---|
+| `restricted_categories` | `{PROPRIETARY}` | `{PROPRIETARY}` |
+| `prohibited_actions` | none | none |
+| `minimum_group_size` | 0 | 0 |
+| `export_row_limit` | 500 | 500 |
+| `aggregation_required` | False | False |
+| `audit_required` | False | False |
+| `cross_domain_allowed` | **empty** | `{SUPPLY_CHAIN}` |
+
+`test_the_policy_is_field_identical_to_manufacturings` asserts the first
+six rows, and
+`test_the_governance_derived_half_of_the_prompt_is_therefore_identical`
+asserts the consequence: strip each skill's own four lines out of its
+composed guidance and what remains is **byte-identical** between the two
+domains. Governance cannot tell an energy question from a production one,
+so everything that makes an energy analysis an energy analysis is
+framing. That is the plainest statement of this package's purpose the
+series has produced — and of its limits, since framing is an accuracy
+aid that fails open (§1).
+
+### The one field that differs runs the wrong way
+
+MANUFACTURING pre-authorizes a join with SUPPLY_CHAIN; ENERGY
+pre-authorizes nothing. Meanwhile this domain's signature measure is an
+**intensity** — consumption or emissions per unit of output, per square
+metre, per unit of revenue — and every one of those denominators lives
+in another domain.
+
+`governance/request_policy.py` owns what happens to such a request: a
+multi-domain question whose other domains fall outside the primary's
+`cross_domain_allowed` returns `REQUIRE_AUTHORIZATION` unless the caller
+holds `VIEW_RESTRICTED_COLUMNS`. **This package must not restate that**
+(§3), and no energy focus text mentions authorization or permission —
+asserted, not assumed. What belongs to the skill is the analytical half:
+a ratio across two grains is a new metric rather than a conversion, so
+the denominator's source and grain have to be named.
+
+This is the first batch in which `cross_domain_allowed` mattered at all,
+which is why §20 now says to read it.
+
+### The provenance series reaches a number nobody measured
+
+The catalog has been accumulating a series, each batch one step further
+from an observation:
+
+| Batch | What the number is | Example |
+|---|---|---|
+| 11 (Customer Service) | a record of someone else's claim | a logged complaint |
+| 12 (Project) | a self-assessment by the party being measured | percent-complete |
+| 13 (IT Operations) | an instrument reading, configured by the measured team | an alert count |
+| **15 (Energy)** | **not measured at all** | **an emissions figure** |
+
+An emissions figure is activity data scaled by a published emission
+factor that a reporter selected, so a fall can be a factor revision
+rather than a reduction. Scope 2 has two methods — location-based and
+market-based — which give different answers for the same electricity and
+are neither interchangeable nor averageable. Most of Scope 3 is a
+supplier's own claim or an estimate derived from spend, which is batch
+11's problem again, except that here it is the normal case rather than
+the exception.
+
+Nothing deterministic in this repo catches any of it, because the
+arithmetic is valid either way: the SQL is correct, the join is correct,
+the total is correct, and the number still is not an observation
+([`CLAUDE.md`](../../CLAUDE.md) §4.4). The same error appears one skill
+along as a *saving* — avoided consumption is a difference against an
+adjusted baseline, so it is a counterfactual and never a metered
+quantity.
+
+### What this domain deliberately does not carry
+
+Batches 9 to 12 each had to guard an individual, because their subjects
+were drivers, operators, agents and allocated people. This domain's
+subjects are meters, sites, accounts and scopes. A meter is not a person,
+so there is no individual to re-identify and no guard to write, and
+`test_nothing_here_carries_an_individual_level_guard` asserts that the
+absence is reasoned rather than overlooked.
+
+That is a statement about framing, not about protection. The personal
+baseline is unioned into every domain regardless, so a personal column
+returned by an energy question is still gated — which is why that test
+reads `effective_restricted_categories` and not the declared set
+([`CLAUDE.md`](../../CLAUDE.md) §5.8). What is genuinely absent is
+suppression: `minimum_group_size=0`.
+
+### Traps read off the subject matter
+
+- **Consumption is a difference between two readings**, so a reset, a
+  rollover or a meter replacement breaks the series rather than reducing
+  usage — and a missing interval is unknown consumption, not zero. Batch
+  9's "a missing row is not a zero" in a new shape.
+- **An estimated read is a placeholder** that a later true-up reverses.
+- **Demand is not energy.** A peak is an instant and cannot be summed.
+- **A billing period is not a calendar month**, so two bills are
+  comparable only as per-day rates.
+- **A blended unit cost** mixes commodity, delivery, demand and standing
+  charges with taxes and levies, so a rise in it may be a levy change
+  rather than a price change.
+- **Net metering can drive billed consumption to zero or below**, which
+  hides the gross volume and leaves a unit rate undefined — the
+  division-by-zero case the supplied Safety block names, arriving through
+  the subject matter rather than through the SQL.
+- **A restated baseline** turns a change of boundary into an apparent
+  reduction. Acquisitions and divestitures recalculate it.
+- **Intensity and absolute move independently**: intensity falls while
+  the absolute figure rises whenever the denominator grows faster.
+- **Coverage is part of the figure.** A site outside the reporting
+  boundary reads as a clean one.
+- **A purchased certificate is a contractual instrument**, never evidence
+  that less energy was used on site.
+- **The sum of project savings is not a site reduction** — two measures
+  on the same end use claim the same unit twice.
+- **An average of efficiency ratios is not the portfolio ratio** — batch
+  10's OEE lesson, reused rather than rediscovered.
+
+### Mutation 47: a misdeclaration governance cannot see
+
+Declaring the batch under `MANUFACTURING` fails **10** tests, and the
+interesting part is *which*. Not one of them is a governance assertion.
+The derived block is unchanged, because both policies prohibit nothing,
+so the whole of §9's machinery is blind to this mutation. What catches
+it is the prompt-domain machinery §8 describes: the misdeclaration
+collides two groups inside one governance domain, `select_skill` refuses
+to guess, and the registration, coverage, zero-prohibition and
+premise assertions fail.
+
+That is the mirror image of the three misdeclarations before it —
+mutation 25 made a domain *stricter*, 31 *dropped* an absolute control,
+39 dropped three prohibitions and a restricted category — and it is the
+one that most needed the batch-3 correction to exist, because governance
+contributes nothing to catching it.
+
+---
+
+## 20. Adding the next batch
 
 1. Add the **prompt-domain's** scope string once in `catalog.py`. If the
    batch shares a governance domain with an existing one (as Marketing
@@ -1212,6 +1368,12 @@ caught the same way — by reading the failure list instead of the total.
    domain prohibits something the shared contract invites, the constraint
    block handles it automatically — but a focus text that contradicts the
    policy is still the author's mistake to avoid.
+8. **Read `cross_domain_allowed` too.** Batch 15 is where it first
+   mattered: a domain whose signature measure needs a denominator from
+   another domain is one whose skills should name that denominator's
+   source and grain. The request gate decides whether the join is
+   authorized, and a skill must not restate that (§3) — only the
+   analytical half belongs here.
 
 No other file changes. Validation runs at import, so a malformed skill
 fails the process rather than producing a degraded prompt on some later
@@ -1219,7 +1381,7 @@ request.
 
 ---
 
-## 20. Status
+## 21. Status
 
 | Item | State |
 |---|---|
@@ -1238,7 +1400,8 @@ request.
 | Project & Portfolio Management skills (5 of 5 supplied) | **Registered** |
 | IT Operations & Service Management skills (5 of 5 supplied) | **Registered** |
 | Healthcare & Life Sciences skills (5 of 5 supplied) | **Registered** |
-| Other 5 domains | **Not registered** — a skill is added when its prompt arrives, never in anticipation |
+| Energy, Utilities & Sustainability skills (5 of 5 supplied) | **Registered** |
+| Other 4 domains | **Not registered** — a skill is added when its prompt arrives, never in anticipation |
 | Wiring into a live analysis path | **Not done** — see below |
 
 **Deliberately not wired yet.** The composer produces guidance, and nothing

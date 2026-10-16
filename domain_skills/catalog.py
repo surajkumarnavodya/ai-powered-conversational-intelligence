@@ -9,8 +9,8 @@ Batches so far: Sales, MIS / Management Reporting, Marketing, HR,
 eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply
 Chain / Procurement & Logistics, Manufacturing & Operations, Customer
 Service & Support, Project & Portfolio Management, IT Operations &
-Service Management, Healthcare & Life Sciences. Every batch has arrived
-with an identical
+Service Management, Healthcare & Life Sciences, Energy, Utilities &
+Sustainability. Every batch has arrived with an identical
 body and an identical "Domain scope" sentence across its five prompts,
 differing only in the heading — so each *prompt-domain* writes its scope
 once (`_SALES_SCOPE`, `_MIS_SCOPE`, `_MARKETING_SCOPE`) and each skill
@@ -1494,6 +1494,174 @@ HEALTHCARE_SKILLS: tuple[DomainSkill, ...] = (
     ),
 )
 
+#: The supplied Energy prompts' "Domain scope:" sentence, verbatim.
+_ENERGY_SCOPE = "Analyze energy, utilities, sustainability, emissions and efficiency."
+
+#: The sixth covered domain whose policy declares no `ProhibitedAction`.
+#: More than that: `policy_for(ENERGY)` is **field-identical to
+#: `policy_for(MANUFACTURING)`** -- the same single declared restriction
+#: (`DataCategory.PROPRIETARY`), the same `minimum_group_size=0`, the same
+#: `export_row_limit=500`, no prohibitions, no aggregation requirement and
+#: no audit requirement. Governance therefore says nothing that
+#: distinguishes an energy question from a production one, which makes
+#: this batch the clearest case in the series of the thing this package
+#: exists for: everything that makes an energy analysis an energy analysis
+#: is framing, and framing is the only layer that can carry it.
+#:
+#: The one field where the two policies differ cuts against this domain.
+#: MANUFACTURING pre-authorizes a join with SUPPLY_CHAIN and vice versa;
+#: ENERGY pre-authorizes nothing (`cross_domain_allowed` is empty), while
+#: the domain's signature measure -- intensity per unit of output, per
+#: square metre, per unit of revenue -- takes its denominator from
+#: another domain entirely. `governance/request_policy.py` is what decides
+#: whether that join needs authorization, and this package must not
+#: restate it; what belongs here is the analytical half, which the
+#: efficiency skill carries: name the denominator, its source and its
+#: grain, because a ratio across two grains is a new metric rather than a
+#: conversion.
+#:
+#: `minimum_group_size=0` is deliberate in the registry -- this domain
+#: holds no individual-level data to protect -- so nothing here is
+#: suppressed, and nothing needs an individual-level guard of the kind
+#: batches 9 to 12 carry. A meter is not a person.
+_ENERGY = BusinessDomain.ENERGY
+
+#: Declared in the supplied numeric order (01 consumption, 02 utility
+#: performance, 03 sustainability, 04 carbon and emissions, 05
+#: efficiency), so the domain default is Energy Consumption Intelligence
+#: (01).
+#:
+#: The distinguishing problem of this batch is **provenance**, continuing
+#: a series the catalog has been accumulating: batch 11 handled a record
+#: of someone else's claim, batch 12 a self-assessment by the party being
+#: measured, batch 13 an instrument reading whose value depends on how the
+#: measured team configured the instrument. Emissions go one step further
+#: -- the quantity is not measured at all. It is activity data scaled by a
+#: published emission factor that a reporter selected, and most of Scope 3
+#: is a supplier's own claim or an estimate derived from spend. A fall can
+#: be a factor revision. Presenting any of it as an observed quantity is
+#: what `CLAUDE.md` 4.4 forbids, and no deterministic control in this repo
+#: can tell the difference, because the arithmetic is valid either way.
+ENERGY_SKILLS: tuple[DomainSkill, ...] = (
+    DomainSkill(
+        slug="energy.consumption",
+        title="Energy Consumption Intelligence",
+        domain=_ENERGY,
+        scope=_ENERGY_SCOPE,
+        focus=(
+            "Consumption across sites, meters and commodities: totals, "
+            "load profile, peaks and movement against prior period or "
+            "target. Consumption is a difference between two meter "
+            "readings, so a reset, a rollover or a meter replacement "
+            "breaks the series rather than reducing usage, and a missing "
+            "interval is unknown consumption, not zero. Say whether a "
+            "read is actual or estimated, because an estimated read is a "
+            "placeholder a later true-up reverses. Demand and energy are "
+            "different quantities: a peak is an instant and must never be "
+            "summed, while energy accumulates. Normalise before comparing "
+            "periods -- degree days and occupied days account for much of "
+            "any year-on-year movement -- or say that it was not "
+            "normalised."
+        ),
+        dimensions=("site", "meter", "commodity", "tariff", "period"),
+    ),
+    DomainSkill(
+        slug="energy.utility_performance",
+        title="Utility Performance Intelligence",
+        domain=_ENERGY,
+        scope=_ENERGY_SCOPE,
+        focus=(
+            "Utility accounts, tariffs, billed cost and supply "
+            "reliability by provider and site. A billing period is not a "
+            "calendar month, so compare a per-day rate rather than two "
+            "bills covering different numbers of days. A blended unit "
+            "cost mixes commodity, delivery, demand and standing charges "
+            "with taxes and levies, so a rise in it may be a demand "
+            "charge or a levy change rather than a price change: "
+            "separate the components before attributing one. Net "
+            "metering can drive billed consumption to zero or below, "
+            "which hides the gross volume and leaves a unit rate "
+            "undefined, so report gross and net separately. A "
+            "reliability measure needs its exclusion rules stated, "
+            "because excluded major-event days are where most of the "
+            "lost supply sits."
+        ),
+        dimensions=("utility provider", "account", "commodity", "tariff component", "period"),
+    ),
+    DomainSkill(
+        slug="energy.sustainability",
+        title="Sustainability Intelligence",
+        domain=_ENERGY,
+        scope=_ENERGY_SCOPE,
+        focus=(
+            "Progress against sustainability targets: absolute and "
+            "intensity measures, coverage of the reporting boundary, and "
+            "movement against a baseline. State the baseline year and "
+            "whether it has been restated, because an acquisition or a "
+            "divestiture recalculates it and a reduction against a "
+            "restated baseline can be a change of boundary rather than "
+            "of behaviour. Report absolute and intensity together: "
+            "intensity falls while the absolute figure rises whenever the "
+            "denominator grows faster. Give the share of sites and of "
+            "activity the figure actually covers, since a site outside "
+            "the boundary reads as a clean one. A purchased certificate "
+            "is a contractual instrument and never evidence that less "
+            "energy was used on site."
+        ),
+        dimensions=("reporting boundary", "site", "indicator", "baseline year", "period"),
+    ),
+    DomainSkill(
+        slug="energy.emissions",
+        title="Carbon and Emission Intelligence",
+        domain=_ENERGY,
+        scope=_ENERGY_SCOPE,
+        focus=(
+            "Emissions by scope, source and site, and their movement "
+            "against baseline or target. An emissions figure is almost "
+            "never measured: it is activity data scaled by a published "
+            "emission factor someone selected, so name the factor set and "
+            "its vintage, because a fall can be a factor revision rather "
+            "than a reduction, and a carbon-equivalent total is "
+            "comparable only to another computed on the same "
+            "global-warming-potential set. Scope 1, 2 and 3 are "
+            "different measurement regimes: say which are included, and "
+            "never present their sum as one observed quantity. Scope 2 "
+            "has two methods, location-based and market-based, which "
+            "give different answers for the same electricity and are "
+            "neither interchangeable nor averageable. Most of Scope 3 is "
+            "a supplier's own claim or an estimate derived from spend, so "
+            "report it as reported, with its method. Offsets and removals "
+            "change a net figure only: report gross and net separately "
+            "and never net alone."
+        ),
+        dimensions=("scope", "emission source", "site", "greenhouse gas", "period"),
+    ),
+    DomainSkill(
+        slug="energy.efficiency",
+        title="Energy Efficiency Intelligence",
+        domain=_ENERGY,
+        scope=_ENERGY_SCOPE,
+        focus=(
+            "Efficiency measures and the savings attributed to them: "
+            "avoided consumption, intensity per unit of output or area, "
+            "and payback. A saving is a counterfactual rather than an "
+            "observation -- it is the difference against an adjusted "
+            "baseline -- so state the adjustments made for weather, "
+            "occupancy and output, and report calculated avoided "
+            "consumption rather than metered reduction. The sum of "
+            "project savings is not a site reduction: two measures acting "
+            "on the same end use claim the same unit twice, so reconcile "
+            "against the meter before adding them up. An intensity figure "
+            "takes its denominator from another domain, so name the "
+            "denominator, its source and its grain -- a ratio across two "
+            "grains is a new metric, not a conversion. An average of "
+            "efficiency ratios across sites is not the portfolio ratio, "
+            "which has to be recomposed from the underlying totals."
+        ),
+        dimensions=("efficiency measure", "site", "end use", "baseline period", "period"),
+    ),
+)
+
 #: Every registered skill, in declaration order. Later batches append their
 #: own tuple here.
 ALL_SKILLS: tuple[DomainSkill, ...] = (
@@ -1511,4 +1679,5 @@ ALL_SKILLS: tuple[DomainSkill, ...] = (
     + PROJECT_SKILLS
     + IT_OPS_SKILLS
     + HEALTHCARE_SKILLS
+    + ENERGY_SKILLS
 )

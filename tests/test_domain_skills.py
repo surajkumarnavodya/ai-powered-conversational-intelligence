@@ -49,13 +49,14 @@ CUSTOMER_SERVICE = BusinessDomain.CUSTOMER_SERVICE
 PROJECT = BusinessDomain.PROJECT
 IT_OPERATIONS = BusinessDomain.IT_OPERATIONS
 HEALTHCARE = BusinessDomain.HEALTHCARE
+ENERGY = BusinessDomain.ENERGY
 
 #: Covered domains whose policy declares no `ProhibitedAction` at all, so
 #: `composer._prohibitions_block` appends nothing and the shared contract's
 #: ranking invitation is never narrowed for them. Derived, not hard-coded,
 #: so a future batch landing in such a domain is covered automatically;
-#: `test_the_zero_prohibition_set_is_exactly_the_three_known_domains` stops
-#: the derivation silently emptying.
+#: `test_the_zero_prohibition_set_is_exactly_the_known_domains` stops the
+#: derivation silently emptying.
 ZERO_PROHIBITION_DOMAINS = tuple(
     d for d in ds.covered_domains() if not policy_for(d).prohibited_actions
 )
@@ -72,6 +73,20 @@ class TestCatalog:
             "sales.product",
             "sales.pricing",
         )
+
+    def test_the_supplied_energy_skills_are_registered_in_numeric_order(self):
+        """Supplied 01..05 in order; registered in that order, so the
+        domain default is Energy Consumption Intelligence."""
+        assert tuple(s.slug for s in ds.skills_for_domain(ENERGY)) == (
+            "energy.consumption",  # 01
+            "energy.utility_performance",  # 02
+            "energy.sustainability",  # 03
+            "energy.emissions",  # 04
+            "energy.efficiency",  # 05
+        )
+        default = select_skill(ENERGY)
+        assert default is not None
+        assert default.slug == "energy.consumption"
 
     def test_the_supplied_healthcare_skills_are_registered_in_numeric_order(self):
         """Supplied 01..05 in order; registered in that order, so the
@@ -250,8 +265,8 @@ class TestCatalog:
         """Four prompt-domains, three governance domains: Marketing shares
         `SALES_MARKETING` with Sales. Inventing a governance domain per
         batch would mean two answers to 'what may this question return'."""
-        assert len({s.group for s in ds.all_skills()}) == 14
-        assert len(ds.covered_domains()) == 13
+        assert len({s.group for s in ds.all_skills()}) == 15
+        assert len(ds.covered_domains()) == 14
 
     def test_the_supplied_mis_skills_are_registered(self):
         assert tuple(s.slug for s in ds.skills_for_domain(MIS)) == (
@@ -310,6 +325,7 @@ class TestCatalog:
             PROJECT,
             IT_OPERATIONS,
             HEALTHCARE,
+            ENERGY,
         )
 
     def test_every_uncovered_domain_has_no_skills(self):
@@ -655,6 +671,7 @@ class TestDomainProhibitionsAreDerivedNotRestated:
             MANUFACTURING,
             CUSTOMER_SERVICE,
             PROJECT,
+            ENERGY,
         )
         # Batch 13 deliberately does *not* join this list: IT_OPERATIONS
         # prohibits `credential_disclosure`, so it gets a derived block.
@@ -672,7 +689,10 @@ class TestDomainProhibitionsAreDerivedNotRestated:
         with no block appended, the contract's "rank top and bottom
         performers" invitation is never overridden for any of them. MIS is
         safe by subject matter -- management reporting is inherently
-        aggregate -- while the others carry their own guards, in
+        aggregate -- and so is ENERGY, whose subjects are meters, sites and
+        scopes rather than people (`TestEnergyIsGovernedExactlyLike
+        Manufacturing` asserts that absence is reasoned rather than
+        overlooked). The others carry their own guards, in
         `TestSupplyChainCarriesItsOwnGuards`,
         `TestManufacturingCarriesItsOwnGuards`,
         `TestCustomerServiceCarriesItsOwnGuards` and
@@ -1614,6 +1634,256 @@ class TestHealthcareIsTheMostTightlyGovernedDomainCovered:
         assert "per device-day is not a rate per patient" in quality
         assert "ranks case mix rather than care" in quality
         assert "reporting culture as much as safety" in quality
+
+
+class TestEnergyIsGovernedExactlyLikeManufacturing:
+    """Batch 15: the sixth zero-prohibition domain, and the clearest case
+    in the series for why this package exists.
+
+    `policy_for(ENERGY)` is **field-identical to
+    `policy_for(MANUFACTURING)`** in everything either the composer or the
+    result gate reads: one declared restriction (`PROPRIETARY`), no
+    prohibited actions, `minimum_group_size=0`, `export_row_limit=500`, no
+    aggregation requirement, no audit requirement. Governance says nothing
+    that distinguishes an energy question from a production one, so
+    everything that makes an energy analysis an energy analysis is
+    framing.
+
+    The one field that differs cuts against this domain: MANUFACTURING
+    pre-authorizes a join with SUPPLY_CHAIN, while ENERGY pre-authorizes
+    nothing -- and the domain's signature measure, intensity, takes its
+    denominator from another domain.
+
+    What is new in the subject matter is **provenance**, one step beyond
+    batches 11 to 13. An emissions figure is not a record of someone's
+    claim, nor a self-assessment, nor an instrument reading: it is
+    activity data scaled by a published factor someone selected, and most
+    of Scope 3 is a supplier's claim or an estimate from spend. A fall can
+    be a factor revision (`CLAUDE.md` 4.4).
+    """
+
+    def test_the_domain_genuinely_appends_no_constraint_block(self):
+        """The premise. If ENERGY ever gains a `ProhibitedAction` the
+        derived block starts covering some of this and these guards should
+        be revisited rather than silently kept."""
+        assert policy_for(ENERGY).prohibited_actions == frozenset()
+        assert policy_for(ENERGY).minimum_group_size == 0
+
+        skills = ds.skills_for_domain(ENERGY)
+        # Non-vacuity: without this the loop empties when the batch is
+        # declared under another domain and the test passes while
+        # asserting nothing (section 7's mutation-25 lesson).
+        assert len(skills) == 5
+        for skill in skills:
+            result = guidance_for(ENERGY, enabled=True, preferred_slug=skill.slug)
+            assert result is not None
+            text, chosen = result
+            assert chosen.slug == skill.slug
+            assert "Domain constraints" not in text, skill.slug
+            assert "Rank top and bottom performers" in text, skill.slug
+
+    def test_the_policy_is_field_identical_to_manufacturings(self):
+        """The batch's thesis, asserted rather than asserted-in-prose.
+
+        If this fails because ENERGY's policy was tightened, that is a
+        governance improvement: update this test and section 19 of the
+        contract document. Do not loosen the policy to keep it passing.
+        """
+        energy = policy_for(ENERGY)
+        manufacturing = policy_for(MANUFACTURING)
+
+        assert energy.restricted_categories == manufacturing.restricted_categories
+        assert energy.prohibited_actions == manufacturing.prohibited_actions
+        assert energy.minimum_group_size == manufacturing.minimum_group_size
+        assert energy.export_row_limit == manufacturing.export_row_limit
+        assert energy.aggregation_required == manufacturing.aggregation_required
+        assert energy.audit_required == manufacturing.audit_required
+        assert energy.required_permission == manufacturing.required_permission
+
+        # The one substantive difference, and the one that matters here.
+        assert manufacturing.cross_domain_allowed != frozenset()
+        assert energy.cross_domain_allowed == frozenset()
+
+    def test_the_governance_derived_half_of_the_prompt_is_therefore_identical(self):
+        """Not a restatement of the test above: that compares the policy,
+        this compares what reaches the model. Two domains with the same
+        policy get the same derived text, so the skill text is the only
+        thing carrying the difference -- which is the whole claim.
+        """
+        energy = guidance_for(ENERGY, enabled=True)
+        manufacturing = guidance_for(MANUFACTURING, enabled=True)
+        assert energy is not None and manufacturing is not None
+        energy_text, energy_skill = energy
+        manufacturing_text, manufacturing_skill = manufacturing
+
+        assert "Domain constraints" not in energy_text
+        assert "Domain constraints" not in manufacturing_text
+        assert energy_skill.focus != manufacturing_skill.focus
+        assert energy_skill.scope != manufacturing_skill.scope
+
+        def shared_part(text: str, skill) -> list[str]:
+            """Every line the skill itself did not contribute."""
+            own = {
+                f"Domain: {skill.domain.value}",
+                f"Analytical scope: {skill.scope}",
+                f"Focus for this question: {skill.focus}",
+                "Dimensions worth considering: " + ", ".join(skill.dimensions) + ".",
+            }
+            return [line for line in text.split("\n") if line not in own]
+
+        # Byte-identical: the contract, the blank lines and the headings
+        # sentence, with no derived block on either side. The moment
+        # ENERGY gains a prohibition this fails, which is correct -- the
+        # claim above would no longer hold.
+        assert shared_part(energy_text, energy_skill) == shared_part(
+            manufacturing_text, manufacturing_skill
+        )
+        assert ANALYTICS_CONTRACT in "\n".join(shared_part(energy_text, energy_skill))
+
+    def test_the_intensity_denominator_crosses_a_boundary_this_policy_does_not_open(self):
+        """The first batch where `cross_domain_allowed` matters.
+
+        Intensity -- consumption or emissions per unit of output, per
+        square metre, per unit of revenue -- is this domain's signature
+        measure, and its denominator lives in MANUFACTURING, REAL_ESTATE
+        or FINANCE. ENERGY pre-authorizes none of them, in either
+        direction.
+
+        `governance/request_policy.py` owns what happens to such a
+        request, and this package must not restate it (section 3). What
+        belongs to the skill is the analytical half: a ratio across two
+        grains is a new metric, so the denominator's source and grain have
+        to be named.
+        """
+        from governance.domains import is_cross_domain_allowed
+
+        assert is_cross_domain_allowed(ENERGY, MANUFACTURING) is False
+        assert is_cross_domain_allowed(MANUFACTURING, ENERGY) is False
+        assert is_cross_domain_allowed(ENERGY, FINANCE) is False
+
+        focus = ds.get_skill("energy.efficiency").focus.lower()
+        assert "takes its denominator from another domain" in focus
+        assert "name the denominator, its source and its grain" in focus
+        assert "a new metric, not a conversion" in focus
+
+        # The analytical half only: no skill may claim to authorize, or to
+        # refuse, a cross-domain join. That is the request gate's call.
+        for skill in ds.skills_for_domain(ENERGY):
+            lowered = skill.focus.lower()
+            assert "authoriz" not in lowered, skill.slug
+            assert "permission" not in lowered, skill.slug
+
+    def test_an_emissions_figure_is_framed_as_derived_not_observed(self):
+        """The provenance step this batch adds. The number is not
+        measured: it is activity data scaled by a factor someone selected,
+        so its movement can be a factor revision. No deterministic control
+        catches this -- the arithmetic is valid either way.
+        """
+        focus = ds.get_skill("energy.emissions").focus.lower()
+        assert "almost never measured" in focus
+        assert "activity data scaled by a published emission factor" in focus
+        assert "name the factor set and its vintage" in focus
+        assert "a factor revision rather than a reduction" in focus
+        assert "global-warming-potential set" in focus
+
+    def test_the_three_scopes_are_not_one_measurement_regime(self):
+        """Scope 2 has two methods that disagree about the same
+        electricity, and most of Scope 3 is a third party's claim or an
+        estimate from spend -- batch 11's record-versus-claim lesson
+        arriving in a domain where it is the normal case rather than the
+        exception.
+        """
+        focus = ds.get_skill("energy.emissions").focus.lower()
+        assert "never present their sum as one observed quantity" in focus
+        assert "location-based and market-based" in focus
+        assert "neither interchangeable nor averageable" in focus
+        assert "supplier's own claim or an estimate derived from spend" in focus
+        assert "report gross and net separately" in focus
+
+    def test_a_saving_is_framed_as_a_counterfactual(self):
+        """Avoided consumption is the difference against an adjusted
+        baseline, so it is a calculation and never a metered quantity.
+        Reporting it as metered reduction is the same provenance error as
+        the emissions one, one skill along.
+        """
+        focus = ds.get_skill("energy.efficiency").focus.lower()
+        assert "a counterfactual rather than an observation" in focus
+        assert "adjustments made for weather, occupancy and output" in focus
+        assert "rather than metered reduction" in focus
+        assert "claim the same unit twice" in focus
+
+    def test_a_market_instrument_is_not_a_physical_reduction(self):
+        """A purchased certificate changes a reported figure, not the
+        meter. Stated on the sustainability skill because that is where a
+        target-progress question lands.
+        """
+        focus = ds.get_skill("energy.sustainability").focus.lower()
+        assert "a purchased certificate is a contractual instrument" in focus
+        assert "never evidence that less energy was used on site" in focus
+
+    def test_nothing_here_carries_an_individual_level_guard(self):
+        """The absence is reasoned, not an omission.
+
+        Batches 9 to 12 each had to guard an individual, because their
+        subjects were drivers, operators, agents and allocated people.
+        This domain's subjects are meters, sites, accounts and scopes: a
+        meter is not a person, so there is no individual to re-identify
+        and no guard to write.
+
+        That is a statement about **framing**, not about protection. The
+        personal baseline is unioned into every domain regardless
+        (`CLAUDE.md` 5.8), so a personal column returned by an energy
+        question is still gated -- which is why this reads
+        `effective_restricted_categories` rather than the declared set.
+        What is genuinely absent is suppression: `minimum_group_size=0`.
+        """
+        from governance.domains import DataCategory
+
+        policy = policy_for(ENERGY)
+        assert policy.restricted_categories == frozenset({DataCategory.PROPRIETARY})
+        assert DataCategory.PII in policy.effective_restricted_categories
+        assert DataCategory.SPI in policy.effective_restricted_categories
+        assert policy.minimum_group_size == 0
+
+        for skill in ds.skills_for_domain(ENERGY):
+            lowered = skill.focus.lower()
+            assert "individual" not in lowered, skill.slug
+            assert "employee" not in lowered, skill.slug
+
+    def test_the_guards_are_not_a_restatement_of_a_prohibition(self):
+        for skill in ds.skills_for_domain(ENERGY):
+            lowered = skill.focus.lower()
+            assert "individual performance ranking" not in lowered
+            assert "unsupported allegation" not in lowered
+            assert "prohibit" not in lowered
+
+    def test_each_skill_states_the_measurement_trap_its_subject_carries(self):
+        """Read off the subject matter. Two are reused rather than
+        rediscovered: the average-of-ratios error batch 10 found in OEE
+        reappears in portfolio intensity, and batch 9's "a missing row is
+        not a zero" reappears as a missing meter interval.
+        """
+        consumption = ds.get_skill("energy.consumption").focus.lower()
+        assert "a difference between two meter readings" in consumption
+        assert "unknown consumption, not zero" in consumption
+        assert "actual or estimated" in consumption
+        assert "a peak is an instant and must never be summed" in consumption
+        assert "degree days" in consumption
+
+        utility = ds.get_skill("energy.utility_performance").focus.lower()
+        assert "a billing period is not a calendar month" in utility
+        assert "blended unit cost mixes" in utility
+        assert "leaves a unit rate undefined" in utility
+        assert "excluded major-event days" in utility
+
+        sustainability = ds.get_skill("energy.sustainability").focus.lower()
+        assert "whether it has been restated" in sustainability
+        assert "intensity falls while the absolute figure rises" in sustainability
+        assert "outside the boundary reads as a clean one" in sustainability
+
+        efficiency = ds.get_skill("energy.efficiency").focus.lower()
+        assert "is not the portfolio ratio" in efficiency
+        assert "recomposed from the underlying totals" in efficiency
 
 
 class TestNothingUntrustedReachesThePrompt:
