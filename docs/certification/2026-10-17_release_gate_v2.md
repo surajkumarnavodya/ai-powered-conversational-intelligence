@@ -295,17 +295,47 @@ was built at `2026-10-17T09:10:29Z` by an earlier pass in this session's
 environment, not by this addendum. It was **not taken on trust** — it was
 re-verified by executing the interpreter and the imports inside it, above.
 A second, independent `docker build` of the committed tree was launched
-during this pass and had **not completed** when this was written; its
-result is therefore not claimed here. The verification above does not
-depend on it.
+during this pass. **It has since finished, and its result corroborates
+the fix without being a clean build** — recorded precisely because the
+distinction matters:
 
-**Consequential unblocking — now possible, still NOT RUN:**
+- **Every dependency layer succeeded**, including
+  `#18 [base …] RUN … pip install -r requirements.txt` → `DONE 1729.1s`
+  on the `python:3.11-slim` base. That layer is *exactly* where F-008
+  failed. `COPY . .`, the frontend-dist copy and the final `chown` layer
+  all completed too.
+- **It then failed at `exporting to image`**:
+  `failed to create temp dir: mkdir /var/lib/desktop-containerd/…: read-only
+  file system`. That is a **host storage fault, not a dependency or code
+  error** — the host is at **98% disk (8.9 GB free)** with Docker holding
+  53.9 GB of images and 67.4 GB of build cache.
+- **A trap worth recording:** the shell pipeline reported `exit code 0`
+  because `docker build … | tail` returns `tail`'s status, not Docker's.
+  The failure was only visible by reading the log. Do not take an exit
+  code from a piped `docker build` as a build result.
+
+So the pinned set now has two independent confirmations of the thing
+F-008 was about — the `:cert` image's installed-and-importable
+`scipy 1.17.1` on `python 3.11.16`, and a from-scratch dependency
+install completing on the same base — and **no** end-to-end clean
+`docker build` of the committed tree in this environment. The §11.2
+verdict rests on the former, which does not depend on the latter.
+
+**Consequential unblocking — reassessed:**
 
 | Previously BLOCKED by F-008 | Status now |
 |---|---|
-| Container CVE scan (Trivy) | **unblocked, not run** |
-| k6 load stack / capacity envelope | **unblocked, not run** |
-| CI `docker-scan` job | **unblocked, not run** (no `gh` CLI on this machine — CI run history cannot be read) |
+| Container CVE scan (Trivy) | **still BLOCKED — by host disk, not by F-008.** Needs free space before an image can be exported to scan |
+| k6 load stack / capacity envelope | **still BLOCKED — same cause.** `eval/load/docker-compose.loadtest.yml` builds this Dockerfile, so it hits the same export step |
+| CI `docker-scan` job | **unblocked in principle, unverified** (no `gh` CLI on this machine — CI run history cannot be read) |
+
+**This is an environment limitation, not a product defect,** so it is
+not filed as an F-number. But it is the live blocker on §11.7 items 2
+and 3: those two cannot proceed until the host has disk. Reclaimable
+right now: ~50.6 GB of images and ~19.1 GB of build cache, by `docker
+system df`'s own reckoning — **not pruned during this pass**, because
+the reclaimable set includes images other sessions and the load stack
+may still want.
 
 ### 11.3 Findings register — delta
 
@@ -463,9 +493,28 @@ model.
 
 **Not executed:** Trivy/container CVE scan, k6 load test, DAST, the
 57-case accuracy benchmark, the 500-case security benchmark, a DR restore
-drill, OIDC against a live IdP, multi-worker behaviour, and **UAT**. A
-second independent `docker build` and the `detect-secrets` run were
-launched and did not finish; neither is claimed.
+drill, OIDC against a live IdP, multi-worker behaviour, and **UAT**.
+
+**Two launched runs, two different outcomes — stated separately because
+"didn't finish" is not one thing:**
+
+- The second `docker build` **finished and failed at image export** on
+  host disk exhaustion, after every dependency layer had succeeded. Its
+  partial result is reported in §11.2 and is not presented as a clean
+  build.
+- The CI-equivalent `detect-secrets` run **was stopped at a 30-minute
+  execution limit** having never produced output. Nothing is claimed
+  from it; §2's morning result stands unrefuted but unreproduced. The
+  real `.secrets.baseline` was never written to — the run used a copy.
+
+**Post-assessment merge.** After this addendum was written,
+`origin/master` was merged into the branch to pick up a Dependabot bump
+of `sharp` 0.35.4 → 0.35.5 (a devDependency; the only content master
+held that this branch lacked). The frontend was re-verified against it:
+**1,161 tests passed across 89 files**, `tsc` clean, `oxlint` exit 0,
+and `npm run build` succeeded. No figure elsewhere in this document is
+affected — the backend suite, the gates and the live probes all predate
+the merge and touch none of the changed files.
 
 **No figure in this addendum was simulated, extrapolated, or carried
 forward.** Every number is from a command run during this pass, and the
