@@ -140,8 +140,12 @@
   },
   "chat": {
     "placeholder": "Haz una pregunta sobre tus datos...",
+    "placeholderEmpty": "Haz una pregunta y envía un mensaje para recibir una respuesta...",
     "view": "Ver",
     "rerun": "Volver a ejecutar",
+    "editQuestion": "Editar",
+    "copyQuestion": "Copiar pregunta",
+    "submitEdit": "Preguntar de nuevo",
     "sources": "Respondido usando",
     "followingUpOn": "Continuando con",
     "sourcesLabel": "Fuentes",
@@ -226,6 +230,8 @@
     "thinking": "Pensando",
     "answeredIn": "Respondido en {{seconds}}s",
     "downloadAnswer": "Descargar respuesta",
+    "downloadMarkdown": "Descargar como Markdown",
+    "downloadPdf": "Descargar como PDF",
     "copyAnswer": "Copiar respuesta",
     "copied": "¡Copiado!",
     "exportCsv": "Exportar CSV",
@@ -358,6 +364,13 @@
     "notRun": "no ejecutada",
     "metadata": "Metadatos de la consulta",
     "statementType": "Tipo de instrucción",
+    "joins": "Uniones",
+    "filterColumns": "Filtrado por",
+    "aggregates": "Agregaciones",
+    "groupBy": "Agrupado por",
+    "orderBy": "Ordenado por",
+    "distinct": "Filas duplicadas",
+    "distinctRemoved": "Eliminadas (DISTINCT)",
     "referencedTables": "Tablas referenciadas",
     "rowCount": "Filas devueltas",
     "duration": "Tiempo de ejecución"
@@ -473,5 +486,14 @@
     "unavailableHeading": "No disponible",
     "notConfigured": "no configurada",
     "notPermitted": "sin acceso"
+  },
+  "shortcuts": {
+    "title": "Atajos de teclado",
+    "hint": "Funcionan en cualquier lugar excepto mientras escribes en un campo de texto.",
+    "newChat": "Nueva conversación",
+    "toggleSidebar": "Mostrar u ocultar la barra lateral",
+    "openSettings": "Abrir ajustes",
+    "focusComposer": "Ir al cuadro de pregunta",
+    "showHelp": "Mostrar esta lista"
   }
 }

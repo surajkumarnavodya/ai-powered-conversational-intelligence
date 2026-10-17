@@ -140,8 +140,12 @@
   },
   "chat": {
     "placeholder": "तुमच्या डेटाबद्दल प्रश्न विचारा...",
+    "placeholderEmpty": "एक प्रश्न विचारा आणि उत्तर मिळवण्यासाठी संदेश पाठवा...",
     "view": "पहा",
     "rerun": "पुन्हा चालवा",
+    "editQuestion": "संपादित करा",
+    "copyQuestion": "प्रश्न कॉपी करा",
+    "submitEdit": "पुन्हा विचारा",
     "sources": "यांच्या मदतीने उत्तर दिले",
     "followingUpOn": "याचा पाठपुरावा",
     "sourcesLabel": "स्रोत",
@@ -226,6 +230,8 @@
     "thinking": "विचार करत आहे",
     "answeredIn": "{{seconds}} सेकंदात उत्तर दिले",
     "downloadAnswer": "उत्तर डाउनलोड करा",
+    "downloadMarkdown": "Markdown म्हणून डाउनलोड करा",
+    "downloadPdf": "PDF म्हणून डाउनलोड करा",
     "copyAnswer": "उत्तर कॉपी करा",
     "copied": "कॉपी झाले!",
     "exportCsv": "CSV निर्यात करा",
@@ -358,6 +364,13 @@
     "notRun": "अंमलात आणले नाही",
     "metadata": "क्वेरी मेटाडेटा",
     "statementType": "विधान प्रकार",
+    "joins": "जॉइन",
+    "filterColumns": "यावर फिल्टर",
+    "aggregates": "एकत्रित",
+    "groupBy": "यानुसार गट",
+    "orderBy": "यानुसार क्रम",
+    "distinct": "डुप्लिकेट ओळी",
+    "distinctRemoved": "काढल्या (DISTINCT)",
     "referencedTables": "संदर्भित सारणी",
     "rowCount": "परत आलेल्या ओळी",
     "duration": "अंमलबजावणी वेळ"
@@ -473,5 +486,14 @@
     "unavailableHeading": "उपलब्ध नाही",
     "notConfigured": "सेट अप नाही",
     "notPermitted": "प्रवेश नाही"
+  },
+  "shortcuts": {
+    "title": "कीबोर्ड शॉर्टकट",
+    "hint": "तुम्ही मजकूर फील्डमध्ये टाइप करत नसताना हे कुठेही चालतात.",
+    "newChat": "नवीन चॅट",
+    "toggleSidebar": "साइडबार दाखवा किंवा लपवा",
+    "openSettings": "सेटिंग्ज उघडा",
+    "focusComposer": "प्रश्न बॉक्सवर जा",
+    "showHelp": "ही यादी दाखवा"
   }
 }

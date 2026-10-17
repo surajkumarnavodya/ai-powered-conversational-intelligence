@@ -16,7 +16,10 @@ export function PendingTurn({ pendingQuestion }: { pendingQuestion: PendingQuest
       <div className="flex justify-end">
         <ChatMessage message={{ role: 'user', content: pendingQuestion.question }} />
       </div>
-      <div className="pl-10">
+      {/* No left inset, matching TurnCard: a pending turn must sit on
+          exactly the edges the finished turn will, or the answer jumps
+          sideways the moment it arrives. */}
+      <div>
         <TimingBadge
           mode="pending"
           startedAt={pendingQuestion.startedAt}

@@ -34,6 +34,7 @@ import api.identity_auth as identity_auth_mod
 import api.identity_authz as identity_authz_mod
 import api.main as api_main
 from config.settings import Settings
+from observability.metrics import get_default_metrics
 from security.audit_log import log_security_event
 
 _SETTINGS = Settings(
@@ -431,3 +432,80 @@ class TestMetrics:
         response = client.get("/platform-admin/metrics", headers=_headers(platform_tokens))
         assert response.status_code == 200
         assert response.json()["tenant_id"] is None
+
+
+class TestLlmUsageRollupOverHttp:
+    """Catalogue row 45 at the route level -- the two surfaces that serve
+    the per-model token rollup, and the scoping that separates them.
+
+    The aggregation itself is unit-tested in
+    `tests/test_observability_metrics.py`; what matters here is that the
+    *merged* route really is cross-tenant and the *tenant-scoped* one
+    really is not. Both read one `PerformanceMetrics`, so a mistake in
+    either route is a cross-tenant disclosure of another tenant's usage
+    volume, which is why this is tested over HTTP and not just in the
+    aggregator.
+    """
+
+    @staticmethod
+    def _record_two_tenants() -> tuple[str, str]:
+        """Writes one call for each tenant into the process singleton the
+        routes read, under model names unique to this test so the
+        assertions never depend on the singleton being otherwise empty."""
+        model_a = f"model-a-{uuid.uuid4().hex[:8]}"
+        model_b = f"model-b-{uuid.uuid4().hex[:8]}"
+        metrics = get_default_metrics()
+        metrics.record_llm_call(model_a, 100, 10, tenant_id="tenant-a")
+        metrics.record_llm_call(model_b, 7, 3, tenant_id="tenant-b")
+        return model_a, model_b
+
+    def test_the_merged_route_reports_every_tenants_usage(self, client: TestClient):
+        model_a, model_b = self._record_two_tenants()
+        tokens = _register_in_tenant(
+            client, "platform-usage@tenant-a.example.com", "platform_admin", "tenant-a"
+        )
+
+        response = client.get("/platform-admin/metrics", headers=_headers(tokens))
+
+        assert response.status_code == 200
+        usage = {row["model"]: row for row in response.json()["llm_usage"]}
+        assert usage[model_a]["total_tokens"] == 110
+        assert usage[model_b]["total_tokens"] == 10
+
+    def test_the_tenant_scoped_route_does_not_leak_another_tenants_usage(self, client: TestClient):
+        model_a, model_b = self._record_two_tenants()
+        tokens = _register_in_tenant(
+            client, "admin-usage@tenant-a.example.com", "admin", "tenant-a"
+        )
+
+        response = client.get("/metrics/performance", headers=_headers(tokens))
+
+        assert response.status_code == 200
+        body = response.json()
+        models = {row["model"] for row in body["llm_usage"]}
+        assert model_a in models
+        assert model_b not in models, (
+            "a tenant admin read another tenant's token consumption -- "
+            "the same disclosure the per-tenant latency partitioning exists to prevent"
+        )
+
+    def test_no_usage_row_carries_a_monetary_field(self, client: TestClient):
+        # The risk the implementation plan names for this batch: the LLM is
+        # local, no price exists, so no cost figure may appear.
+        self._record_two_tenants()
+        tokens = _register_in_tenant(
+            client, "platform-nocost@tenant-a.example.com", "platform_admin", "tenant-a"
+        )
+
+        response = client.get("/platform-admin/metrics", headers=_headers(tokens))
+
+        rows = response.json()["llm_usage"]
+        assert rows
+        for row in rows:
+            assert set(row) == {
+                "model",
+                "calls",
+                "prompt_tokens",
+                "completion_tokens",
+                "total_tokens",
+            }

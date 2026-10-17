@@ -37,7 +37,9 @@ ANALYTICS_CONTRACT = (
     "\n"
     "Frame your analysis using only what you were given:\n"
     "- Compare against a prior period or a target when the data supports it.\n"
-    "- Rank top and bottom performers when a ranking is meaningful.\n"
+    "- Rank top and bottom performers when a ranking is meaningful AND "
+    "not prohibited for this domain -- the domain constraints at the end "
+    "of these instructions override this line.\n"
     "- Note trends, concentration, anomalies and material changes that are "
     "visible in the data in front of you.\n"
     "- Offer at most four recommendations, each tied to a specific figure "
@@ -71,12 +73,21 @@ ANALYTICS_CONTRACT = (
 )
 
 #: Sections a skill-guided analysis should produce, from the supplied
-#: contract's "Response:" line. Narrowed to what this platform can actually
-#: back with evidence: `SQL` and `Validation` are omitted because the
-#: response already carries the real, executed statement and the real
-#: validation outcome as structured fields — having the model restate them
-#: would create a second, unverified copy of a fact the API already owns
-#: (`CLAUDE.md` §4.8).
+#: contract's "Response:" line. Narrowed to what this platform can
+#: actually back with evidence; five of the supplied headings are
+#: omitted, all for the one reason that a fact has a single owner
+#: (`CLAUDE.md` §4.8):
+#:
+#: - `SQL` and `Validation` — the response already carries the real,
+#:   executed statement and the real validation outcome as structured
+#:   fields, so a restatement would be a second, unverified copy.
+#: - `Domain` — decided by routing, not by the model, and already in
+#:   the guidance block the composer emits.
+#: - `Metrics` and `Relevant Entities` — the semantic layer's facts.
+#:   `semantic/` owns a `MetricDefinition`, and a skill must not
+#:   restate a metric (see `catalog.py` on the Manufacturing batch),
+#:   so inviting the model to list them would be a third copy, free
+#:   to contradict the approved one.
 RESPONSE_SECTIONS: tuple[str, ...] = (
     "Intent",
     "Assumptions",

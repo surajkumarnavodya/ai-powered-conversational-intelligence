@@ -62,8 +62,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={{ toast, dismiss }}>
       {children}
+      {/* Inset from both edges on a phone: `w-full` here resolves
+          against the viewport, so the old `right-4 w-full max-w-sm`
+          hung 16px off the left edge below 400px and clipped the toast.
+          From `sm` up it goes back to a right-anchored 24rem card. */}
       <div
-        className="pointer-events-none fixed bottom-4 right-4 flex w-full max-w-sm flex-col gap-2"
+        className="pointer-events-none fixed bottom-4 left-4 right-4 flex flex-col gap-2 sm:left-auto sm:w-full sm:max-w-sm"
         style={{ zIndex: 'var(--z-toast)' }}
       >
         {toasts.map((item) => (

@@ -15,6 +15,10 @@ per-capability inventory backing it did not. This is that inventory.
 **Date of assessment:** 2026-10-14.
 **Commit assessed:** `b4d74d2` (branch `feat/inference-engineering`).
 **Read with:** [`context-map.md`](context-map.md) for topic ownership.
+**Rows added after the original assessment carry their own date** in the
+Status column, so the 2026-10-14 baseline above stays readable as what it
+was. §8's test/lint baseline is re-measured in place and states its own
+date.
 
 ---
 
@@ -49,6 +53,8 @@ says so.
 | Business-context retrieval (8 chunk kinds) | Flag-gated | `retrieval/`; `ENABLE_BUSINESS_CONTEXT_RETRIEVAL=true` in `.env.example:276` | [`overview.md`](overview.md) | keep | — |
 | Multi-database auto-routing | Live | `embeddings/retriever.py::select_database` | [`overview.md`](overview.md) | keep | — |
 | Result governance gate | Live | `governance/`; gate runs in `agent.nodes.execute_sql_node` before `result_rows` is set | [`../DATA_PRIVACY_GOVERNANCE_ENGINE.md`](../DATA_PRIVACY_GOVERNANCE_ENGINE.md) | keep | — |
+| SQL structural description (joins, filter columns, aggregates, grain, ordering) | **Live** (2026-10-17) | `agent/sql_validator.py::describe_sql` reads the AST `validate_sql` already parsed; `api/schemas.py::SqlSummaryOut`; `tests/test_sql_validator.py`; rendered by `SqlIntelligencePanel.tsx` | [`../API.md`](../API.md), [`features-frontend.md`](features-frontend.md) | keep | — |
+| Answer translation into a UI locale | **Built, not wired** (2026-10-17) | `agent/translation.py` + `tests/test_translation.py`; **no route, node or setting calls it** — grep for importers returns none outside its own test | [`../../CHANGELOG.md`](../../CHANGELOG.md) (2026-10-17) | decide: wire or park | P2 |
 
 ## 3. Multi-source orchestration
 
@@ -178,33 +184,50 @@ claiming a finding is or is not yours" — applies to its own contents.
 
 ## 8. Test and lint baseline (actual commands)
 
-Run on 2026-10-14 against commit `b4d74d2`, Python 3.14.4 (`.venv`).
+**Re-measured 2026-10-17 against commit `a446755`**, Python 3.14.4
+(`.venv`). The 2026-10-14 baseline at `b4d74d2` is kept below it for the
+delta, since the point of this section is attributability.
 
 ```
 $ .venv/Scripts/python.exe -m pytest --collect-only -q
-5910 tests collected in 11.17s
+7274/7285 tests collected (11 deselected) in 20.44s
 
 $ .venv/Scripts/python.exe -m pytest -q -p no:randomly
-5910 passed, 1431 warnings in 413.70s (0:06:53)
+7274 passed, 11 deselected, 1431 warnings in 580.41s (0:09:40)
 
 $ .venv/Scripts/python.exe -m ruff check .
 Found 1 error.                      # I001 import order, agent/multiagent/agents.py
 [*] 1 fixable with the `--fix` option.
 
 $ .venv/Scripts/python.exe -m black --check .
-All done! 776 files would be left unchanged.
+All done! 1635 files would be left unchanged.
+
+$ .venv/Scripts/python.exe -m mypy .
+Found 631 errors in 115 files (checked 820 source files)
+
+$ cd frontend && npx vitest run
+Test Files  89 passed (89)
+     Tests  1161 passed (1161)
 ```
 
-Both lint results match [`CLAUDE.md`](../../CLAUDE.md) §13's documented
-pre-existing baseline exactly (one ruff import-order finding in
+The 11 deselected are `tests/live/`, which need real infrastructure and are
+excluded by default (`-m 'not live'`). **Previous baseline, 2026-10-14 at
+`b4d74d2`:** 5910 collected, 5910 passed in 413.70s; the same single ruff
+finding; black clean over 776 files.
+
+Both lint results still match [`CLAUDE.md`](../../CLAUDE.md) §13's
+documented baseline exactly (one ruff import-order finding in
 `agent/multiagent/agents.py`; black clean). **Neither was introduced by
-this audit** — this audit changed no Python.
+this audit** — the audit itself changed no Python. The `mypy` figure is
+new to this section and is **not** clean: §13 carries the breakdown,
+including the seven findings in production modules.
 
 ### 8.1 What the suite does and does not cover
 
-**The full suite is green: 5910 passed, 0 failed, 0 skipped.** That is a
-genuinely clean baseline, and it means any failure introduced by later work
-is unambiguously attributable.
+**The full suite is green: 7274 passed, 0 failed, 11 deselected** (the
+`tests/live/` set, which needs real infrastructure) as re-measured
+2026-10-17. That is a genuinely clean baseline, and it means any failure
+introduced by later work is unambiguously attributable.
 
 It does **not** mean the platform is verified end to end. The suite is
 fully mocked — no real database, no Ollama — per
@@ -213,10 +236,20 @@ infrastructure were **not run** and cannot run in this environment:
 `scripts/integration_test.py`, `scripts/run_benchmark.py`, and
 `eval/security_benchmark/`.
 
-`mypy` was **not run** in this pass. [`CLAUDE.md`](../../CLAUDE.md) §13
-records pre-existing errors concentrated in `tests/` and
-`eval/security_benchmark/`; since this audit changed no Python, running it
-would have added nothing to attribute.
+`mypy` was **not run** in that pass, since the audit changed no Python.
+It has been run since — [`CLAUDE.md`](../../CLAUDE.md) §13 carries the
+current measured figures, including the seven findings that are in
+production modules rather than tests, which that entry previously claimed
+were clean.
+
+**Accessibility is partly verified as of 2026-10-17**, and the bound is
+worth stating here because "a11y tested" is exactly the kind of claim this
+document exists to qualify: `jsx-a11y` static rules now run in `oxlint`,
+and `axe-core` runs against the *rendered* tree in
+`frontend/src/components/ui/accessibility.test.tsx` (shared primitives, a
+dialog, a chat message — not every page). **Colour contrast is not covered
+and cannot be under jsdom**, which has no layout or paint; it needs a real
+browser. See [`features-frontend.md`](features-frontend.md).
 
 ---
 

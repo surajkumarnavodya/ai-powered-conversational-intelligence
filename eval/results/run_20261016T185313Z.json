@@ -1,0 +1,87 @@
+{
+  "run_id": "run_20261016T185313Z",
+  "timestamp": "2026-10-16T18:53:13.894751+00:00",
+  "model": "llama3.1:8b",
+  "database": "AdventureWorksDW2025",
+  "total_cases": 3,
+  "metrics": {
+    "sql_execution_accuracy": 1.0,
+    "result_set_accuracy": 0.6666666666666666,
+    "exact_sql_match": 0.0,
+    "final_accuracy": 0.6666666666666666,
+    "intent_classification_accuracy": 1.0,
+    "schema_retrieval_recall": 1.0,
+    "relevant_table_precision": 0.17037037037037037,
+    "column_selection_accuracy": 0.8333333333333334,
+    "join_correctness": null,
+    "aggregation_correctness": null,
+    "filter_correctness": 1.0,
+    "date_time_reasoning_accuracy": null,
+    "group_by_correctness": null,
+    "order_by_correctness": 0.0,
+    "null_handling_accuracy": null,
+    "nested_query_correctness": null,
+    "window_function_correctness": null,
+    "ambiguous_question_handling_accuracy": null,
+    "follow_up_accuracy": null,
+    "retry_success_rate": 1.0,
+    "first_attempt_success_rate": 1.0,
+    "average_latency_seconds": 215.23016633332978,
+    "p95_latency_seconds": 523.8623503000126,
+    "avg_llm_calls_per_case": 3.3333333333333335,
+    "total_llm_calls": 10.0,
+    "avg_prompt_tokens": 14898.666666666666,
+    "avg_completion_tokens": 449.6666666666667,
+    "avg_query_complexity": 3.3333333333333335,
+    "avg_estimated_cost_rows": 223.33333333333334,
+    "security_rejection_accuracy": null
+  },
+  "per_category": {
+    "simple_filtering": {
+      "count": 2.0,
+      "pass_rate": 1.0,
+      "avg_latency_seconds": 60.91407434998837
+    },
+    "sorting": {
+      "count": 1.0,
+      "pass_rate": 0.0,
+      "avg_latency_seconds": 523.8623503000126
+    }
+  },
+  "per_difficulty": {
+    "easy": {
+      "count": 3.0,
+      "pass_rate": 0.6666666666666666,
+      "avg_latency_seconds": 215.23016633332978
+    }
+  },
+  "cases": [
+    {
+      "case_id": "easy_filter_red_products",
+      "turn_index": null,
+      "difficulty": "easy",
+      "category": "simple_filtering",
+      "overall_pass": true,
+      "final_status": "succeeded",
+      "failure_category": null
+    },
+    {
+      "case_id": "easy_filter_red_count",
+      "turn_index": null,
+      "difficulty": "easy",
+      "category": "simple_filtering",
+      "overall_pass": true,
+      "final_status": "succeeded",
+      "failure_category": null
+    },
+    {
+      "case_id": "easy_sort_top5_expensive",
+      "turn_index": null,
+      "difficulty": "easy",
+      "category": "sorting",
+      "overall_pass": false,
+      "final_status": "succeeded",
+      "failure_category": "wrong_query_structure"
+    }
+  ]
+}

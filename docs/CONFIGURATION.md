@@ -525,6 +525,26 @@ for how the router/subgraphs work internally.
 | `WEB_SEARCH_PROVIDER` | `tavily` | Selects the provider (`search/web_search.py::SUPPORTED_SEARCH_PROVIDERS`). Only `tavily` is implemented today. |
 | `WEB_SEARCH_API_KEY` | *(unset)* | API key for the configured provider. Get a Tavily key at [tavily.com](https://tavily.com). `SecretStr`-wrapped. |
 | `WEB_SEARCH_MAX_RESULTS` | `5` | Max results requested per search call. |
+| `WEB_SEARCH_ANSWER_MAX_TOKENS` | `2400` | Output cap for the LLM call that drafts the web answer. Sized for a structured, multi-source answer rather than a sentence. |
+| `WEB_SEARCH_CONTEXT_MAX_CHARS` | `18000` | Input cap on the results block handed to that call. Whole results are dropped from the lowest-ranked end until it fits, the omission is stated in the answer, and a dropped result is not cited. `0` disables the budget. |
+
+Whether the input cap binds at `WEB_SEARCH_MAX_RESULTS=5` depends on the
+sources. Measured 2026-10-16: five ordinary pages returned 1,547–2,363
+characters each (10,979 total — nothing dropped), while five
+academic/long-form pages for one medical question exceeded 18,000
+characters between them and the top two were kept, with the answer saying
+so.
+
+**On the input cap.** It exists because removing a limit is not the same
+as removing truncation: Ollama does not reject an oversized prompt, it
+truncates it from the *start* — where the system prompt lives — and
+reports nothing. Measured on this machine (llama3.1:8b, 2026-10-16): with
+no `num_ctx` the model is served at 4,096 and a long prompt was evaluated
+at **2,050 tokens with the system prompt gone**; at `OLLAMA_NUM_CTX=16384`
+the same prompt was evaluated at 12,043 tokens with the system prompt
+intact. So the budget is set below the usable window and what it drops is
+disclosed, rather than letting a silent cut decide the answer. Keep it in
+step with `OLLAMA_NUM_CTX`.
 
 ### REST/OpenAPI connector (optional, off by default)
 
@@ -576,10 +596,28 @@ would turn every write into prompt injection with full pipeline reach.
 `identity/rbac.py`; what may be returned stays with `governance/`. None of
 those gates reads a skill.
 
-Coverage today is **Sales, MIS / Management Reporting and Marketing** —
-15 skills across 2 governance domains, since Sales and Marketing share
-`SALES_MARKETING`. The other 16 governance domains have none declared — a
-skill is added when its prompt arrives, never in anticipation.
+Coverage today is **Sales, MIS / Management Reporting, Marketing, HR,
+eCommerce, Training / L&D, Finance & Corporate Functions, BFSI, Supply
+Chain / Procurement & Logistics, Manufacturing & Operations, Customer
+Service & Support, Project & Portfolio Management, IT Operations &
+Service Management, Healthcare & Life Sciences, Energy, Utilities &
+Sustainability, Risk, Audit & Controls, Legal, Secretarial & Governance,
+Real Estate & Facilities and Construction & Capital Works** — 95 skills
+across 18 of the 19 governance domains, since Sales and Marketing share
+`SALES_MARKETING`. Construction is the one batch with no supplied prompt
+behind it: its skills and its governance policy were derived, which
+`domain_skills/catalog.py` and `governance/domains.py` both record at the
+point of declaration. `EXECUTIVE` has none
+declared, and deliberately so: its one supplied prompt is registered as
+`mis.executive_kpi`, under the domain the batch was supplied with, and the
+two policies are measured identical. Coverage is read from the catalog by
+`registry.covered_domains()` rather than claimed here, so this paragraph
+cannot drift ahead of the code.
+
+Guidance for a domain automatically carries that domain's prohibited
+actions, derived from `governance/domains.py`. HR, for example, prohibits
+individual performance ranking, so its guidance says so even though the
+shared contract otherwise invites ranking.
 
 A domain holding two prompt-domains (as `SALES_MARKETING` does) produces
 **no** skill framing unless a specific skill is named, rather than guessing

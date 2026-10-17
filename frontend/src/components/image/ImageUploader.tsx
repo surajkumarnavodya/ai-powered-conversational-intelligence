@@ -1,7 +1,13 @@
-import { Paperclip } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import { useRef, type ChangeEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 
 /** Every extension attachments/validation.py's EXTENSION_TO_MEDIA_TYPE
  * allowlist accepts -- kept in sync with that server-side allowlist since
@@ -47,17 +53,32 @@ export function ImageUploader({
         aria-hidden="true"
         tabIndex={-1}
       />
-      <Button
-        variant="secondary"
-        size="icon"
-        onClick={() => inputRef.current?.click()}
-        disabled={disabled}
-        aria-label={t('attachments.attach')}
-        title={t('attachments.attach')}
-        className="rounded-xl"
-      >
-        <Paperclip className="h-4 w-4" />
-      </Button>
+      {/* Borderless, like the other composer controls -- the composer's
+          own rounded container is the visible frame, so a border per
+          button only boxed them up inside it. The accessible name stays
+          "attach", which is what the control does whatever its icon.
+          The hover hint is the design system's Tooltip rather than a
+          native `title`: a bare `+` needs a label that also appears on
+          keyboard focus, which `title` does not reliably give. There is
+          deliberately no `title` alongside it -- the two would stack up
+          as two hints for the same control. */}
+      <TooltipProvider delayDuration={300}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => inputRef.current?.click()}
+              disabled={disabled}
+              aria-label={t('attachments.attach')}
+              className="rounded-xl"
+            >
+              <Plus className="h-4 w-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="top">{t('attachments.attach')}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
     </>
   )
 }

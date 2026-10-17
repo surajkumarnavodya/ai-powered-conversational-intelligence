@@ -19,7 +19,9 @@ import { DownloadAnswerButton } from './DownloadAnswerButton'
 import { AgentExecutionTimeline } from './AgentExecutionTimeline'
 import { SaveArtifactButton } from './ArtifactWorkspace'
 import { FollowUpSuggestions } from './FollowUpSuggestions'
+import { QuestionActions } from './QuestionActions'
 import { ReadAloudButton } from './ReadAloudButton'
+import { RegenerateAnswerButton } from './RegenerateAnswerButton'
 import { ResponseFeedbackWidget } from './ResponseFeedbackWidget'
 import { SentAttachmentsPreview } from './SentAttachmentsPreview'
 import { SourceLineagePanel } from './SourceLineagePanel'
@@ -113,10 +115,25 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
     <div id={`turn-${entry.entryId}`} className="flex scroll-mt-4 flex-col gap-3">
       <SentAttachmentsPreview attachments={entry.sentAttachments} />
       <div className="flex justify-end">
-        <ChatMessage message={{ role: 'user', content: entry.question }} />
+        {/* Editing resubmits as a NEW turn (`askQuestion`), leaving this
+            one on screen -- the transcript stays append-only, which is
+            what `conversation_history` is built from. Opt-in per call
+            site: `PendingTurn` and `SharedConversation` render the same
+            component without this prop and so offer no edit control. */}
+        <ChatMessage
+          message={{ role: 'user', content: entry.question }}
+          onSubmitEdit={(edited) => void askQuestion(edited)}
+          editDisabled={pendingQuestion !== null}
+          actions={<QuestionActions question={entry.question} />}
+        />
       </div>
 
-      <div className="flex flex-col gap-3 pl-10">
+      {/* Full column width, no left inset. The inset used to reserve the
+          width of a left-hand avatar, but the only avatar in a turn sits
+          on the *right* of the question bubble -- so it just stepped the
+          answer 40px in from the composer and the question's own right
+          edge. Everything in a turn now shares one pair of edges. */}
+      <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <TimingBadge mode="done" durationMs={entry.answerDurationMs} />
           <time dateTime={entry.timestamp} className="text-xs text-[var(--muted-foreground)]">
@@ -126,6 +143,12 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
             <>
               <CopyAnswerButton answer={answerMarkdown} />
               <DownloadAnswerButton question={entry.question} answer={answerMarkdown} />
+              {/* Only on a turn that produced an answer -- `answerMarkdown`
+                  already gates this whole row. Re-running a turn that
+                  failed or needs clarification would just repeat the
+                  failure, and the composer is the right place to retry
+                  that. */}
+              <RegenerateAnswerButton entryId={entry.entryId} />
               <SaveArtifactButton entry={entry} />
               <ResponseFeedbackWidget entryId={entry.entryId} />
               {showReadAloud && <ReadAloudButton text={buildSpokenAnswerText(entry)} />}

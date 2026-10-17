@@ -157,7 +157,14 @@ export function QuestionNavigator({
 
   return (
     <div
-      className="pointer-events-none absolute right-4 top-1/2 z-20 flex h-44 w-9 -translate-y-1/2 flex-col items-center"
+      /* Shown only from `xl` up. The rail is an overlay in the right
+         margin, and that margin only exists once the viewport is wider
+         than the reading column plus the rail's own 52px lane: at
+         1024-1280px with the sidebar open the main area is narrower
+         than the column, so the rail would sit on top of the answer
+         text it is meant to sit beside. Below `xl` the questions stay
+         reachable by scrolling and from the conversation list. */
+      className="pointer-events-none absolute right-4 top-1/2 z-20 hidden h-44 w-9 -translate-y-1/2 flex-col items-center xl:flex"
       onKeyDown={handleKeyDown}
     >
       {/* Decorative rail -- a hairline with end-cap dots marking where this

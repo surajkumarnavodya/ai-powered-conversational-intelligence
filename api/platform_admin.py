@@ -74,7 +74,12 @@ from api.platform_admin_schemas import (
     SetTenantStatusRequest,
     TenantOut,
 )
-from api.schemas import PerformanceMetricsResponse, RequestMetricOut, StageMetricOut
+from api.schemas import (
+    ModelUsageOut,
+    PerformanceMetricsResponse,
+    RequestMetricOut,
+    StageMetricOut,
+)
 from config.settings import get_settings
 from db.connection import test_connection
 from observability.metrics import get_default_metrics
@@ -404,6 +409,7 @@ def platform_metrics(
         result_cache_hits=snapshot["result_cache_hits"],
         result_cache_misses=snapshot["result_cache_misses"],
         database_concurrency_rejections=snapshot["database_concurrency_rejections"],
+        llm_usage=[ModelUsageOut(**usage) for usage in snapshot["llm_usage"]],
     )
 
 

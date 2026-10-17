@@ -744,6 +744,201 @@ def summarize_sql(sql: str, dialect: str | None = DEFAULT_DIALECT) -> tuple[str,
     return statement.key.upper(), tables
 
 
+#: Caps on what `describe_sql` returns. A description is a presentation
+#: aid, not a dump: an adversarial or machine-generated statement can
+#: carry hundreds of predicates, and neither the response model nor the
+#: panel should grow without bound because of one query.
+_MAX_SHAPE_ITEMS = 12
+_MAX_SHAPE_ITEM_CHARS = 80
+
+
+class SqlJoinFact(BaseModel):
+    """One join, as the parser actually read it.
+
+    `kind` is sqlglot's own side/kind for the node (`INNER`, `LEFT`,
+    `RIGHT`, `FULL`, `CROSS`) -- never inferred from the SQL text, and
+    never guessed when sqlglot reports neither (a bare `JOIN` is `INNER`
+    by SQL's own default, which is a language fact rather than an
+    assumption about this query).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    kind: str
+    table: str
+
+
+class SqlShape(BaseModel):
+    """Structural facts about a statement, read from its parsed AST.
+
+    **What this is for.** `summarize_sql` above answers "what kind of
+    statement is this, and which tables does it touch". This answers the
+    next question a reader asks -- how are those tables joined, what is
+    filtered, what is aggregated, at what grain -- so the dashboard can
+    describe a query without anyone having to read SQL.
+
+    **Why it is parsed, not generated.** Every field here is a fact
+    already present in the AST `validate_sql` parsed. Asking a model to
+    describe SQL instead would add a round trip, and could hallucinate a
+    join that is not there -- which, rendered beside a real validator
+    verdict, would read as authoritative. A parse cannot be wrong about
+    the statement it parsed.
+
+    **Three honesty boundaries this type deliberately keeps:**
+
+    1. **No business meaning.** `group_by` is the grain the statement
+       declares, not "sales by region". Naming what a column *means* is
+       the semantic layer's job (`semantic/`), and inventing it here
+       would be a second, unreviewed owner for it.
+    2. **No execution outcome.** Nothing here says whether the query ran,
+       returned rows, or was truncated. Those are owned by the status
+       line and the result gate.
+    3. **No row limit.** Deliberately absent even though the AST has one.
+       `agent.nodes.validate_sql_node` writes `enforce_row_limit`'s
+       output back to `state["sql"]`, so the `TOP`/`LIMIT` in the SQL a
+       caller sees is usually **this platform's governance cap, not the
+       query's own intent**. Reporting it as query behaviour would
+       present a control as authorship. The cap is already disclosed by
+       the result gate, which is its one owner (`CLAUDE.md` 4.8).
+
+    Gates nothing. `validate_sql` remains the only thing that decides
+    whether SQL may run.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    joins: tuple[SqlJoinFact, ...] = ()
+    #: Columns appearing in a `WHERE` anywhere in the statement --
+    #: including inside a CTE or subquery, because that is routinely
+    #: where the real filter lives in generated SQL. Column names only:
+    #: the compared *values* are deliberately not reported, since a
+    #: predicate can carry data (`WHERE email = '...'`) and this string
+    #: is rendered in a UI and may be logged.
+    filter_columns: tuple[str, ...] = ()
+    aggregates: tuple[str, ...] = ()
+    #: Statement-level `GROUP BY` -- the grain of the result.
+    group_by: tuple[str, ...] = ()
+    #: Statement-level `ORDER BY` only. Read from the statement's own
+    #: `order` argument rather than by searching the tree, because a
+    #: window function carries its own `ORDER BY` inside `OVER (...)`
+    #: and a search finds that one first on a statement that has no
+    #: ordering of its own -- reporting a window's internal ordering as
+    #: the result's ordering would be wrong.
+    order_by: tuple[str, ...] = ()
+    is_distinct: bool = False
+
+
+def _render_shape_items(nodes: object) -> tuple[str, ...]:
+    """Renders AST nodes back to SQL text, de-duplicated and bounded.
+
+    De-duplication matters: an aggregate repeated in `SELECT` and
+    `HAVING` is one aggregate to a reader but two nodes to the parser.
+    Order is preserved so the rendering follows the statement.
+    """
+    seen: list[str] = []
+    for node in nodes or ():  # type: ignore[union-attr]
+        try:
+            text = node.sql().strip()
+        except Exception:  # noqa: BLE001 - a presentation aid never raises
+            continue
+        if not text:
+            continue
+        text = text[:_MAX_SHAPE_ITEM_CHARS]
+        if text not in seen:
+            seen.append(text)
+        if len(seen) >= _MAX_SHAPE_ITEMS:
+            break
+    return tuple(seen)
+
+
+def describe_sql(sql: str, dialect: str | None = DEFAULT_DIALECT) -> SqlShape | None:
+    """The statement's structural shape, for display beside the SQL.
+
+    A companion to `summarize_sql`, deliberately a separate function
+    rather than a wider return from it: that one has two live callers
+    (`api.main._sql_summary_out` and `api.artifacts`) whose tuple
+    unpacking would break on a changed signature, and one of them wants
+    only the table list.
+
+    Args:
+        sql: SQL to describe. Usually already validated, but a parse
+            failure is a normal outcome here, not an error.
+        dialect: sqlglot dialect to parse with.
+
+    Returns:
+        A `SqlShape`, or `None` when `sql` is empty or does not parse --
+        so a caller shows nothing rather than guessing.
+    """
+    if not sql or not sql.strip():
+        return None
+    try:
+        statement = sqlglot.parse_one(sql, read=dialect)
+    except SqlglotError:
+        return None
+    if statement is None:
+        return None
+
+    try:
+        joins: list[SqlJoinFact] = []
+        for node in statement.find_all(exp.Join):
+            target = node.this
+            # A join onto a subquery or derived table has no table name;
+            # its alias is the honest label, and an unnamed one is
+            # skipped rather than labelled with a guess.
+            name = getattr(target, "name", "") or getattr(target, "alias", "")
+            if not name:
+                continue
+            # `side` is LEFT/RIGHT/FULL, `kind` is INNER/CROSS/OUTER;
+            # sqlglot leaves both empty for a bare `JOIN`, which SQL
+            # itself defines as INNER.
+            kind = (node.side or node.kind or "INNER").upper()
+            fact = SqlJoinFact(kind=kind, table=name)
+            if fact not in joins:
+                joins.append(fact)
+            if len(joins) >= _MAX_SHAPE_ITEMS:
+                break
+
+        # Every WHERE in the statement, not just the top-level one: in
+        # generated SQL the meaningful predicate is routinely inside a
+        # CTE, and reporting "no filters" for such a query would be
+        # actively misleading.
+        filter_columns: list[str] = []
+        for where in statement.find_all(exp.Where):
+            for column in where.find_all(exp.Column):
+                if column.name and column.name not in filter_columns:
+                    filter_columns.append(column.name)
+                if len(filter_columns) >= _MAX_SHAPE_ITEMS:
+                    break
+
+        aggregates = _render_shape_items(list(statement.find_all(exp.AggFunc)))
+
+        group = statement.args.get("group")
+        group_by = _render_shape_items(getattr(group, "expressions", ()) if group else ())
+
+        order = statement.args.get("order")
+        order_by = _render_shape_items(getattr(order, "expressions", ()) if order else ())
+
+        return SqlShape(
+            joins=tuple(joins),
+            filter_columns=tuple(filter_columns[:_MAX_SHAPE_ITEMS]),
+            aggregates=aggregates,
+            group_by=group_by,
+            order_by=order_by,
+            # Only meaningful for a SELECT. sqlglot also sets `distinct`
+            # on a set operation, where it encodes `UNION` rather than
+            # `UNION ALL` -- a different fact about de-duplicating two
+            # result sets, not a `SELECT DISTINCT`. Reporting that as
+            # "distinct" would mislabel every plain UNION.
+            is_distinct=isinstance(statement, exp.Select)
+            and statement.args.get("distinct") is not None,
+        )
+    except Exception:  # noqa: BLE001 - a presentation aid never fails the answer
+        # An AST shape this walk did not anticipate must degrade to "no
+        # description", never to a partial one that a reader would take
+        # as complete.
+        return None
+
+
 def references_multiple_tables(sql: str, dialect: str | None = DEFAULT_DIALECT) -> bool:
     """Whether `sql` references two or more distinct tables (i.e. involves a join).
 

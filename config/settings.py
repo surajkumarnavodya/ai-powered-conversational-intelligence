@@ -1343,6 +1343,14 @@ class Settings(BaseSettings):
             several external sources into a structured, in-depth response
             (headings, lists, an inline citation per claim), not a single
             short SQL-adjacent answer, so it needs materially more budget.
+        web_search_context_max_chars: Character ceiling on the block of web
+            results handed to that same call
+            (`agent.orchestrator.nodes._build_web_excerpts`). Whole results
+            are dropped from the lowest-ranked end until the block fits and
+            the omission is reported -- a result is never cut mid-way, and
+            the citations returned list only the results the model actually
+            saw. 0 disables the budget entirely (send every result), which
+            is the documented off switch.
         enable_media_generation: Whether IMA Studio image/video/audio
             generation (`media_gen/`, routed as the orchestrator's
             "generation" source -- see `agent.orchestrator.nodes
@@ -1837,7 +1845,7 @@ class Settings(BaseSettings):
     ollama_model: str = "llama3.1:8b"
     ollama_request_timeout_seconds: int = Field(default=300, gt=0)
 
-    # --- Decoding policy (agent/llm_client._decoding_options) ----------
+    # --- Decoding policy (agent/llm_client.decoding_options) -----------
     # The served context window for every Ollama call. **Not the same as
     # the model's trained context length**: llama3.1:8b reports
     # llama.context_length=131072, but Ollama serves a far smaller window
@@ -2971,6 +2979,29 @@ class Settings(BaseSettings):
     web_search_api_key: SecretStr | None = None
     web_search_max_results: int = Field(default=5, gt=0)
     web_search_answer_max_tokens: int = Field(default=2400, gt=0)
+    # Character ceiling on the web-results block in the answer-drafting
+    # prompt. 0 disables budgeting, matching `context_budget_max_chars`'s
+    # own off switch.
+    #
+    # Sized against the *usable* window the same way
+    # `context_budget_max_chars` is, and for the same reason -- an
+    # oversized prompt is not rejected by Ollama, it is silently truncated
+    # from the start. With OLLAMA_NUM_CTX=16384 and the parallel split
+    # documented above, ~8,192 prompt tokens are usable. Reserving
+    # `web_search_answer_max_tokens` (2,400) for the completion, ~500 for
+    # the system prompt and ~150 for the question and scaffolding leaves
+    # ~5,100 tokens ~= 20,400 characters; 18,000 keeps a margin for the
+    # 4-chars-per-token estimate being an estimate.
+    #
+    # Whether this binds at the default `web_search_max_results=5`
+    # depends on the sources, and both cases were measured here on
+    # 2026-10-16: five ordinary web pages came back at 1,547-2,363
+    # characters each (10,979 total, nothing dropped), while five
+    # academic/long-form pages for one medical question exceeded 18,000
+    # characters between them and the top 2 were kept. Raising this
+    # without raising `ollama_num_ctx` does not buy more context, it
+    # moves truncation back inside Ollama where it is silent.
+    web_search_context_max_chars: int = Field(default=18_000, ge=0)
     enable_media_generation: bool = False
     ima_api_key: SecretStr | None = None
     ima_api_base_url: str = "https://api.imastudio.com"

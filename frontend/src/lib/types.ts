@@ -32,9 +32,31 @@ export interface ConversationExchange {
  * not the same as `AgentStateView.schema_tables` (those are the top-k
  * candidates retrieval offered). Server-derived from the parsed AST, so
  * the browser never re-parses SQL to label it. */
+/** Mirrors `api.schemas.SqlJoinOut` -- one join as the parser read it. */
+export interface SqlJoin {
+  /** `INNER` | `LEFT` | `RIGHT` | `FULL` | `CROSS`, from the parser. */
+  kind: string
+  table: string
+}
+
 export interface SqlSummary {
   statement_type: string
   referenced_tables: string[]
+  /** Structural shape from `agent.sql_validator.describe_sql`, read from
+   * the same AST the validator parsed. All optional: a turn persisted
+   * before these existed, or SQL whose shape could not be read, simply
+   * omits them.
+   *
+   * Deliberately carries no row limit: the `TOP`/`LIMIT` in the SQL a
+   * caller sees is this platform's governance cap rather than the
+   * query's own intent, and the cap is already reported by the status
+   * line. */
+  joins?: SqlJoin[]
+  filter_columns?: string[]
+  aggregates?: string[]
+  group_by?: string[]
+  order_by?: string[]
+  is_distinct?: boolean
 }
 
 /** Mirrors `api.schemas.StageTimingOut` -- one graph node call's duration
@@ -1492,6 +1514,17 @@ export interface RequestMetricOut {
   max_ms: number
 }
 
+// Mirrors api/schemas.py's ModelUsageOut. Token counts only -- the
+// backend reports no monetary figure for a locally-hosted model, so
+// there is deliberately no cost field to render.
+export interface ModelUsageOut {
+  model: string
+  calls: number
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+}
+
 export interface PerformanceMetricsResponse {
   started_at: string
   window_requests: number
@@ -1503,6 +1536,9 @@ export interface PerformanceMetricsResponse {
   result_cache_hits: number
   result_cache_misses: number
   database_concurrency_rejections: number
+  // Optional on the wire: the backend defaults it to [], and an older
+  // backend omits it entirely.
+  llm_usage?: ModelUsageOut[]
 }
 
 // --- Tenant/client admin dashboard (api/tenant_admin.py, Prompt 29) --

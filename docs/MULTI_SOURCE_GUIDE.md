@@ -161,6 +161,85 @@ data. Swapping providers later (Bing, SerpAPI, ...) is a
 `search/web_search.py::SUPPORTED_SEARCH_PROVIDERS` addition, not something
 `.env` alone can do yet — only `tavily` is implemented today.
 
+### What the answer looks like
+
+`web_search_node` asks the model for the shape a modern AI search
+assistant produces, not a snippet dump: a direct 1–3 sentence answer
+first, then depth under short `##` headings with lists where the content
+is enumerable and a table only where several items share the same few
+attributes. It is told to merge what several results say about one point
+into a single statement rather than giving each result its own paragraph,
+to keep figures, dates, names and versions rather than rounding them, to
+cite the supporting result inline as a markdown link under that source's
+own title, and to say plainly when results disagree, when a claim rests
+on a single result, or when they do not cover part of the question.
+
+The answer carries **no trailing "Sources" section** by design — the
+dashboard's `SourceAnswerCard` already renders the source list from the
+structured `citations`, and this repo keeps one owner per fact. The inline
+links carry what that list cannot: which source supports which claim.
+
+This is an instruction to a local model, not a guarantee. A small model
+(`llama3.1:8b`) follows the shape loosely; a larger `OLLAMA_MODEL` follows
+it more closely. The prompt is in `agent/orchestrator/nodes.py` and is
+**not** benchmark-pinned, unlike the SQL generation and insight prompts.
+
+**Inline citations are the least reliable part.** Across live runs here on
+2026-10-16, `llama3.1:8b` produced the lead answer, headings and lists
+every time, but inline links only sometimes -- and when it did, often as
+`[1](url)` rather than the source title the prompt asks for. Numbering the
+results in the prompt block is not the cause: an A/B of `[n] [Title](url)`
+against `[Title](url)` produced no inline links in either arm for the same
+question. The structured source list the dashboard renders comes from
+`citations`, not from the answer text, so it is complete either way.
+
+### How much of each result reaches the model
+
+Usually all of it. Tavily is called at `advanced` depth; measured here on
+2026-10-16, five ordinary web pages came back at 1,547–2,363 characters
+each (10,979 total) and all five were passed whole. Long-form sources are
+the exception: five academic pages for one medical question exceeded
+18,000 characters between them, and the top two were used — with the
+answer saying so.
+
+What bounds this is `WEB_SEARCH_CONTEXT_MAX_CHARS` (default 18,000), and
+it exists for a specific reason: **removing a limit is not the same as
+removing truncation.** Ollama does not reject an oversized prompt — it
+truncates from the start, where the system prompt lives, and reports
+nothing. Measured here on 2026-10-16 with `llama3.1:8b`: served without
+`num_ctx`, a long prompt came back evaluated at 2,050 tokens with the
+system prompt gone; at `OLLAMA_NUM_CTX=16384` the same prompt was
+evaluated at 12,043 tokens with it intact. Until this change
+`rag/llm.py` — the helper behind this node — set no `num_ctx` at all, so
+web answers were drafted against a 4,096-token served window while the
+SQL path ran at 16,384.
+
+So the budget is set below the usable window, and when it binds it:
+
+- drops **whole results**, lowest-ranked first (half a source reads as a
+  complete one, and the model would cite it for a claim its missing half
+  contradicts);
+- never drops the top-ranked result, even if it alone exceeds the budget;
+- **says so in the answer** ("_Note: this answer is based on the N most
+  relevant of M search results…_"), while the operator-facing log line
+  names the settings to change;
+- **does not cite** a dropped result — the citation list is what the model
+  actually saw.
+
+Set `WEB_SEARCH_CONTEXT_MAX_CHARS=0` to disable the budget and send every
+result. If you raise `WEB_SEARCH_MAX_RESULTS`, raise `OLLAMA_NUM_CTX` and
+this together — raising this alone just moves truncation back inside
+Ollama, where it is silent. A larger `OLLAMA_NUM_CTX` costs VRAM
+(roughly 1 GB of KV cache per doubling per concurrent slot on an 8B
+model).
+
+**Limitation.** Over-budget handling is rank-based selection only. There
+is no map-reduce pass that summarizes each dropped result separately and
+merges the summaries, and no per-result chunking — both would cost extra
+LLM calls per question, and neither is implemented. So for a question
+whose answer is spread across five long-form sources, the answer rests on
+the top-ranked ones and says so, rather than covering all five.
+
 ## 6. Media generation (image/video creation)
 
 ```env

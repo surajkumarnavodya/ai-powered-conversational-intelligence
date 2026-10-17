@@ -222,8 +222,13 @@ class TestDomainRegistry:
         assert set(DOMAIN_POLICIES) == set(BusinessDomain)
 
     def test_the_mission_s_eighteen_domains_are_all_covered(self):
+        """The mission named eighteen; `CONSTRUCTION` was added later and
+        is counted separately here so the provenance of the nineteenth
+        stays visible instead of being absorbed into the mission's list."""
         business = {domain for domain in BusinessDomain if domain is not BusinessDomain.GENERAL}
-        assert len(business) == 18
+        assert BusinessDomain.CONSTRUCTION in business
+        assert len(business - {BusinessDomain.CONSTRUCTION}) == 18
+        assert len(business) == 19
 
     def test_no_domain_protects_personal_data_less_than_the_floor(self):
         """The structural guarantee that makes domain detection safe:

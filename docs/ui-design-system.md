@@ -29,6 +29,13 @@ broke.
 | `--z-dropdown` / `--z-drawer` / `--z-modal` / `--z-toast` | Named stacking tiers (30/40/50/60) so a new overlay picks the right layer without guessing against existing ad hoc z-index numbers. |
 | `--duration-fast` / `--duration-base` / `--duration-slow` | Named transition speeds (100/150/250ms) instead of a bare value repeated per component. |
 
+Added by the later responsive pass (same additive rule):
+
+| Token | Purpose |
+|---|---|
+| `--chat-column` | The conversation's reading measure (48rem), exposed as the `max-w-chat` utility via Tailwind v4's `--container-chat`. The turns, the composer and the shared read-only view all use it, so they cannot drift apart. See [`docs/ui-responsive-layout.md`](ui-responsive-layout.md), which is authoritative for the measure and the breakpoints. |
+| `--selection-bg` / `--selection-foreground` | The `::selection` pair. Both halves are set deliberately: a background alone left light-on-accent text (a question bubble) unreadable the moment it was selected. |
+
 **Deliberately not added** (see the audit's correction): a separate
 spacing scale and a separate type scale. Tailwind v4's own built-in
 spacing/`text-*` utilities already provide a consistent scale — adding a

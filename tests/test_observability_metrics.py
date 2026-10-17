@@ -188,3 +188,173 @@ class TestFailOpen:
 class TestDefaultSingleton:
     def test_get_default_metrics_returns_the_same_instance_every_call(self):
         assert get_default_metrics() is get_default_metrics()
+
+
+class TestLlmUsageRollup:
+    """Catalogue row 45 -- cumulative per-model token consumption.
+
+    `record_llm_call` is fed from `agent.llm_client._log_ollama_timing`;
+    the wiring from that funnel (and the "no model name means no bucket"
+    guard) is covered in
+    `tests/test_llm_client_usage_rollup.py`.
+    """
+
+    def test_an_empty_rollup_is_a_list_not_a_missing_key(self):
+        assert PerformanceMetrics().snapshot()["llm_usage"] == []
+
+    def test_repeated_calls_accumulate_per_model(self):
+        metrics = PerformanceMetrics()
+
+        metrics.record_llm_call("llama3.1:8b", 100, 20)
+        metrics.record_llm_call("llama3.1:8b", 50, 5)
+
+        assert metrics.snapshot()["llm_usage"] == [
+            {
+                "model": "llama3.1:8b",
+                "calls": 2,
+                "prompt_tokens": 150,
+                "completion_tokens": 25,
+                "total_tokens": 175,
+            }
+        ]
+
+    def test_models_are_sorted_by_total_tokens_descending(self):
+        metrics = PerformanceMetrics()
+
+        metrics.record_llm_call("small", 1, 1)
+        metrics.record_llm_call("large", 900, 100)
+        metrics.record_llm_call("medium", 10, 10)
+
+        assert [u["model"] for u in metrics.snapshot()["llm_usage"]] == [
+            "large",
+            "medium",
+            "small",
+        ]
+
+    def test_usage_is_cumulative_and_survives_the_rolling_request_window(self):
+        # The request/stage windows keep only the most recent `max_requests`;
+        # usage is a cumulative counter and must not be evicted with them.
+        metrics = PerformanceMetrics(max_requests=1)
+
+        metrics.record_llm_call("m", 10, 1)
+        metrics.record_llm_call("m", 10, 1)
+        for _ in range(5):
+            metrics.record_agent_run([], total_duration_ms=1.0, status="succeeded")
+
+        assert metrics.snapshot()["llm_usage"][0]["calls"] == 2
+        assert metrics.snapshot()["window_requests"] == 1
+
+    def test_a_call_with_no_model_name_is_not_attributed_to_any_bucket(self):
+        metrics = PerformanceMetrics()
+
+        metrics.record_llm_call(None, 100, 20)
+
+        assert metrics.snapshot()["llm_usage"] == []
+
+    def test_a_call_reporting_no_token_counts_at_all_is_not_recorded(self):
+        # An older Ollama server omits both counters. Recording a
+        # zero-token call would be indistinguishable from a real call that
+        # consumed nothing -- "nothing measured" must not read as
+        # "measured zero".
+        metrics = PerformanceMetrics()
+
+        metrics.record_llm_call("m", None, None)
+
+        assert metrics.snapshot()["llm_usage"] == []
+
+    def test_one_missing_count_keeps_the_call_and_contributes_zero(self):
+        metrics = PerformanceMetrics()
+
+        metrics.record_llm_call("m", 100, None)
+
+        assert metrics.snapshot()["llm_usage"] == [
+            {
+                "model": "m",
+                "calls": 1,
+                "prompt_tokens": 100,
+                "completion_tokens": 0,
+                "total_tokens": 100,
+            }
+        ]
+
+    def test_usage_is_partitioned_per_tenant_like_every_other_metric(self):
+        # A tenant admin reading `GET /metrics/performance` must not see
+        # another tenant's consumption (CLAUDE.md 5.3) -- the same reason
+        # latency and status counts are partitioned.
+        metrics = PerformanceMetrics()
+
+        metrics.record_llm_call("m", 100, 10, tenant_id="tenant-a")
+        metrics.record_llm_call("m", 7, 3, tenant_id="tenant-b")
+
+        assert metrics.snapshot("tenant-a")["llm_usage"] == [
+            {
+                "model": "m",
+                "calls": 1,
+                "prompt_tokens": 100,
+                "completion_tokens": 10,
+                "total_tokens": 110,
+            }
+        ]
+        assert metrics.snapshot("tenant-b")["llm_usage"][0]["total_tokens"] == 10
+
+    def test_the_merged_snapshot_sums_every_tenants_usage(self):
+        # What `GET /platform-admin/metrics` serves, and the one view that
+        # is deliberately cross-tenant.
+        metrics = PerformanceMetrics()
+
+        metrics.record_llm_call("m", 100, 10, tenant_id="tenant-a")
+        metrics.record_llm_call("m", 7, 3, tenant_id="tenant-b")
+
+        assert metrics.snapshot()["llm_usage"] == [
+            {
+                "model": "m",
+                "calls": 2,
+                "prompt_tokens": 107,
+                "completion_tokens": 13,
+                "total_tokens": 120,
+            }
+        ]
+
+    def test_an_unknown_tenants_usage_view_is_empty_not_an_error(self):
+        # Same anti-oracle property the rest of `snapshot` already has: a
+        # tenant that recorded nothing must not be distinguishable from one
+        # that does not exist.
+        assert PerformanceMetrics().snapshot("never-seen")["llm_usage"] == []
+
+    def test_the_distinct_model_count_is_bounded(self):
+        metrics = PerformanceMetrics(max_models=2)
+
+        for index in range(5):
+            metrics.record_llm_call(f"model-{index}", 1, 1)
+
+        usage = metrics.snapshot()["llm_usage"]
+        assert len(usage) == 2
+        # LRU: the two most recently used survive.
+        assert {u["model"] for u in usage} == {"model-3", "model-4"}
+
+    def test_recording_never_raises_even_with_a_nonsense_count(self):
+        # An observability aid fails open (CLAUDE.md 4.2): a bad value
+        # must cost the counter, never the request.
+        metrics = PerformanceMetrics()
+
+        metrics.record_llm_call("m", cast(Any, "not-a-number"), 1)
+
+        assert metrics.snapshot()["llm_usage"] == []
+
+    def test_no_snapshot_field_mentions_money(self):
+        # The one risk the implementation plan names for this batch: no
+        # monetary figure exists for a locally-hosted model, so none may
+        # be reported.
+        metrics = PerformanceMetrics()
+        metrics.record_llm_call("m", 10, 1)
+
+        keys = set(metrics.snapshot()["llm_usage"][0])
+
+        assert keys == {
+            "model",
+            "calls",
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+        }
+        assert not {k for k in keys if any(w in k for w in ("cost", "price", "usd", "spend"))}

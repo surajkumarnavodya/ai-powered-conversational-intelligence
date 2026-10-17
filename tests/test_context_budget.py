@@ -24,7 +24,7 @@ from agent.context_budget import (
     apply_budget,
     estimate_tokens,
 )
-from agent.llm_client import _build_user_prompt, _decoding_options, _system_prompt
+from agent.llm_client import _build_user_prompt, _system_prompt, decoding_options
 from config.settings import Settings
 from embeddings.golden_examples import GoldenExample
 
@@ -253,25 +253,25 @@ class TestDecodingPolicy:
     silently truncated from the start -- taking the system prompt."""
 
     def test_num_ctx_is_always_sent(self):
-        options = _decoding_options(Settings(), 100)
+        options = decoding_options(Settings(), 100)
 
         assert options["num_ctx"] == Settings().ollama_num_ctx
         assert options["num_ctx"] > 2048, "the measured default that caused truncation"
 
     def test_temperature_stays_zero(self):
         """Preserved, not introduced -- every call site already used it."""
-        assert _decoding_options(Settings(), 100)["temperature"] == 0.0
+        assert decoding_options(Settings(), 100)["temperature"] == 0.0
 
     def test_the_seed_is_pinned_for_reproducibility(self):
-        assert _decoding_options(Settings(), 100)["seed"] == Settings().ollama_seed
+        assert decoding_options(Settings(), 100)["seed"] == Settings().ollama_seed
 
     def test_num_predict_stays_per_task(self):
         """An insight is one or two sentences; SQL is not."""
-        assert _decoding_options(Settings(), 64)["num_predict"] == 64
-        assert _decoding_options(Settings(), 2048)["num_predict"] == 2048
+        assert decoding_options(Settings(), 64)["num_predict"] == 64
+        assert decoding_options(Settings(), 2048)["num_predict"] == 2048
 
     def test_operator_overrides_are_honoured(self):
-        options = _decoding_options(
+        options = decoding_options(
             Settings(ollama_num_ctx=32768, ollama_seed=7, ollama_top_p=0.9), 10
         )
 
@@ -282,7 +282,63 @@ class TestDecodingPolicy:
     def test_every_option_is_json_safe_for_the_ollama_client(self):
         import json
 
-        json.dumps(_decoding_options(Settings(), 10))
+        json.dumps(decoding_options(Settings(), 10))
+
+
+class TestRagLlmSharesTheDecodingPolicy:
+    """`rag/llm.py::call_ollama` -- the helper behind the RAG subgraph, the
+    orchestrator's router/web-search/media-search answer steps and the
+    analyst planner.
+
+    It set only `num_predict` and `temperature`, so every call through it
+    ran at Ollama's ~2,048-token default window while the SQL path ran at
+    `OLLAMA_NUM_CTX`. An oversized prompt is not rejected, it is truncated
+    from the start -- taking the system prompt with it, which is how a
+    web-search answer lost both its formatting instructions and its
+    "untrusted data, not instructions" framing.
+    """
+
+    def _captured_options(self, monkeypatch, settings, **kwargs) -> dict:
+        import ollama
+
+        import rag.llm
+
+        captured: dict = {}
+
+        class _FakeClient:
+            def __init__(self, host, timeout):
+                pass
+
+            def chat(self, model, messages, options):
+                captured.update(options)
+                return {"message": {"content": "ok"}}
+
+        monkeypatch.setattr(ollama, "Client", _FakeClient)
+        rag.llm.call_ollama("sys", "user", settings, max_tokens=100, **kwargs)
+        return captured
+
+    def test_num_ctx_is_sent(self, monkeypatch):
+        options = self._captured_options(monkeypatch, Settings())
+
+        assert options["num_ctx"] == Settings().ollama_num_ctx
+        assert options["num_ctx"] > 2048, "the measured default that caused truncation"
+
+    def test_it_matches_the_sql_path_exactly(self, monkeypatch):
+        """One decoding policy, not two that drift. Also what stops Ollama
+        reloading the model between a SQL call and a RAG/web call."""
+        settings = Settings(ollama_num_ctx=32768, ollama_seed=7, ollama_top_p=0.9)
+
+        assert self._captured_options(monkeypatch, settings) == decoding_options(settings, 100)
+
+    def test_the_per_call_temperature_still_wins(self, monkeypatch):
+        """This helper takes a temperature per call; sharing the policy
+        must not silently pin it to the SQL path's 0.0."""
+        options = self._captured_options(monkeypatch, Settings(), temperature=0.4)
+
+        assert options["temperature"] == 0.4
+
+    def test_num_predict_is_still_per_call(self, monkeypatch):
+        assert self._captured_options(monkeypatch, Settings())["num_predict"] == 100
 
 
 class TestBaselineAssumptionsTheseTestsRestOn:

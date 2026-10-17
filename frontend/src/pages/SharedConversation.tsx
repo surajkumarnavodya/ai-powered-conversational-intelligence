@@ -107,7 +107,7 @@ export function SharedConversation({ inShell = false }: { inShell?: boolean } = 
         </header>
       )}
 
-      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
+      <main className="mx-auto w-full max-w-chat flex-1 px-3 py-6 sm:px-6">
         {data?.snapshot_captured_at && (
           <p className="mb-4 text-xs text-[var(--muted-foreground)]">
             {t('sharedView.snapshotOf', { date: new Date(data.snapshot_captured_at).toLocaleString() })}
@@ -152,14 +152,14 @@ export function SharedConversation({ inShell = false }: { inShell?: boolean } = 
       </main>
 
       {inShell && (
-        <div className="sticky bottom-0 mx-auto w-full max-w-3xl bg-[var(--background)] px-4 pb-4 pt-2">
+        <div className="sticky bottom-0 mx-auto w-full max-w-chat bg-[var(--background)] px-3 pb-3 pt-2 sm:px-6 sm:pb-4">
           {/* Typing here starts a new chat; the shared copy above stays read-only. */}
           <ChatInput onSend={() => navigate('/')} />
         </div>
       )}
 
       <footer className="border-t border-[var(--border)]">
-        <p className="mx-auto max-w-3xl px-4 py-4 text-center text-xs text-[var(--muted-foreground)]">
+        <p className="mx-auto max-w-chat px-3 py-4 text-center text-xs text-[var(--muted-foreground)] sm:px-6">
           {t('sharedView.readOnlyNote')}
         </p>
       </footer>

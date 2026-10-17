@@ -84,6 +84,28 @@
   --assistant-message-bg: var(--card);
   --assistant-message-foreground: var(--foreground);
 
+  /* Reading column -- the single width every conversation surface is
+     capped at (the turns, the composer, the shared read-only view), so
+     messages and the box you answer them in always share one left and
+     right edge. 48rem is the measure a line of prose stays comfortable
+     at and what the mainstream AI chat UIs settle on; anything wider
+     reads as a stretched document on a 1440px+ laptop. Data-dense
+     screens (admin, review, dashboards) deliberately do NOT use this --
+     they are tables, not prose, and keep their own wider containers.
+     Content too wide for it (result tables, SQL) scrolls inside its own
+     box rather than widening the column. */
+  --chat-column: 48rem;
+
+  /* Text selection -- a neutral gray highlight with an explicit text
+     color. Both halves matter: ::selection repaints the background but
+     leaves `color` alone unless it is set, so selecting white-on-accent
+     text (the user's question bubble, ChatMessage.tsx) used to put white
+     text on a light tint and make the selected text unreadable. A
+     neutral pair, deliberately NOT derived from --accent, is legible
+     over every surface in the app regardless of the chosen accent hue. */
+  --selection-bg: #cbd5e1;
+  --selection-foreground: #0f172a;
+
   /* Code / SQL surfaces -- distinct from --muted/--card so a future syntax
      highlighter (markdown code fences) and the SQL result area can share
      one consistent "this is data/code, not prose" surface. */
@@ -94,10 +116,21 @@
   /* Modal-specific surfaces -- deliberately NOT --card. --card carries a
      translucent "glass" alpha channel in dark mode (see the dark override
      below) intended for surfaces meant to sit atop other content, like
-     message bubbles. A modal that's meant to fully occlude the page behind
-     it needs a guaranteed fully-opaque panel/backdrop regardless of theme,
-     so it gets its own tokens instead of inheriting --card's transparency. */
-  --modal-backdrop: #05050a;
+     message bubbles. A modal panel must never let anything show through
+     it regardless of theme, so it gets its own guaranteed-opaque token
+     instead of inheriting --card's transparency.
+
+     The *backdrop* is a different question from the *panel*, and the two
+     were conflated when these tokens were introduced (docs/functional-ui
+     -audit.md 1.5). The bug being fixed then was content showing through
+     the panel in dark mode, which --modal-surface below is what actually
+     fixes; the backdrop was made fully opaque in the same pass and that
+     part went further than the bug required, blacking the page out
+     entirely. A scrim is meant to dim what is behind it, not delete it --
+     seeing the page recede is what tells you the dialog is a layer over
+     your work rather than a new screen. So: translucent here, opaque for
+     the panel. */
+  --modal-backdrop: rgb(5 5 10 / 0.55);
   --modal-surface: #ffffff;
   /* Floating menus (dropdown, popover, toast): opaque, so page content never shows through. */
   --popover-surface: #ffffff;
@@ -143,12 +176,24 @@
   --input: #17152a;
   --header: #100e1f;
 
+  /* A little more opaque than the light scrim. The page behind is already
+     dark here, so an identical alpha reads as a faint tint rather than as
+     dimming, and the panel stops standing out from it. */
+  --modal-backdrop: rgb(5 5 10 / 0.65);
+
   /* Same hue as --card's dark value, alpha channel removed -- --card's
      transparency here is deliberate ("glass" surfaces like message
-     bubbles), but a modal panel meant to fully occlude the page must never
-     let the backdrop/page show through it. */
+     bubbles), but a modal panel must never let the backdrop or the page
+     show through it. This is the half of the 2026-09-19 fix that was
+     load-bearing, and it is unchanged. */
   --modal-surface: #151324;
   --popover-surface: #151324;
+
+  /* Same intent as the light values (gray highlight, legible text), read
+     for the dark surface -- a near-black selection foreground would be
+     invisible here. */
+  --selection-bg: #4a4769;
+  --selection-foreground: #f1f1fa;
 
   --shadow-color: 260 60% 3%;
 
@@ -193,6 +238,9 @@
   --color-modal-surface: var(--modal-surface);
   --color-popover-surface: var(--popover-surface);
   --color-modal-surface-foreground: var(--modal-surface-foreground);
+  /* Generates `max-w-chat`/`w-chat` from the token above -- Tailwind v4's
+     --container-* namespace -- so no surface hardcodes the measure. */
+  --container-chat: var(--chat-column);
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 0.25rem);
   --radius-sm: calc(var(--radius) - 0.375rem);
@@ -243,8 +291,19 @@ body {
   overflow-x: visible;
 }
 
+/* Highlighted text keeps a fixed, readable pair (see --selection-bg) --
+   setting only the background leaves light-on-accent text unreadable the
+   moment it is selected. ::-moz-selection is listed separately because a
+   selector list containing one pseudo-element a browser does not know
+   drops the whole rule. */
 ::selection {
-  background: var(--accent-soft);
+  background: var(--selection-bg);
+  color: var(--selection-foreground);
+}
+
+::-moz-selection {
+  background: var(--selection-bg);
+  color: var(--selection-foreground);
 }
 
 /* Respects the OS-level "reduce motion" preference across every animated

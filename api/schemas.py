@@ -177,6 +177,20 @@ class AttemptRecordOut(BaseModel):
     will_retry: bool = False
 
 
+class SqlJoinOut(BaseModel):
+    """One join in the generated SQL, as the parser read it.
+
+    Mirrors `agent.sql_validator.SqlJoinFact`. `kind` is the parser's own
+    side/kind (`INNER`, `LEFT`, `RIGHT`, `FULL`, `CROSS`), never inferred
+    from the SQL text.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    kind: str
+    table: str
+
+
 class SqlSummaryOut(BaseModel):
     """What the generated SQL *is* -- its statement shape and the tables it
     actually references.
@@ -196,6 +210,30 @@ class SqlSummaryOut(BaseModel):
 
     statement_type: str
     referenced_tables: list[str] = Field(default_factory=list)
+
+    # --- Structural shape, from `agent.sql_validator.describe_sql` -------
+    # Added additively: every field below is optional with a default, so
+    # an older consumer of this frozen model is unaffected and a turn
+    # whose SQL does not parse simply carries the empty defaults
+    # (`CLAUDE.md` 6.3).
+    #
+    # Read from the same AST `validate_sql` already parsed -- no second
+    # parser, and deliberately no model call: an explanation that
+    # hallucinated a join would sit beside a real validator verdict and
+    # read as authoritative. See `SqlShape` for the three honesty
+    # boundaries this carries, in particular why there is no row limit
+    # here (the `TOP`/`LIMIT` in the SQL a caller sees is this
+    # platform's governance cap, not the query's own intent).
+    joins: list[SqlJoinOut] = Field(default_factory=list)
+    #: Column names appearing in a `WHERE` anywhere in the statement.
+    #: Names only -- never the compared values, which can carry data.
+    filter_columns: list[str] = Field(default_factory=list)
+    aggregates: list[str] = Field(default_factory=list)
+    #: Statement-level `GROUP BY` -- the grain of the result.
+    group_by: list[str] = Field(default_factory=list)
+    #: Statement-level `ORDER BY` only, never a window's internal one.
+    order_by: list[str] = Field(default_factory=list)
+    is_distinct: bool = False
 
 
 class StageTimingOut(BaseModel):
@@ -1330,6 +1368,26 @@ class RequestMetricOut(BaseModel):
     max_ms: float
 
 
+class ModelUsageOut(BaseModel):
+    """One model's cumulative token consumption -- see
+    `observability.metrics.ModelUsageSummary`, which this mirrors
+    field-for-field.
+
+    **No monetary field, deliberately.** The LLM runs locally via Ollama,
+    so this deployment has no per-token price to report; a cost column
+    would be an invented number presented as an observed fact. Token
+    counts are what the provider actually reported.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    model: str
+    calls: int
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+
+
 class PerformanceMetricsResponse(BaseModel):
     """`GET /metrics/performance` -- a live rollup of the same per-stage
     timing data `agent.nodes._timed_node` has always logged, aggregated by
@@ -1356,6 +1414,14 @@ class PerformanceMetricsResponse(BaseModel):
     # response is self-describing about its scope rather than leaving a
     # reader to assume it is process-wide (which it no longer is).
     tenant_id: str | None = None
+    # Catalogue row 45 (AI usage rollup) -- cumulative per-model token
+    # consumption, additive and defaulted like every field above it, so an
+    # older client that doesn't know it sees no behavior change. Empty
+    # means "no LLM call has reported token counts in this scope yet",
+    # which is also what an older Ollama server that omits the counts
+    # produces -- indistinguishable by design, since both mean "nothing
+    # measured" rather than "measured zero".
+    llm_usage: list[ModelUsageOut] = []
 
 
 class ComponentHealth(BaseModel):

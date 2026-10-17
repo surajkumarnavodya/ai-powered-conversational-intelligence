@@ -172,12 +172,39 @@ fix):
 
 | Check | Desktop (1440px), dark | Desktop (1440px), light | Tablet (820px), dark | Mobile (390px), dark |
 |---|---|---|---|---|
-| Overlay computed `background-color` | `rgb(5, 5, 10)`, opacity `1` | `rgb(5, 5, 10)`, opacity `1` | `rgb(5, 5, 10)`, opacity `1` | `rgb(5, 5, 10)`, opacity `1` |
+| Overlay computed `background-color` | `rgb(5, 5, 10)`, opacity `1` | `rgb(5, 5, 10)`, opacity `1` | `rgb(5, 5, 10)`, opacity `1` | `rgb(5, 5, 10)`, opacity `1` | <!-- superseded 2026-10-16, see below -->
 | Panel computed `background-color` | `rgb(21, 19, 36)` (`#151324`), opacity `1` | `rgb(255, 255, 255)`, opacity `1` | `rgb(21, 19, 36)`, opacity `1` | `rgb(21, 19, 36)`, opacity `1` |
 | Background wrapper `.inert` | `true` | `true` | `true` | `true` |
 | Element under former "New chat" button location | resolves to the opaque backdrop div (unclickable) | — | — | — |
 | Tab pressed 15× from dialog open — focus ever leaves dialog? | No | No | No | No |
 | Escape closes dialog, `inert` removed, background clickable again | Yes (`New chat` click succeeded post-close, no error) | — | — | — |
+
+#### Superseded in part, 2026-10-16: the backdrop is a scrim again
+
+The row above is **no longer true of the overlay**, by a later deliberate
+change, and is kept rather than edited so the reasoning stays legible.
+
+The 2026-09-19 fix addressed two things at once and only one of them was
+the bug. Content bled *through the panel* because `--card` carries a ~52%
+alpha in dark mode — that is what `--modal-surface` fixes, and it is
+unchanged and still fully opaque in both themes. Making the **backdrop**
+fully opaque as well went further than the bug required: it blacked the
+page out entirely, so a dialog read as a new screen rather than as a
+layer over the user's work. Reported again on 2026-10-16, from the
+feedback dialog.
+
+`--modal-backdrop` is now `rgb(5 5 10 / 0.55)` in light and
+`rgb(5 5 10 / 0.65)` in dark — a little more alpha in dark, where an
+identical scrim over an already-dark page reads as a tint rather than as
+dimming. The page behind is visibly dimmed, not hidden.
+
+What this does **not** change, and what the acceptance condition below
+actually rests on: the panel stays opaque (nothing shows through it),
+`AppShell` still marks the background `inert` while a modal is open, so
+the page behind remains unreachable by pointer, tab order and assistive
+technology, and `tests/.../dialog.test.tsx` still pins that the modal
+draws from the dedicated tokens rather than `--card` or a bare
+`bg-black`. Occlusion was never what made the modal safe; `inert` is.
 
 Screenshots taken during this run (chat content — suggestion chips, hero
 heading — fully hidden behind an edge-to-edge opaque panel/backdrop in

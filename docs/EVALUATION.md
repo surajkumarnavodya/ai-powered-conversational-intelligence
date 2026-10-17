@@ -149,6 +149,23 @@ than a hypothetical one.
 > `docs/RISK_REGISTER.md`'s R-003 for the same caveat stated in those
 > documents' own words.
 
+## Run artefacts in this repository
+
+`eval/results/` holds the compact and `_full` JSON for each recorded run.
+The baseline and the run this document's numbers come from are named above.
+**Three later runs are checked in but deliberately not reported as
+results** — `run_20261016T184207Z`, `run_20261016T185313Z` and
+`run_20261016T205212Z` (2026-10-16, `llama3.1:8b`, `AdventureWorksDW2025`,
+3/3/33 cases). They were committed by a session that did not perform or
+verify them, and none is a full 57-case run, so they are raw artefacts
+rather than a measurement this project stands behind. See
+[`EVALUATION_CURRENT.md`](EVALUATION_CURRENT.md)'s header note.
+
+The `_full.json` variants embed generated SQL and result rows. Those rows
+are from Microsoft's synthetic AdventureWorks sample warehouse — no real or
+personal data — which is why they are safe to keep in version control; a
+run against a real tenant database would not be.
+
 ## Running it yourself
 
 ```bash

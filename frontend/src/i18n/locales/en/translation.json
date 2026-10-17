@@ -157,11 +157,15 @@
   },
   "chat": {
     "placeholder": "Ask a question about your data...",
+    "placeholderEmpty": "Ask a question and send a message to receive a reply...",
     "send": "Send message",
     "liveThinking": "The assistant is thinking about your question.",
     "liveAnswerReady": "The answer is ready.",
     "view": "View",
     "rerun": "Re-run",
+    "editQuestion": "Edit",
+    "copyQuestion": "Copy question",
+    "submitEdit": "Ask again",
     "sources": "Answered using",
     "followingUpOn": "Following up on",
     "sourcesLabel": "Sources",
@@ -432,6 +436,8 @@
     "thinking": "Thinking",
     "answeredIn": "Answered in {{seconds}}s",
     "downloadAnswer": "Download answer",
+    "downloadMarkdown": "Download as Markdown",
+    "downloadPdf": "Download as PDF",
     "copyAnswer": "Copy answer",
     "copied": "Copied!",
     "exportCsv": "Export CSV",
@@ -576,6 +582,13 @@
     "notRun": "not run",
     "metadata": "Query metadata",
     "statementType": "Statement type",
+    "joins": "Joins",
+    "filterColumns": "Filtered on",
+    "aggregates": "Aggregates",
+    "groupBy": "Grouped by",
+    "orderBy": "Ordered by",
+    "distinct": "Duplicate rows",
+    "distinctRemoved": "Removed (DISTINCT)",
     "referencedTables": "Tables referenced",
     "rowCount": "Rows returned",
     "duration": "Execution time"
@@ -781,5 +794,14 @@
     "unavailableHeading": "Not available",
     "notConfigured": "not set up",
     "notPermitted": "no access"
+  },
+  "shortcuts": {
+    "title": "Keyboard shortcuts",
+    "hint": "These work anywhere except while you are typing in a text field.",
+    "newChat": "New chat",
+    "toggleSidebar": "Show or hide the sidebar",
+    "openSettings": "Open settings",
+    "focusComposer": "Jump to the question box",
+    "showHelp": "Show this list"
   }
 }

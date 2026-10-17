@@ -19,6 +19,7 @@ export function Chat() {
   const activeConversationId = useChatStore((state) => state.activeConversationId)
 
   const isMultiDb = (health.data?.databases.length ?? 0) > 1
+  const isEmptyConversation = queryHistory.length === 0 && pendingQuestion === null
 
   const scrollRef = useRef<HTMLDivElement>(null)
   // Single scroll-state source of truth, shared by the auto-follow effect
@@ -70,7 +71,7 @@ export function Chat() {
     // column never scrolls itself -- the middle region below is the only
     // scroll container, spanning the full remaining width so its
     // scrollbar sits flush against the browser's right edge, with the
-    // actual message content centered inside it via max-w-4xl/mx-auto.
+    // actual message content centered inside it via max-w-chat/mx-auto.
     //
     // Every turn ever asked this session renders here, in order, each
     // fully expanded (question directly above its own answer) -- not just
@@ -93,7 +94,12 @@ export function Chat() {
         bottomOffsetPx={composerHeight + 16}
       />
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex min-h-full max-w-4xl flex-col px-4 pb-4 pt-6">
+        {/* `max-w-chat` (48rem, --chat-column in index.css) is the one
+            owner of the conversation's measure -- the composer below
+            sits in this same box, so the two can never drift apart. The
+            gutter grows with the viewport instead of being a fixed 16px
+            at every size: edge-tight on a phone, roomier from `sm` up. */}
+        <div className="mx-auto flex min-h-full w-full max-w-chat flex-col px-3 pb-4 pt-4 sm:px-6 sm:pt-6">
           <div className="flex flex-col gap-8">
             {queryHistory.map((entry) => (
               <TurnCard key={entry.entryId} entry={entry} isMultiDb={isMultiDb} />
@@ -105,15 +111,24 @@ export function Chat() {
               while the messages scroll beneath it, and the scrollbar itself runs
               all the way to the bottom edge of the page.
 
-              pl-10 matches the exact left inset TurnCard/PendingTurn already
-              apply to an answer's own content (see TurnCard.tsx: it reserves
-              the width of the question bubble's avatar + gap so the answer
-              reads as indented beneath it). Without this, the composer's
-              left edge sits 40px to the left of where the answer content it
-              sits below actually starts -- the two columns would not share
-              the same left edge even though both already share the same
-              max-w-4xl/px-4 container and therefore the same right edge. */}
-          <div ref={composerRef} className="sticky bottom-0 mt-auto bg-[var(--background)] pb-4 pt-2 pl-10">
+              It spans the full reading column, with no left inset. It used
+              to carry `pl-10` to line up with the answer text's own
+              avatar-width indent, but that pushed the composer 40px right
+              of centre -- unmissable on an empty conversation, where the
+              box is the only thing on screen. Matching the column the
+              turns sit in gives it equal left and right margins; the
+              answer's indent stays a property of the answer. */}
+          {/* `my-auto` on an empty conversation, `mt-auto` once there is
+              one: with nothing to read, pinning the box to the bottom
+              left the whole screen empty above it, so it centres in the
+              space instead and drops to the bottom as soon as the first
+              turn gives it something to sit under. */}
+          <div
+            ref={composerRef}
+            className={`sticky bottom-0 bg-[var(--background)] pb-3 pt-2 sm:pb-4 ${
+              isEmptyConversation ? 'my-auto' : 'mt-auto'
+            }`}
+          >
             {/* Above the composer on purpose: it describes what the
                 *next* question will carry, so it belongs with the input
                 rather than with any one answer. Collapsed by default --

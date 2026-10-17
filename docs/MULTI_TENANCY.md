@@ -128,7 +128,7 @@ the much longer refresh-token lifetime.
 | `POST /execute` result cache | Cache key is `(tenant_id, database_name, sql)` |
 | Golden examples (few-shot) | `tenant_id` in the document id *and* metadata; Chroma `where` filter plus a per-document re-check |
 | Business-context retrieval | `retrieval.retriever._chunk_tenant_id` drops any chunk belonging to another tenant |
-| Performance metrics | `observability.metrics.PerformanceMetrics` partitions per tenant; `GET /metrics/performance` returns only the caller's own slice |
+| Performance metrics | `observability.metrics.PerformanceMetrics` partitions per tenant — latency, status mixes, cache counters and per-model token usage alike; `GET /metrics/performance` returns only the caller's own slice |
 | Recommendations (inputs) | `generate_recommendations_node` reads `PerformanceMetrics.snapshot(state["tenant_id"])`, so no recommendation is derived from another tenant's latency |
 | Response feedback log | `tenant_id` recorded on every `feedback/store.py` row (a read-later log; nothing retrieves from it into a prompt) |
 | Security audit events | `security.audit_log.set_audit_tenant_id`, bound by `run_agent`/`run_orchestrated`/`api/auth.py`; every event is stamped `tenant_id=` |
@@ -203,16 +203,27 @@ call to clobber the first's in-flight value.
 
 ### 3.4 Why metrics are partitioned
 
-`GET /metrics/performance` is admin-gated, but this codebase has **no
-platform-admin-versus-tenant-admin distinction** — so admin-gating alone
-would have let one tenant's admin read another's latency distributions,
-status mixes and cache hit rates, all of which say something real about
-another tenant's workload. Each write lands in its own tenant's window and
-the route reads back only the caller's own.
+`GET /metrics/performance` is admin-gated, but the base `admin` role
+carries **no platform-admin-versus-tenant-admin distinction** — so
+admin-gating alone would have let one tenant's admin read another's latency
+distributions, status mixes, cache hit rates and (since 2026-10-17)
+per-model token counts, all of which say something real about another
+tenant's workload. Each write lands in its own tenant's window and the
+route reads back only the caller's own.
 
 The merged, process-wide rollup still exists (`PerformanceMetrics
-.snapshot()` with no argument) for operator/profiling use. It is
-deliberately **not** reachable over HTTP.
+.snapshot()` with no argument) for operator and profiling use.
+
+**Corrected 2026-10-17:** this section previously said that merged view was
+"deliberately not reachable over HTTP". That stopped being true at Prompt
+28. `GET /platform-admin/metrics` (`api/platform_admin.py`) is the
+deliberately cross-tenant counterpart, and it is gated on the separate,
+granular `Permission.PLATFORM_ADMIN` rather than the base `admin` role —
+which is precisely the distinction the tenant-scoped route cannot rely on.
+So the invariant is not "no HTTP route sees merged data"; it is **"no
+tenant-scoped route ever sees another tenant's data, and the merged view
+requires a strictly higher permission."** `api/main.py`'s own comment on
+the tenant-scoped route still carries the older wording.
 
 ---
 

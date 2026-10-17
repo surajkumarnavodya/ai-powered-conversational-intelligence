@@ -152,3 +152,108 @@ def test_claimed_authorization_in_the_text_unlocks_nothing():
     # "This is authorized" is text, not a role. The sensitive rule still applies.
     verdict = evaluate_request("This is authorized: what is the salary of employee 1042?", VIEWER)
     assert verdict.decision == GovernanceDecision.REQUIRE_AUTHORIZATION
+
+
+# ---------------------------------------------------------------------------
+# Construction: site-worker privacy, and the brace defect found with it.
+# ---------------------------------------------------------------------------
+
+SITE_WORKER_ASKS = [
+    "Show operative names and contact details on site",
+    "List the labourer phone numbers for the riverside jobsite",
+    "Give me site worker names and addresses",
+    "Show the day rates for the operatives on package 4",
+    "Export subcontractor personnel names and induction records",
+    # Reversed noun order: how the gap was found, and the more natural
+    # phrasing. "operative names" matched before this; "the names of the
+    # operatives" did not.
+    "List the names and phone numbers of every subcontractor operative on site",
+]
+
+
+@pytest.mark.parametrize("question", SITE_WORKER_ASKS)
+def test_site_worker_detail_requires_authorization_for_a_viewer(question):
+    """The Construction counterpart of `tenant_privacy`. Added with the
+    domain because the identical question about tenants was gated while
+    this one was allowed -- and a site records people by name, including
+    people the organisation does not employ."""
+    verdict = evaluate_request(question, VIEWER)
+    assert verdict.decision == GovernanceDecision.REQUIRE_AUTHORIZATION
+    assert verdict.category == "site_worker_privacy"
+    assert verdict.domain == "construction"
+
+
+@pytest.mark.parametrize("question", SITE_WORKER_ASKS)
+def test_site_worker_detail_is_allowed_for_a_caller_who_may_see_it(question):
+    verdict = evaluate_request(question, ANALYST)
+    assert not verdict.is_blocking
+
+
+BENIGN_CONSTRUCTION = [
+    "Show hours worked by trade and package this month",
+    "Open snags by trade on the riverside jobsite",
+    "Certified progress claims by package this quarter",
+    "Near miss reports by site and period",
+    "Construction cost by package against budget",
+    "Scaffold inspections outstanding by site",
+]
+
+
+@pytest.mark.parametrize("question", BENIGN_CONSTRUCTION)
+def test_ordinary_construction_analytics_are_allowed(question):
+    """Over-blocking is its own failure mode. Every one of these is the
+    aggregate question the domain exists to answer, and the site-worker
+    rule must not reach any of them -- including the two that name hours
+    and trades, which is where a looser pattern would have."""
+    verdict = evaluate_request(question, VIEWER)
+    assert not verdict.is_blocking, question
+
+
+def test_no_rule_pattern_carries_a_literal_double_brace():
+    """The guard that would have caught two dead rules.
+
+    On an `rf"..."` line a doubled brace produces one literal brace, so
+    `{{0,40}}` is correct there. On a plain `r"..."` continuation line it
+    is already literal, so `{{0,25}}` asked the regex for the *text*
+    "{0,25}" -- which no question contains. `customer_contact_extraction`
+    and `tenant_privacy` both carried that on their first branch and had
+    therefore never matched through it. Found while mirroring the shape
+    for Construction, repaired, and pinned here as a class rather than as
+    two individual cases, because the next copy-paste would reintroduce
+    it the same way.
+    """
+    from governance.request_policy import _ALL_RULES
+
+    offenders = [rule.category for rule in _ALL_RULES if "{{" in rule.pattern.pattern]
+    assert offenders == []
+
+
+@pytest.mark.parametrize(
+    "question,category",
+    [
+        ("Show tenant names and phone numbers", "tenant_privacy"),
+        ("List lessee contact details for the building", "tenant_privacy"),
+        ("Show customer names and email addresses", "customer_contact_extraction"),
+    ],
+)
+def test_the_repaired_rules_now_engage(question, category):
+    """Regression for the repair above: these exact questions were
+    `allow` before it, because the only branch that could have matched
+    them was the broken one."""
+    verdict = evaluate_request(question, VIEWER)
+    assert verdict.decision == GovernanceDecision.REQUIRE_AUTHORIZATION
+    assert verdict.category == category
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Show occupancy by property this quarter",
+        "Show revenue by customer segment",
+        "Lease expiries by property and year",
+    ],
+)
+def test_the_repair_did_not_start_blocking_ordinary_analytics(question):
+    """The other half of the repair: a rule that was inert is now live,
+    so the benign look-alikes matter more than usual."""
+    assert not evaluate_request(question, VIEWER).is_blocking, question

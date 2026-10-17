@@ -26,9 +26,42 @@ import logging
 from domain_skills.contract import ANALYTICS_CONTRACT, RESPONSE_SECTIONS
 from domain_skills.registry import skills_for_domain
 from domain_skills.types import DomainSkill
-from governance.domains import BusinessDomain
+from governance.domains import BusinessDomain, policy_for
 
 logger = logging.getLogger(__name__)
+
+
+def _prohibitions_block(domain: BusinessDomain) -> str:
+    """The domain's prohibited actions, rendered as a constraint.
+
+    **Derived from `governance.domains.policy_for`, never hand-written per
+    skill.** Those prohibitions are already data with one owner, and HR is
+    why that matters: it forbids `individual_performance_ranking`, while
+    the shared contract invites "rank top and bottom performers". Writing
+    the constraint by hand in each skill would mean fifteen chances to
+    forget it, and a copy that could drift from the policy the governance
+    engine actually enforces.
+
+    Deriving it also means every future domain gets this for free, correct
+    on the day its skills land.
+
+    This is **defence in depth, not the control.**
+    `governance/request_policy.py` and `governance/recommendation_safety.py`
+    are what actually refuse a prohibited output; this only stops the model
+    being invited to produce one in the first place. A domain with no
+    prohibitions (MIS has none) yields an empty string and nothing is
+    appended.
+    """
+    actions = sorted(action.value for action in policy_for(domain).prohibited_actions)
+    if not actions:
+        return ""
+    phrased = "; ".join(action.replace("_", " ") for action in actions)
+    return (
+        "Domain constraints, which override every instruction above. This "
+        "domain prohibits: " + phrased + ". Report in aggregate only. If a "
+        "question can be answered only by doing one of these, say that "
+        "plainly instead of doing it."
+    )
 
 
 def compose_guidance(skill: DomainSkill) -> str:
@@ -56,6 +89,13 @@ def compose_guidance(skill: DomainSkill) -> str:
             "genuinely have nothing to say under: " + ", ".join(RESPONSE_SECTIONS) + ".",
         ]
     )
+
+    # Last, so it visibly overrides everything above -- including the
+    # contract's own invitation to rank performers.
+    prohibitions = _prohibitions_block(skill.domain)
+    if prohibitions:
+        parts.extend(["", prohibitions])
+
     return "\n".join(parts)
 
 

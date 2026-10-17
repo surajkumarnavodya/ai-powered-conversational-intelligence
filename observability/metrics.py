@@ -40,6 +40,23 @@ rolling-window) counters -- `result_cache_hits`/`result_cache_misses`
 (`db.result_cache`) and `database_concurrency_rejections`
 (`agent.rate_limit.get_database_execution_limiter`) -- reusing this same
 singleton/lock rather than standing up a second metrics object.
+
+The AI usage rollup (catalogue row 45) is a fourth such cumulative
+counter, added the same way: `record_llm_call` sums Ollama's own
+per-call `prompt_eval_count`/`eval_count` per model name, fed from
+`agent.llm_client._log_ollama_timing` -- the one point all of that
+module's `client.chat` calls already funnel through, which is why no
+call site changed. **Tokens only; this module reports no monetary
+figure**, because the LLM runs locally and no per-token price exists for
+this deployment to report (`ModelUsageSummary`'s own docstring states
+why inventing one would be a provenance violation, not just a guess).
+
+This module deliberately does **not** own which model a request was
+*routed* to or how that route performed -- `model_routing`'s own
+`get_route_metrics()` owns that, and its `total_cost_units` is an
+abstract tier weight rather than money. One fact, one owner
+(`CLAUDE.md` §4.8): routing answers "which model, and did the route
+work", this answers "what the models actually consumed".
 """
 
 from __future__ import annotations
@@ -65,6 +82,16 @@ _DEFAULT_MAX_REQUESTS = 500
 #: module is server-resolved, never attacker-chosen, so this is a cheap
 #: guard rather than a response to a real attack.
 _DEFAULT_MAX_TENANTS = 200
+
+#: Upper bound on how many distinct model names one tenant's LLM-usage
+#: rollup keeps (LRU-evicted past this), bounded for the same
+#: defense-in-depth reason `_DEFAULT_MAX_TENANTS` is. A model name reaching
+#: `record_llm_call` is echoed by the Ollama server from a request this app
+#: built, and a per-request override is already validated against
+#: `Settings.ollama_allowed_models`, so the set is server-controlled rather
+#: than attacker-chosen -- but a swapped-out `OLLAMA_MODEL` over a long
+#: process lifetime makes a bound worth having anyway, and it costs nothing.
+_DEFAULT_MAX_MODELS = 50
 
 
 class StageSummary(TypedDict):
@@ -95,6 +122,29 @@ class RequestSummary(TypedDict):
     max_ms: float
 
 
+class ModelUsageSummary(TypedDict):
+    """One model's cumulative token consumption in this process.
+
+    **Tokens only -- deliberately no monetary figure.** The LLM runs
+    locally via Ollama, so no per-token price exists for this deployment;
+    deriving one would mean inventing a number and presenting an inference
+    as an observed fact, which `CLAUDE.md` §4.4 forbids. A reader who wants
+    cost multiplies these counts by whatever their own hosting costs them.
+
+    `calls` counts LLM calls, not `/ask` requests -- one question makes
+    several (planning, generation, review, insight), and a retry makes more.
+    `prompt_tokens`/`completion_tokens` are Ollama's own
+    `prompt_eval_count`/`eval_count`, summed; a call whose response omitted
+    them (older Ollama server) contributes to nothing at all, not a zero.
+    """
+
+    model: str
+    calls: int
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+
+
 class MetricsSnapshot(TypedDict):
     """The full live rollup, as returned by `GET /metrics/performance`."""
 
@@ -120,6 +170,13 @@ class MetricsSnapshot(TypedDict):
     # process-wide view. Present so a snapshot is self-describing about its
     # own scope rather than leaving a reader to infer it from the caller.
     tenant_id: str | None
+    # Catalogue row 45 (AI usage rollup) -- cumulative per-model token
+    # consumption, for the same reason the cache counters above are
+    # cumulative: a usage total's whole point is "how much has this
+    # deployment consumed", which a bounded rolling window of the most
+    # recent `max_requests` would understate. Sorted by total tokens,
+    # descending, so the heaviest model reads first.
+    llm_usage: list[ModelUsageSummary]
 
 
 def _percentile(sorted_values: list[float], fraction: float) -> float:
@@ -154,6 +211,7 @@ class _TenantWindow:
         "result_cache_hits",
         "result_cache_misses",
         "database_concurrency_rejections",
+        "llm_usage",
     )
 
     def __init__(self, max_requests: int) -> None:
@@ -163,6 +221,10 @@ class _TenantWindow:
         self.result_cache_hits = 0
         self.result_cache_misses = 0
         self.database_concurrency_rejections = 0
+        # model name -> [calls, prompt_tokens, completion_tokens]. An
+        # `OrderedDict` so the model cap below can evict least-recently-used,
+        # the same structure `PerformanceMetrics._windows` uses for tenants.
+        self.llm_usage: OrderedDict[str, list[int]] = OrderedDict()
 
 
 class PerformanceMetrics:
@@ -204,10 +266,12 @@ class PerformanceMetrics:
         self,
         max_requests: int = _DEFAULT_MAX_REQUESTS,
         max_tenants: int = _DEFAULT_MAX_TENANTS,
+        max_models: int = _DEFAULT_MAX_MODELS,
     ) -> None:
         self._lock = threading.Lock()
         self._max_requests = max_requests
         self._max_tenants = max_tenants
+        self._max_models = max_models
         self._started_at = time.time()
         self._windows: OrderedDict[str, _TenantWindow] = OrderedDict()
 
@@ -247,6 +311,74 @@ class PerformanceMetrics:
         `agent.nodes.execute_sql_node` or `api/main.py`'s `POST /execute`)."""
         with self._lock:
             self._window_locked(tenant_id).database_concurrency_rejections += 1
+
+    def record_llm_call(
+        self,
+        model: str | None,
+        prompt_tokens: int | None,
+        completion_tokens: int | None,
+        tenant_id: str | None = None,
+    ) -> None:
+        """Adds one LLM call's own reported token counts to `tenant_id`'s
+        cumulative per-model usage rollup (catalogue row 45).
+
+        Called by `agent.llm_client._log_ollama_timing` -- the single point
+        every one of that module's `client.chat` calls already funnels
+        through, which is why no call site needed changing and why a future
+        call site is counted for free. See that function's docstring for the
+        same argument applied to the circuit breaker.
+
+        **Never raises**, matching `record_agent_run` below and
+        `CLAUDE.md` §4.2: a usage counter is an observability aid, so a
+        failure here degrades to "this call wasn't counted", never to a
+        question that cannot be answered.
+
+        A call is recorded only when the server actually reported token
+        counts. `model=None` (a mocked or older response that carries no
+        model field) or both counts `None` records nothing at all, rather
+        than a zero-token call against an `"unknown"` model -- a zero would
+        be indistinguishable from a real call that genuinely consumed
+        nothing, and inventing the attribution would be worse than omitting
+        it. One count present and the other missing is kept, with the
+        missing side contributing 0.
+        """
+        if model is None or (prompt_tokens is None and completion_tokens is None):
+            return
+        try:
+            # Coerced *before* the window is touched, so an unusable value
+            # leaves no partially-applied entry behind. Incrementing in
+            # place and failing halfway would record a phantom call with
+            # zero tokens -- worse than not counting it, because a reader
+            # cannot tell it apart from a real call.
+            prompt = int(prompt_tokens or 0)
+            completion = int(completion_tokens or 0)
+        except (TypeError, ValueError):
+            logger.debug("[metrics] unusable token counts for model %r -- not recorded", model)
+            return
+        if prompt < 0 or completion < 0:
+            logger.debug("[metrics] negative token counts for model %r -- not recorded", model)
+            return
+        try:
+            with self._lock:
+                usage = self._window_locked(tenant_id).llm_usage
+                entry = usage.get(model)
+                if entry is None:
+                    entry = [0, 0, 0]
+                    usage[model] = entry
+                    if len(usage) > self._max_models:
+                        evicted, _ = usage.popitem(last=False)
+                        logger.warning(
+                            "[metrics] llm usage model cache at capacity (%d) -- "
+                            "evicted LRU model %r",
+                            self._max_models,
+                            evicted,
+                        )
+                usage.move_to_end(model)
+                entry[0] += 1
+                entry[1] += prompt
+                entry[2] += completion
+        except Exception:  # pragma: no cover -- defensive, see docstring
+            logger.debug("[metrics] failed to record LLM usage", exc_info=True)
 
     def record_agent_run(
         self,
@@ -314,6 +446,9 @@ class PerformanceMetrics:
             result_cache_hits = 0
             result_cache_misses = 0
             database_concurrency_rejections = 0
+            # model -> [calls, prompt_tokens, completion_tokens], merged
+            # across however many windows this snapshot covers.
+            usage_totals: dict[str, list[int]] = {}
             for window in windows:
                 request_durations.extend(window.request_durations_ms)
                 for stage_name, stage_durations in window.stage_durations_ms.items():
@@ -326,6 +461,11 @@ class PerformanceMetrics:
                 result_cache_hits += window.result_cache_hits
                 result_cache_misses += window.result_cache_misses
                 database_concurrency_rejections += window.database_concurrency_rejections
+                for model_name, counts in window.llm_usage.items():
+                    running = usage_totals.setdefault(model_name, [0, 0, 0])
+                    running[0] += counts[0]
+                    running[1] += counts[1]
+                    running[2] += counts[2]
 
         window_requests = len(request_durations)
         request_durations.sort()
@@ -353,9 +493,24 @@ class PerformanceMetrics:
                 }
             )
 
+        llm_usage: list[ModelUsageSummary] = sorted(
+            (
+                {
+                    "model": model_name,
+                    "calls": counts[0],
+                    "prompt_tokens": counts[1],
+                    "completion_tokens": counts[2],
+                    "total_tokens": counts[1] + counts[2],
+                }
+                for model_name, counts in usage_totals.items()
+            ),
+            key=lambda summary: (-summary["total_tokens"], summary["model"]),
+        )
+
         return {
             "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(self._started_at)),
             "tenant_id": tenant_id,
+            "llm_usage": llm_usage,
             "window_requests": window_requests,
             "max_window_requests": self._max_requests,
             "requests": requests,

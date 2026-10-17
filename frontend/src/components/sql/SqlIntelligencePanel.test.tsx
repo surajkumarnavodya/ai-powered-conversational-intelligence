@@ -110,6 +110,61 @@ describe('buildSqlMetadata', () => {
     expect(rows.some((row) => row.key === 'statementType')).toBe(false)
   })
 
+  it('describes the structural shape the server read from the AST', () => {
+    const rows = buildSqlMetadata(
+      entry({
+        sql_summary: {
+          statement_type: 'SELECT',
+          referenced_tables: ['FactInternetSales', 'DimSalesTerritory'],
+          joins: [
+            { kind: 'INNER', table: 'DimSalesTerritory' },
+            { kind: 'LEFT', table: 'DimProduct' },
+          ],
+          filter_columns: ['OrderDateKey', 'Color'],
+          aggregates: ['SUM(f.SalesAmount)', 'COUNT(*)'],
+          group_by: ['t.SalesTerritoryRegion'],
+          order_by: ['Total DESC'],
+          is_distinct: true,
+        },
+      }),
+      false,
+      tKey,
+    )
+    const byKey = Object.fromEntries(rows.map((row) => [row.key, row.value]))
+    expect(byKey.joins).toBe('INNER DimSalesTerritory, LEFT DimProduct')
+    expect(byKey.filterColumns).toBe('OrderDateKey, Color')
+    expect(byKey.aggregates).toBe('SUM(f.SalesAmount), COUNT(*)')
+    expect(byKey.groupBy).toBe('t.SalesTerritoryRegion')
+    expect(byKey.orderBy).toBe('Total DESC')
+    expect(byKey.distinct).toBe('sqlIntelligence.distinctRemoved')
+  })
+
+  it('omits every shape row a simple query has nothing to say for', () => {
+    // A plain `SELECT a FROM t` must not render six empty rows: the grid
+    // stays short for the simple queries that are most of them.
+    const rows = buildSqlMetadata(
+      entry({ sql_summary: { statement_type: 'SELECT', referenced_tables: ['t'] } }),
+      false,
+      tKey,
+    )
+    const keys = rows.map((row) => row.key)
+    expect(keys).toContain('statementType')
+    for (const absent of ['joins', 'filterColumns', 'aggregates', 'groupBy', 'orderBy', 'distinct']) {
+      expect(keys).not.toContain(absent)
+    }
+  })
+
+  it('tolerates a turn persisted before the shape fields existed', () => {
+    // The fields are optional on the wire; a reloaded old turn carries
+    // none of them and must still render its statement type.
+    const rows = buildSqlMetadata(
+      entry({ sql_summary: { statement_type: 'UNION', referenced_tables: [] } }),
+      false,
+      tKey,
+    )
+    expect(rows.some((row) => row.key === 'statementType')).toBe(true)
+  })
+
   it('names the database only when more than one is configured', () => {
     const e = entry({ database: 'hr' })
     expect(buildSqlMetadata(e, false, tKey).some((row) => row.key === 'database')).toBe(false)

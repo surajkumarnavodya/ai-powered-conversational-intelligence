@@ -111,6 +111,21 @@ governing metrics → error feedback. Each block has its own
 Every call site sets `temperature: 0.0` and a per-task `num_predict`.
 **No `top_p`, no `seed`, no `num_ctx`, no `stop`.**
 
+> **Follow-up, 2026-10-16.** Prompt 05 closed this for the seven calls in
+> `agent/llm_client.py` (`decoding_options`), but the audit's path map
+> above covers only that module. A second Ollama call site —
+> `rag/llm.py::call_ollama`, behind the RAG subgraph, the orchestrator's
+> router / web-search / media-search answer steps and the analyst planner
+> — still built its own `{"num_predict", "temperature"}` dict and kept the
+> gap. It now calls `decoding_options` too, so there is one decoding
+> policy rather than two. Re-measured here on `llama3.1:8b`: without
+> `num_ctx` the model is served at 4,096 and a long prompt was evaluated
+> at **2,050 tokens with the system prompt gone** (reproducing §1's
+> finding on the other call site); at `OLLAMA_NUM_CTX=16384` the same
+> prompt was evaluated at 12,043 tokens with the system prompt intact.
+> Unifying the window also stops Ollama reloading the model between a SQL
+> call at 16,384 and a RAG/web call at the default.
+
 ---
 
 ## 3. Baseline metrics

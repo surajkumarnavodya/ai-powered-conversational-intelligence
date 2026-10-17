@@ -140,8 +140,12 @@
   },
   "chat": {
     "placeholder": "अपने डेटा के बारे में एक सवाल पूछें...",
+    "placeholderEmpty": "एक प्रश्न पूछें और उत्तर पाने के लिए संदेश भेजें...",
     "view": "देखें",
     "rerun": "फिर से चलाएं",
+    "editQuestion": "संपादित करें",
+    "copyQuestion": "प्रश्न कॉपी करें",
+    "submitEdit": "फिर से पूछें",
     "sources": "इनकी मदद से उत्तर दिया गया",
     "followingUpOn": "इसका अनुवर्ती",
     "sourcesLabel": "स्रोत",
@@ -226,6 +230,8 @@
     "thinking": "सोच रहा है",
     "answeredIn": "{{seconds}} सेकंड में उत्तर दिया",
     "downloadAnswer": "उत्तर डाउनलोड करें",
+    "downloadMarkdown": "Markdown के रूप में डाउनलोड करें",
+    "downloadPdf": "PDF के रूप में डाउनलोड करें",
     "copyAnswer": "उत्तर कॉपी करें",
     "copied": "कॉपी हो गया!",
     "exportCsv": "CSV निर्यात करें",
@@ -358,6 +364,13 @@
     "notRun": "निष्पादित नहीं",
     "metadata": "क्वेरी मेटाडेटा",
     "statementType": "कथन प्रकार",
+    "joins": "जॉइन",
+    "filterColumns": "इस पर फ़िल्टर",
+    "aggregates": "समुच्चय",
+    "groupBy": "इसके अनुसार समूहीकृत",
+    "orderBy": "इसके अनुसार क्रमबद्ध",
+    "distinct": "डुप्लिकेट पंक्तियाँ",
+    "distinctRemoved": "हटाई गईं (DISTINCT)",
     "referencedTables": "संदर्भित तालिकाएँ",
     "rowCount": "लौटाई गई पंक्तियाँ",
     "duration": "निष्पादन समय"
@@ -473,5 +486,14 @@
     "unavailableHeading": "उपलब्ध नहीं",
     "notConfigured": "सेट अप नहीं",
     "notPermitted": "पहुँच नहीं"
+  },
+  "shortcuts": {
+    "title": "कीबोर्ड शॉर्टकट",
+    "hint": "ये कहीं भी काम करते हैं, सिवाय इसके कि आप टेक्स्ट फ़ील्ड में टाइप कर रहे हों।",
+    "newChat": "नई चैट",
+    "toggleSidebar": "साइडबार दिखाएं या छिपाएं",
+    "openSettings": "सेटिंग्स खोलें",
+    "focusComposer": "प्रश्न बॉक्स पर जाएं",
+    "showHelp": "यह सूची दिखाएं"
   }
 }

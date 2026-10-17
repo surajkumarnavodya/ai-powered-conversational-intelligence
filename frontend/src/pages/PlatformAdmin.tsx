@@ -585,6 +585,46 @@ function UsageSection() {
       </Card>
       <Card>
         <CardHeader>
+          <CardTitle className="text-sm">Model token usage (every tenant, since restart)</CardTitle>
+        </CardHeader>
+        <CardContent className="overflow-x-auto">
+          <p className="pb-2 text-xs text-[var(--muted-foreground)]">
+            What the models actually consumed, as reported by Ollama itself -- cumulative per
+            worker process and reset on restart, like every other metric on this page. Tokens
+            only: the model runs locally, so there is no per-token price to report.
+          </p>
+          {(data.llm_usage ?? []).length === 0 ? (
+            <p className="text-sm text-[var(--muted-foreground)]">
+              No token counts reported yet.
+            </p>
+          ) : (
+            <table className="w-full text-left text-sm">
+              <thead className="text-xs uppercase text-[var(--muted-foreground)]">
+                <tr>
+                  <th className="pr-3 font-medium">Model</th>
+                  <th className="pr-3 font-medium">Calls</th>
+                  <th className="pr-3 font-medium">Prompt</th>
+                  <th className="pr-3 font-medium">Completion</th>
+                  <th className="pr-3 font-medium">Total</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border)]">
+                {(data.llm_usage ?? []).map((usage) => (
+                  <tr key={usage.model}>
+                    <td className="py-1 pr-3">{usage.model}</td>
+                    <td className="py-1 pr-3 tabular-nums">{usage.calls}</td>
+                    <td className="py-1 pr-3 tabular-nums">{usage.prompt_tokens}</td>
+                    <td className="py-1 pr-3 tabular-nums">{usage.completion_tokens}</td>
+                    <td className="py-1 pr-3 font-semibold tabular-nums">{usage.total_tokens}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
           <CardTitle className="text-sm">Per-stage timing</CardTitle>
         </CardHeader>
         <CardContent className="overflow-x-auto">

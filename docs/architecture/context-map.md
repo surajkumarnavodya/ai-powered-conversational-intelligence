@@ -83,7 +83,8 @@ its own contract (§3).**
 |---|---|
 | **Current** production-readiness verdict and gate matrix | [`../PRODUCTION_READINESS_RELEASE_GATE.md`](../PRODUCTION_READINESS_RELEASE_GATE.md) |
 | Deployment, backup/recovery, rollback | [`../DEPLOYMENT.md`](../DEPLOYMENT.md) |
-| Observability, correlation ids, `[trace]` lines, tenant propagation | [`../OBSERVABILITY.md`](../OBSERVABILITY.md) |
+| Observability, correlation ids, `[trace]` lines, tenant propagation, per-model token usage | [`../OBSERVABILITY.md`](../OBSERVABILITY.md) |
+| Release history and what changed when | [`../../CHANGELOG.md`](../../CHANGELOG.md) (the README's "News and Updates" shows only the three newest) |
 | Text-to-SQL accuracy numbers (dated — see §5) | [`../EVALUATION_CURRENT.md`](../EVALUATION_CURRENT.md), [`../EVALUATION.md`](../EVALUATION.md) |
 | Performance baselines and why further backend tuning is unjustified | [`../PERFORMANCE_BASELINE.md`](../PERFORMANCE_BASELINE.md), [`../PERFORMANCE_RESULTS.md`](../PERFORMANCE_RESULTS.md) |
 | Load/scale baseline and honest capacity statement | [`../SCALE_BASELINE.md`](../SCALE_BASELINE.md) |
@@ -97,12 +98,15 @@ its own contract (§3).**
 | Topic | Document |
 |---|---|
 | Design tokens and shared UI primitives | [`../ui-design-system.md`](../ui-design-system.md) |
+| Conversation reading width, responsive breakpoints, device verification | [`../ui-responsive-layout.md`](../ui-responsive-layout.md) |
 | One-action-one-owner table for every shell control | [`../navigation-and-actions.md`](../navigation-and-actions.md) |
 | Chat history UI, search components | [`../chat-history-ui.md`](../chat-history-ui.md), [`../chat-history-search.md`](../chat-history-search.md) |
 | Chat-history data model and what a reload does not restore | [`../chat-history-architecture.md`](../chat-history-architecture.md) |
 | Conversational-intelligence chat workspace (panels, lifecycle rail, evidence, artifacts) | [`../conversational-intelligence-ui.md`](../conversational-intelligence-ui.md) |
 | Image editing and attachment flows | [`../image-editing-architecture.md`](../image-editing-architecture.md), [`../image-attachment-flow.md`](../image-attachment-flow.md) |
 | Vector-retrieval design and its disclosed gaps | [`../vector-retrieval-design.md`](../vector-retrieval-design.md) |
+| Accessibility: static lint, runtime axe checks, and the contrast gap | [`features-frontend.md`](features-frontend.md) |
+| Generated-SQL structural description in the query-metadata grid | [`features-frontend.md`](features-frontend.md), [`../API.md`](../API.md) |
 
 ---
 

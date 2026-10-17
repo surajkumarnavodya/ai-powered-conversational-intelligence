@@ -224,3 +224,53 @@ describe('ChatInput -- typing while an answer is pending', () => {
     expect(screen.getByRole('button', { name: /stop/i })).toBeInTheDocument()
   })
 })
+
+describe('ChatInput -- first-question placeholder', () => {
+  beforeEach(() => {
+    useChatStore.setState(initialChatState, true)
+    vi.spyOn(api, 'getHealth').mockResolvedValue(makeHealth())
+  })
+
+  afterEach(() => {
+    useChatStore.setState(initialChatState, true)
+    vi.restoreAllMocks()
+  })
+
+  /** The composer is the only thing on an empty conversation's screen, so
+   * its placeholder has to carry the instruction; once a turn exists the
+   * short prompt is enough. */
+  function placeholderOf() {
+    const textarea = screen.getByRole('textbox', { name: /ask a question/i }) as HTMLTextAreaElement
+    return textarea.placeholder
+  }
+
+  it('tells the user what to do while the conversation is empty', () => {
+    renderChatInput()
+    expect(placeholderOf()).toBe('Ask a question and send a message to receive a reply...')
+  })
+
+  it('falls back to the short prompt once a turn exists', () => {
+    useChatStore.setState({ queryHistory: [{ entryId: 'e1', question: 'first' }] } as never)
+    renderChatInput()
+    expect(placeholderOf()).toBe('Ask a question about your data...')
+  })
+
+  it('does not re-show the instruction while the very first answer is still pending', () => {
+    useChatStore.setState({
+      queryHistory: [],
+      pendingQuestion: { question: 'first', startedAt: Date.now() },
+    } as never)
+    renderChatInput()
+    expect(placeholderOf()).toBe('Ask a question about your data...')
+  })
+
+  it('keeps one stable accessible name whatever the conversation holds', () => {
+    const { unmount } = renderChatInput()
+    expect(screen.getByLabelText('Ask a question about your data...')).toBeInTheDocument()
+    unmount()
+
+    useChatStore.setState({ queryHistory: [{ entryId: 'e1', question: 'first' }] } as never)
+    renderChatInput()
+    expect(screen.getByLabelText('Ask a question about your data...')).toBeInTheDocument()
+  })
+})

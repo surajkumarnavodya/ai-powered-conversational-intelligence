@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronUp } from 'lucide-react'
-import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
+import { useLayoutEffect, useRef, useState, type ClipboardEvent, type CSSProperties } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 
@@ -9,6 +9,22 @@ const clampStyle = (lines: number): CSSProperties => ({
   WebkitBoxOrient: 'vertical',
   overflow: 'hidden',
 })
+
+/** The copied text as an *inline* HTML fragment.
+ *
+ * A browser's own copy puts two flavors on the clipboard, and only the
+ * plain-text one is clean here: the HTML one is the selected subtree,
+ * which for this component is one or two block-level `<p>` elements (the
+ * visible paragraph plus, when the selection covers the whole box, the
+ * invisible measuring copy below). A paste target that prefers the HTML
+ * flavor turns a block into a paragraph -- which is where the stray blank
+ * line after a pasted question came from. A `<span>` is inline, so it
+ * pastes as exactly the characters that were selected.
+ */
+function asInlineHtml(text: string): string {
+  const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return `<span>${escaped.replace(/\r?\n/g, '<br>')}</span>`
+}
 
 /** Clamps long text to `maxLines`, with a bottom fade and a "Show more"
  * toggle when it actually overflows -- the ChatGPT/Perplexity treatment
@@ -44,6 +60,31 @@ export function ExpandableText({
   const [expanded, setExpanded] = useState(false)
   const [overflowing, setOverflowing] = useState(false)
   const measureRef = useRef<HTMLParagraphElement>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  /** Copies exactly the selected characters, in both clipboard flavors.
+   *
+   * Left to the browser, copying a question out of its bubble pastes with
+   * a trailing blank line (see asInlineHtml). Only a selection that lies
+   * entirely inside this component is rewritten -- a selection that runs
+   * on into the rest of the turn is left to the browser, since replacing
+   * it with just this component's text would silently drop the rest of
+   * what the user had highlighted. */
+  const handleCopy = (event: ClipboardEvent<HTMLDivElement>) => {
+    const root = rootRef.current
+    const selection = window.getSelection()
+    if (!root || !selection || selection.rangeCount === 0) return
+    if (!root.contains(selection.getRangeAt(0).commonAncestorContainer)) return
+
+    // `toString()` already excludes the invisible measuring paragraph --
+    // it is `visibility: hidden`, which selection skips.
+    const selected = selection.toString().trim()
+    if (!selected) return
+
+    event.clipboardData.setData('text/plain', selected)
+    event.clipboardData.setData('text/html', asInlineHtml(selected))
+    event.preventDefault()
+  }
 
   useLayoutEffect(() => {
     const el = measureRef.current
@@ -55,12 +96,18 @@ export function ExpandableText({
   }, [text, maxLines])
 
   return (
-    <div className={className}>
+    <div ref={rootRef} className={className} onCopy={handleCopy}>
       <div className="relative">
         <p
           ref={measureRef}
           aria-hidden="true"
-          className={cn('pointer-events-none invisible absolute inset-x-0 top-0 -z-10 whitespace-pre-wrap', textClassName)}
+          /* `select-none` keeps this duplicate out of a selection that
+             spans several turns, where handleCopy stands aside and the
+             browser serializes the subtree itself. */
+          className={cn(
+            'pointer-events-none invisible absolute inset-x-0 top-0 -z-10 select-none whitespace-pre-wrap',
+            textClassName,
+          )}
           style={clampStyle(maxLines)}
         >
           {text}

@@ -168,9 +168,20 @@ needed to any individual call site.
 Ollama's own reported `total_ms`/`load_ms`/`prompt_eval_ms`/`generation_ms` and token
 counts by attaching a `logging.Handler` to `agent.llm_client`'s logger for the scope of
 one question — this is what distinguishes model-load time from prompt-processing time
-from generation time (wall-clock alone can't, per that module's own docstring), used by
-both `eval/runner.py`'s benchmark and available to any future API-layer caller that
-wants the same breakdown for a live request.
+from generation time (wall-clock alone can't, per that module's own docstring).
+
+**`eval/runner.py` is its only caller, and it must stay that way — it is not
+usable on the request path.** Corrected 2026-10-17: that module's own docstring
+claims it "backs the API/observability layer's per-request `LlmCallTiming` list",
+and nothing in `api/` imports it, so the claim is stale. It is also unsafe
+here. It works by attaching a handler to the `agent.llm_client` logger **and
+forcing that logger's level**, both process-wide for the duration of the `with`
+block. Under concurrent `/ask` requests every active capture would see every
+*other* request's timing lines, so tokens would be **cross-attributed between
+tenants**, and the save/restore of the logger level would race. That is correct
+for the single-threaded benchmark runner it was written for and a
+tenant-isolation defect if reused live — which is why the token rollup in §3c
+below records at the call funnel instead of by log scraping.
 
 ### 3b. Per-route model-routing metrics (Prompt 47)
 
@@ -217,6 +228,82 @@ ids and the decision's own reason, so it is safe at `INFO` in a way the
 free-text lines named in section 4 below are not. A decision that changed
 nothing is counted in the rollup but not logged, to keep the common case
 quiet.
+
+### 3c. Per-model token consumption rollup (2026-10-17)
+
+`agent/llm_client.py` had read Ollama's own `prompt_eval_count` and
+`eval_count` on every call for a long time and then thrown them away into a
+log line. An operator could see *which* model a request was routed to
+(§3b) and how long each LangGraph stage took (§3), but nothing anywhere
+said what the models actually **consumed**.
+`observability.metrics.PerformanceMetrics.record_llm_call` now accumulates
+them, and `llm_usage` on the snapshot reports, per model, `calls`,
+`prompt_tokens`, `completion_tokens` and `total_tokens`, sorted by total
+descending. It is read back by the two **existing** metrics routes — `GET
+/metrics/performance` (the caller's own tenant) and `GET
+/platform-admin/metrics` (merged across tenants) — and shown on the two
+admin panels that already displayed latency. No new route, no new
+permission.
+
+**Where it is captured, and why there.** `_log_ollama_timing` is the single
+point all seven of that module's `client.chat` calls already funnel
+through, which is why the circuit breaker's success signal is there too.
+The rollup goes in the same place for the same reason: **a future eighth
+call site is counted without anyone remembering to add it.** A structural
+test parses the module's own AST and asserts
+`len(client.chat calls) == len(_log_ollama_timing calls)`, which is the one
+failure mode no behavioural test of the existing seven would catch. The
+model name is read from the *response* rather than threaded in from the
+call sites, so not one of the seven changed — and it is the more correct
+source, because the name recorded is what the server actually served,
+which can differ from what this app asked for (an alias, or a per-request
+`AskRequest.model` override).
+
+**Tenant partitioning**, like latency and the status mix, via
+`security.audit_log`'s existing `_tenant_id` contextvar
+(`get_audit_tenant_id()`), already bound by `run_agent`/`run_orchestrated`
+on the **worker side** of `/ask`'s thread-pool boundary — which is
+precisely where a contextvar survives. Token counts measure a tenant's own
+usage volume, and this codebase has no platform-admin-versus-tenant-admin
+split inside the tenant-scoped route, so admin-gating alone would let one
+tenant's admin read another's numbers. A test asserts over HTTP that it
+does not.
+
+**No monetary figure, deliberately.** Every model runs locally through
+Ollama, so there is no per-token price to report; a cost column would be an
+invented number presented as an observed fact (`CLAUDE.md` §4.4). Three
+tests pin its absence — on the snapshot's keys, on the HTTP response's
+keys, and on the rendered panel. This is the same posture §3b's
+`cost_units` takes, and the two rollups own different facts (§4.8):
+`model_routing` owns "which model was chosen and did the route work", this
+owns "what the models consumed".
+
+Stated limits, all of them the disclosed posture every metric store in this
+codebase already carries:
+
+- **Cumulative per worker process, and resets on restart.** Not windowed,
+  like the existing cache counters and for the same reason. A multi-worker
+  deployment has one rollup per worker, so these are *not* deployment-wide
+  totals. Both admin panels say so in their own prose.
+- **`calls` counts LLM calls, not questions.** One question makes several
+  (planning, generation, review, insight) and a retry makes more.
+- **Nothing is persisted**, so this is not a billing or chargeback record
+  and must not be cited as one.
+- **Per model and per tenant only** — no per-question or per-user
+  attribution.
+- **It depends on the provider reporting counts.** An older Ollama server
+  that omits them yields an empty rollup, deliberately indistinguishable
+  from "no calls yet": a response carrying no counts records nothing rather
+  than a zero, because "nothing measured" must not read as "measured zero".
+- Distinct model names are **bounded** and LRU-evicted (`max_models`,
+  default 50), the same defence-in-depth posture as the tenant-window
+  bound.
+
+Being an observability aid it **fails open** (`CLAUDE.md` §4.2): an
+unusable value costs the counter, never the request. Both token counts are
+coerced *before* the window is touched, so a non-numeric or negative count
+records nothing at all rather than leaving a phantom zero-token call behind
+that a reader could not tell apart from a real call that consumed nothing.
 
 ## 4. What's never logged
 

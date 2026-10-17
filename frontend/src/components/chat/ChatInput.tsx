@@ -84,6 +84,13 @@ export function ChatInput({ onSend }: { onSend?: () => void } = {}) {
   const showVoiceButton = Boolean(health.data?.voice_enabled) && voiceModeEnabled
 
   const pendingQuestion = useChatStore((state) => state.pendingQuestion)
+  // Nothing asked yet in this conversation: the composer is the only
+  // thing on screen, so its placeholder is the one place that can say
+  // what to do with it. Once a turn exists the shorter prompt is enough
+  // -- the instruction has been demonstrated by then. A question still
+  // in flight counts as "asked", so the hint does not reappear while the
+  // very first answer is being waited on.
+  const hasConversation = useChatStore((state) => state.queryHistory.length > 0)
   const askQuestion = useChatStore((state) => state.askQuestion)
   const tryApplyChartTypeFollowup = useChatStore((state) => state.tryApplyChartTypeFollowup)
   const cancelPendingQuestion = useChatStore((state) => state.cancelPendingQuestion)
@@ -308,15 +315,39 @@ export function ChatInput({ onSend }: { onSend?: () => void } = {}) {
             </div>
           </div>
         )}
-        <div className="flex items-end gap-2">
+        {/* One row from `sm` up; on a phone the textarea takes the full
+            width and the controls drop to their own right-aligned row
+            beneath it, because four 36px buttons beside the text left it
+            about 150px wide -- narrow enough that the placeholder itself
+            wrapped onto two lines.
+
+            gap-0.5 between the buttons, not gap-2: each is a 32-36px box
+            around a 16px icon, so it already carries its own breathing
+            room -- a row gap on top of that read as four separate
+            controls rather than one toolbar. */}
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:gap-0.5">
           <textarea
             ref={textareaRef}
+            // Lets the global `/` shortcut find the composer from
+            // `AppShell`, which renders this several routes deep through
+            // `<Outlet />`. See `lib/shortcuts.ts` on why an attribute
+            // rather than a ref threaded up through context.
+            data-chat-composer=""
             value={displayValue}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
             placeholder={
-              isListening && !voice.isSupported ? t('voice.unsupportedCaption') : t('chat.placeholder')
+              isListening && !voice.isSupported
+                ? t('voice.unsupportedCaption')
+                : hasConversation || pendingQuestion
+                  ? t('chat.placeholder')
+                  : t('chat.placeholderEmpty')
             }
+            // Deliberately not the placeholder above: the control's
+            // accessible name must stay the same whatever the
+            // conversation currently holds, so a screen reader (and the
+            // tests that find this box by name) never see it rename
+            // itself after the first question.
             aria-label={t('chat.placeholder')}
             // Typing stays open while an answer is pending, so the next question
           // can be drafted. Only voice capture/playback locks the box.
@@ -325,11 +356,12 @@ export function ChatInput({ onSend }: { onSend?: () => void } = {}) {
             rows={1}
             className="min-h-10 max-h-60 flex-1 resize-none overflow-y-auto bg-transparent px-1 py-2 text-sm leading-6 focus-visible:outline-none"
           />
+          <div className="flex items-center justify-end gap-0.5">
           <ImageUploader onFilesSelected={(files) => void attachments.addFiles(files)} disabled={disabled} />
           <SourcePicker disabled={disabled} />
           {showVoiceButton && (
             <Button
-              variant="secondary"
+              variant="ghost"
               size="icon"
               onClick={() => {
                 if (isListening) voice.stopListening()
@@ -365,6 +397,7 @@ export function ChatInput({ onSend }: { onSend?: () => void } = {}) {
           >
             {disabled ? <Square className="h-4 w-4" /> : <Send className="h-4 w-4" />}
           </Button>
+          </div>
         </div>
         {editingImage && (
           // Suspense fallback is intentionally invisible (null): the editor

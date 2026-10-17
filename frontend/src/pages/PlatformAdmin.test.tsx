@@ -343,6 +343,52 @@ describe('PlatformAdmin', () => {
     expect(screen.getByText(/failed: 2/i)).toBeInTheDocument()
   })
 
+  it('shows per-model token usage, and never a cost figure', async () => {
+    setUserRole(['platform_admin'])
+    mockAllSections()
+    vi.mocked(platformAdminApi.getPlatformMetrics).mockResolvedValue({
+      ...emptyMetrics,
+      llm_usage: [
+        {
+          model: 'llama3.1:8b',
+          calls: 9,
+          prompt_tokens: 7400,
+          completion_tokens: 530,
+          total_tokens: 7930,
+        },
+      ],
+    })
+
+    renderPage()
+    await userEvent.click(await screen.findByRole('tab', { name: /usage & latency/i }))
+
+    expect(await screen.findByText('llama3.1:8b')).toBeInTheDocument()
+    expect(screen.getByText('7930')).toBeInTheDocument()
+    expect(screen.getByText('7400')).toBeInTheDocument()
+    // The locally-hosted model has no per-token price, so the panel must
+    // not imply one -- the risk this batch's plan calls out by name. A
+    // currency *amount* and a cost *column* are the two ways that would
+    // show up; the prose disclosure is allowed to use the word.
+    expect(screen.queryByText(/[$€£]\s?[\d.]/)).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('columnheader', { name: /cost|price|spend|usd/i })
+    ).not.toBeInTheDocument()
+  })
+
+  it('says so plainly when no token counts have been reported yet', async () => {
+    // An older Ollama server omits the counters, and a freshly restarted
+    // worker has none -- both must read as "nothing measured" rather than
+    // as a zero-consumption deployment.
+    setUserRole(['platform_admin'])
+    mockAllSections()
+    vi.mocked(platformAdminApi.getPlatformMetrics).mockResolvedValue({ ...emptyMetrics })
+
+    renderPage()
+    await userEvent.click(await screen.findByRole('tab', { name: /usage & latency/i }))
+
+    expect(await screen.findByText(/no token counts reported yet/i)).toBeInTheDocument()
+  })
+
   it('shows security events and can filter by severity', async () => {
     setUserRole(['platform_admin'])
     mockAllSections()

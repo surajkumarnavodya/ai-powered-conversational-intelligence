@@ -16,7 +16,11 @@ const buttonVariants = cva(
       size: {
         sm: 'h-8 px-2.5 text-xs',
         md: 'h-9 px-4',
-        icon: 'h-8 w-8',
+        // Larger hit area on touch-sized viewports, back to the compact
+        // 32px box from `sm` up where a mouse is doing the aiming. One
+        // owner for every icon button in the app, rather than each
+        // toolbar deciding its own thumb-friendliness.
+        icon: 'h-9 w-9 sm:h-8 sm:w-8',
       },
     },
     defaultVariants: { variant: 'secondary', size: 'md' },

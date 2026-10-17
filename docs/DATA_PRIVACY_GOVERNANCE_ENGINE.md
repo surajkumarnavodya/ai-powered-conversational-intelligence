@@ -81,7 +81,7 @@ Those remained the integration points; none was re-plumbed.
 | Module | Responsibility |
 |---|---|
 | `governance/classification.py` | `DataClassification` (6 ordered levels) × `DataCategory` (16 families) → `FieldPolicy` (masking, aggregation, audit, reason, inferred). Explicit config wins; patterns fill the gap. |
-| `governance/domains.py` | `BusinessDomain` (18 + fallback), `DomainPolicy`, `ProhibitedAction` (14), `DOMAIN_POLICIES`, `BASELINE_RESTRICTED_CATEGORIES`, `GOVERNANCE_POLICY_VERSION` |
+| `governance/domains.py` | `BusinessDomain` (19 + fallback — the mission's 18 plus the later, derived `construction`), `DomainPolicy`, `ProhibitedAction` (14), `DOMAIN_POLICIES`, `BASELINE_RESTRICTED_CATEGORIES`, `GOVERNANCE_POLICY_VERSION` |
 | `governance/domain_detection.py` | Deterministic detection; schema evidence ×3 vs text ×1; multi-domain reported, not resolved |
 | `governance/suppression.py` | k-anonymity suppression of sensitive measures in small groups |
 | `governance/recommendation_safety.py` | Refuses a recommendation proposing a prohibited action |
@@ -120,10 +120,20 @@ domain's sensitive data · `Audit` = every decision audited.
 | project | — | contract, employee | 0 | — | 500 | — |
 | it_operations | credential disclosure | proprietary | 0 | — | 500 | ✓ |
 | real_estate | — | contract | 5 | — | 500 | — |
+| construction | employment action, performance ranking, liability determination, unsupported allegation | contract, employee | 5 | — | 500 | — |
 | energy | — | proprietary | 0 | — | 500 | — |
 | risk_audit | unsupported allegation, liability determination | audit, legal | 5 | — | 50 | ✓ |
 | executive | — | financial, employee | 5 | ✓ | 200 | ✓ |
 | **general** (fallback) | **all 14** | personal, credential, payment, banking, clinical, compensation, performance, legal | 5 | — | 500 | — |
+
+`construction` is the one row that was **derived rather than specified**:
+it was added after the mission's eighteen, by reasoning from `project`,
+`real_estate`, `hr` and `risk_audit`, and it is the only policy declaring
+all four of the individual-decision and attribution actions. A test
+(`test_the_derived_policy_is_stricter_than_both_neighbours`) pins the
+property that makes that safe: a derived policy may add protection and
+never remove it. See
+[`architecture/domain-skills.md`](architecture/domain-skills.md) §23.
 
 **The baseline every domain inherits** (`BASELINE_RESTRICTED_CATEGORIES`):
 PII, SPI, PHI, compensation, performance, credential, payment, banking.
@@ -177,6 +187,41 @@ merely *declares* a required permission is proven to make no decision.
 
 No new permission was introduced — the engine reuses
 `Permission.VIEW_RESTRICTED_COLUMNS`, the same one the SQL gate enforces.
+
+---
+
+### 7.1 Two request rules that had never matched (found 2026-10-16)
+
+Adding Construction's `site_worker_privacy` rule meant copying the shape
+of `tenant_privacy`, and the copy worked while the original did not. Both
+`tenant_privacy` and `customer_contact_extraction` carried `{{0,25}}` on
+a plain `r"..."` continuation line. On an `rf"..."` line a doubled brace
+produces one literal brace, which is why `{{0,40}}` is correct there; on
+a plain string it *is* literal, so the regex was asking for the text
+"{0,25}" and that branch could never match. "Show tenant names and phone
+numbers" was `allow`; it is now `require_authorization`.
+
+Three things changed, all in `governance/request_policy.py` and its
+tests:
+
+- The two quantifiers were repaired, with a benign-look-alike test on
+  each so a rule that went from inert to live cannot start blocking
+  ordinary occupancy or segment analytics.
+- `site_worker_privacy` was added for Construction: a site records people
+  by name, including people the organisation does not employ, and the
+  identical question about a tenant was already gated. It matches the
+  person and detail nouns **in either order**, because "the names of the
+  operatives" is the more natural phrasing and is how the gap was found.
+- `test_no_rule_pattern_carries_a_literal_double_brace` pins the whole
+  class rather than the two instances, because the next copy-paste would
+  reintroduce it the same way.
+
+**Scope of the fix.** Request rules are matched on pattern alone — the
+`domain` field labels the verdict, it does not filter — so the repair
+changes behaviour for every caller without `VIEW_RESTRICTED_COLUMNS`
+asking those two shapes, which is what the rules were written to do. The
+result gate was never affected: tenant and customer names classify as
+`PII` and were masked at the row level throughout.
 
 ---
 

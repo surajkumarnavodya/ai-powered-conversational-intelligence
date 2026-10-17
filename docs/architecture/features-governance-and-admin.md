@@ -1122,6 +1122,21 @@ silently worked around:**
   (400 on an unknown role), so this is a UX rough edge, not a security
   gap.
 
+### Model token usage panel (2026-10-17)
+
+The Usage section gained a **"Model token usage (every tenant, since
+restart)"** table -- per model: calls, prompt tokens, completion tokens and
+total. It is the `llm_usage` field `GET /platform-admin/metrics` already
+carried once `observability.metrics` started recording it, so no route and
+no permission was added; the merged cross-tenant scope is the one this
+route already had. The panel's own prose states that the figures are
+cumulative per worker process and reset on restart, and that **the model
+runs locally so there is no per-token price to report** -- there is no
+currency anywhere on this page, and a test asserts both the absence of a
+currency amount and the absence of a cost/price/spend column header.
+Design, limits and the reason a monetary figure is refused:
+[`../OBSERVABILITY.md`](../OBSERVABILITY.md) §3c.
+
 **Read [`28_GLOBAL_PLATFORM_ADMIN_DASHBOARD_CONTRACT.md`](../../28_GLOBAL_PLATFORM_ADMIN_DASHBOARD_CONTRACT.md)**
 for the full prompt text and outcome summary.
 
@@ -1231,6 +1246,18 @@ proven directly (`tests/test_api_tenant_admin.py
   dropdown of real role names (same disclosed rough edge Prompt 28's own
   equivalent control has) -- server-side validation (400 on an unknown
   role, 403 on `platform_admin`) is the real guardrail.
+
+### Model tokens consumed (2026-10-17)
+
+The card already titled **"Recent AI usage"** showed only latency; it now
+also lists, per model, the tokens this tenant's own questions consumed
+(total, with the call count and the prompt/completion split beneath). Same
+`llm_usage` field, read from `GET /metrics/performance`, which is scoped to
+the caller's own tenant -- so a tenant admin sees their own consumption and
+not another tenant's, which `tests/test_api_platform_admin.py
+::TestLlmUsageRollupOverHttp` asserts over HTTP rather than only in the
+aggregator. No new route, no new permission, and no monetary figure, for
+the reason given in [`../OBSERVABILITY.md`](../OBSERVABILITY.md) §3c.
 
 **Read [`29_TENANT_ADMIN_DASHBOARD_CONTRACT.md`](../../29_TENANT_ADMIN_DASHBOARD_CONTRACT.md)**
 for the full prompt text and outcome summary.
@@ -2000,7 +2027,7 @@ with the pattern that matched.
 
 **Module map (6 new, 4 extended):** `classification.py`
 (`DataClassification`'s 6 ordered levels x `DataCategory`'s 16 families ->
-`FieldPolicy`), `domains.py` (18 domains + fallback, `DomainPolicy`,
+`FieldPolicy`), `domains.py` (19 domains + fallback, `DomainPolicy`,
 14 `ProhibitedAction`s, `GOVERNANCE_POLICY_VERSION`),
 `domain_detection.py`, `suppression.py` (k-anonymity),
 `recommendation_safety.py`, `telemetry.py`; plus `decisions.py`,

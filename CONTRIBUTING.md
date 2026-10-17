@@ -33,14 +33,33 @@ This codebase optimizes for being explainable, not just working — see
 
 ```bash
 pytest                          # mocked unit tests -- must pass
-ruff check . && black --check . && mypy .   # must be clean
+ruff check . && black --check .  # must be clean
+mypy .                          # see the note below -- not currently clean
+```
+
+If your change touches the frontend, also run, in `frontend/`:
+
+```bash
+npm run test    # vitest (includes the axe-core accessibility checks)
+npm run lint    # oxlint, including the jsx-a11y rules
+npm run build   # tsc -b && vite build -- this is also the typecheck
 ```
 
 (Or `.\tasks.ps1 test` / `.\tasks.ps1 lint` on Windows.) If your change
 touches `agent/sql_validator.py` or anything on the SQL-execution path,
 say so explicitly in the PR description — that module is the app's
-security boundary (see CLAUDE.md's "SQL is untrusted output, always"), and
-changes there get read more carefully.
+security boundary ([`CLAUDE.md`](CLAUDE.md) §5.1, "SQL is untrusted
+output, always"), and changes there get read more carefully.
+
+**On `mypy`: "clean" is not the current baseline, and saying it is would
+mislead you.** Measured 2026-10-17 it reports 631 errors across 115 files,
+overwhelmingly in `tests/` — a disclosed, separately-scoped backlog
+recorded in [`CLAUDE.md`](CLAUDE.md) §13, which also names the seven
+findings that are in production modules. CI runs it **report-only**
+(`continue-on-error`), so it will not turn your PR red. What is expected
+instead: run it, and do not add a new error in a file you touched. If you
+see one you did not cause, §13 is where to check before assuming it is
+yours.
 
 ## Adding a new benchmark case
 

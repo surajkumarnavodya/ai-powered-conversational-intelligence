@@ -117,13 +117,39 @@ describe('Chat page', () => {
     expect(screen.queryByRole('button', { name: 'Toggle question list' })).toBeNull()
   })
 
-  it('gives the composer the same left inset TurnCard applies to its answer content', () => {
+  /** One reading column, one pair of edges. The composer and the turns
+   * share a single `max-w-chat` container and neither carries a left
+   * inset of its own -- the avatar-width `pl-10` that used to step the
+   * answer (and then the composer) in from the column is gone, so a
+   * question, its answer and the box you type the next one into all line
+   * up. A second container here is how they drift apart. */
+  it('puts the turns and the composer in the same reading column, with no extra inset on either', () => {
     useChatStore.setState({ queryHistory: [makeEntry('First'), makeEntry('Second')] } as never)
     const { container } = renderChat()
 
     const composerWrapper = container.querySelector('textarea')?.closest('.sticky')
     expect(composerWrapper).not.toBeNull()
-    expect(composerWrapper?.className).toMatch(/\bpl-10\b/)
+    expect(composerWrapper?.className).not.toMatch(/\bpl-10\b/)
+
+    const column = composerWrapper?.parentElement
+    expect(column?.className).toMatch(/\bmax-w-chat\b/)
+
+    // The turns live in that same column, not a container of their own.
+    const turn = container.querySelector('[id^="turn-"]')
+    expect(turn?.closest('.max-w-chat')).toBe(column)
+    expect(turn?.parentElement?.className).not.toMatch(/\bpl-10\b/)
+  })
+
+  it('centres the composer while the conversation is empty and drops it to the bottom once a turn exists', () => {
+    const { container, rerender } = renderChat()
+    expect(container.querySelector('textarea')?.closest('.sticky')?.className).toMatch(/\bmy-auto\b/)
+
+    useChatStore.setState({ queryHistory: [makeEntry('First')] } as never)
+    rerenderChat(rerender)
+
+    const wrapper = container.querySelector('textarea')?.closest('.sticky')
+    expect(wrapper?.className).toMatch(/\bmt-auto\b/)
+    expect(wrapper?.className).not.toMatch(/\bmy-auto\b/)
   })
 
   describe('Jump to Bottom button', () => {
