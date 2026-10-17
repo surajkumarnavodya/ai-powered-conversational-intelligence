@@ -416,7 +416,7 @@ Signed only after every journey for the role is attempted.
 | Tester (name) |  |
 | Date |  |
 | Journeys attempted |  |
-| PASS / FAIL / BLOCKED / N/A counts |  |
+| PASS / FAIL / BLOCKED / NOT TESTED / N/A counts |  |
 | P0 or P1 defects outstanding |  |
 | **Verdict** (Accept / Accept with conditions / Reject) |  |
 | Conditions, if any |  |
