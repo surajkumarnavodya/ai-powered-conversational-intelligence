@@ -25,7 +25,7 @@ import { RegenerateAnswerButton } from './RegenerateAnswerButton'
 import { ResponseFeedbackWidget } from './ResponseFeedbackWidget'
 import { SentAttachmentsPreview } from './SentAttachmentsPreview'
 import { SourceLineagePanel } from './SourceLineagePanel'
-import { SourcesUsedPanel } from './SourcesUsedPanel'
+import { SourcesUsedChips, SourcesUsedPanel } from './SourcesUsedPanel'
 import { TimingBadge } from './TimingBadge'
 
 // Chart.js is the largest remaining chunk in this app -- lazy-loaded so a
@@ -134,19 +134,26 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
           answer 40px in from the composer and the question's own right
           edge. Everything in a turn now shares one pair of edges. */}
       <div className="flex flex-col gap-3">
-        {/* Metadata only. The answer *actions* used to sit here too, above
-            the answer they act on -- so "Copy answer" appeared before
-            there was a visible answer to copy, and the row read as a
-            toolbar for the turn rather than for the response. They now
-            render once, left-aligned, at the foot of the turn (see the
-            action row at the bottom of this component), which is where
-            every mainstream assistant UI puts them and where the eye
+        {/* Top row: metadata, plus the three controls that act on the
+            *turn* rather than on the answer's text -- re-run it, pin it,
+            hear it. They belong next to the timing and timestamp for the
+            same reason: all five describe or operate on the exchange as a
+            whole, and none of them needs you to have read the answer
+            first. The controls that consume the finished text -- copy,
+            download, rate it -- sit at the foot instead, where the eye
             lands after reading. */}
         <div className="flex flex-wrap items-center gap-2">
           <TimingBadge mode="done" durationMs={entry.answerDurationMs} />
           <time dateTime={entry.timestamp} className="text-xs text-[var(--muted-foreground)]">
             {formatTurnTime(entry.timestamp)}
           </time>
+          {answerMarkdown && (
+            <div className="flex items-center gap-0.5">
+              <RegenerateAnswerButton entryId={entry.entryId} />
+              <SaveArtifactButton entry={entry} />
+              {showReadAloud && <ReadAloudButton text={buildSpokenAnswerText(entry)} />}
+            </div>
+          )}
           {entry.spokenAudioUrl && (
             // Playback itself already happened once, automatically, via
             // `useVoiceConversation`'s own `<audio>` element as part of the
@@ -342,24 +349,28 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
           </>
         )}
 
-        {/* Answer actions -- left-aligned, at the foot of the response,
-            after everything the answer produced (text, provenance, SQL,
-            results, chart). `answerMarkdown` gates the whole row: a turn
-            that failed, was rejected or needs clarification has nothing
-            to copy, download, rate or re-run, and the composer is the
-            right place to retry that. `justify-start` is explicit rather
-            than inherited so a future `items-*`/`justify-*` change to the
-            parent cannot quietly re-centre it. */}
+        {/* Bottom row: the controls that act on the finished answer --
+            take it away (copy, download) or judge it (rate). Left-aligned,
+            after everything the answer produced: text, provenance, SQL,
+            results, chart. `answerMarkdown` gates it, so a turn that
+            failed, was rejected or needs clarification shows nothing here
+            -- there is no text to copy or rate. `justify-start` is
+            explicit rather than inherited so a later `justify-*` change to
+            the parent cannot quietly re-centre the row. */}
         {answerMarkdown && (
-          <div className="flex flex-wrap items-center justify-start gap-1 pt-1">
+          <div className="flex flex-wrap items-center justify-start gap-0.5 pt-1">
             <CopyAnswerButton answer={answerMarkdown} />
             <DownloadAnswerButton question={entry.question} answer={answerMarkdown} />
-            <RegenerateAnswerButton entryId={entry.entryId} />
-            <SaveArtifactButton entry={entry} />
             <ResponseFeedbackWidget entryId={entry.entryId} />
-            {showReadAloud && <ReadAloudButton text={buildSpokenAnswerText(entry)} />}
           </div>
         )}
+
+        {/* Attribution last, under the actions. It used to sit above the
+            answer, inside `SourcesUsedPanel` -- which put a row of chips
+            between the question and the first line of the response. Which
+            sources were consulted is something you check *after* reading,
+            so it reads better here. */}
+        <SourcesUsedChips state={state} />
       </div>
     </div>
   )

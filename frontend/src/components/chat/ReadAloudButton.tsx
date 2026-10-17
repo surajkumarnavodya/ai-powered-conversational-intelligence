@@ -1,6 +1,7 @@
 import { Loader2, Volume2, VolumeX } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ActionTooltip } from '@/components/ui/action-tooltip'
 import { Button } from '@/components/ui/button'
 import { synthesizeSpeechUrl } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -76,16 +77,21 @@ export function ReadAloudButton({ text }: { text: string }) {
   const isBusy = status === 'loading' || status === 'playing'
   const label = status === 'error' ? t('common.readAloudFailed') : isBusy ? t('common.stopReading') : t('common.readAloud')
 
+  // Icon-only. `label` already tracked all four states, and it now drives
+  // the tooltip as well as the accessible name -- so "Stop reading" and
+  // the failure message still reach the user, by hover and by screen
+  // reader, rather than only as an icon swap.
   return (
-    <Button size="sm" variant="ghost" onClick={() => void handleClick()} aria-label={label}>
-      {status === 'loading' ? (
-        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-      ) : status === 'playing' ? (
-        <VolumeX className="h-3.5 w-3.5" />
-      ) : (
-        <Volume2 className={cn('h-3.5 w-3.5', status === 'error' && 'text-[var(--danger)]')} />
-      )}
-      {label}
-    </Button>
+    <ActionTooltip label={label}>
+      <Button size="icon" variant="ghost" onClick={() => void handleClick()} aria-label={label}>
+        {status === 'loading' ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : status === 'playing' ? (
+          <VolumeX className="h-4 w-4" />
+        ) : (
+          <Volume2 className={cn('h-4 w-4', status === 'error' && 'text-[var(--danger)]')} />
+        )}
+      </Button>
+    </ActionTooltip>
   )
 }
