@@ -87,7 +87,12 @@ export function ConversationListItem({
                 conversation title in the history list isn't just a dead
                 ellipsis with no way to read the rest short of renaming or
                 opening it. */}
-            <ScrollingText text={conversation.title} className="flex-1 font-medium" />
+            {/* Normal weight, matching the app's body text. `font-medium`
+                (500) made every row in the list read as emphasised, which
+                is the opposite of what a long history list wants: when
+                everything is bold, nothing is, and the active row's own
+                accent colour is what should carry selection. */}
+            <ScrollingText text={conversation.title} className="flex-1" />
             {isActive && isLoading && (
               <>
                 <Loader2 className="h-3 w-3 shrink-0 animate-spin" aria-hidden="true" />
