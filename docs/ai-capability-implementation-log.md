@@ -239,3 +239,121 @@ what determines bundling, rather than by grepping the artefact.)
 - Scoped to shared primitives and the chat bubble, not whole pages.
 - No formal WCAG conformance audit; this is regression protection.
 - The 13 remaining warnings are a tracked backlog, not fixed here.
+
+---
+
+## Batch 3 — Governed-answer translation (catalogue row 79) · 2026-10-17
+
+**Status: CORE COMPLETE, NOT WIRED.** Row 79 moves
+*Needs decision / Missing* → **Core / Partial**.
+**Baseline commit:** `cf0781a`.
+
+> **No user can reach this yet.** `agent/translation.py` is built,
+> tested and proven against the real model, but there is no API field
+> and no UI control. It is the "built, not wired" state `CLAUDE.md` §1
+> recognises, and it is recorded as Partial rather than Complete for
+> exactly that reason.
+
+### The invariant problem, and why the model is not trusted with it
+
+Your condition was to preserve numbers, signs, units, currency, dates,
+identifiers, citations, source references and SQL — and to **defer if
+those invariants could not be demonstrated.**
+
+A model asked to translate free text will eventually localise a decimal
+separator, round a figure or drop a citation. No prompt makes that a
+guarantee. So the model is never shown the parts that must not change:
+
+1. **Protect** — every invariant span becomes an opaque placeholder.
+2. **Translate** — only the prose between placeholders reaches the model.
+3. **Restore** — spans are put back verbatim.
+4. **Verify** — the multiset of spans recovered from the output must
+   equal the input's. Any drift ⇒ **discard the translation, return the
+   original.**
+
+The guarantee is not "the model behaved". It is "a translation that
+failed to preserve the invariants never reaches the caller".
+`translate_answer` has exactly two outcomes, by construction.
+
+### Proven live, not just against fakes
+
+Against `llama3.1:8b` (local, no new provider, no cost), French, 32.0 s:
+
+> *Les revenus ont atteint **$1,234.56** sur **2026-10-17**, en
+> augmentation de **12.5%** par rapport à l'année précédente. La colonne
+> propriétaire est **[restricted]** pour votre rôle. Voir
+> **[the catalogue](https://example.test/cat)** pour la définition du
+> métrique.*
+
+All five protected spans intact; prose genuinely translated; and
+**`[restricted]` was not translated** — a translated mask could read as
+content rather than as a withheld value.
+
+### Two defects the tests caught, and one they did not
+
+Caught by tests:
+
+- The number pattern `[\d,]*` swallowed a **sentence comma** — "In 2026,
+  revenue" captured `2026,`, so the same figure in two sentences
+  produced different spans and verification rejected a *faithful*
+  translation. Now `(?:,\d{3})*`.
+- `\s?%?` captured a trailing space unconditionally, making spans
+  whitespace-sensitive. Now `(?:\s?%)?`.
+
+**Not caught by tests, found only by the live call:** `rag.llm.call_ollama`
+takes `max_tokens` as a **required positional**, which my call omitted.
+Every unit test passed because the fakes had the wrong arity too. A
+mocked suite cannot catch a signature mismatch with the real collaborator
+— the live run is what found it, and the fakes now match the real
+signature.
+
+### Governance position
+
+- Operates **after** the governed path, on text governance has finished
+  with. It never alters a validation verdict, authorization decision,
+  restricted-column mask or access-control outcome.
+- `[restricted]` is a protected span, so a mask can never be translated
+  away.
+- No new provider, no egress, no cost — the same local Ollama.
+- **Not in conflict with `agent/input_guard.py`**, which refuses a
+  *user's* request to translate arbitrary text. That would route around
+  the governed answer path; this is a presentation transform of our own
+  governed output. Worth stating because the two look similar.
+
+### Tests — actual results
+
+| Check | Result |
+|---|---|
+| `pytest tests/test_translation.py` | **34 passed** |
+| Live translation, `llama3.1:8b`, fr | Translated, all invariants intact, 32.0 s |
+| `ruff` / `black` | Clean |
+
+Coverage includes: numbers, signs, percentages, currency in three
+symbols, dates, inline and fenced SQL, markdown citations, the
+governance mask, a figure legitimately **moved** by word order
+(accepted), and five distinct ways a figure can drift (all rejected),
+plus model error, empty response, unsupported locale, and all four
+non-English locales.
+
+### Why it is not wired, and what wiring needs
+
+**32 seconds per translation on this hardware.** That settles the design
+question: translation must be **on demand**, never automatic per answer
+— the same conclusion the SQL explainer reached for the same reason.
+
+Wiring needs an optional response field or a small endpoint, an
+on-demand control in the answer actions, and i18n ×5. The original must
+stay available for comparison, which the two-outcome contract already
+guarantees server-side.
+
+### Remaining limitations
+
+- Not reachable by any user.
+- Identifier protection is via code spans and the number/date/currency
+  rules; a bare unquoted identifier in prose (`DimProduct`) is **not**
+  protected and could be translated. Wrapping identifiers in backticks
+  upstream would close this; recorded rather than hidden.
+- Quality of the translated prose is unmeasured — only invariant
+  preservation is guaranteed.
+- 4,096-token output cap; a longer answer truncates, which verification
+  turns into a discarded translation rather than a wrong one.
