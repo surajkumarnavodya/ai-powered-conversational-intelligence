@@ -357,3 +357,198 @@ guarantees server-side.
   preservation is guaranteed.
 - 4,096-token output cap; a longer answer truncates, which verification
   turns into a discarded translation rather than a wrong one.
+
+---
+
+## Batch 4 — AI usage rollup (catalogue row 45) · 2026-10-17
+
+**Status: COMPLETE.** Audit status for row 45 moves Partial → Complete
+(row 45 is **Optional**, not Core, so the Core tallies in the audit's §1
+are unchanged). **Baseline commit:** `4bb46fd`.
+
+> **Numbering.** This is the *plan's* **Batch 3** (§4 of
+> [`ai-capability-implementation-plan.md`](ai-capability-implementation-plan.md)).
+> It is logged as Batch 4 because this log numbers by execution order and
+> row 79's translation work took the Batch 3 slot here first. Same work,
+> two schemes — recorded rather than silently renumbered.
+
+### What the gap was
+
+`agent/llm_client.py` had read Ollama's own `prompt_eval_count`/
+`eval_count` on every call since long before this batch — and then threw
+them away into a log line. An operator could see *which* model a request
+was routed to (`model_routing`'s `GET /metrics`) and how long each
+LangGraph stage took (`GET /metrics/performance`), but nothing anywhere
+said what the models actually **consumed**.
+
+### Where the data is captured, and why nothing else changed
+
+`_log_ollama_timing` is the one point all seven of this module's
+`client.chat` calls already funnel through — which is why its own
+docstring puts the circuit breaker's success signal there. The token
+rollup goes in the same place, for the same reason: **a future eighth
+call site is counted without anyone remembering to add it.**
+
+The model name is read from the *response*, not threaded in from the call
+sites, so **not one of the seven callers changed**. It is also the more
+correct source: the name recorded is what the server actually served,
+which can differ from what this app asked for (an alias, or a
+per-request `AskRequest.model` override).
+
+A structural test parses this module's own AST and asserts
+`len(client.chat calls) == len(_log_ollama_timing calls)`. The failure
+mode it guards is someone adding a chat call and forgetting the funnel
+line — which no behavioural test of the existing seven would catch.
+
+### Tenant attribution: the existing contextvar, not a new mechanism
+
+Token counts are a measure of a tenant's own usage volume, so they are
+partitioned per tenant exactly as latency and status mixes already are
+(`PerformanceMetrics`' own docstring explains why: this codebase has no
+platform-admin-versus-tenant-admin split inside the tenant-scoped
+route, so admin-gating alone would let one tenant's admin read another's
+numbers).
+
+The tenant comes from `security.audit_log`'s `_tenant_id` contextvar via
+`get_audit_tenant_id()` — already bound by `run_agent`/`run_orchestrated`
+on the **worker side** of `/ask`'s thread-pool boundary, which is
+precisely where a contextvar survives (that module's docstring records
+why it is not bound in the middleware). No signature changed, no
+process-global state was mutated, and `CLAUDE.md` §4.6 holds.
+
+### The mechanism I rejected, and why it matters
+
+`observability/llm_timing_capture.py` already parses these exact numbers
+out of the log line, and its module docstring claims it "backs the
+API/observability layer's per-request `LlmCallTiming` list". **Nothing in
+`api/` imports it** — `eval/runner.py` is its only caller, so that claim
+is stale.
+
+It is also unusable here. It works by attaching a handler to the
+`agent.llm_client` logger and forcing that logger's level, both
+process-wide for the duration of the `with` block. Under concurrent
+`/ask` requests every active capture would see every *other* request's
+timing lines, so tokens would be **cross-attributed between tenants**,
+and the save/restore of the logger level would race. Correct for the
+single-threaded benchmark runner it was written for; a tenant-isolation
+defect if reused on the request path. Recorded here so the next session
+does not reach for it.
+
+### Deliberately no monetary figure
+
+The one risk the plan named for this batch. The LLM runs locally, so this
+deployment has no per-token price; a cost column would be an invented
+number presented as an observed fact, which `CLAUDE.md` §4.4 forbids.
+Three tests pin its absence — one on the snapshot's keys, one on the HTTP
+response's keys, and one on the rendered panel (no currency amount, and
+no cost column). The prose disclosure is allowed to use the *word*
+"price", which is what the first version of the frontend assertion got
+wrong: it matched my own disclaimer and failed. Narrowed to a currency
+amount plus a column-header check.
+
+### One owner per fact (`CLAUDE.md` §4.8)
+
+`model_routing.get_route_metrics()` keeps owning "which model was chosen
+and did the route work", including its `total_cost_units` — an abstract
+tier weight, **not** money. This rollup owns "what the models consumed".
+Neither duplicates the other, and the usage rollup works whether or not
+`ENABLE_MODEL_ROUTING` is on (the routing route 404s when it is off).
+
+### Files changed
+
+| File | Why |
+|---|---|
+| `observability/metrics.py` | `+ModelUsageSummary`, `+record_llm_call`, `llm_usage` on `MetricsSnapshot`, `max_models` bound. Cumulative, not windowed — like the existing cache counters, and for the same stated reason |
+| `agent/llm_client.py` | `+_get_model_name`; one `record_llm_call` in the existing funnel. **No call site touched**; the benchmark-pinned prompts (`CLAUDE.md` §12) are untouched |
+| `api/schemas.py` | `+ModelUsageOut`; `llm_usage: list[...] = []` — additive and defaulted, so the frozen model stays backward compatible (§6.3) |
+| `api/main.py`, `api/platform_admin.py` | Both **existing** metrics routes pass the new field through. **No new route, no new permission** |
+| `frontend/src/lib/types.ts` | `+ModelUsageOut`; `llm_usage` optional, so an older backend that omits it still renders |
+| `frontend/src/pages/PlatformAdmin.tsx` | A token-usage table in the **existing** `UsageSection` |
+| `frontend/src/pages/TenantAdmin.tsx` | Token totals inside the card already titled "Recent AI usage", which until now showed only latency |
+| `tests/test_observability_metrics.py` | `+TestLlmUsageRollup`, 13 tests |
+| `tests/test_llm_client_usage_rollup.py` (new) | 9 tests — the funnel, both response shapes, the guards, tenant attribution |
+| `tests/test_api_platform_admin.py` | `+TestLlmUsageRollupOverHttp`, 3 tests incl. the cross-tenant non-leak |
+| `frontend/.../PlatformAdmin.test.tsx`, `TenantAdmin.test.tsx` | 3 tests |
+
+These two admin pages use plain English, not i18n keys, so no locale
+files changed — following the surrounding convention (§6.1.4) rather
+than introducing a sixth pattern into pages that have none.
+
+### A defect my own fail-open test caught
+
+`record_llm_call` incremented the call counter and then the token
+counters in place. A non-numeric count raised **after** the call counter
+had already moved, and the `except` swallowed it — leaving a **phantom
+zero-token call** that a reader could not tell apart from a real call
+that consumed nothing. Now both counts are coerced *before* the window is
+touched, so an unusable value records nothing at all. Negative counts are
+rejected the same way.
+
+This is also why a response with no counts at all records nothing rather
+than a zero: "nothing measured" must not read as "measured zero".
+
+### Tests executed — actual results
+
+| Check | Result |
+|---|---|
+| `pytest tests/test_observability_metrics.py` | **24 passed** (13 new) |
+| `pytest tests/test_llm_client_usage_rollup.py` | **9 passed** |
+| `pytest tests/test_api_platform_admin.py` | **24 passed** (3 new) |
+| `pytest` (full suite) | **7274 passed, 11 deselected**, exit 0, 8m15s. Reconciles exactly: 7215 after Batch 1, + 34 from row 79's translation tests, + this batch's 25 = 7274. No regression |
+| `npx vitest run` (full) | **1161 passed, 89 files** (was 1158 — exactly the 3 new) |
+| `npx tsc --noEmit -p tsconfig.app.json` | Clean, exit 0 |
+| `npm run lint` | **Exit 0**; warnings only, all in files this batch did not touch |
+| `ruff check` / `black --check` on changed files | Clean (3 files needed `black`; reformatted, then re-verified) |
+| `mypy` on the four touched production modules | **3 errors, none in a file this batch touched** — `agent/sql_validator.py:839` (blamed to `933cfff`, Batch 1) and `db/schema_introspection.py:376` (blamed to `25073964`, 2026-10-04). Both reproduce with this batch's changes absent from the invocation |
+
+**Four guards proven non-vacuous by mutation**, re-run *after* `black`
+reformatted the files (a formatter can silently invalidate a
+text-matching mutation and fake the proof). Each mutation asserts it
+actually applied, and each was caught:
+
+| Mutation | Caught by |
+|---|---|
+| Drop `record_llm_call` from the funnel | `test_llm_client_usage_rollup.py` |
+| Attribute every call to the default tenant | `TestTenantAttribution` |
+| Record a phantom zero-token call | `TestLlmUsageRollup` |
+| Ignore the `max_models` bound | `TestLlmUsageRollup` |
+
+### Security and governance verification
+
+- **No governed path touched.** Validation, row limits, timeouts,
+  restricted-column masking, authorization and the execution sequence are
+  unchanged. This batch adds counters and one response field.
+- **No content is recorded or logged** — model name, call count and token
+  counts only. No question, no answer, no row (`CLAUDE.md` §5.6).
+- **Cross-tenant disclosure is tested over HTTP**, not just in the
+  aggregator: a tenant admin calling `GET /metrics/performance` must not
+  see another tenant's model in `llm_usage`.
+- **Fails open** (§4.2): an observability aid, so a bad value costs the
+  counter and never the request.
+- Distinct model names are **bounded** (`max_models`, LRU-evicted), the
+  same defense-in-depth posture as the tenant-window bound.
+
+### Remaining limitations
+
+- **Per worker process, resets on restart** — the disclosed limit every
+  metric store in this codebase carries (`CLAUDE.md` §13). A
+  multi-worker deployment has one rollup per worker, so these are not
+  deployment-wide totals. Stated in both panels' own prose.
+- **Counts LLM calls, not questions.** One question makes several calls
+  (planning, generation, review, insight) and a retry makes more, so
+  `calls` is not a request count.
+- **Nothing is persisted**, so this is not a billing or chargeback
+  record and must not be cited as one.
+- **No per-question or per-user attribution** — per model, per tenant.
+- **Depends on the provider reporting counts.** An older Ollama server
+  that omits them yields an empty rollup, deliberately indistinguishable
+  from "no calls yet".
+- **Not verified in a browser.** Verified through the two pages' own
+  tests and the real route construction path.
+
+### Not done in this batch, deliberately
+
+Row 79's wiring (the translation module is still built-not-wired),
+Word/Excel export (decision 4), the paid media providers (decision 5),
+and the two pre-existing `mypy` findings above — all left alone rather
+than folded into unrelated work.

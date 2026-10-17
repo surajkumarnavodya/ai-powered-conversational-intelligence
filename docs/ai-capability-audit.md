@@ -160,7 +160,7 @@ capabilities, as the brief requires, rather than treated as 14 features.
 | ~~**C**~~ | ~~**Accessibility assurance**~~ | 60 | **CLOSED 2026-10-17 (Batch 2).** `jsx-a11y` enabled in the existing oxlint config (no new dependency) + `axe-core` runtime checks in the vitest suite. Contrast remains browser-only — see the log | — |
 | **D** | **Load / capacity evidence** | 59 | Complete k6 + compose stack in `eval/load/`; CI smoke scenario | Never executed — Docker daemon not running |
 | **E** | **DAST** | 49 | SAST (bandit) blocking in CI | DAST has never run; needs a deployed target |
-| **F** | **AI usage rollup** | 45 | Token counts read in `agent/llm_client.py`; routing metrics; DB query cost | No usage surface. Monetary cost is **N/A** for local Ollama |
+| ~~**F**~~ | ~~**AI usage rollup**~~ | 45 | **CLOSED 2026-10-17 (Batch 4).** `PerformanceMetrics.record_llm_call` sums Ollama's own per-call counts per model, fed from the one `_log_ollama_timing` funnel every `client.chat` already passes through; served by the two metrics routes that already existed, each with its own scope. **Tokens only — no monetary figure**, which stays N/A for local Ollama. See the implementation log | — |
 | **G** | **Office document generation** | 63 | PDF, CSV and Markdown export | No Word or Excel generation |
 | **H** | **Prompt registry activation** | 41 | Versioned registry with approve/deploy/rollback | Deliberately never hot-swaps a live prompt (`CLAUDE.md` §5.5) — **not a defect** |
 | **I** | **SQL repair transparency** | 28 | Bounded retry + `review_sql_node` repairs automatically | No user-facing account of what was repaired |

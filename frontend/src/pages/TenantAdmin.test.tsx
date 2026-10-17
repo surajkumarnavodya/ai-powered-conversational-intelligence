@@ -326,6 +326,36 @@ describe('TenantAdmin', () => {
     expect(api.getPerformanceMetrics).toHaveBeenCalled()
   })
 
+  it('shows this tenant own token consumption, without a cost figure', async () => {
+    setUserRole(['admin'])
+    mockAllSections()
+    vi.mocked(api.getPerformanceMetrics).mockResolvedValue({
+      ...emptyMetrics,
+      tenant_id: 'tenant-a',
+      llm_usage: [
+        {
+          model: 'llama3.1:8b',
+          calls: 4,
+          prompt_tokens: 900,
+          completion_tokens: 120,
+          total_tokens: 1020,
+        },
+      ],
+    })
+
+    renderPage()
+    await userEvent.click(await screen.findByRole('tab', { name: /ai usage/i }))
+
+    expect(await screen.findByText('llama3.1:8b')).toBeInTheDocument()
+    expect(screen.getByText('1020 tokens')).toBeInTheDocument()
+    expect(screen.getByText(/4 calls/)).toBeInTheDocument()
+    // Server-side scoping is what keeps another tenant out of this list
+    // (tests/test_api_platform_admin.py pins it); the panel must not
+    // imply a price for a locally-hosted model either -- no currency
+    // amount, though the prose disclosure may use the word.
+    expect(screen.queryByText(/[$€£]\s?[\d.]/)).not.toBeInTheDocument()
+  })
+
   it('shows recommendations reused from the existing recommendations route', async () => {
     setUserRole(['admin'])
     mockAllSections()

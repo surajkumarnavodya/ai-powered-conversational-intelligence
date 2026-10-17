@@ -144,6 +144,7 @@ from api.schemas import (
     MessageFeedbackResponse,
     ModelOut,
     ModelsResponse,
+    ModelUsageOut,
     PerformanceMetricsResponse,
     RequestMetricOut,
     SchemaRefreshResponse,
@@ -2095,6 +2096,7 @@ def metrics_performance(
         result_cache_hits=snapshot["result_cache_hits"],
         result_cache_misses=snapshot["result_cache_misses"],
         database_concurrency_rejections=snapshot["database_concurrency_rejections"],
+        llm_usage=[ModelUsageOut(**usage) for usage in snapshot["llm_usage"]],
     )
 
 

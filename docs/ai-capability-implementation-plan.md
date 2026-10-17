@@ -102,6 +102,13 @@ before adding.
 
 ## 4. Batch 3 — P2: AI usage rollup (F, row 45)
 
+**DELIVERED 2026-10-17.** Logged as **Batch 4** in
+[`ai-capability-implementation-log.md`](ai-capability-implementation-log.md),
+because that log numbers batches by the order they were executed and
+row 79's translation work (listed under §5 below) was built first and
+took the "Batch 3" slot there. Same work, two numbering schemes — this
+section's label is the plan's; the log's label is the execution order.
+
 | Field | Detail |
 |---|---|
 | **Business value** | Operators can see routing decisions but not what the models actually consumed |
@@ -148,9 +155,10 @@ before any code.
 ## 7. Sequencing and dependency rule
 
 ```
-now        Batch 1 (A, P1)          frontend + one backend module, no schema change
-then       Batch 2C (a11y, P2)      test-only; needs one dev dependency
-then       Batch 3 (F, P2)          backend metrics + existing admin panel
+done       Batch 1 (A, P1)          frontend + one backend module, no schema change
+done       Batch 2C (a11y, P2)      test-only; needs one dev dependency
+done       row 79 (translation)     built, NOT wired — log's "Batch 3"
+done       Batch 3 (F, P2)          backend metrics + existing admin panel
 on Docker  Batch 2D (load)          run the existing stack — certification 53-60
 deferred   Batch 4 (P3)             on request
 never      H, L, M, 78 rows         see §6

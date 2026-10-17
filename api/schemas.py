@@ -1368,6 +1368,26 @@ class RequestMetricOut(BaseModel):
     max_ms: float
 
 
+class ModelUsageOut(BaseModel):
+    """One model's cumulative token consumption -- see
+    `observability.metrics.ModelUsageSummary`, which this mirrors
+    field-for-field.
+
+    **No monetary field, deliberately.** The LLM runs locally via Ollama,
+    so this deployment has no per-token price to report; a cost column
+    would be an invented number presented as an observed fact. Token
+    counts are what the provider actually reported.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    model: str
+    calls: int
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+
+
 class PerformanceMetricsResponse(BaseModel):
     """`GET /metrics/performance` -- a live rollup of the same per-stage
     timing data `agent.nodes._timed_node` has always logged, aggregated by
@@ -1394,6 +1414,14 @@ class PerformanceMetricsResponse(BaseModel):
     # response is self-describing about its scope rather than leaving a
     # reader to assume it is process-wide (which it no longer is).
     tenant_id: str | None = None
+    # Catalogue row 45 (AI usage rollup) -- cumulative per-model token
+    # consumption, additive and defaulted like every field above it, so an
+    # older client that doesn't know it sees no behavior change. Empty
+    # means "no LLM call has reported token counts in this scope yet",
+    # which is also what an older Ollama server that omits the counts
+    # produces -- indistinguishable by design, since both mean "nothing
+    # measured" rather than "measured zero".
+    llm_usage: list[ModelUsageOut] = []
 
 
 class ComponentHealth(BaseModel):

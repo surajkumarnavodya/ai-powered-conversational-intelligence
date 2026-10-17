@@ -453,6 +453,34 @@ function UsageSection() {
             </div>
           ))}
         </dl>
+        <div className="mt-4 border-t border-[var(--border)] pt-3">
+          <h3 className="text-xs font-semibold uppercase text-[var(--muted-foreground)]">
+            Model tokens consumed
+          </h3>
+          <p className="pt-1 text-xs text-[var(--muted-foreground)]">
+            Your tenant's own consumption, as reported by Ollama -- cumulative per worker
+            process and reset on restart, so it is a live view rather than a billing record.
+            The model runs locally, so there is no per-token price to report.
+          </p>
+          {(data.llm_usage ?? []).length === 0 ? (
+            <p className="pt-2 text-sm text-[var(--muted-foreground)]">
+              No token counts reported yet.
+            </p>
+          ) : (
+            <dl className="grid grid-cols-2 gap-3 pt-2 text-sm sm:grid-cols-3">
+              {(data.llm_usage ?? []).map((usage) => (
+                <div key={usage.model}>
+                  <dt className="text-xs text-[var(--muted-foreground)]">{usage.model}</dt>
+                  <dd className="font-semibold tabular-nums">{usage.total_tokens} tokens</dd>
+                  <dd className="text-xs text-[var(--muted-foreground)] tabular-nums">
+                    {usage.calls} calls · {usage.prompt_tokens} prompt ·{' '}
+                    {usage.completion_tokens} completion
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          )}
+        </div>
       </CardContent>
     </Card>
   )

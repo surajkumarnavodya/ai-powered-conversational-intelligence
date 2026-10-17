@@ -29,6 +29,8 @@ from agent.insight import ResultSummary
 from agent.intent import AnalyticalIntentClassification, AnalyticalIntentType, ExpectedResultShape
 from agent.state import ConversationExchange, GoldenExample
 from config.settings import Settings, get_settings
+from observability.metrics import get_default_metrics
+from security.audit_log import get_audit_tenant_id
 
 logger = logging.getLogger(__name__)
 
@@ -1010,6 +1012,29 @@ def _get_field(response: object, name: str) -> int | None:
     return getattr(response, name, None)
 
 
+def _get_model_name(response: object) -> str | None:
+    """Reads the model name Ollama echoes back on its own response.
+
+    Separate from `_get_field` above purely because that one is typed for
+    the integer counter/duration fields. Read from the *response* rather
+    than threaded in from each call site so that `_log_ollama_timing`
+    needs no new argument at any of its seven callers, and so the name
+    recorded is the one the server actually served -- not the one this app
+    asked for, which can differ (an alias, or a per-request override from
+    `AskRequest.model`).
+
+    Anything that isn't a non-empty string becomes `None`, which
+    `PerformanceMetrics.record_llm_call` treats as "don't attribute this
+    call to any model" rather than inventing a bucket for it.
+    """
+    value = (
+        response.get("model") if isinstance(response, dict) else getattr(response, "model", None)
+    )
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
 def _log_ollama_timing(response: object) -> None:
     """Logs Ollama's own reported call breakdown, and reports provider health.
 
@@ -1030,6 +1055,16 @@ def _log_ollama_timing(response: object) -> None:
     `num_predict` bounds). Wall-clock alone can't distinguish these, and
     which one dominates determines whether prompt trimming, a smaller
     model, or neither is the right lever.
+
+    Also feeds the per-model token rollup (`observability.metrics
+    .PerformanceMetrics.record_llm_call`, catalogue row 45) for the same
+    reason the circuit-breaker success signal lives here: this is the one
+    point every `client.chat` in this module already passes through, so a
+    future call site is counted without anyone remembering to add it. The
+    rollup is attributed to the current request's tenant via the
+    `security.audit_log` context variable that `agent.graph.run_agent`
+    already binds -- read rather than threaded through, exactly as that
+    module's own docstring describes for ~40 `log_security_event` sites.
     """
     record_outcome("ollama", None)
     total_ns = _get_field(response, "total_duration")
@@ -1038,6 +1073,16 @@ def _log_ollama_timing(response: object) -> None:
     eval_ns = _get_field(response, "eval_duration")
     prompt_tokens = _get_field(response, "prompt_eval_count")
     output_tokens = _get_field(response, "eval_count")
+
+    # Recorded before the `total_ns` guard below, and independently of it:
+    # the token counters are separate response fields, so a server that
+    # reports them without a duration breakdown should still be counted.
+    get_default_metrics().record_llm_call(
+        model=_get_model_name(response),
+        prompt_tokens=prompt_tokens,
+        completion_tokens=output_tokens,
+        tenant_id=get_audit_tenant_id(),
+    )
 
     if total_ns is None:
         return  # Older Ollama server or a mocked response in tests -- nothing to log.

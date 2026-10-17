@@ -1514,6 +1514,17 @@ export interface RequestMetricOut {
   max_ms: number
 }
 
+// Mirrors api/schemas.py's ModelUsageOut. Token counts only -- the
+// backend reports no monetary figure for a locally-hosted model, so
+// there is deliberately no cost field to render.
+export interface ModelUsageOut {
+  model: string
+  calls: number
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+}
+
 export interface PerformanceMetricsResponse {
   started_at: string
   window_requests: number
@@ -1525,6 +1536,9 @@ export interface PerformanceMetricsResponse {
   result_cache_hits: number
   result_cache_misses: number
   database_concurrency_rejections: number
+  // Optional on the wire: the backend defaults it to [], and an older
+  // backend omits it entirely.
+  llm_usage?: ModelUsageOut[]
 }
 
 // --- Tenant/client admin dashboard (api/tenant_admin.py, Prompt 29) --
