@@ -1,0 +1,835 @@
+{
+  "run_id": "run_20261016T185313Z",
+  "timestamp": "2026-10-16T18:53:13.894751+00:00",
+  "model": "llama3.1:8b",
+  "database": "AdventureWorksDW2025",
+  "total_cases": 3,
+  "metrics": {
+    "sql_execution_accuracy": 1.0,
+    "result_set_accuracy": 0.6666666666666666,
+    "exact_sql_match": 0.0,
+    "final_accuracy": 0.6666666666666666,
+    "intent_classification_accuracy": 1.0,
+    "schema_retrieval_recall": 1.0,
+    "relevant_table_precision": 0.17037037037037037,
+    "column_selection_accuracy": 0.8333333333333334,
+    "join_correctness": null,
+    "aggregation_correctness": null,
+    "filter_correctness": 1.0,
+    "date_time_reasoning_accuracy": null,
+    "group_by_correctness": null,
+    "order_by_correctness": 0.0,
+    "null_handling_accuracy": null,
+    "nested_query_correctness": null,
+    "window_function_correctness": null,
+    "ambiguous_question_handling_accuracy": null,
+    "follow_up_accuracy": null,
+    "retry_success_rate": 1.0,
+    "first_attempt_success_rate": 1.0,
+    "average_latency_seconds": 215.23016633332978,
+    "p95_latency_seconds": 523.8623503000126,
+    "avg_llm_calls_per_case": 3.3333333333333335,
+    "total_llm_calls": 10.0,
+    "avg_prompt_tokens": 14898.666666666666,
+    "avg_completion_tokens": 449.6666666666667,
+    "avg_query_complexity": 3.3333333333333335,
+    "avg_estimated_cost_rows": 223.33333333333334,
+    "security_rejection_accuracy": null
+  },
+  "per_category": {
+    "simple_filtering": {
+      "count": 2.0,
+      "pass_rate": 1.0,
+      "avg_latency_seconds": 60.91407434998837
+    },
+    "sorting": {
+      "count": 1.0,
+      "pass_rate": 0.0,
+      "avg_latency_seconds": 523.8623503000126
+    }
+  },
+  "per_difficulty": {
+    "easy": {
+      "count": 3.0,
+      "pass_rate": 0.6666666666666666,
+      "avg_latency_seconds": 215.23016633332978
+    }
+  },
+  "cases": [
+    {
+      "case_id": "easy_filter_red_products",
+      "turn_index": null,
+      "difficulty": "easy",
+      "category": "simple_filtering",
+      "overall_pass": true,
+      "final_status": "succeeded",
+      "failure_category": null
+    },
+    {
+      "case_id": "easy_filter_red_count",
+      "turn_index": null,
+      "difficulty": "easy",
+      "category": "simple_filtering",
+      "overall_pass": true,
+      "final_status": "succeeded",
+      "failure_category": null
+    },
+    {
+      "case_id": "easy_sort_top5_expensive",
+      "turn_index": null,
+      "difficulty": "easy",
+      "category": "sorting",
+      "overall_pass": false,
+      "final_status": "succeeded",
+      "failure_category": "wrong_query_structure"
+    }
+  ],
+  "cases_full": [
+    {
+      "case_id": "easy_filter_red_products",
+      "question": "Which products are the color red?",
+      "difficulty": "easy",
+      "category": "simple_filtering",
+      "security_classification": "benign",
+      "turn_index": null,
+      "final_status": "succeeded",
+      "retry_count": 0,
+      "attempt_history": [
+        {
+          "attempt": 1,
+          "sql": "SELECT TOP 1000 EnglishProductName FROM DimProduct WHERE Color = 'Red'",
+          "outcome": "succeeded",
+          "error": null,
+          "will_retry": false
+        }
+      ],
+      "generated_sql": "SELECT TOP 1000 EnglishProductName FROM DimProduct WHERE Color = 'Red'",
+      "rejection_reason": null,
+      "followup_classification": "standalone",
+      "failure_explanation": null,
+      "retrieved_tables": [
+        "DimProductSubcategory",
+        "DimProduct",
+        "DimPromotion",
+        "DimProductCategory",
+        "FactInternetSales"
+      ],
+      "expected_tables_hint": [
+        "DimProduct"
+      ],
+      "result_columns": [
+        "EnglishProductName"
+      ],
+      "result_rows": [
+        [
+          "HL Road Frame - Red, 58"
+        ],
+        [
+          "Sport-100 Helmet, Red"
+        ],
+        [
+          "Sport-100 Helmet, Red"
+        ],
+        [
+          "Sport-100 Helmet, Red"
+        ],
+        [
+          "HL Road Frame - Red, 62"
+        ],
+        [
+          "HL Road Frame - Red, 62"
+        ],
+        [
+          "HL Road Frame - Red, 62"
+        ],
+        [
+          "HL Road Frame - Red, 44"
+        ],
+        [
+          "HL Road Frame - Red, 44"
+        ],
+        [
+          "HL Road Frame - Red, 44"
+        ],
+        [
+          "HL Road Frame - Red, 48"
+        ],
+        [
+          "HL Road Frame - Red, 48"
+        ],
+        [
+          "HL Road Frame - Red, 48"
+        ],
+        [
+          "HL Road Frame - Red, 52"
+        ],
+        [
+          "HL Road Frame - Red, 52"
+        ],
+        [
+          "HL Road Frame - Red, 52"
+        ],
+        [
+          "HL Road Frame - Red, 56"
+        ],
+        [
+          "HL Road Frame - Red, 56"
+        ],
+        [
+          "HL Road Frame - Red, 56"
+        ],
+        [
+          "LL Road Frame - Red, 44"
+        ],
+        [
+          "LL Road Frame - Red, 44"
+        ],
+        [
+          "LL Road Frame - Red, 48"
+        ],
+        [
+          "LL Road Frame - Red, 48"
+        ],
+        [
+          "LL Road Frame - Red, 52"
+        ],
+        [
+          "LL Road Frame - Red, 52"
+        ],
+        [
+          "LL Road Frame - Red, 58"
+        ],
+        [
+          "LL Road Frame - Red, 58"
+        ],
+        [
+          "LL Road Frame - Red, 60"
+        ],
+        [
+          "LL Road Frame - Red, 60"
+        ],
+        [
+          "LL Road Frame - Red, 62"
+        ],
+        [
+          "LL Road Frame - Red, 62"
+        ],
+        [
+          "ML Road Frame - Red, 44"
+        ],
+        [
+          "ML Road Frame - Red, 48"
+        ],
+        [
+          "ML Road Frame - Red, 52"
+        ],
+        [
+          "ML Road Frame - Red, 58"
+        ],
+        [
+          "ML Road Frame - Red, 60"
+        ],
+        [
+          "Road-150 Red, 62"
+        ],
+        [
+          "Road-150 Red, 44"
+        ],
+        [
+          "Road-150 Red, 48"
+        ],
+        [
+          "Road-150 Red, 52"
+        ],
+        [
+          "Road-150 Red, 56"
+        ],
+        [
+          "Road-450 Red, 58"
+        ],
+        [
+          "Road-450 Red, 60"
+        ],
+        [
+          "Road-450 Red, 44"
+        ],
+        [
+          "Road-450 Red, 48"
+        ],
+        [
+          "Road-450 Red, 52"
+        ],
+        [
+          "Road-650 Red, 58"
+        ],
+        [
+          "Road-650 Red, 58"
+        ],
+        [
+          "Road-650 Red, 60"
+        ],
+        [
+          "Road-650 Red, 60"
+        ],
+        [
+          "Road-650 Red, 62"
+        ],
+        [
+          "Road-650 Red, 62"
+        ],
+        [
+          "Road-650 Red, 44"
+        ],
+        [
+          "Road-650 Red, 44"
+        ],
+        [
+          "Road-650 Red, 48"
+        ],
+        [
+          "Road-650 Red, 48"
+        ],
+        [
+          "Road-650 Red, 52"
+        ],
+        [
+          "Road-650 Red, 52"
+        ],
+        [
+          "Road-250 Red, 44"
+        ],
+        [
+          "Road-250 Red, 48"
+        ],
+        [
+          "Road-250 Red, 52"
+        ],
+        [
+          "Road-250 Red, 58"
+        ],
+        [
+          "Road-250 Red, 58"
+        ]
+      ],
+      "row_count": 63,
+      "wall_time_seconds": 100.30892409998341,
+      "stage_timings_ms": {
+        "sanitize_input": 0.55,
+        "classify_followup": 0.05,
+        "retrieve_schema": 2181.17,
+        "retrieve_golden_examples": 318.67,
+        "retrieve_business_context": 426.04,
+        "classify_analytical_intent": 40313.35,
+        "build_analytical_plan": 0.04,
+        "plan_query": 0.02,
+        "generate_sql": 56041.19,
+        "review_sql": 0.01,
+        "review_metric_conformance": 0.01,
+        "validate_sql": 42.59,
+        "estimate_cost": 660.63,
+        "execute_sql": 11.8,
+        "compute_analytics": 0.26,
+        "generate_forecast": 0.01,
+        "generate_recommendations": 252.25,
+        "generate_insight": 0.0
+      },
+      "llm_call_count": 1,
+      "cost_estimate_severity": "low",
+      "cost_estimate_rows": 63.0,
+      "complexity_score": 0,
+      "prompt_tokens": 4751,
+      "completion_tokens": 81,
+      "observed_intent": "lookup",
+      "observed_ambiguity_flags": [],
+      "gold_columns": [
+        "EnglishProductName"
+      ],
+      "gold_rows": [
+        [
+          "HL Road Frame - Red, 58"
+        ],
+        [
+          "Sport-100 Helmet, Red"
+        ],
+        [
+          "Sport-100 Helmet, Red"
+        ],
+        [
+          "Sport-100 Helmet, Red"
+        ],
+        [
+          "HL Road Frame - Red, 62"
+        ],
+        [
+          "HL Road Frame - Red, 62"
+        ],
+        [
+          "HL Road Frame - Red, 62"
+        ],
+        [
+          "HL Road Frame - Red, 44"
+        ],
+        [
+          "HL Road Frame - Red, 44"
+        ],
+        [
+          "HL Road Frame - Red, 44"
+        ],
+        [
+          "HL Road Frame - Red, 48"
+        ],
+        [
+          "HL Road Frame - Red, 48"
+        ],
+        [
+          "HL Road Frame - Red, 48"
+        ],
+        [
+          "HL Road Frame - Red, 52"
+        ],
+        [
+          "HL Road Frame - Red, 52"
+        ],
+        [
+          "HL Road Frame - Red, 52"
+        ],
+        [
+          "HL Road Frame - Red, 56"
+        ],
+        [
+          "HL Road Frame - Red, 56"
+        ],
+        [
+          "HL Road Frame - Red, 56"
+        ],
+        [
+          "LL Road Frame - Red, 44"
+        ],
+        [
+          "LL Road Frame - Red, 44"
+        ],
+        [
+          "LL Road Frame - Red, 48"
+        ],
+        [
+          "LL Road Frame - Red, 48"
+        ],
+        [
+          "LL Road Frame - Red, 52"
+        ],
+        [
+          "LL Road Frame - Red, 52"
+        ],
+        [
+          "LL Road Frame - Red, 58"
+        ],
+        [
+          "LL Road Frame - Red, 58"
+        ],
+        [
+          "LL Road Frame - Red, 60"
+        ],
+        [
+          "LL Road Frame - Red, 60"
+        ],
+        [
+          "LL Road Frame - Red, 62"
+        ],
+        [
+          "LL Road Frame - Red, 62"
+        ],
+        [
+          "ML Road Frame - Red, 44"
+        ],
+        [
+          "ML Road Frame - Red, 48"
+        ],
+        [
+          "ML Road Frame - Red, 52"
+        ],
+        [
+          "ML Road Frame - Red, 58"
+        ],
+        [
+          "ML Road Frame - Red, 60"
+        ],
+        [
+          "Road-150 Red, 62"
+        ],
+        [
+          "Road-150 Red, 44"
+        ],
+        [
+          "Road-150 Red, 48"
+        ],
+        [
+          "Road-150 Red, 52"
+        ],
+        [
+          "Road-150 Red, 56"
+        ],
+        [
+          "Road-450 Red, 58"
+        ],
+        [
+          "Road-450 Red, 60"
+        ],
+        [
+          "Road-450 Red, 44"
+        ],
+        [
+          "Road-450 Red, 48"
+        ],
+        [
+          "Road-450 Red, 52"
+        ],
+        [
+          "Road-650 Red, 58"
+        ],
+        [
+          "Road-650 Red, 58"
+        ],
+        [
+          "Road-650 Red, 60"
+        ],
+        [
+          "Road-650 Red, 60"
+        ],
+        [
+          "Road-650 Red, 62"
+        ],
+        [
+          "Road-650 Red, 62"
+        ],
+        [
+          "Road-650 Red, 44"
+        ],
+        [
+          "Road-650 Red, 44"
+        ],
+        [
+          "Road-650 Red, 48"
+        ],
+        [
+          "Road-650 Red, 48"
+        ],
+        [
+          "Road-650 Red, 52"
+        ],
+        [
+          "Road-650 Red, 52"
+        ],
+        [
+          "Road-250 Red, 44"
+        ],
+        [
+          "Road-250 Red, 48"
+        ],
+        [
+          "Road-250 Red, 52"
+        ],
+        [
+          "Road-250 Red, 58"
+        ],
+        [
+          "Road-250 Red, 58"
+        ]
+      ],
+      "gold_source": "expected_sql",
+      "execution_correct": null,
+      "result_set_correct": true,
+      "sql_exact_match": false,
+      "retrieval_recall": 1.0,
+      "column_recall": 1.0,
+      "structure_checks": {
+        "filter_present": true
+      },
+      "security_correct": null,
+      "intent_classification_correct": true,
+      "overall_pass": true,
+      "failure_category": null,
+      "error_detail": null
+    },
+    {
+      "case_id": "easy_filter_red_count",
+      "question": "How many products are the color red?",
+      "difficulty": "easy",
+      "category": "simple_filtering",
+      "security_classification": "benign",
+      "turn_index": null,
+      "final_status": "succeeded",
+      "retry_count": 0,
+      "attempt_history": [
+        {
+          "attempt": 1,
+          "sql": "SELECT TOP 1000 COUNT(ProductKey) FROM DimProduct WHERE Color = 'Red'",
+          "outcome": "succeeded",
+          "error": null,
+          "will_retry": false
+        }
+      ],
+      "generated_sql": "SELECT TOP 1000 COUNT(ProductKey) FROM DimProduct WHERE Color = 'Red'",
+      "rejection_reason": null,
+      "followup_classification": "standalone",
+      "failure_explanation": null,
+      "retrieved_tables": [
+        "DimProductSubcategory",
+        "DimProduct",
+        "DimPromotion",
+        "DimProductCategory",
+        "FactInternetSales"
+      ],
+      "expected_tables_hint": [
+        "DimProduct"
+      ],
+      "result_columns": [
+        ""
+      ],
+      "result_rows": [
+        [
+          63
+        ]
+      ],
+      "row_count": 1,
+      "wall_time_seconds": 21.519224599993322,
+      "stage_timings_ms": {
+        "sanitize_input": 0.4,
+        "classify_followup": 0.05,
+        "retrieve_schema": 1621.6,
+        "retrieve_golden_examples": 306.11,
+        "retrieve_business_context": 383.51,
+        "classify_analytical_intent": 11362.26,
+        "build_analytical_plan": 0.03,
+        "plan_query": 0.01,
+        "generate_sql": 7737.73,
+        "review_sql": 0.01,
+        "review_metric_conformance": 0.01,
+        "validate_sql": 8.08,
+        "estimate_cost": 24.27,
+        "execute_sql": 13.66,
+        "compute_analytics": 0.44,
+        "generate_forecast": 0.02,
+        "generate_recommendations": 13.24,
+        "generate_insight": 0.01
+      },
+      "llm_call_count": 1,
+      "cost_estimate_severity": "low",
+      "cost_estimate_rows": 1.0,
+      "complexity_score": 1,
+      "prompt_tokens": 5001,
+      "completion_tokens": 88,
+      "observed_intent": "lookup",
+      "observed_ambiguity_flags": [],
+      "gold_columns": [
+        ""
+      ],
+      "gold_rows": [
+        [
+          63
+        ]
+      ],
+      "gold_source": "expected_sql",
+      "execution_correct": null,
+      "result_set_correct": true,
+      "sql_exact_match": false,
+      "retrieval_recall": 1.0,
+      "column_recall": 1.0,
+      "structure_checks": {
+        "filter_present": true
+      },
+      "security_correct": null,
+      "intent_classification_correct": null,
+      "overall_pass": true,
+      "failure_category": null,
+      "error_detail": null
+    },
+    {
+      "case_id": "easy_sort_top5_expensive",
+      "question": "What are the 5 most expensive products?",
+      "difficulty": "easy",
+      "category": "sorting",
+      "security_classification": "benign",
+      "turn_index": null,
+      "final_status": "succeeded",
+      "retry_count": 3,
+      "attempt_history": [
+        {
+          "attempt": 1,
+          "sql": "WITH ranked AS (\n    SELECT p.ProductKey, p.EnglishProductName, p.ProductSubcategoryKey, \n           d.EnglishProductSubcategoryName, p.ListPrice,\n           ROW_NUMBER() OVER (PARTITION BY d.ProductSubcategoryKey ORDER BY p.ListPrice DESC) AS rn\n    FROM FactInternetSales p\n    JOIN DimProductSubcategory d ON p.ProductSubcategoryKey = d.ProductSubcategoryKey\n)\nSELECT ProductKey, EnglishProductName, ProductSubcategoryKey, EnglishProductSubcategoryName, ListPrice\nFROM ranked\nWHERE rn <= 5;",
+          "outcome": "plan_not_satisfied_advisory",
+          "error": "The SQL is missing the MAX aggregation step, which should be applied to the ListPrice column.",
+          "will_retry": false
+        },
+        {
+          "attempt": 1,
+          "sql": "WITH ranked AS (SELECT p.ProductKey AS ProductKey, p.EnglishProductName AS EnglishProductName, p.ProductSubcategoryKey AS ProductSubcategoryKey, d.EnglishProductSubcategoryName AS EnglishProductSubcategoryName, p.ListPrice AS ListPrice, ROW_NUMBER() OVER (PARTITION BY d.ProductSubcategoryKey ORDER BY p.ListPrice DESC) AS rn FROM FactInternetSales AS p JOIN DimProductSubcategory AS d ON p.ProductSubcategoryKey = d.ProductSubcategoryKey) SELECT TOP 1000 ProductKey, EnglishProductName, ProductSubcategoryKey, EnglishProductSubcategoryName, ListPrice FROM ranked WHERE rn <= 5",
+          "outcome": "missing_reference",
+          "error": "(pyodbc.ProgrammingError) ('42S22', \"[42S22] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]Invalid column name 'ProductSubcategoryKey'. (207) (SQLExecDirectW); [42S22] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]Invalid column name 'EnglishProductName'. (207); [42S22] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]Invalid column name 'ProductSubcategoryKey'. (207); [42S22] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]Invalid column name 'ListPrice'. (207); [42S22] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]Invalid column name 'ListPrice'. (207)\")\n[SQL: WITH ranked AS (SELECT p.ProductKey AS ProductKey, p.EnglishProductName AS EnglishProductName, p.ProductSubcategoryKey AS ProductSubcategoryKey, d.EnglishProductSubcategoryName AS EnglishProductSubcategoryName, p.ListPrice AS ListPrice, ROW_NUMBER() OVER (PARTITION BY d.ProductSubcategoryKey ORDER BY p.ListPrice DESC) AS rn FROM FactInternetSales AS p JOIN DimProductSubcategory AS d ON p.ProductSubcategoryKey = d.ProductSubcategoryKey) SELECT TOP 1000 ProductKey, EnglishProductName, ProductSubcategoryKey, EnglishProductSubcategoryName, ListPrice FROM ranked WHERE rn <= 5]\n(Background on this error at: https://sqlalche.me/e/20/f405)",
+          "will_retry": true
+        },
+        {
+          "attempt": 2,
+          "sql": "WITH ranked AS (\n    SELECT p.ProductKey AS ProductKey, p.EnglishProductName AS EnglishProductName, p.ListPrice AS ListPrice,\n           ROW_NUMBER() OVER (PARTITION BY p.ProductKey ORDER BY p.ListPrice DESC) AS rn\n    FROM FactInternetSales AS p\n    JOIN DimProduct AS d ON p.ProductKey = d.ProductKey\n)\nSELECT ProductKey, EnglishProductName, ListPrice\nFROM ranked\nWHERE rn <= 5;",
+          "outcome": "plan_not_satisfied_advisory",
+          "error": "The SQL does not compute 'most_expensive_products' as MAX(DimProduct.ListPrice) as required by step 1.",
+          "will_retry": false
+        },
+        {
+          "attempt": 2,
+          "sql": "WITH ranked AS (SELECT p.ProductKey AS ProductKey, p.EnglishProductName AS EnglishProductName, p.ListPrice AS ListPrice, ROW_NUMBER() OVER (PARTITION BY p.ProductKey ORDER BY p.ListPrice DESC) AS rn FROM FactInternetSales AS p JOIN DimProduct AS d ON p.ProductKey = d.ProductKey) SELECT TOP 1000 ProductKey, EnglishProductName, ListPrice FROM ranked WHERE rn <= 5",
+          "outcome": "missing_reference",
+          "error": "(pyodbc.ProgrammingError) ('42S22', \"[42S22] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]Invalid column name 'EnglishProductName'. (207) (SQLExecDirectW); [42S22] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]Invalid column name 'ListPrice'. (207); [42S22] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]Invalid column name 'ListPrice'. (207)\")\n[SQL: WITH ranked AS (SELECT p.ProductKey AS ProductKey, p.EnglishProductName AS EnglishProductName, p.ListPrice AS ListPrice, ROW_NUMBER() OVER (PARTITION BY p.ProductKey ORDER BY p.ListPrice DESC) AS rn FROM FactInternetSales AS p JOIN DimProduct AS d ON p.ProductKey = d.ProductKey) SELECT TOP 1000 ProductKey, EnglishProductName, ListPrice FROM ranked WHERE rn <= 5]\n(Background on this error at: https://sqlalche.me/e/20/f405)",
+          "will_retry": true
+        },
+        {
+          "attempt": 3,
+          "sql": "WITH ranked AS (\n    SELECT d.ProductKey AS ProductKey, d.EnglishProductName AS EnglishProductName, \n           MAX(d.StandardCost) AS most_expensive_products,\n           ROW_NUMBER() OVER (PARTITION BY d.ProductKey ORDER BY MAX(d.StandardCost) DESC) AS rn\n    FROM DimProduct AS d\n    GROUP BY d.ProductKey\n)\nSELECT TOP 5 ProductKey, EnglishProductName, most_expensive_products\nFROM ranked\nWHERE rn <= 5;",
+          "outcome": "plan_not_satisfied_advisory",
+          "error": "The SQL does not use a window function (ROW_NUMBER/RANK) to rank the top 5 products, but instead uses a subquery with TOP to limit the results.",
+          "will_retry": false
+        },
+        {
+          "attempt": 3,
+          "sql": "WITH ranked AS (SELECT d.ProductKey AS ProductKey, d.EnglishProductName AS EnglishProductName, MAX(d.StandardCost) AS most_expensive_products, ROW_NUMBER() OVER (PARTITION BY d.ProductKey ORDER BY MAX(d.StandardCost) DESC) AS rn FROM DimProduct AS d GROUP BY d.ProductKey) SELECT TOP 5 ProductKey, EnglishProductName, most_expensive_products FROM ranked WHERE rn <= 5",
+          "outcome": "unknown_error",
+          "error": "(pyodbc.ProgrammingError) ('42000', \"[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]Column 'DimProduct.EnglishProductName' is invalid in the select list because it is not contained in either an aggregate function or the GROUP BY clause. (8120) (SQLExecDirectW)\")\n[SQL: WITH ranked AS (SELECT d.ProductKey AS ProductKey, d.EnglishProductName AS EnglishProductName, MAX(d.StandardCost) AS most_expensive_products, ROW_NUMBER() OVER (PARTITION BY d.ProductKey ORDER BY MAX(d.StandardCost) DESC) AS rn FROM DimProduct AS d GROUP BY d.ProductKey) SELECT TOP 5 ProductKey, EnglishProductName, most_expensive_products FROM ranked WHERE rn <= 5]\n(Background on this error at: https://sqlalche.me/e/20/f405)",
+          "will_retry": true
+        },
+        {
+          "attempt": 4,
+          "sql": "WITH ranked AS (\n    SELECT d.ProductKey AS ProductKey, d.EnglishProductName AS EnglishProductName, MAX(d.StandardCost) AS most_expensive_products,\n           ROW_NUMBER() OVER (PARTITION BY d.ProductKey ORDER BY MAX(d.StandardCost) DESC) AS rn\n    FROM DimProduct AS d\n    GROUP BY d.ProductKey, d.EnglishProductName\n)\nSELECT TOP 5 ProductKey, EnglishProductName, most_expensive_products\nFROM ranked\nWHERE rn <= 5",
+          "outcome": "plan_not_satisfied_advisory",
+          "error": "The SQL misimplements step 3, as it uses plain TOP/LIMIT combined with GROUP BY, instead of a window function (ROW_NUMBER/RANK) to rank the top 5 products.",
+          "will_retry": false
+        },
+        {
+          "attempt": 4,
+          "sql": "WITH ranked AS (SELECT d.ProductKey AS ProductKey, d.EnglishProductName AS EnglishProductName, MAX(d.StandardCost) AS most_expensive_products, ROW_NUMBER() OVER (PARTITION BY d.ProductKey ORDER BY MAX(d.StandardCost) DESC) AS rn FROM DimProduct AS d GROUP BY d.ProductKey, d.EnglishProductName) SELECT TOP 5 ProductKey, EnglishProductName, most_expensive_products FROM ranked WHERE rn <= 5",
+          "outcome": "succeeded",
+          "error": null,
+          "will_retry": false
+        }
+      ],
+      "generated_sql": "WITH ranked AS (SELECT d.ProductKey AS ProductKey, d.EnglishProductName AS EnglishProductName, MAX(d.StandardCost) AS most_expensive_products, ROW_NUMBER() OVER (PARTITION BY d.ProductKey ORDER BY MAX(d.StandardCost) DESC) AS rn FROM DimProduct AS d GROUP BY d.ProductKey, d.EnglishProductName) SELECT TOP 5 ProductKey, EnglishProductName, most_expensive_products FROM ranked WHERE rn <= 5",
+      "rejection_reason": null,
+      "followup_classification": "standalone",
+      "failure_explanation": null,
+      "retrieved_tables": [
+        "DimProduct",
+        "FactInternetSales",
+        "DimProductSubcategory",
+        "DimPromotion",
+        "FactResellerSales",
+        "DimReseller",
+        "DimProductCategory",
+        "FactAdditionalInternationalProductDescription",
+        "FactInternetSalesReason"
+      ],
+      "expected_tables_hint": [
+        "DimProduct"
+      ],
+      "result_columns": [
+        "ProductKey",
+        "EnglishProductName",
+        "most_expensive_products"
+      ],
+      "result_rows": [
+        [
+          1,
+          "Adjustable Race",
+          null
+        ],
+        [
+          2,
+          "Bearing Ball",
+          null
+        ],
+        [
+          3,
+          "BB Ball Bearing",
+          null
+        ],
+        [
+          4,
+          "Headset Ball Bearings",
+          null
+        ],
+        [
+          5,
+          "Blade",
+          null
+        ]
+      ],
+      "row_count": 5,
+      "wall_time_seconds": 523.8623503000126,
+      "stage_timings_ms": {
+        "sanitize_input": 0.82,
+        "classify_followup": 0.07,
+        "retrieve_schema": 2475.82,
+        "retrieve_golden_examples": 980.97,
+        "retrieve_business_context": 1080.2,
+        "classify_analytical_intent": 21095.62,
+        "build_analytical_plan": 206899.09999999998,
+        "plan_query": 20521.62,
+        "generate_sql": 240191.38,
+        "review_sql": 30178.649999999998,
+        "review_metric_conformance": 0.03,
+        "validate_sql": 75.27,
+        "estimate_cost": 73.33,
+        "execute_sql": 34.03,
+        "compute_analytics": 1.18,
+        "generate_forecast": 0.02,
+        "generate_recommendations": 110.98,
+        "generate_insight": 0.0
+      },
+      "llm_call_count": 8,
+      "cost_estimate_severity": "low",
+      "cost_estimate_rows": 606.0,
+      "complexity_score": 9,
+      "prompt_tokens": 34944,
+      "completion_tokens": 1180,
+      "observed_intent": "ranking",
+      "observed_ambiguity_flags": [],
+      "gold_columns": [
+        "EnglishProductName",
+        "ListPrice"
+      ],
+      "gold_rows": [
+        [
+          "Road-150 Red, 62",
+          "3578.2700"
+        ],
+        [
+          "Road-150 Red, 44",
+          "3578.2700"
+        ],
+        [
+          "Road-150 Red, 48",
+          "3578.2700"
+        ],
+        [
+          "Road-150 Red, 52",
+          "3578.2700"
+        ],
+        [
+          "Road-150 Red, 56",
+          "3578.2700"
+        ]
+      ],
+      "gold_source": "expected_sql",
+      "execution_correct": null,
+      "result_set_correct": false,
+      "sql_exact_match": false,
+      "retrieval_recall": 1.0,
+      "column_recall": 0.5,
+      "structure_checks": {
+        "order_by_present": false
+      },
+      "security_correct": null,
+      "intent_classification_correct": null,
+      "overall_pass": false,
+      "failure_category": "wrong_query_structure",
+      "error_detail": "failed structural check(s): ['order_by_present']"
+    }
+  ]
+}
