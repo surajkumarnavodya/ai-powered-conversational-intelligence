@@ -22,6 +22,11 @@
   --border: #e2e8f0;
   --muted: #f1f5f9;
   --muted-foreground: #64748b;
+  /* Scrollbar thumb -- the same slate as --muted-foreground, at low
+     alpha so it reads as a hint over any surface it floats on
+     (sidebar, card, chat column) without needing a per-surface rule. */
+  --scrollbar-thumb: rgb(100 116 139 / 0.35);
+  --scrollbar-thumb-hover: rgb(100 116 139 / 0.6);
   --sidebar: #ffffff;
   --sidebar-foreground: #0f172a;
   --input: #ffffff;
@@ -171,6 +176,8 @@
   --border: #2a2745;
   --muted: #1a1830;
   --muted-foreground: #a1a1c2;
+  --scrollbar-thumb: rgb(161 161 194 / 0.3);
+  --scrollbar-thumb-hover: rgb(161 161 194 / 0.55);
   --sidebar: #100e1f;
   --sidebar-foreground: #e5e5f5;
   --input: #17152a;
@@ -353,4 +360,60 @@ body {
   background: var(--muted);
   border-radius: 0.25rem;
   padding: 0.125rem 0.375rem;
+}
+
+/* ---- Compact scrollbars -------------------------------------------------
+   Nothing styled these before, so every scroll region fell back to the
+   platform default -- on Windows/Chromium that is a ~17px track with
+   stepper arrows at each end, which is what made the sidebar's scrollbar
+   read as a piece of chrome rather than a hint.
+
+   Two implementations, deliberately mutually exclusive. Chromium ignores
+   every `::-webkit-scrollbar-*` rule on an element once `scrollbar-width`
+   or `scrollbar-color` is set on it (behaviour introduced in Chrome 121),
+   so setting both "to be safe" would silently throw away the precise
+   width, radius and hover state below. The standard properties are
+   therefore scoped to engines that have no webkit pseudo-elements at all
+   -- Firefox -- where `thin` is the closest available equivalent. */
+
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+/* Transparent, not a tinted track: the thumb floats over whatever surface
+   it is scrolling, so one rule works on the sidebar, a card and the chat
+   column without three per-surface overrides. */
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border-radius: 9999px;
+  /* A long list would otherwise shrink the thumb to a few pixels -- too
+     small to grab, and too small to read as a position indicator. */
+  min-height: 2rem;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
+}
+
+/* The stepper arrows at each end of the Windows default track. They cost
+   two 17px blocks of vertical space and nothing in this app asks the user
+   to scroll one line at a time. */
+::-webkit-scrollbar-button {
+  display: none;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
