@@ -134,26 +134,19 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
           answer 40px in from the composer and the question's own right
           edge. Everything in a turn now shares one pair of edges. */}
       <div className="flex flex-col gap-3">
+        {/* Metadata only. The answer *actions* used to sit here too, above
+            the answer they act on -- so "Copy answer" appeared before
+            there was a visible answer to copy, and the row read as a
+            toolbar for the turn rather than for the response. They now
+            render once, left-aligned, at the foot of the turn (see the
+            action row at the bottom of this component), which is where
+            every mainstream assistant UI puts them and where the eye
+            lands after reading. */}
         <div className="flex flex-wrap items-center gap-2">
           <TimingBadge mode="done" durationMs={entry.answerDurationMs} />
           <time dateTime={entry.timestamp} className="text-xs text-[var(--muted-foreground)]">
             {formatTurnTime(entry.timestamp)}
           </time>
-          {answerMarkdown && (
-            <>
-              <CopyAnswerButton answer={answerMarkdown} />
-              <DownloadAnswerButton question={entry.question} answer={answerMarkdown} />
-              {/* Only on a turn that produced an answer -- `answerMarkdown`
-                  already gates this whole row. Re-running a turn that
-                  failed or needs clarification would just repeat the
-                  failure, and the composer is the right place to retry
-                  that. */}
-              <RegenerateAnswerButton entryId={entry.entryId} />
-              <SaveArtifactButton entry={entry} />
-              <ResponseFeedbackWidget entryId={entry.entryId} />
-              {showReadAloud && <ReadAloudButton text={buildSpokenAnswerText(entry)} />}
-            </>
-          )}
           {entry.spokenAudioUrl && (
             // Playback itself already happened once, automatically, via
             // `useVoiceConversation`'s own `<audio>` element as part of the
@@ -347,6 +340,25 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
               </div>
             )}
           </>
+        )}
+
+        {/* Answer actions -- left-aligned, at the foot of the response,
+            after everything the answer produced (text, provenance, SQL,
+            results, chart). `answerMarkdown` gates the whole row: a turn
+            that failed, was rejected or needs clarification has nothing
+            to copy, download, rate or re-run, and the composer is the
+            right place to retry that. `justify-start` is explicit rather
+            than inherited so a future `items-*`/`justify-*` change to the
+            parent cannot quietly re-centre it. */}
+        {answerMarkdown && (
+          <div className="flex flex-wrap items-center justify-start gap-1 pt-1">
+            <CopyAnswerButton answer={answerMarkdown} />
+            <DownloadAnswerButton question={entry.question} answer={answerMarkdown} />
+            <RegenerateAnswerButton entryId={entry.entryId} />
+            <SaveArtifactButton entry={entry} />
+            <ResponseFeedbackWidget entryId={entry.entryId} />
+            {showReadAloud && <ReadAloudButton text={buildSpokenAnswerText(entry)} />}
+          </div>
         )}
       </div>
     </div>
