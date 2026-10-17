@@ -15,7 +15,7 @@ rows, machine-generated), [`ai-capability-implementation-plan.md`](ai-capability
 ## 1. Executive summary
 
 **Of the 149 catalogue rows, 56 are Core capabilities for this product. Of
-those 56: 43 are Complete, 13 are Partial, and none is Missing.**
+those 56: 44 are Complete, 12 are Partial, and none is Missing.**
 *(Updated 2026-10-17: row 27 closed by Batch 1 — see
 [`ai-capability-implementation-log.md`](ai-capability-implementation-log.md).)*
 
@@ -157,7 +157,7 @@ capabilities, as the brief requires, rather than treated as 14 features.
 |---|---|---|---|---|
 | ~~**A**~~ | ~~**SQL explanation**~~ | 27 | **CLOSED 2026-10-17 (Batch 1).** `describe_sql` reads the AST `validate_sql` already parsed; six structural rows added to the existing metadata grid. Deterministic — no LLM call, no new dependency. See the implementation log | — |
 | **B** | **Research depth & verification** | 2, 7, 8 | Web search with synthesis, inline citations, hedging when sources disagree | No verification pass, no multi-step research plan, no iterative retrieval |
-| **C** | **Accessibility assurance** | 60 | Responsive layout, i18n ×5, aria labels, focus management throughout | No automated a11y test, no formal WCAG audit |
+| ~~**C**~~ | ~~**Accessibility assurance**~~ | 60 | **CLOSED 2026-10-17 (Batch 2).** `jsx-a11y` enabled in the existing oxlint config (no new dependency) + `axe-core` runtime checks in the vitest suite. Contrast remains browser-only — see the log | — |
 | **D** | **Load / capacity evidence** | 59 | Complete k6 + compose stack in `eval/load/`; CI smoke scenario | Never executed — Docker daemon not running |
 | **E** | **DAST** | 49 | SAST (bandit) blocking in CI | DAST has never run; needs a deployed target |
 | **F** | **AI usage rollup** | 45 | Token counts read in `agent/llm_client.py`; routing metrics; DB query cost | No usage surface. Monetary cost is **N/A** for local Ollama |

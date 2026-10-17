@@ -129,3 +129,113 @@ actually meant.
 Decisions 2 (accessibility), 3 (translation), 4 (Word/Excel — deferred by
 you) and 5 (certification) were kept out, per the instruction not to
 combine unrelated work.
+
+---
+
+## Batch 2 — Accessibility assurance (catalogue row 60) · 2026-10-17
+
+**Status: COMPLETE.** Audit status for row 60 moves Partial → Complete.
+**Baseline commit:** `933cfff`.
+
+### What the gap was
+
+The UI had aria labels, focus management and responsive layout
+throughout, and 53 of 88 test files already query by role or label — but
+**nothing asserted any of it stayed true.** No automated accessibility
+check existed at all.
+
+### Existing tooling first, as instructed — and it paid
+
+Before proposing any dependency I checked what the installed stack could
+already do. **oxlint 1.82 ships a `jsx-a11y` plugin that was simply not
+enabled** — the config listed only `react`, `typescript`, `oxc`.
+
+Enabling it cost **zero new dependencies** and immediately surfaced 28
+findings. So half the gap closed for free.
+
+### Why `axe-core`, not `vitest-axe`
+
+You approved `vitest-axe` *if justified*. It is not the better choice,
+by your own criteria:
+
+| | `vitest-axe` | `axe-core` (chosen) |
+|---|---|---|
+| Version | **0.1.0**, pre-1.0 | 4.14.0 |
+| Last modified | **2025-01-22** (~21 months) | **2026-10-15** (2 days) |
+| What it is | A thin matcher around axe-core | Deque's actual engine |
+
+`vitest-axe` wraps this same engine. For a repository that digest-pins
+container images and justifies every CVE ignore individually, depending
+on the maintained first-party engine and writing the ~15-line matcher
+ourselves is the cheaper long-term position. Dev dependency only;
+`dependencies` is untouched.
+
+### The static findings were mostly false positives — and the runtime engine proved it
+
+Of the 28 jsx-a11y findings, the eight that looked like real defects
+included `ShareModal`'s access-mode radios and `ui/card.tsx`'s
+`CardTitle`. Rather than mass-fix, I rendered both patterns and ran axe
+against them:
+
+- **ShareModal's `<label>` wrapping an input plus nested text spans:**
+  **no runtime violation.** The rule cannot see text nested two levels
+  deep; the control is correctly labelled.
+- **`CardTitle` (`<h3 {...props} />` taking content via `children`):**
+  **no runtime violation.** A static rule cannot know children exist.
+- **A genuinely empty `<h3 />`:** *is* caught (`empty-heading`) — so the
+  engine is not merely permissive.
+
+Three rules are therefore disabled in `.oxlintrc.json` with that
+evidence behind them: `label-has-associated-control` and
+`heading-has-content` (false positives on this codebase's legitimate
+patterns, both covered properly by axe at runtime) and
+`prefer-tag-over-role` (a style preference — `role="status"` is valid
+ARIA, not a defect).
+
+**13 findings remain as warnings** and are real, pre-existing issues now
+*visible* rather than silently absent: `no-redundant-roles` (5),
+`control-has-associated-label` (3), `no-static-element-interactions` (2),
+`media-has-caption` (2), `no-autofocus` (1). They are deliberately not
+fixed in this batch — they pre-date it, and absorbing them silently
+would hide what enabling the plugin found. `npm run lint` still exits 0.
+
+### Files changed
+
+| File | Why |
+|---|---|
+| `frontend/.oxlintrc.json` | `jsx-a11y` plugin enabled; three rules off with the evidence above |
+| `frontend/package.json`, `package-lock.json` | `axe-core@4.14.0`, **devDependencies only** |
+| `frontend/src/test/axe.ts` (new) | The matcher, plus an explicit statement of what jsdom cannot check |
+| `frontend/src/components/ui/accessibility.test.tsx` (new) | 8 tests across Button, Card, Dialog, ChatMessage |
+
+### Tests executed — actual results
+
+| Check | Result |
+|---|---|
+| `npx vitest run accessibility.test.tsx` | **8 passed** |
+| `npm run test` | **1158 passed, 89 files** (was 1150 / 88) |
+| `npx tsc --noEmit` | Clean |
+| `npm run lint` | **Exit 0**; 13 a11y warnings now visible |
+| `npm run build` | Succeeds |
+
+**Non-vacuity is proven, not assumed:** one test renders an icon-only
+button with no accessible name and asserts axe reports `button-name`. If
+axe ever stopped running, that test fails rather than silently passing.
+
+### Security
+
+No production dependency added. `axe-core` is unreachable from the app
+entry point — only `accessibility.test.tsx` and `src/test/axe.ts` import
+it, so Vite cannot bundle it. (`frontend/dist` is read-blocked under
+`CLAUDE.md` §12, so this is established by source reachability, which is
+what determines bundling, rather than by grepping the artefact.)
+
+### Remaining limitations
+
+- **Colour contrast is not checked and cannot be**, because jsdom has no
+  layout or paint. The rule is explicitly disabled rather than left to
+  report a misleading pass. **This helper must not be cited as evidence
+  that contrast was verified** — that needs a real browser.
+- Scoped to shared primitives and the chat bubble, not whole pages.
+- No formal WCAG conformance audit; this is regression protection.
+- The 13 remaining warnings are a tracked backlog, not fixed here.
