@@ -45,6 +45,23 @@ eval/results/
 *.md
 !README.md
 
+# --- Local run logs -- `.gitignore` has excluded `*.log` since line 53,
+# but this file did not, so three stray dev logs (app_run.log,
+# app_run_new.log, app_run_session.log -- Sept/Oct local sessions) sit
+# in the build context and were therefore COPYed into the production
+# image and shipped. An earlier inspection of the files on the host
+# found no credentials, connection strings or tokens, but 18 generated
+# SELECT statements from development runs, which has no business
+# leaving the host; the exclusion stands on the rule, not on that
+# content. This file's own header says it "mirrors .gitignore's
+# intent"; for logs it did not. ---
+*.log
+
+# --- The mocked test suite. Useful in CI, not in a running container:
+# it is dead weight in the image and ships fixtures and adversarial
+# payloads (tests/security/) that the runtime has no use for. ---
+tests/
+
 # --- Docker files themselves ---
 Dockerfile
 docker-compose.yml
