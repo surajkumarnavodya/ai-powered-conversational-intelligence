@@ -98,9 +98,9 @@ pandas==2.3.3
 # job**, because `requirements-dev.txt` line 16 is `-r
 # requirements.txt`, and the `benchmark-regression` job, which installs
 # this file directly. So an unsatisfiable pin here fails CI at the
-# dependency step, before a single test runs. (Not observed: no `gh`
-# CLI on this machine, so no run history was read -- this is what the
-# metadata entails, not a quoted red build.)
+# dependency step, before a single test runs. (The CI half is what the
+# metadata entails, not a quoted red build -- no `gh` CLI on this
+# machine, so no run history was read.)
 #
 # 1.17.1 declares `Requires-Python: >=3.11` and publishes cp311 *and*
 # cp314 wheels, so it satisfies the 3.11 target *and* the 3.14 local
@@ -108,9 +108,32 @@ pandas==2.3.3
 # drift apart again. Verified here by installing 1.17.1 into the 3.14
 # venv (numpy 2.5.3 satisfies its `numpy<2.7,>=1.26.4`, `pip check`
 # reports no scipy conflict) and running the four scipy-dependent
-# suites -- 76 passed. The 3.11 resolution itself has NOT been
-# exercised: no Docker daemon runs on this machine, so the image has
-# never been built here. That half rests on the metadata above.
+# suites -- 76 passed.
+#
+# The build failure was real and measured, not inferred: the
+# certification pass on 2026-10-17 started a Docker daemon, attempted
+# the container build for the first time in this environment, and
+# recorded the failure as **F-008** (release-blocking, P1) in
+# `docs/certification/2026-10-17_release_gate_v2.md` -- the single
+# defect behind that gate's NO-GO verdict. Section 9 item 1 of it
+# prescribes exactly this fix (pin scipy <= 1.17.1, rebuild, re-run the
+# full backend suite).
+#
+# The rebuild has since been exercised, so this no longer rests on
+# metadata alone. Later the same day the image was built and then
+# *inspected from the inside*: `docker run --rm --entrypoint python
+# <image> -c "import sys, scipy, numpy; ..."` reports `python 3.11.16`
+# with `scipy 1.17.1` and `numpy 2.4.6`, and all five scipy-dependent
+# production modules import there -- `analytics.causal`,
+# `analytics.forecasting`, `analytics.models`, `analytics.predictive`,
+# `optimization.engine` -- as do `api.main`, `agent.graph` and
+# `agent.sql_validator`. The full backend suite re-ran clean on the
+# downgraded pin (7,274 passed, 0 failed). Recorded in
+# `docs/certification/2026-10-17_release_gate_v2.md` section 11.2.
+#
+# What that does NOT establish is numerical-output parity between
+# 1.17.1 and 1.18.1. The suite asserts behaviour and it passes; nobody
+# diffed a forecast or a causal estimate across the two versions.
 # Do not raise this past 1.17.x while the base image is 3.11.
 scipy==1.17.1
 
