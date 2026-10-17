@@ -152,10 +152,30 @@ which is both `pyproject.toml`'s `requires-python` target and what
 to verification this has had; no one has confirmed runtime behavior parity
 beyond that.
 
-**Mitigation today:** CI already runs the full mocked test suite against
-3.11 on every push/PR — a pin that broke import/basic behavior would
-likely surface there, though CI doesn't exercise every driver against a
-live database of its type.
+**This risk has materialized once, and the mitigation below did not
+catch it.** `scipy==1.18.1` was pinned by `54842a9` (Prompt 39) for the
+same reason — it was what resolved on the 3.14 dev machine. scipy 1.18.x
+declares `Requires-Python: >=3.12`, so it cannot install on 3.11 at all;
+it was corrected to `scipy==1.17.1` (cp311 *and* cp314 wheels) on
+2026-10-17. It reached `origin/master` and sat there. The instructive
+part is the failure *mode*: an unsatisfiable pin fails at the dependency
+install step, so the test suite never runs and "a pin that broke
+import/basic behavior would surface in tests" does not apply — there are
+no test results to read. Note this is reasoned from package metadata, not
+from a CI run log (no `gh` CLI on this machine).
+
+**Mitigation today:** CI runs the full mocked test suite against 3.11 on
+every push/PR, and because `requirements-dev.txt` line 16 is `-r
+requirements.txt`, an unresolvable pin does turn the blocking `test` job
+red at install time — provided the branch is actually pushed. Several
+local feature branches have no upstream, so a pin can be introduced and
+exercised only against 3.14 for some time before any 3.11 resolver sees
+it. CI also doesn't exercise every driver against a live database of its
+type.
+
+**Cheap check before pinning anything:** confirm the candidate declares a
+`Requires-Python` that admits 3.11 and publishes a `cp311` wheel, not
+just that `pip install` succeeded locally on 3.14.
 
 **Review date:** before relying on `DB_TYPE=mssql` or `oracle` in a new
 environment — smoke-test the specific driver against Python 3.11 first

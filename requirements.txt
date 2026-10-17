@@ -79,11 +79,40 @@ pandas==2.3.3
 # sentence-transformers' own ML dependencies, used by embeddings/media
 # search) but pinned explicitly now that it's a genuine direct import --
 # the same "was transitive, now direct, so pin it" pattern pymupdf/
-# defusedxml/pydantic below already establish. 1.18.1 is simply the
-# version already resolved and verified working in this environment;
-# no specific CVE/compatibility reason drove picking it like pandas'
-# own pin above.
-scipy==1.18.1
+# defusedxml/pydantic below already establish.
+#
+# **Held at 1.17.x deliberately: 1.18 requires Python >= 3.12 and this
+# project targets 3.11.** The previous pin was 1.18.1, chosen (per this
+# comment's earlier wording) as "the version already resolved and
+# verified working in this environment" -- but that environment is the
+# local venv, which `CLAUDE.md` 2 records as Python 3.14 because this
+# machine has no 3.11. The Dockerfile's base is `python:3.11-slim` and
+# every CI job pins `python-version: "3.11"`, so 1.18.1 cannot install
+# in either. The proof is the published package metadata, not a build
+# log: scipy 1.18.0 and 1.18.1 both declare `Requires-Python: >=3.12`,
+# so pip on 3.11 resolves no candidate at all.
+#
+# The blast radius is wider than the image. It takes the production
+# image, CI's docker-scan job, the Trivy scan and the k6 load stack
+# (which build this same Dockerfile) -- but also the **blocking `test`
+# job**, because `requirements-dev.txt` line 16 is `-r
+# requirements.txt`, and the `benchmark-regression` job, which installs
+# this file directly. So an unsatisfiable pin here fails CI at the
+# dependency step, before a single test runs. (Not observed: no `gh`
+# CLI on this machine, so no run history was read -- this is what the
+# metadata entails, not a quoted red build.)
+#
+# 1.17.1 declares `Requires-Python: >=3.11` and publishes cp311 *and*
+# cp314 wheels, so it satisfies the 3.11 target *and* the 3.14 local
+# venv -- one pin for both, rather than a marker that would let the two
+# drift apart again. Verified here by installing 1.17.1 into the 3.14
+# venv (numpy 2.5.3 satisfies its `numpy<2.7,>=1.26.4`, `pip check`
+# reports no scipy conflict) and running the four scipy-dependent
+# suites -- 76 passed. The 3.11 resolution itself has NOT been
+# exercised: no Docker daemon runs on this machine, so the image has
+# never been built here. That half rests on the metadata above.
+# Do not raise this past 1.17.x while the base image is 3.11.
+scipy==1.17.1
 
 # Deterministic regression/classification models and evaluation metrics
 # for the governed Predictive Analytics engine (analytics/predictive.py,
