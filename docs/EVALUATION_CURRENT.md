@@ -16,6 +16,18 @@
 >
 > Treat everything below as **a dated historical record**, not a current
 > accuracy claim. Re-run the benchmark before citing any figure here.
+>
+> **Newer run artefacts exist in the repository and are not promoted here.**
+> `eval/results/run_20261016T184207Z*`, `run_20261016T185313Z*` and
+> `run_20261016T205212Z*` (2026-10-16, `llama3.1:8b` against
+> `AdventureWorksDW2025`; 3, 3 and 33 cases) were committed in `a446755`
+> by a session that **did not perform them and could not verify them**, and
+> none is a full 57-case run. No figure from them has been copied into this
+> document: restating a headline number from an unverified run would put an
+> unowned figure into the one document meant to carry measured ones, and
+> this benchmark's numbers are pinned to the exact wording of prompts that
+> `CLAUDE.md` §12 protects. Read those files as raw artefacts, and re-run
+> `scripts/run_benchmark.py` yourself before citing anything from them.
 
 A live run of the full 57-case Text-to-SQL benchmark (`scripts/run_benchmark.py`) against the **current implementation**, run against the same live Ollama (`llama3.1:8b`) and the same `AdventureWorksDW2025` database the recorded baseline used. No numbers here are carried over from old documentation — every figure below was measured in this session.
 

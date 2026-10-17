@@ -4,6 +4,130 @@ Newest first. The README's "News and Updates" section shows only the three most
 recent entries. This file keeps the full record. Each entry names the contract
 document that holds the design, the API, the configuration and the limitations.
 
+## 2026-10-17: SQL shape explanation, per-model token counts, accessibility checks
+
+Four batches from the capability-catalogue plan
+([`docs/ai-capability-implementation-plan.md`](docs/ai-capability-implementation-plan.md)),
+each recorded with its full evidence in
+[`docs/ai-capability-implementation-log.md`](docs/ai-capability-implementation-log.md).
+`POST /ask` and `/ask/stream` keep their shape: every new response field is
+optional with a default, no route or permission was added, and no governed
+path (validation, row limits, masking, authorization) changed.
+
+### Added
+
+- **The generated-SQL panel now says what the SQL *does*, not just what it
+  is.** `agent.sql_validator.describe_sql` reads the AST `validate_sql` has
+  already parsed and reports the joins (the parser's own `INNER`/`LEFT`/
+  `RIGHT`/`FULL`/`CROSS` side, never inferred from text), the columns
+  filtered on, the aggregates, the `GROUP BY` grain, the statement-level
+  `ORDER BY`, and whether `DISTINCT` is applied. No second parser, no model
+  call, no new dependency — an explanation that hallucinated a join would
+  sit beside a real validator verdict and read as authoritative, whereas a
+  parse cannot be wrong about the statement it parsed. Three deliberate
+  honesty boundaries: **no row limit** is reported (the `TOP`/`LIMIT` a
+  caller sees is this platform's governance cap written back by
+  `validate_sql_node`, not the query's own intent, and reporting it as
+  query behaviour would present a control as authorship); **no business
+  meaning** (`group_by` is the declared grain, not "sales by region", which
+  is `semantic/`'s to say); and **no filter values** — column names only,
+  because a predicate can carry data and this string is rendered and may be
+  logged. Output is bounded at 12 items of 80 characters. `SqlSummaryOut`
+  gains `joins`, `filter_columns`, `aggregates`, `group_by`, `order_by` and
+  `is_distinct`, all optional with defaults; the server returns structured
+  facts and the frontend renders them through i18n in all five locales, as
+  six new rows in the *existing* query-metadata grid, each omitted when the
+  statement has nothing to say for it. `describe_sql` gates nothing — a test
+  asserts `validate_sql` still rejects `DELETE` while `describe_sql`
+  happily describes it, proving the helper cannot be mistaken for a gate.
+- **Per-model token consumption.** `agent/llm_client.py` had read Ollama's
+  own `prompt_eval_count`/`eval_count` on every call for a long time and
+  thrown them into a log line; `observability.metrics.record_llm_call` now
+  accumulates them per model, and `llm_usage` on the metrics snapshot
+  reports calls, prompt tokens, completion tokens and total tokens per
+  model. Surfaced on the two **existing** metrics routes — `GET
+  /metrics/performance` (`Permission.ADMIN_CONFIG`, the caller's own tenant
+  only) and `GET /platform-admin/metrics` (`Permission.PLATFORM_ADMIN`,
+  merged across tenants) — and on the two admin panels that already showed
+  latency. The capture point is `_log_ollama_timing`, the single funnel all
+  seven `client.chat` calls already pass through, so a future eighth call
+  site is counted without anyone remembering to add it; a structural test
+  parses the module's own AST and asserts the two counts stay equal. The
+  model name is read from the *response*, so no call site changed and the
+  name recorded is what the server actually served rather than what was
+  asked for. Tenant attribution reuses `security.audit_log`'s existing
+  contextvar.
+  **Deliberately no monetary figure, anywhere.** The LLM runs locally, so
+  this deployment has no per-token price; a cost column would be an
+  invented number presented as an observed fact (`CLAUDE.md` §4.4). Three
+  tests pin its absence — on the snapshot's keys, on the HTTP response's
+  keys, and on the rendered panel. `model_routing`'s `total_cost_units`
+  remains an abstract tier weight, not money, and keeps owning "which model
+  was chosen and did the route work" while this rollup owns "what the
+  models consumed" (§4.8).
+- **Runtime accessibility checks in the component suite.** oxlint 1.82
+  already shipped a `jsx-a11y` plugin that was simply not enabled — turning
+  it on cost zero dependencies and surfaced 28 findings. For the runtime
+  half, `frontend/src/test/axe.ts` wraps `axe-core` (Deque's own engine,
+  dev dependency only, unreachable from the app entry so Vite cannot bundle
+  it) and `frontend/src/components/ui/accessibility.test.tsx` runs it
+  against rendered primitives, a dialog and a chat message. The static
+  rules read one file's JSX and cannot see composition; the rendered tree
+  can, which is how three `jsx-a11y` rules were turned off **with
+  evidence** rather than for noise: `ShareModal`'s wrapping-label radios
+  and `card.tsx`'s children-taking `CardTitle` both render with no
+  violation, while a genuinely empty `<h3 />` is still caught. Non-vacuity
+  is proven — one test renders an icon-only button with no accessible name
+  and asserts axe reports `button-name`, so if axe stopped running that
+  test fails rather than silently passing.
+
+### Changed
+
+- `observability/llm_timing_capture.py`'s documented role is corrected
+  rather than extended. It parses the same Ollama token counts, but it
+  works by attaching a handler to the `agent.llm_client` logger and forcing
+  that logger's level **process-wide** for the scope of a `with` block.
+  Under concurrent `/ask` requests every active capture would see every
+  other request's timing lines, so tokens would be **cross-attributed
+  between tenants**, and the level save/restore would race. It is correct
+  for the single-threaded benchmark runner it was written for
+  (`eval/runner.py`, still its only caller) and must not be reused on the
+  request path — which is why the token rollup above records at the funnel
+  instead. See [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) §3a.
+
+### Built, not wired (no live caller — see `CLAUDE.md` §1)
+
+- **`agent/translation.py`** translates the *prose* of an answer that has
+  already been through the governed path, so a Hindi-speaking analyst reads
+  Hindi prose around the same figures an English-speaking one sees. What
+  makes it safe is the protocol, not the model: every span that must
+  survive byte-for-byte — numbers, currency, dates, code and SQL blocks,
+  markdown links (citations and sources) and the governance mask
+  `[restricted]` — is replaced by an opaque placeholder, only the prose
+  between placeholders reaches the model, the spans are restored verbatim,
+  and the protected spans recovered from the output must be the same
+  multiset as those taken from the input. If a single placeholder is
+  missing, duplicated or mangled the translation is **discarded** and the
+  original returned, so `translate_answer` has exactly two outcomes. It
+  uses the same local Ollama model, adding no provider, no egress path and
+  no cost. **Nothing calls it yet** — there is no route, no node and no
+  setting; it is tested (`tests/test_translation.py`) and deliberately
+  parked, not shipped. `agent.input_guard` still refuses a user's request
+  to translate arbitrary text, which is a different thing and correctly
+  refused.
+
+### Benchmarks
+
+- Checked in the artefacts from three `scripts/run_benchmark.py` runs on
+  2026-10-16 (`eval/results/run_20261016T184207Z*`, `...T185313Z*`,
+  `...T205212Z*` — `llama3.1:8b` against `AdventureWorksDW2025`, 3, 3 and
+  33 cases). These were **not** produced or verified by the session that
+  committed them, so no headline figure was promoted into
+  [`docs/EVALUATION_CURRENT.md`](docs/EVALUATION_CURRENT.md), whose numbers
+  are pinned to specific prompt wording (`CLAUDE.md` §12). The `_full.json`
+  files embed result rows from Microsoft's synthetic AdventureWorks sample
+  warehouse — no real or personal data.
+
 ## 2026-10-16: Web search — untruncated results and a synthesized answer
 
 Scoped to the web source. `POST /ask`, `/ask/stream` and every response

@@ -22,11 +22,11 @@
 
 <!-- Newest first, sourced from real commit history. Keep no more than the three most recent entries. -->
 
+- **2026-10-17** — The generated-SQL panel now says what the SQL *does*, the admin panels say what the models consumed, and the component suite checks accessibility at runtime. `agent.sql_validator.describe_sql` reads the AST `validate_sql` has **already parsed** and reports the joins (the parser's own `INNER`/`LEFT`/`RIGHT`/`FULL`/`CROSS` side, never guessed from the text), the columns filtered on, the aggregates, the `GROUP BY` grain, the statement-level `ORDER BY` and whether `DISTINCT` applies — no second parser, no model call, because an explanation that hallucinated a join would render beside a real validator verdict and read as authoritative. It deliberately reports **no row limit** (the `TOP n` you see is this platform's governance cap, not the query's intent), no business meaning, and no filter *values* — column names only. Separately, the Ollama token counts `agent/llm_client.py` had been reading and discarding for months are now rolled up per model and shown on the two existing metrics routes and admin panels, **with no monetary figure anywhere**: the model runs locally, so there is no per-token price, and inventing one would present a guess as an observed fact (three tests pin its absence). And oxlint turned out to ship a `jsx-a11y` plugin that was simply never enabled — enabling it cost zero dependencies and found 28 issues, while an `axe-core` helper now checks the *rendered* tree, which is what proved three of those static rules were false positives. Colour contrast is still unchecked and cannot be checked under jsdom — stated rather than glossed. Also added: `agent/translation.py`, which preserves every number, date, citation and `[restricted]` mask byte-for-byte or discards the translation entirely — **built, not wired**, with no live caller. See [`CHANGELOG.md`](CHANGELOG.md) and [`docs/ai-capability-implementation-log.md`](docs/ai-capability-implementation-log.md).
+
 - **2026-10-16** — Web search answers stopped being cut off, and read like a search assistant's. `rag/llm.py::call_ollama` — the helper behind document/policy RAG, the multi-source router and the web-search answer step — set `num_predict` and `temperature` but never `num_ctx`, so those calls ran against Ollama's default served window while the SQL path ran at `OLLAMA_NUM_CTX`. Ollama does not reject an oversized prompt; it truncates from the *start*, taking the system prompt. Measured on `llama3.1:8b`: without `num_ctx` a long prompt came back evaluated at **2,050 tokens with the system prompt gone**, versus 12,043 with it intact at `OLLAMA_NUM_CTX=16384` — so a web answer could lose both its formatting instructions and its "untrusted data, not instructions" framing without anything reporting it. Decoding policy now has one owner for both call sites. Replacing that silent cut is an explicit `WEB_SEARCH_CONTEXT_MAX_CHARS` budget that drops **whole** results lowest-ranked first, never drops the top result, states the omission in the answer and leaves dropped results out of the citations. Five ordinary pages (1,547-2,363 characters each) all pass whole; five academic pages for one medical question did not, and the top two were used. The answer prompt now asks for synthesis across sources rather than a snippet dump, specifics kept rather than rounded, inline citations under each source's own title, and explicit hedging where results disagree. See [`docs/MULTI_SOURCE_GUIDE.md`](docs/MULTI_SOURCE_GUIDE.md) §5.
 
 - **2026-10-15** — Source connectivity, streaming, and an honest audit of what is actually built. An evidence-based audit found that roughly half of a proposed connector roadmap already existed, and that **no Microsoft 365 connector exists at all** — the new [`docs/architecture/feature-inventory.md`](docs/architecture/feature-inventory.md) records per-capability status with a separate *verification* column, so "implemented" stops implying "proven". Shipped since: a source-type contract (`sources/`) that made each source's description, permission and availability have one owner instead of three drifting literals; per-conversation **source selection** (`AskRequest.sources` plus a picker), which is a filter over RBAC and never a grant — turning the intersection into a union fails 19 tests; a read-only **REST/OpenAPI connector** behind a host allowlist checked before DNS, with redirects re-validated hop by hop; an **MCP client** whose trust model is administrator-controlled only, where an empty allowlist approves nothing and a server's `instructions` field is read and discarded rather than fed to a model; and **SSE streaming** (`POST /ask/stream`) that calls the existing `/ask` handler rather than copying it, so a slow multi-source question shows live per-node progress. Also added opt-in live tests (`tests/live/`, deselected by default) and the Microsoft 365 tenant runbook they will plug into. See [`docs/architecture/source-connector-contract.md`](docs/architecture/source-connector-contract.md) and [`docs/LIVE_INTEGRATION_TESTING.md`](docs/LIVE_INTEGRATION_TESTING.md).
-
-- **2026-10-06** — Added three governed AI-analysis layers, all off by default. An **AI Data Analyst** (`POST /analyst/investigate`) decomposes a business question, runs each part through the same SQL pipeline as `/ask`, and returns an evidence-linked report from a bounded, traced loop. A **multi-agent supervisor** (`POST /analyst/supervise`) routes one turn across typed specialist agents, each limited to its own tools, with circuit breakers, turn budgets and conflict resolution. A benchmark confirms it makes the same SQL and planner calls as the analyst. **Semantic intelligence** (`/semantic-intelligence/*`) finds synonym candidates, ambiguous terms, conflicting metric definitions and metric dependencies in the governed catalog, and queues them for review by risk, with versioned findings and rollback. Every output is labelled as an observed database fact or an AI estimate, and cross-tenant access is refused. See [`33_AI_DATA_ANALYST_AGENT_CONTRACT.md`](33_AI_DATA_ANALYST_AGENT_CONTRACT.md), [`34_MULTI_AGENT_SUPERVISOR_CONTRACT.md`](34_MULTI_AGENT_SUPERVISOR_CONTRACT.md) and [`35_SEMANTIC_INTELLIGENCE_CONTRACT.md`](35_SEMANTIC_INTELLIGENCE_CONTRACT.md).
 
 <a id="example-usage"></a>
 
@@ -353,7 +353,11 @@ ruff check . && black --check . && mypy .
 PowerShell equivalents are in `tasks.ps1` (`.\tasks.ps1 run`,
 `.\tasks.ps1 test`, `.\tasks.ps1 lint`); Make targets for bash are in the
 `Makefile`. CI (`.github/workflows/ci.yml`) runs the same lint + test steps
-on GitHub Actions.
+on GitHub Actions — with one difference worth knowing: **`mypy` is
+report-only there** (`continue-on-error`, and last in the job, so a type
+error cannot stop `bandit`/`pytest`/`pip-audit` from running). A type error
+will therefore *not* turn CI red. Treat it as a real defect anyway; the
+standing backlog is in [`CLAUDE.md`](CLAUDE.md) §13.
 
 **Frontend tests** (`frontend/`, vitest + React Testing Library — added
 alongside the UI overhaul below, previously no test runner existed):
@@ -362,9 +366,18 @@ alongside the UI overhaul below, previously no test runner existed):
 cd frontend
 npm run test        # vitest run -- one-shot
 npm run test:watch  # vitest -- watch mode
-npm run lint         # oxlint
+npm run lint         # oxlint (incl. the jsx-a11y rules)
 npm run build        # tsc -b && vite build (also the typecheck)
 ```
+
+Accessibility is checked at two levels: `oxlint`'s static `jsx-a11y` rules,
+and `axe-core` against the **rendered** tree in
+`frontend/src/components/ui/accessibility.test.tsx`, which catches what
+static rules structurally cannot — a control that ends up with no
+accessible name once components compose. **Colour contrast is not covered
+and cannot be**: jsdom has no layout engine, so that rule is explicitly
+disabled rather than left to report a misleading pass. See
+[Known limitations](#known-limitations).
 
 ### Frontend UI
 
@@ -543,6 +556,7 @@ be verified here; the reason is named.
 | Multi-database auto-routing | `IMPLEMENTED_AND_TESTED` | mocked | [`docs/architecture/overview.md`](docs/architecture/overview.md) |
 | Result governance / restricted columns | `IMPLEMENTED_AND_TESTED` | mocked | [`docs/DATA_PRIVACY_GOVERNANCE_ENGINE.md`](docs/DATA_PRIVACY_GOVERNANCE_ENGINE.md) |
 | Follow-up questions | `IMPLEMENTED_AND_TESTED` | mocked; per-request, not checkpointed | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
+| Generated-SQL structural description (joins, filters, aggregates, grain) | `IMPLEMENTED_AND_TESTED` | mocked; read from the parsed AST, no LLM call | [`docs/API.md`](docs/API.md) |
 
 ### Sources
 
@@ -569,6 +583,9 @@ be verified here; the reason is named.
 | Token-level LLM streaming | `PLANNED` | n/a | — |
 | Scheduler / background worker / alert delivery | `DOCUMENTED_BUT_NOT_IMPLEMENTED` | n/a — CLI scripts are the cron entry points | [`CLAUDE.md`](CLAUDE.md) |
 | Analytics, forecasting, recommendations | `IMPLEMENTED_BUT_NOT_FULLY_TESTED` | mocked; output quality unmeasured | [`docs/architecture/features-analytics.md`](docs/architecture/features-analytics.md) |
+| Per-model token usage rollup | `IMPLEMENTED_AND_TESTED` | mocked; per worker, resets on restart; **no cost figure — the model is local** | [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) |
+| Accessibility checks (static `jsx-a11y` + runtime `axe-core`) | `IMPLEMENTED_AND_TESTED` | mocked; **colour contrast not covered** — jsdom has no layout | [`docs/architecture/features-frontend.md`](docs/architecture/features-frontend.md) |
+| Answer translation into a UI locale | `PARTIALLY_IMPLEMENTED` | mocked; **built, not wired** — no route, node or setting calls it | [`CHANGELOG.md`](CHANGELOG.md) |
 | Multi-replica deployment | `PLANNED` | n/a — all shared state is per-process | [`docs/SCALE_BASELINE.md`](docs/SCALE_BASELINE.md) |
 
 Opt-in live verification for the credential-blocked rows above:
@@ -708,6 +725,27 @@ any of this security work and remains a separate, equally real gap.
   video clip is never streamed back — only a representative frame +
   timestamp range. No dense-captioning quality tuning has been done
   across different Ollama vision models.
+- **Accessibility is partly verified, and colour contrast is not.** Static
+  `jsx-a11y` lint rules and runtime `axe-core` checks both run (the latter
+  over shared primitives, a dialog and a chat message — not every page),
+  but `axe`'s `color-contrast` rule is **explicitly disabled** because
+  jsdom has no layout or paint and would report neither a real pass nor a
+  real failure. Contrast still needs a real browser, and nothing here
+  should be cited as evidence it was checked. Thirteen `jsx-a11y` warnings
+  are also outstanding — real, pre-existing, and left visible rather than
+  silently absorbed.
+- **Per-model token counts are not a billing record.** The admin panels
+  report what the models consumed (calls, prompt/completion/total tokens)
+  and deliberately show **no monetary figure**: the model runs locally via
+  Ollama, so there is no per-token price, and inventing one would present a
+  guess as an observed fact. The figures are cumulative **per worker
+  process and reset on restart**, nothing is persisted, and `calls` counts
+  LLM calls rather than questions — one question makes several.
+- **`agent/translation.py` is built but not wired.** It can translate an
+  already-governed answer's prose while preserving every number, date,
+  citation and `[restricted]` mask byte-for-byte (discarding the
+  translation outright if verification fails), but **nothing calls it** —
+  there is no route, node or setting. It is tested and parked, not shipped.
 
 <a id="contributing"></a>
 

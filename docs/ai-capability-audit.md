@@ -14,27 +14,37 @@ rows, machine-generated), [`ai-capability-implementation-plan.md`](ai-capability
 
 ## 1. Executive summary
 
-**Of the 149 catalogue rows, 56 are Core capabilities for this product. Of
-those 56: 44 are Complete, 12 are Partial, and none is Missing.**
-*(Updated 2026-10-17: row 27 closed by Batch 1 — see
-[`ai-capability-implementation-log.md`](ai-capability-implementation-log.md).)*
+**Of the 149 catalogue rows, 57 are Core capabilities for this product. Of
+those 57: 44 are Complete, 13 are Partial, and none is Missing.**
 
 No Core capability is absent. Every genuine gap is a partial — an existing
 implementation that stops short — which makes this a refinement exercise,
 not a build-out.
 
+> **Recounted from the CSV on 2026-10-17**, after four batches landed and
+> one row was reclassified. The figures below are what
+> [`ai-capability-coverage.csv`](ai-capability-coverage.csv) actually
+> contains now, not the original audit's snapshot. What moved: rows 27
+> (Batch 1), 60 (Batch 2) and 45 (Batch 4) went Partial → Complete, and
+> **row 79 (content translation) went from "Needs decision" to Core /
+> Partial** when `agent/translation.py` was built — which is why Core is
+> 57 rather than the 56 this summary first reported, and why the "Needs
+> decision" row below is gone rather than zeroed. Batch 4's own log entry
+> notes that row 45 is Optional, so closing it did not move the Core
+> tallies. See
+> [`ai-capability-implementation-log.md`](ai-capability-implementation-log.md).
+
 | Product relevance | Rows | |
 |---|---:|---|
-| **Core** | **56** | Maps to a real capability of this platform |
+| **Core** | **57** | Maps to a real capability of this platform |
 | Optional | 14 | Could fit, low analytics value |
 | **Out of scope** | **78** | Not features of this product — see §3 |
-| Needs decision | 1 | Content translation (row 79) |
 
 | Existing status (Core + Optional only) | Rows |
 |---|---:|
-| Complete | 42 |
-| Partial | 23 |
-| Missing | 6 |
+| Complete | 45 |
+| Partial | 21 |
+| Missing | 5 |
 | N/A (out of scope) | 78 |
 
 ### The finding that governs everything else
@@ -148,10 +158,13 @@ control this platform exists to enforce.
 
 ---
 
-## 4. The 14 Core partials — where the real work is
+## 4. The Core partials — where the real work is
 
-These are the only Core rows not already complete. Grouped into cohesive
-capabilities, as the brief requires, rather than treated as 14 features.
+Grouped into cohesive capabilities, as the brief requires, rather than
+treated as a row per feature. **Written as "the 14 Core partials"**; three
+groups have since closed (struck through below) and one row joined the set
+after being reclassified, so the live count is the 13 Core partial rows
+§1 now reports: 2, 7, 8, 28, 32, 41, 49, 59, 63, 79, 88, 145 and 147.
 
 | # | Capability | Rows | What exists | What stops short |
 |---|---|---|---|---|
@@ -169,6 +182,7 @@ capabilities, as the brief requires, rather than treated as 14 features.
 | **L** | **ETL / data cleaning** | 32, 33 | Schema refresh, onboarding, `data_quality/` scans | No transformation — **by charter**: read-only client |
 | **M** | **Repository/file inspection** | 147 | `attachments/` ingests and analyses uploads | No codebase inspection (nor should there be) |
 | **N** | **Multi-dimension research report** | 8 | See B | — |
+| **O** | **Content translation** | 79 | Added 2026-10-17 — `agent/translation.py`: protect / translate / restore / **verify**, discarding any translation whose protected spans (figures, dates, citations, `[restricted]`) do not come back as the same multiset. Not in the original 14: row 79 was "Needs decision" at audit time | **Built, not wired** — no route, node or setting calls it. Wiring it is a separate decision, not an oversight |
 
 **H, L and M are partial by deliberate design**, not by omission. They are
 recorded as partials for honesty, and the plan proposes no work on them.

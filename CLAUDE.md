@@ -39,7 +39,7 @@ mistake a session makes here**:
 | State | Meaning | Example |
 |---|---|---|
 | **Live** | Wired into a request path and running | the 18-node SQL graph, RBAC, result governance |
-| **Built, not wired** | Implemented and tested, no live caller | `analytics.root_cause` (needs a second dataset the pipeline never produces), `recommendation.RecommendationProvider` (Protocol only) |
+| **Built, not wired** | Implemented and tested, no live caller | `analytics.root_cause` (needs a second dataset the pipeline never produces), `recommendation.RecommendationProvider` (Protocol only), `agent.translation` (no route, node or setting calls it) |
 | **Off by default** | Live only when an operator enables it | web search, media search/generation, result cache, model routing, BI integrations |
 | **Disclosed gap** | Deliberately absent, with a reason | no scheduler/background worker, no delivery channel for alerts or briefings, no streaming |
 
@@ -327,9 +327,14 @@ restriction as a boundary.** Full detail:
   429 before any LLM/DB work). Rate limits are keyed by **real identity**, not
   raw client IP, and `X-Forwarded-For` is read only when an operator sets
   `trusted_proxy_count`.
-- CI gates are **blocking**: `ruff`, `black --check`, `mypy`, `bandit`,
-  `pytest`, `pip-audit` (with an individually justified ignore list), and
-  `detect-secrets`.
+- CI gates are **blocking** — `ruff`, `black --check`, `bandit`, `pytest`,
+  `pip-audit` (with an individually justified ignore list) and
+  `detect-secrets` — **except `mypy`, which is report-only**
+  (`continue-on-error: true`, and deliberately the last step in the job).
+  It was made non-blocking because the `test` job's steps run sequentially
+  and a failing `mypy` silently stopped `bandit`/`pytest`/`pip-audit` from
+  running at all. So treat a type error as a real defect to fix — CI will
+  *report* it and still go green. The standing backlog is in §13.
 
 ### 5.8 Domain privacy and safety — consult the policy before changing behavior
 
@@ -668,13 +673,29 @@ contract lists its specific limitations; these are the cross-cutting ones.
   been verified against a live IdP, ClamAV's fail-closed path has never seen
   a real daemon, and `docs/EVALUATION_CURRENT.md`'s accuracy numbers predate
   many pipeline changes.
-- **Pre-existing lint/type findings — do not assume you caused them.**
-  `mypy .` reports errors concentrated in `tests/` and
-  `eval/security_benchmark/` (`AgentState`-vs-`dict` looseness) — a bounded,
-  separate hygiene pass. `black --check .` is clean and `ruff check .` has one
-  import-order finding (`agent/multiagent/agents.py`) as of 2026-10-14.
-  **Production modules are otherwise clean — keep them that way**, and
-  measure before claiming a finding is or is not yours.
-- **Two CI scanners are `continue-on-error`** by deliberate, dated decision:
-  `gitleaks` and the Trivy container scan. Every other gate blocks (§5.7).
+- **Lint/type findings — measure before claiming one is, or is not, yours.**
+  Measured 2026-10-17: `mypy .` reports **631 errors across 115 files**, of
+  which **616 are in `tests/`** and 8 in `eval/security_benchmark/` (largely
+  `AgentState`-vs-`dict` looseness) — a bounded, separate hygiene pass.
+  `black --check .` is clean (1,635 files) and `ruff check .` has exactly
+  one finding, an import-order `I001` in `agent/multiagent/agents.py`.
+  **The "production modules are otherwise clean" claim this entry used to
+  make is no longer true** — seven of those errors are in production code,
+  so it is named here rather than left for a session to trip over:
+  `agent/sql_validator.py:839` (two errors — a `# type: ignore[union-attr]`
+  that no longer covers the code actually reported; introduced by `933cfff`,
+  2026-10-17, so *not* ancient), `db/schema_introspection.py:376`
+  (`25073964`, 2026-10-04), and four SQLAlchemy
+  `SQLCoreOperations[...]`-vs-`None` assignments in
+  `identity/repositories/semantic_intelligence.py:199,200,242` and
+  `identity/repositories/recommendation_governance.py:402`. `mypy` is
+  report-only in CI (§5.7), so nothing is blocking them.
+- **Four CI steps are non-blocking** by deliberate, dated decision:
+  `gitleaks`, `mypy` (§5.7), the Trivy container scan — report-only because
+  the action only fails a step when its `exit-code` input is set, which it
+  deliberately is not, making that step's `continue-on-error` redundant —
+  and the load-test smoke scenario. Every other gate blocks (§5.7).
+  Note that `.github/workflows/ci.yml`'s own comment on the mypy step still
+  describes the older measurement ("281 ... all in test files"); the figures
+  above are the current ones.
   See [`docs/security/CVE_TRIAGE.md`](docs/security/CVE_TRIAGE.md).

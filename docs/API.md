@@ -211,6 +211,55 @@ class of question. `model` echoes back whichever model actually answered
 this question (the request's own `model`, once validated, or the server
 default).
 
+**`sql_summary`** (optional, `null` when no SQL was generated or it did not
+parse) describes the statement **as the parser read it** — it is purely
+descriptive and gates nothing, because `agent/sql_validator.py::validate_sql`
+remains the only thing that decides whether SQL may run:
+
+```json
+"sql_summary": {
+  "statement_type": "SELECT",
+  "referenced_tables": ["FactInternetSales", "DimDate"],
+  "joins": [{"kind": "INNER", "table": "DimDate"}],
+  "filter_columns": ["CalendarYear"],
+  "aggregates": ["SUM(SalesAmount)"],
+  "group_by": ["CalendarYear"],
+  "order_by": ["CalendarYear"],
+  "is_distinct": false
+}
+```
+
+`statement_type` and `referenced_tables` come from
+`summarize_sql`; the six structural fields come from `describe_sql`, which
+reads the **same AST `validate_sql` already parsed** — no second parser and
+deliberately no LLM call, since an explanation that hallucinated a join
+would render beside a real validator verdict and read as authoritative.
+Every one of the six is optional with a default, so a caller written before
+they existed is unaffected and a turn whose SQL does not parse simply
+carries the empty defaults.
+
+`kind` on a join is the parser's own side (`INNER`, `LEFT`, `RIGHT`,
+`FULL`, `CROSS`), never inferred from the SQL text. `referenced_tables` is
+the tables the statement actually uses, which is normally fewer than
+retrieval offered.
+
+Three things it deliberately does **not** report, each a correctness
+boundary rather than an omission:
+
+- **No row limit**, although the AST has one. `validate_sql_node` writes
+  `enforce_row_limit`'s output back into the SQL, so the `TOP n`/`LIMIT n`
+  a caller sees is *this platform's governance cap*, not the query's own
+  intent — reporting it as query behaviour would present a control as
+  authorship.
+- **No business meaning.** `group_by` is the declared grain, not "sales by
+  region"; naming the business concept is `semantic/`'s to do.
+- **No filter values** — `filter_columns` is column names only. A
+  predicate can carry data, and this response is rendered in a UI and may
+  be logged.
+
+Each list is bounded at 12 entries of 80 characters, so one pathological
+statement cannot grow the response.
+
 Rate limiting: a per-client-IP question-submission limiter
 (`Settings.question_rate_limit_per_minute`, mirroring the UI's
 per-session limiter) returns `429` with a `Retry-After` header when
@@ -1047,9 +1096,38 @@ feedback loop" section.
 
 `GET /metrics/performance` (`Permission.ADMIN_CONFIG`, same gate as
 `POST /schema/refresh`) returns a live rollup of per-LangGraph-stage
-timing across recent `/ask` requests — `observability.metrics`, see
-`CLAUDE.md`'s "Observability — live performance rollup" section for the
-full design and its single-process/resets-on-restart limits.
+timing across recent `/ask` requests, **scoped to the caller's own
+tenant**, plus `llm_usage` — per-model token consumption. See
+[`docs/OBSERVABILITY.md`](OBSERVABILITY.md) §3 for the full design and
+`observability/metrics.py`'s own docstring for the
+per-worker/resets-on-restart limits it deliberately does not claim to
+solve.
+
+Each `llm_usage` entry is one model: `model`, `calls`, `prompt_tokens`,
+`completion_tokens`, `total_tokens`, sorted by total descending. The
+counts are Ollama's own `prompt_eval_count`/`eval_count` as reported per
+response, accumulated since process start.
+
+```json
+"llm_usage": [
+  {"model": "llama3.1:8b", "calls": 42, "prompt_tokens": 51234,
+   "completion_tokens": 3120, "total_tokens": 54354}
+]
+```
+
+**There is no monetary field, deliberately.** The LLM runs locally via
+Ollama, so this deployment has no per-token price to report, and a cost
+column would be an invented number presented as an observed fact
+(`CLAUDE.md` §4.4). `model_routing`'s `total_cost_units` (see
+`/model-routing/*` above) is an abstract tier weight, not money, and is
+a different fact with a different owner. Note also that `calls` counts
+**LLM calls, not questions** — one question makes several (planning,
+generation, review, insight) and a retry makes more — and that nothing
+here is persisted, so it is not a billing or chargeback record.
+
+`GET /platform-admin/metrics` (`Permission.PLATFORM_ADMIN`) returns the
+same shape **merged across every tenant**; the tenant-scoped route above
+never reveals another tenant's models, which is covered by a test.
 
 **Local-account auth** (`api/identity_auth.py`, only reachable when
 `LOCAL_AUTH_ENABLED=true` — 404s otherwise, not 503, see that router's own

@@ -164,10 +164,15 @@ the model-call design, with its injection and latency trade-offs stated.
 
 ## D-008 — Open questions for you
 
-| # | Question | Default if you don't answer |
+**Status recorded 2026-10-17.** Questions 1–3 have been settled by what was
+actually built; 4 and 5 remain genuinely open. Each outcome is written down
+here rather than left implicit in a commit message, because a question that
+looks open invites it to be asked again.
+
+| # | Question | Outcome |
 |---|---|---|
-| 1 | SQL explanation (Batch 1): on-demand, or automatic every SQL turn? | **On-demand** — automatic roughly doubles per-turn latency on a local model |
-| 2 | May I add `vitest-axe` as a dev dependency for Batch 2C? | Hold — I will not add a dependency unasked |
-| 3 | Row 79, content translation: translate governed answers? | **Hold** — must not alter figures, units or citations; needs design |
-| 4 | Row 63, Word/Excel export: wanted? | **Hold** — needs a new dependency; PDF/CSV/Markdown already cover common cases |
-| 5 | Enable any paid media provider (rows 80/81/86)? | **No** — remains off by default |
+| 1 | SQL explanation (Batch 1): on-demand, or automatic every SQL turn? | **Moot — superseded by D-009.** The delivered design reads the already-parsed AST, so there is no LLM call and no latency to trade. It is computed on every SQL turn, and the on-demand/automatic question disappears with the model call |
+| 2 | May I add `vitest-axe` as a dev dependency for Batch 2C? | **Resolved: `axe-core` was added instead** (dev dependency only, unreachable from the app entry). `vitest-axe` is `0.1.0`, last modified January 2025, and is a thin matcher around that same engine — so for a repo that digest-pins base images, depending on Deque's maintained first-party engine and writing the fifteen-line matcher ourselves is the cheaper position. The static half (`jsx-a11y` in oxlint) cost **no** dependency, as it was already installed and merely not enabled |
+| 3 | Row 79, content translation: translate governed answers? | **Resolved in part: the module exists, nothing calls it.** `agent/translation.py` answers the "must not alter figures, units or citations" objection structurally rather than by prompt — protected spans are removed before the model sees the text, restored verbatim, and the translation is **discarded** unless they come back as the same multiset. Row 79 moved "Needs decision" → Core / Partial. **Whether to wire it into a response path is still open**, and is the only part of this question left |
+| 4 | Row 63, Word/Excel export: wanted? | **Open.** Default if unanswered: hold — needs a new dependency; PDF/CSV/Markdown already cover common cases |
+| 5 | Enable any paid media provider (rows 80/81/86)? | **Open.** Default if unanswered: **no** — remains off by default |

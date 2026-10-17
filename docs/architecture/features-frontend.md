@@ -17,6 +17,8 @@ only, and the server re-checks every request.
 - [Conversational Intelligence UI (chat workspace, 2026-10)](#conversational-intelligence-ui-chat-workspace-2026-10)
 - [Follow-up recommendation chips ("Ask next")](#follow-up-recommendation-chips-ask-next)
 - [Agent execution timeline (stage-level status)](#agent-execution-timeline-stage-level-status)
+- [SQL structural description in the query-metadata grid (2026-10-17)](#sql-structural-description-in-the-query-metadata-grid-2026-10-17)
+- [Accessibility: static lint plus runtime axe checks (2026-10-17)](#accessibility-static-lint-plus-runtime-axe-checks-2026-10-17)
 
 ---
 
@@ -660,3 +662,93 @@ translated), with a derived fallback so a newly added node still gets a
 readable label rather than a raw identifier; and a turn reconstructed from
 saved chat history shows no timeline, since `stage_timings` is not
 persisted -- the same disclosed gap the lifecycle rail already has.
+
+---
+
+## SQL structural description in the query-metadata grid (2026-10-17)
+
+`SqlIntelligencePanel.tsx` showed *what* SQL was generated and whether it
+validated; nothing said how the tables were joined, what was filtered, what
+was aggregated, or at what grain. Six rows now join the **existing**
+metadata grid — Joins, Filtered on, Aggregates, Grouped by, Ordered by, and
+Duplicate rows (rendered only when `DISTINCT` is applied) — alongside the
+Statement type and Tables referenced rows that were already there. No new
+component, and each row is omitted when the statement has nothing to say
+for it, so a simple query does not render six empty rows.
+
+**The server returns structured facts; the frontend owns the prose.** The
+fields on `SqlSummaryOut` are lists of identifiers and a boolean, and the
+labels come from i18n keys added to all five locales (`sqlPanel.joins`,
+`filterColumns`, `aggregates`, `groupBy`, `orderBy`, `distinct`,
+`distinctRemoved`). English prose from the server would have made the
+feature untranslatable in a five-locale app — the same reason the stage
+labels in the execution timeline are the exception that gets called out
+rather than the rule.
+
+What the panel deliberately cannot show, because the server does not send
+it: no row limit (the `TOP n` in the SQL is this platform's governance cap,
+not the query's intent), no business interpretation of the grain, and no
+filter *values* — column names only, since a predicate can carry data and
+this grid is rendered and may be logged. Full rationale:
+[`../API.md`](../API.md) under `POST /ask`.
+
+**It gates nothing.** The description is read from the same AST
+`validate_sql` already parsed, so it cannot invent a join, but it is also
+not a verdict: `agent/sql_validator.py` remains the only thing that decides
+whether SQL may run, and a backend test asserts `validate_sql` still
+rejects `DELETE` while `describe_sql` happily describes it.
+
+---
+
+## Accessibility: static lint plus runtime axe checks (2026-10-17)
+
+The UI had aria labels, focus management and responsive layout throughout,
+and 53 of 88 test files already queried by role or label — but **nothing
+asserted any of it stayed true**. Two layers now do, and they catch
+genuinely different things.
+
+**Static.** oxlint 1.82 already shipped a `jsx-a11y` plugin that was simply
+not enabled — `frontend/.oxlintrc.json` listed only `react`, `typescript`
+and `oxc`. Enabling it cost zero dependencies and surfaced 28 findings.
+
+**Runtime.** `frontend/src/test/axe.ts` wraps `axe-core` — Deque's own
+engine, a dev dependency only and unreachable from the app entry, so Vite
+cannot bundle it. It was chosen over the `vitest-axe` matcher deliberately:
+that package is `0.1.0`, last modified January 2025, and is a thin wrapper
+around this same engine, so for a repository that digest-pins base images
+and justifies every CVE ignore individually, depending on the maintained
+first-party engine and writing the fifteen-line matcher ourselves is the
+cheaper long-term position.
+`frontend/src/components/ui/accessibility.test.tsx` runs it against shared
+primitives, an open dialog and a chat message.
+
+**The runtime layer is what proved three static rules were false
+positives**, which is why they are off *with evidence* rather than for
+noise. `jsx-a11y/label-has-associated-control`,
+`jsx-a11y/heading-has-content` and `jsx-a11y/prefer-tag-over-role` cannot
+see text nested two levels deep, nor know that `children` exist:
+`ShareModal`'s access-mode radios (a `<label>` wrapping an input plus
+nested spans) and `card.tsx`'s `CardTitle` (`<h3 {...props} />`, taking
+content via children) both render with **no** violation — while a genuinely
+empty `<h3 />` *is* still caught, so the engine is not merely permissive.
+
+**Non-vacuity is proven, not assumed.** One test renders an icon-only
+button with no accessible name and asserts axe reports `button-name`, so if
+axe ever stopped running, that test fails instead of silently passing.
+
+**Known limitations, stated because they bound the claim:**
+
+- **Colour contrast is not checked and cannot be under jsdom**, which has
+  no layout or paint. The `color-contrast` rule is explicitly disabled
+  rather than left to report a misleading pass, and the helper says so in
+  its own docstring. Contrast still needs a real browser, and
+  `docs/certification/` records it as an open gap — this helper must not be
+  cited as evidence that contrast was verified.
+- **Thirteen `jsx-a11y` findings remain as warnings.** They are real,
+  pre-existing issues now visible rather than silently absent, and were
+  deliberately left unfixed: they pre-date the pass that enabled the
+  plugin, and absorbing them quietly would hide what enabling it found.
+  `npm run lint` still exits 0 (they are warnings, not errors).
+- Coverage is the shared primitives, a dialog and a chat message — not
+  every page. Axe evaluates what a test renders, so a component no test
+  renders is unchecked.
