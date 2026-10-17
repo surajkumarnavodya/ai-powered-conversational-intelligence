@@ -8,13 +8,21 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-available-blue.svg)](USER_GUIDE.md)
-[![Status](https://img.shields.io/badge/status-beta%20--%20security%20hardened-brightgreen.svg)](#-project-status)
+[![Status](https://img.shields.io/badge/status-advanced%20beta%20--%20pre--production%20hardening-orange.svg)](#-project-status)
 
 </div>
 
-> **Beta — security hardened.** The React dashboard (`frontend/`) is now
-> the only UI this project ships; the original Streamlit app has been
-> removed. See [Project status](#-project-status).
+> **Advanced beta — pre-production hardening.** The platform builds,
+> deploys and runs: the production container image was verified on
+> 2026-10-17 to build and import every module on its target Python 3.11,
+> and the core workflows, authorization and data-protection controls were
+> driven end to end against live databases and a live local model.
+> **It is not production-ready and UAT has not been run** — three
+> blocking CI gates are red on verified-benign findings awaiting a
+> decision, capacity and container-CVE testing are unblocked but unrun,
+> recovery has never been drilled, and no business user has executed or
+> signed off a single acceptance journey. See
+> [Project status](#-project-status).
 
 <a id="news-and-updates"></a>
 
@@ -22,11 +30,11 @@
 
 <!-- Newest first, sourced from real commit history. Keep no more than the three most recent entries. -->
 
+- **2026-10-17 (later)** — The one thing standing between this project and a deployable artefact is fixed, and the project status moves to **advanced beta / pre-production hardening**. A certification pass that morning had returned **NO-GO** on a single release-blocking defect: `requirements.txt` pinned `scipy==1.18.1`, which declares `Requires-Python: >=3.12`, while the Dockerfile's base is `python:3.11-slim` and every CI job pins 3.11 — so `pip` resolved no candidate and the production image could not be built at all. The instructive part is the failure *mode*: an unsatisfiable pin fails at the dependency-install step, so the test suite never runs and "a bad pin would show up in tests" simply does not apply — there are no test results to read. It is now `scipy==1.17.1`, which publishes cp311 *and* cp314 wheels and so satisfies both the 3.11 target and this machine's 3.14 dev venv with one pin rather than a marker that would let the two drift apart again. **Verified rather than argued:** the image runs `python 3.11.16` with `scipy 1.17.1`, all five scipy-dependent production modules (`analytics/causal.py`, `forecasting.py`, `models.py`, `predictive.py`, `optimization/engine.py`) import inside it, and the full backend suite re-ran clean at **7,274 passed / 0 failed**. The same pass drove the running application end to end for the first time on record — the SQL validator refusing a hand-edited `UPDATE`, a `DROP`, a stacked statement and a `sys.tables` reference; the row cap injected into the SQL text as `SELECT TOP 1000`; compensation columns returned as `[restricted]` against a bare `SELECT *`; and 14 of 14 admin routes refused server-side for a `user` role. It also found a new defect worth knowing about before you demo this: with several databases configured, auto-routing picks on *schema similarity alone* and chose a schema-rich but **data-empty** database over the one holding the answer — returning zero rows, correctly refusing to invent any, with no way for a user to redirect the question. **Still not production-ready:** three blocking CI gates (`ruff`, `bandit`, `pip-audit`) are red on verified-benign findings, container-CVE and load testing are now unblocked but unrun, and **UAT remains NOT COMPLETED**. See [`docs/certification/2026-10-17_release_gate_v2.md`](docs/certification/2026-10-17_release_gate_v2.md) §11.
+
 - **2026-10-17** — The generated-SQL panel now says what the SQL *does*, the admin panels say what the models consumed, and the component suite checks accessibility at runtime. `agent.sql_validator.describe_sql` reads the AST `validate_sql` has **already parsed** and reports the joins (the parser's own `INNER`/`LEFT`/`RIGHT`/`FULL`/`CROSS` side, never guessed from the text), the columns filtered on, the aggregates, the `GROUP BY` grain, the statement-level `ORDER BY` and whether `DISTINCT` applies — no second parser, no model call, because an explanation that hallucinated a join would render beside a real validator verdict and read as authoritative. It deliberately reports **no row limit** (the `TOP n` you see is this platform's governance cap, not the query's intent), no business meaning, and no filter *values* — column names only. Separately, the Ollama token counts `agent/llm_client.py` had been reading and discarding for months are now rolled up per model and shown on the two existing metrics routes and admin panels, **with no monetary figure anywhere**: the model runs locally, so there is no per-token price, and inventing one would present a guess as an observed fact (three tests pin its absence). And oxlint turned out to ship a `jsx-a11y` plugin that was simply never enabled — enabling it cost zero dependencies and found 28 issues, while an `axe-core` helper now checks the *rendered* tree, which is what proved three of those static rules were false positives. Colour contrast is still unchecked and cannot be checked under jsdom — stated rather than glossed. Also added: `agent/translation.py`, which preserves every number, date, citation and `[restricted]` mask byte-for-byte or discards the translation entirely — **built, not wired**, with no live caller. See [`CHANGELOG.md`](CHANGELOG.md) and [`docs/ai-capability-implementation-log.md`](docs/ai-capability-implementation-log.md).
 
 - **2026-10-16** — Web search answers stopped being cut off, and read like a search assistant's. `rag/llm.py::call_ollama` — the helper behind document/policy RAG, the multi-source router and the web-search answer step — set `num_predict` and `temperature` but never `num_ctx`, so those calls ran against Ollama's default served window while the SQL path ran at `OLLAMA_NUM_CTX`. Ollama does not reject an oversized prompt; it truncates from the *start*, taking the system prompt. Measured on `llama3.1:8b`: without `num_ctx` a long prompt came back evaluated at **2,050 tokens with the system prompt gone**, versus 12,043 with it intact at `OLLAMA_NUM_CTX=16384` — so a web answer could lose both its formatting instructions and its "untrusted data, not instructions" framing without anything reporting it. Decoding policy now has one owner for both call sites. Replacing that silent cut is an explicit `WEB_SEARCH_CONTEXT_MAX_CHARS` budget that drops **whole** results lowest-ranked first, never drops the top result, states the omission in the answer and leaves dropped results out of the citations. Five ordinary pages (1,547-2,363 characters each) all pass whole; five academic pages for one medical question did not, and the top two were used. The answer prompt now asks for synthesis across sources rather than a snippet dump, specifics kept rather than rounded, inline citations under each source's own title, and explicit hedging where results disagree. See [`docs/MULTI_SOURCE_GUIDE.md`](docs/MULTI_SOURCE_GUIDE.md) §5.
-
-- **2026-10-15** — Source connectivity, streaming, and an honest audit of what is actually built. An evidence-based audit found that roughly half of a proposed connector roadmap already existed, and that **no Microsoft 365 connector exists at all** — the new [`docs/architecture/feature-inventory.md`](docs/architecture/feature-inventory.md) records per-capability status with a separate *verification* column, so "implemented" stops implying "proven". Shipped since: a source-type contract (`sources/`) that made each source's description, permission and availability have one owner instead of three drifting literals; per-conversation **source selection** (`AskRequest.sources` plus a picker), which is a filter over RBAC and never a grant — turning the intersection into a union fails 19 tests; a read-only **REST/OpenAPI connector** behind a host allowlist checked before DNS, with redirects re-validated hop by hop; an **MCP client** whose trust model is administrator-controlled only, where an empty allowlist approves nothing and a server's `instructions` field is read and discarded rather than fed to a model; and **SSE streaming** (`POST /ask/stream`) that calls the existing `/ask` handler rather than copying it, so a slow multi-source question shows live per-node progress. Also added opt-in live tests (`tests/live/`, deselected by default) and the Microsoft 365 tenant runbook they will plug into. See [`docs/architecture/source-connector-contract.md`](docs/architecture/source-connector-contract.md) and [`docs/LIVE_INTEGRATION_TESTING.md`](docs/LIVE_INTEGRATION_TESTING.md).
 
 <a id="example-usage"></a>
 
@@ -595,7 +603,33 @@ Opt-in live verification for the credential-blocked rows above:
 
 ## 🧪 Project status
 
-This project is **beta — security hardened**. The React dashboard is now
+This project is **advanced beta — pre-production hardening**
+(status set 2026-10-17 at commit `08f385e`, on measured evidence).
+
+**What that means, precisely, because the distinction matters:**
+
+| Question | Answer | Evidence |
+|---|---|---|
+| Does it build and deploy? | **Yes** | Production image verified running `python 3.11.16` with every module importing, incl. all five scipy-dependent ones |
+| Do the automated tests pass? | **Yes** | **7,274** backend (0 failed, 11 `tests/live/` deselected) · **1,161** frontend across 89 files · `tsc` clean · `black` clean over 1,635 files |
+| Do the core workflows run for real? | **Yes** | 20 live end-to-end probes against 4 live SQL Server databases and local Ollama — auth, RBAC, chat history, SQL validation, row cap, restricted-column masking |
+| Is CI green? | **No** | `ruff`, `bandit` and `pip-audit` each exit non-zero on **verified-benign** findings (0 High, 0 Medium) awaiting an owner decision |
+| Is capacity known? | **No** | Load testing was blocked by the build defect; now unblocked, **not yet run**. No capacity claim is made anywhere |
+| Is answer accuracy known? | **No** | The only full-corpus benchmark is self-disclaimed as stale — see [Known limitations](#known-limitations) |
+| Has recovery been drilled? | **No** | RPO/RTO *proposed*, awaiting sign-off; no restore drill |
+| **Has UAT been completed?** | **NO — NOT COMPLETED** | A 15-journey, 6-role script exists with every result cell deliberately blank. **No business user has executed or signed off anything.** Automated tests are not UAT |
+
+**Read these two documents before forming a view**, in this order:
+[`docs/certification/2026-10-17_release_gate_v2.md`](docs/certification/2026-10-17_release_gate_v2.md)
+(the current verdict — **NO-GO for production, READY FOR UAT with
+conditions** — with its §11 addendum carrying the live verification and
+the open findings) and
+[`docs/certification/UAT_SCRIPTS_AND_SIGNOFF.md`](docs/certification/UAT_SCRIPTS_AND_SIGNOFF.md)
+(what acceptance testing would have to cover). Neither claims this
+platform is production-ready, and nothing in this README should be read
+as claiming it either.
+
+The React dashboard is now
 the only UI — a previous Streamlit app was removed once the dashboard
 reached full feature parity with it. Three completed security review
 passes (referenced throughout this codebase as "2026 Phase 1/2/3") have

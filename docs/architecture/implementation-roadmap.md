@@ -65,7 +65,7 @@ future session reads about known gaps.
 | Item | Why |
 |---|---|
 | Correct §13's stale `search/` entry | It claims `search/` has no mocked unit test file and calls it "a real, worthwhile follow-up". `tests/test_web_search.py` (236 lines, 14 tests) already closed it. A future session will otherwise redo finished work — this audit nearly did. See [`feature-inventory.md`](feature-inventory.md) §7 R3 |
-| Optionally fix the `ruff` I001 in `agent/multiagent/agents.py` | **Owner's call, not a default.** §13 records it as known and accepted. Fixing it clears the baseline so later batches' lint output is unambiguous; leaving it is equally defensible |
+| Optionally fix the `ruff` I001 in `agent/multiagent/agents.py` | **Owner's call, not a default.** §13 records it as known and accepted. Fixing it clears the baseline so later batches' lint output is unambiguous; leaving it is equally defensible. **Re-weighted 2026-10-17: "equally defensible" no longer holds.** `.github/workflows/ci.yml` runs `ruff check .` unscoped and **blocking**, so this one accepted finding makes a blocking CI gate fail — filed as F-011 in [`../certification/2026-10-17_release_gate_v2.md`](../certification/2026-10-17_release_gate_v2.md) §11.3. The decision is still yours, but it is now "accept a red blocking gate" versus "fix an import order", not a cosmetic preference. A certification pass on 2026-10-17 deliberately left it alone for exactly that reason: this row assigns the call to you |
 
 - **Affected:** `CLAUDE.md` §13; optionally `agent/multiagent/agents.py`
 - **Acceptance:** §13 no longer names a closed gap as open; if the lint fix is taken, `ruff check .` reports no errors

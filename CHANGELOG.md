@@ -4,6 +4,102 @@ Newest first. The README's "News and Updates" section shows only the three most
 recent entries. This file keeps the full record. Each entry names the contract
 document that holds the design, the API, the configuration and the limitations.
 
+## 2026-10-17 (later): release-blocker verified closed, project status moved to advanced beta
+
+A certification/status pass, not a feature change. **No application code
+was modified** — the only code change in scope landed separately as
+`08f385e` (the `scipy` pin). Everything here is measurement and
+documentation.
+
+### Verified
+
+- **F-008 — the production image does not build — is CLOSED.** The
+  morning's release gate returned NO-GO on it and declined to apply the
+  obvious fix, because validating a numerical-dependency change needs a
+  full suite re-run and a 3.11 resolution this machine cannot provide.
+  Both objections are now discharged by measurement: the production
+  image runs **`python 3.11.16`** with **`scipy 1.17.1`**; all five
+  scipy-dependent production modules (`analytics/causal.py`,
+  `forecasting.py`, `models.py`, `predictive.py`,
+  `optimization/engine.py`) import inside it, along with `api.main`,
+  `agent.graph` and `agent.sql_validator`; and the backend suite re-ran
+  at **7,274 passed, 0 failed**. The image was not taken on trust — it
+  was re-verified by executing the interpreter and the imports inside
+  it.
+- **The running application was driven end to end for the first time on
+  record** — 20 probes against live SQL Server databases and local
+  Ollama. The controls hold against real traffic, not only fixtures: a
+  hand-edited `UPDATE`, a `DROP`, a stacked `SELECT 1; DELETE ...` and a
+  `sys.tables` reference were all refused; the row cap appears in the
+  SQL text as `SELECT TOP 1000`; compensation columns came back
+  `[restricted]` against a bare `SELECT *`; 14 of 14 admin routes
+  refused a `user`-role caller server-side, with the refusal written to
+  the audit log; `X-Tenant-Id` was rejected with a 400 before
+  authentication; and no password or connection string appeared in any
+  log line read.
+- **No drift in the lint/type baseline**: 631 mypy errors in 115 files
+  with the same 7 in production modules, black clean over 1,635 files,
+  one ruff `I001`, 1,161 frontend tests passing, `tsc` clean.
+
+### Found
+
+- **F-012 / R-020 — multi-database auto-routing can select a database
+  that holds no data.** `select_database` ranks connections by
+  schema-text similarity alone; it has no notion of whether a table has
+  rows. Reproduced: a question routed to an empty `hr` database while a
+  configured database holding 15 employees was available. Nothing was
+  fabricated — `insight` was `null` and the answer said *"0 row(s)
+  returned"*, so provenance held — but there is **no user recourse**,
+  because `AskRequest` has no `database` field and the source picker
+  selects source *types*. Cannot occur with one configured database.
+  **Not fixed:** the remedy is a design decision, recorded with three
+  options in [`docs/RISK_REGISTER.md`](docs/RISK_REGISTER.md) R-020.
+- **F-011 — one accepted lint finding makes a *blocking* CI gate fail.**
+  The `I001` in `agent/multiagent/agents.py` has long been recorded as
+  known and accepted; what nobody had recorded is that CI runs `ruff
+  check .` unscoped and blocking. **Not fixed** — the roadmap assigns
+  that call to the owner; the point of filing it is that the trade-off
+  is no longer cosmetic.
+- **F-009 regressed, 3 → 4 bandit findings** —
+  `agent/sql_validator.py:842` (`B112`) joined via `933cfff`. Still 0
+  High, 0 Medium.
+- **F-013 — `CLAUDE.md` §13 cited `langgraph==0.2.62`; the real pin is
+  `langgraph==1.0.10rc1`** (a release candidate, in a production
+  requirements file). The conclusion that entry drew still holds — zero
+  checkpointer usage, re-verified — but the premise was three major
+  versions stale. Corrected.
+
+### Changed
+
+- Project status is now **advanced beta — pre-production hardening**
+  ([`README.md`](README.md)), with a table separating "builds",
+  "tests pass", "workflows run live", "CI green", "capacity known",
+  "accuracy known", "recovery drilled" and "UAT completed" — because
+  those had been collapsing into one impression.
+- [`docs/certification/2026-10-17_release_gate_v2.md`](docs/certification/2026-10-17_release_gate_v2.md)
+  gains a §11 addendum rather than a v3 document. Verdict: **still
+  NO-GO for production, READY FOR UAT with conditions.** §1–§10 are
+  preserved unmodified as the morning's assessment.
+- [`docs/certification/UAT_SCRIPTS_AND_SIGNOFF.md`](docs/certification/UAT_SCRIPTS_AND_SIGNOFF.md)
+  grows from 15 to **18 journeys** (documentation accuracy; model
+  selection; boundaries and limits), plus per-journey objective,
+  business scenario, preconditions and test data; a five-value status
+  vocabulary including **NOT TESTED** as the default; per-row defect
+  reference, severity, tester and date; and a section recording what is
+  already verified and what is already known broken, so UAT time is not
+  spent rediscovering F-012. **Every result cell remains blank.**
+
+### Not done, and why
+
+**UAT is NOT COMPLETED and is not claimed otherwise.** No business user
+has executed or signed off a single journey, and automated tests are not
+UAT. Also not run: the Trivy container scan and the k6 load stack (both
+*unblocked* by the F-008 fix but not executed), DAST, the 57-case
+accuracy benchmark, the 500-case security benchmark, a DR restore drill,
+OIDC against a live IdP, and multi-worker behaviour. A second
+independent `docker build` and a CI-equivalent `detect-secrets` run were
+started and did not finish; neither is claimed as evidence.
+
 ## 2026-10-17: SQL shape explanation, per-model token counts, accessibility checks
 
 Four batches from the capability-catalogue plan

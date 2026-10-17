@@ -335,6 +335,18 @@ restriction as a boundary.** Full detail:
   and a failing `mypy` silently stopped `bandit`/`pytest`/`pip-audit` from
   running at all. So treat a type error as a real defect to fix — CI will
   *report* it and still go green. The standing backlog is in §13.
+  **`mypy` is not the only non-blocking step** — `gitleaks`, the Trivy
+  container scan and the load-test smoke scenario are too, for their own
+  dated reasons. §13's "Four CI steps are non-blocking" bullet is the
+  authoritative list; read it before concluding that a green CI run
+  proves anything about those four.
+- **Do not assume the blocking gates are currently green.** Measured
+  2026-10-17 at `08f385e`: `ruff`, `bandit` and `pip-audit` all exit
+  non-zero, so three blocking steps fail, while `black` and `pytest`
+  pass. Every one of the three is a verified-benign finding awaiting an
+  owner decision, not a vulnerability — see §13 and
+  [`docs/certification/2026-10-17_release_gate_v2.md`](docs/certification/2026-10-17_release_gate_v2.md)
+  §11.6. Never "fix" one by weakening the gate.
 
 ### 5.8 Domain privacy and safety — consult the policy before changing behavior
 
@@ -643,8 +655,13 @@ contract lists its specific limitations; these are the cross-cutting ones.
   `agent/followup.py`'s `classify_followup_node` sees only the
   `conversation_history` the caller resends, capped at
   `MAX_FOLLOWUP_EXCHANGES`; no LangGraph checkpointer exists (none ships for
-  SQL Server at the pinned `langgraph==0.2.62` — it would need a custom
-  `BaseCheckpointSaver`).
+  SQL Server, so it would need a custom `BaseCheckpointSaver`).
+  *Corrected 2026-10-17: this entry cited `langgraph==0.2.62`.*
+  **The real pin is `langgraph==1.0.10rc1`** (`requirements.txt:2`) — three
+  major versions on, and a release candidate in a production requirements
+  file, which is itself worth a deliberate decision. The conclusion is
+  unchanged and re-verified: zero `BaseCheckpointSaver`/`checkpointer=`
+  usage anywhere in this repo.
 - **Chat history and artifacts cover locally-authenticated users only.** An
   OIDC or unauthenticated caller is answered normally but nothing is
   persisted — there is no `identity.users` row to attach a conversation to.
@@ -690,6 +707,17 @@ contract lists its specific limitations; these are the cross-cutting ones.
   `identity/repositories/semantic_intelligence.py:199,200,242` and
   `identity/repositories/recommendation_governance.py:402`. `mypy` is
   report-only in CI (§5.7), so nothing is blocking them.
+  **Re-measured 2026-10-17 at `08f385e`: every figure above still holds
+  exactly** — 631 mypy errors in 115 files with the same 7 production
+  findings, black clean over 1,635 files, one ruff `I001`. No drift, so a
+  new finding is attributable. The one addition: **`bandit` now reports 4
+  Low findings, not 3** — `agent/sql_validator.py:842`
+  (`B112 try_except_continue`) joined the set, introduced by `933cfff`'s
+  `describe_sql`, alongside `agent/harness/retry.py:75` (B311),
+  `api/streaming.py:82` (B101) and `security/audit_log.py:255` (B110).
+  Still 0 High and 0 Medium, and all four are deliberate and already
+  annotated for `ruff` but not for `bandit` — which is why that blocking
+  gate fails (§5.7).
 - **Four CI steps are non-blocking** by deliberate, dated decision:
   `gitleaks`, `mypy` (§5.7), the Trivy container scan — report-only because
   the action only fails a step when its `exit-code` input is set, which it
