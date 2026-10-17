@@ -87,7 +87,7 @@ export function SourcePicker({ disabled = false }: { disabled?: boolean }) {
           )}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-72">
+      <PopoverContent align="start" className="w-72">
         <p className="text-sm font-semibold">{t('sources.pickerTitle')}</p>
         <p className="mt-1 text-xs text-[var(--muted-foreground)]">
           {t('sources.pickerHelp')}
