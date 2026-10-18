@@ -1,4 +1,7 @@
 {
+  "a11y": {
+    "skipToContent": "मुख्य सामग्री पर जाएँ"
+  },
   "app": {
     "homeLabel": "नई चैट शुरू करें",
     "title": "AI-Powered Conversational Intelligence",
@@ -113,7 +116,15 @@
     "appearance": "रूप-रंग",
     "theme": "थीम",
     "accentColor": "एक्सेंट रंग",
-    "font": "फ़ॉन्ट",
+    "appFont": "एप्लिकेशन फ़ॉन्ट",
+    "codeFont": "कोड और SQL फ़ॉन्ट",
+    "fontPreview": "फ़ॉन्ट पूर्वावलोकन",
+    "resetFonts": "फ़ॉन्ट डिफ़ॉल्ट पर रीसेट करें",
+    "previewHeading": "क्षेत्र के अनुसार तिमाही राजस्व",
+    "previewUser": "आपने पूछा: कौन-सा क्षेत्र सबसे तेज़ी से बढ़ा?",
+    "previewAssistant": "उत्तर सबसे तेज़ी से बढ़ा, तिमाही-दर-तिमाही 12.4%।",
+    "previewColRegion": "क्षेत्र",
+    "previewColOrders": "ऑर्डर",
     "language": "भाषा",
     "installApp": "ऐप इंस्टॉल करें",
     "updateAvailable": "एक नया संस्करण उपलब्ध है।",
@@ -135,8 +146,7 @@
   "questionNavigator": {
     "label": "प्रश्न",
     "itemLabel": "प्रश्न पर जाएँ: {{question}}",
-    "toggleLabel": "प्रश्न सूची टॉगल करें",
-    "closeLabel": "प्रश्न सूची बंद करें"
+    "toggleLabel": "प्रश्न सूची टॉगल करें"
   },
   "chat": {
     "placeholder": "अपने डेटा के बारे में एक सवाल पूछें...",
@@ -151,7 +161,8 @@
     "sourcesLabel": "स्रोत",
     "words": "शब्द",
     "noRecordedAnswer": "इस संदेश का कोई सहेजा हुआ उत्तर नहीं है।",
-    "scrollToLatest": "नवीनतम संदेश पर जाएं"
+    "scrollToLatest": "नवीनतम संदेश पर जाएं",
+    "spokenAnswerLabel": "बोला गया उत्तर"
   },
   "sql": {
     "title": "जनरेट किया गया SQL",

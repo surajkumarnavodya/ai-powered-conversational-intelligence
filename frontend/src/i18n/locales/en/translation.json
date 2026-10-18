@@ -1,4 +1,7 @@
 {
+  "a11y": {
+    "skipToContent": "Skip to main content"
+  },
   "app": {
     "homeLabel": "Start a new chat",
     "title": "AI-Powered Conversational Intelligence",
@@ -121,7 +124,15 @@
     "appearance": "Appearance",
     "theme": "Theme",
     "accentColor": "Accent color",
-    "font": "Font",
+    "appFont": "Application font",
+    "codeFont": "Code & SQL font",
+    "fontPreview": "Font preview",
+    "resetFonts": "Reset fonts to defaults",
+    "previewHeading": "Quarterly revenue by region",
+    "previewUser": "You asked: which region grew fastest?",
+    "previewAssistant": "North grew fastest at 12.4% quarter over quarter.",
+    "previewColRegion": "Region",
+    "previewColOrders": "Orders",
     "language": "Language",
     "installApp": "Install app",
     "updateAvailable": "A new version is available.",
@@ -152,8 +163,7 @@
   "questionNavigator": {
     "label": "Questions",
     "itemLabel": "Navigate to question: {{question}}",
-    "toggleLabel": "Toggle question list",
-    "closeLabel": "Close question list"
+    "toggleLabel": "Toggle question list"
   },
   "chat": {
     "placeholder": "Ask a question about your data...",
@@ -172,7 +182,8 @@
     "words": "words",
     "noRecordedAnswer": "This message has no recorded answer.",
     "disclaimer": "AI may make mistakes. Please verify results before relying on them.",
-    "scrollToLatest": "Scroll to latest message"
+    "scrollToLatest": "Scroll to latest message",
+    "spokenAnswerLabel": "Spoken answer"
   },
   "sql": {
     "title": "Generated SQL",
@@ -422,7 +433,9 @@
       "downloadResult": "Download",
       "errorNoRegions": "Select at least one region to remove.",
       "errorGeneric": "Couldn't edit this image. Please try again.",
-      "tooManyRegions": "You can remove up to {{max}} regions at once."
+      "tooManyRegions": "You can remove up to {{max}} regions at once.",
+      "regionToggleInclude": "Include this detected text in the removal: \"{{text}}\"",
+      "regionToggleExclude": "Exclude this detected text from the removal: \"{{text}}\""
     }
   },
   "common": {

@@ -169,7 +169,7 @@ export function ChartCustomizePanel({
           onChange={(e) => update({ title: e.target.value })}
           placeholder={t('chart.titlePlaceholder')}
           maxLength={120}
-          className="h-9 rounded-md border border-[var(--border)] bg-[var(--input)] px-2.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          className="h-9 rounded-md border border-[var(--border-control)] bg-[var(--input)] px-2.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
         />
       </label>
 

@@ -63,7 +63,7 @@ export function ConversationListItem({
               if (event.key === 'Escape') onCancelRename()
             }}
             aria-label={t('history.rename')}
-            className="h-6 flex-1 rounded border border-[var(--border)] bg-[var(--input)] px-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+            className="h-6 flex-1 rounded border border-[var(--border-control)] bg-[var(--input)] px-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
           />
           <Button size="icon" variant="ghost" onClick={onCommitRename} aria-label={t('common.save')}>
             <Check className="h-3.5 w-3.5" />

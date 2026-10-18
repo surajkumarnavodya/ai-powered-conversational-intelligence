@@ -9,7 +9,11 @@ export function Select({ className, ...props }: SelectHTMLAttributes<HTMLSelectE
   return (
     <select
       className={cn(
-        'h-9 rounded-md border border-[var(--border)] bg-[var(--input)] px-2.5 text-sm text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
+        // --border-control, not --border: this is a real form control, so
+        // its outline is what identifies it (WCAG 1.4.11) -- --input is
+        // white on an off-white page, and at --border's 1.18:1 the box
+        // effectively has no visible edge.
+        'h-9 rounded-md border border-[var(--border-control)] bg-[var(--input)] px-2.5 text-sm text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]',
         className,
       )}
       {...props}

@@ -266,6 +266,20 @@ export function RemoveTextDialog({
                         type="button"
                         onClick={() => toggleDetectedRegion(region.region_id)}
                         title={region.text}
+                        // `title` alone is a weak accessible name: it is a
+                        // last-resort fallback in the accname algorithm and
+                        // never surfaces on touch. These overlay boxes have
+                        // no text of their own, so without this they are
+                        // announced as an unnamed button -- and the name has
+                        // to say what activating it *does*, since the two
+                        // states do opposite things.
+                        aria-label={t(
+                          excluded
+                            ? 'attachments.removeText.regionToggleInclude'
+                            : 'attachments.removeText.regionToggleExclude',
+                          { text: region.text },
+                        )}
+                        aria-pressed={!excluded}
                         style={toPercent(region)}
                         className={`absolute rounded-sm border-2 transition-colors ${
                           excluded

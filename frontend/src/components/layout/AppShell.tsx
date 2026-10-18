@@ -11,7 +11,7 @@ import {
   ShieldCheck,
   Workflow,
 } from 'lucide-react'
-import { useRef, useState, type ReactNode } from 'react'
+import { useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Outlet, useNavigate } from 'react-router-dom'
 import { cn } from '@/lib/utils'
@@ -29,6 +29,8 @@ import { SidebarToggle } from './SidebarToggle'
 import { UserMenu } from './UserMenu'
 
 const SIDEBAR_ID = 'app-sidebar'
+/** Target of the skip link, and the element focus is moved to. */
+const MAIN_CONTENT_ID = 'main-content'
 
 /** How each screen the server may list is drawn: an icon and a translated label.
  * Presentation only. Whether a screen appears at all is the server's decision
@@ -77,6 +79,24 @@ export function AppShell({ children }: { children?: ReactNode } = {}) {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const startNewChat = useChatStore((state) => state.startNewChat)
+
+  /** Moves focus to `<main>` without letting the `#main-content` fragment
+   * reach the router.
+   *
+   * The `href` is kept so the control is a real link -- it is announced as
+   * one, and it still works if this handler never runs. But this is a
+   * client-routed SPA: letting the default fire would append `#main-content`
+   * to the current URL, which then rides along in anything the user copies
+   * or shares, and react-router would treat the location as changed. The
+   * explicit `focus()` is also what makes the jump actually work for a
+   * keyboard user -- see `<main tabIndex={-1}>` below. */
+  const handleSkipToContent = (event: ReactMouseEvent<HTMLAnchorElement>) => {
+    const main = document.getElementById(MAIN_CONTENT_ID)
+    if (!main) return
+    event.preventDefault()
+    main.focus()
+    main.scrollIntoView({ block: 'start' })
+  }
 
   // The product name doubles as "home": clicking it starts a fresh
   // conversation and returns to the chat route. Exactly what the
@@ -139,6 +159,34 @@ export function AppShell({ children }: { children?: ReactNode } = {}) {
           (see ui/dialog.tsx), so it's not a descendant of this div and is
           never affected by its own inert flag. */}
       <div className="flex h-full" inert={isSettingsOpen || isShortcutHelpOpen || undefined}>
+        {/* Bypass block (WCAG 2.4.1, Level A). Every page repeats the same
+            sidebar and primary nav, so without this a keyboard or
+            switch-device user tabs through all of it before reaching the
+            answer they came for -- on every single navigation.
+
+            It must be *seeable* once tabbed to, not merely present, or a
+            sighted keyboard user cannot tell what focus landed on. It is
+            the first child of the shell so it is the first thing Tab
+            reaches.
+
+            Parked off-screen with a transform rather than `sr-only` +
+            `focus-visible:not-sr-only`: that pair looks tidier but is
+            broken here. `not-sr-only` resets `padding` to 0, and Tailwind
+            emits variant utilities after plain ones, so on focus it wins
+            over `px-4 py-2` and the link renders as a cramped, unreadable
+            pill. A transform touches only `translate`, which nothing else
+            here sets. (Verified against the compiled CSS, not assumed.)
+
+            It sits inside the `inert` wrapper deliberately: while Settings
+            is open the whole shell is inert, and a skip link that still
+            took focus would jump the user out of the open dialog. */}
+        <a
+          href={`#${MAIN_CONTENT_ID}`}
+          onClick={handleSkipToContent}
+          className="fixed left-4 top-4 z-50 -translate-y-24 rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--accent-foreground)] shadow-lg transition-transform duration-[var(--duration-base)] ease-out focus-visible:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)] motion-reduce:transition-none"
+        >
+          {t('a11y.skipToContent')}
+        </a>
         <aside
           id={SIDEBAR_ID}
           className={cn(
@@ -198,7 +246,16 @@ export function AppShell({ children }: { children?: ReactNode } = {}) {
               full width (edge-to-edge, scrollbar flush against the browser
               edge) with its content centered inside via its own max-w
               wrapper. */}
-          <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+          <main
+            id={MAIN_CONTENT_ID}
+            /* `tabIndex={-1}` so the skip link's fragment jump actually
+               moves focus here: following a `#id` link scrolls to the
+               target but only focuses it if it is focusable, and without
+               that the next Tab would resume from the skip link -- back at
+               the top of the nav, which is the very thing being skipped. */
+            tabIndex={-1}
+            className="relative min-h-0 min-w-0 flex-1 overflow-hidden outline-none"
+          >
             {children ?? <Outlet />}
           </main>
         </div>

@@ -58,7 +58,7 @@ export function SourceLineagePanel({ state }: { state: AskResponse }) {
 
   return (
     <details className="group rounded-lg border border-[var(--border)] bg-[var(--card)]">
-      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs font-medium marker:content-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs font-medium marker:content-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]">
         <ChevronRight
           className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90"
           aria-hidden="true"
@@ -72,6 +72,11 @@ export function SourceLineagePanel({ state }: { state: AskResponse }) {
 
         <LineageChain steps={lineage.steps} />
 
+        {/* `role="list"` is not redundant here: Tailwind preflight removes the
+            list marker, and WebKit then drops list semantics, so VoiceOver on
+            Safari/iOS stops announcing this as a list. See
+            ConversationContextPanel.tsx for the full note. */}
+        {/* oxlint-disable-next-line jsx-a11y/no-redundant-roles */}
         <ul role="list" className="flex flex-col gap-1.5">
           {lineage.sources.map((source) => {
             const isOpen = openSource === source.kind
@@ -86,7 +91,7 @@ export function SourceLineagePanel({ state }: { state: AskResponse }) {
                   aria-expanded={source.details.length === 0 ? undefined : isOpen}
                   aria-controls={source.details.length === 0 ? undefined : panelId}
                   onClick={() => setOpenSource(isOpen ? null : source.kind)}
-                  className="flex w-full flex-wrap items-center gap-2 px-2.5 py-1.5 text-left text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-inset disabled:cursor-default"
+                  className="flex w-full flex-wrap items-center gap-2 px-2.5 py-1.5 text-left text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:ring-inset disabled:cursor-default"
                 >
                   <span className="font-medium">{sourceLabel(source)}</span>
                   {source.name && (

@@ -18,7 +18,7 @@ export function Switch({
       checked={checked}
       onCheckedChange={onCheckedChange}
       className={cn(
-        'relative h-5 w-9 shrink-0 cursor-pointer rounded-full bg-[var(--border)] transition-colors data-[state=checked]:bg-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2',
+        'relative h-5 w-9 shrink-0 cursor-pointer rounded-full bg-[var(--border)] transition-colors data-[state=checked]:bg-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:ring-offset-2',
         className,
       )}
     >

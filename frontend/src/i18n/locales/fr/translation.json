@@ -1,4 +1,7 @@
 {
+  "a11y": {
+    "skipToContent": "Aller au contenu principal"
+  },
   "app": {
     "homeLabel": "Démarrer un nouveau chat",
     "title": "AI-Powered Conversational Intelligence",
@@ -113,7 +116,15 @@
     "appearance": "Apparence",
     "theme": "Thème",
     "accentColor": "Couleur d'accent",
-    "font": "Police",
+    "appFont": "Police de l'application",
+    "codeFont": "Police du code et du SQL",
+    "fontPreview": "Aperçu de la police",
+    "resetFonts": "Réinitialiser les polices",
+    "previewHeading": "Revenus trimestriels par région",
+    "previewUser": "Vous avez demandé : quelle région a crû le plus vite ?",
+    "previewAssistant": "Le Nord a crû le plus vite, de 12,4 % d'un trimestre à l'autre.",
+    "previewColRegion": "Région",
+    "previewColOrders": "Commandes",
     "language": "Langue",
     "installApp": "Installer l'application",
     "updateAvailable": "Une nouvelle version est disponible.",
@@ -135,8 +146,7 @@
   "questionNavigator": {
     "label": "Questions",
     "itemLabel": "Aller a la question : {{question}}",
-    "toggleLabel": "Afficher/masquer la liste des questions",
-    "closeLabel": "Fermer la liste des questions"
+    "toggleLabel": "Afficher/masquer la liste des questions"
   },
   "chat": {
     "placeholder": "Posez une question sur vos données...",
@@ -151,7 +161,8 @@
     "sourcesLabel": "Sources",
     "words": "mots",
     "noRecordedAnswer": "Ce message n'a pas de réponse enregistrée.",
-    "scrollToLatest": "Faire défiler jusqu'au dernier message"
+    "scrollToLatest": "Faire défiler jusqu'au dernier message",
+    "spokenAnswerLabel": "Réponse vocale"
   },
   "sql": {
     "title": "SQL généré",

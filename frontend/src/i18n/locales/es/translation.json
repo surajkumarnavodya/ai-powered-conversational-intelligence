@@ -1,4 +1,7 @@
 {
+  "a11y": {
+    "skipToContent": "Saltar al contenido principal"
+  },
   "app": {
     "homeLabel": "Iniciar un chat nuevo",
     "title": "AI-Powered Conversational Intelligence",
@@ -113,7 +116,15 @@
     "appearance": "Apariencia",
     "theme": "Tema",
     "accentColor": "Color de acento",
-    "font": "Fuente",
+    "appFont": "Fuente de la aplicación",
+    "codeFont": "Fuente de código y SQL",
+    "fontPreview": "Vista previa de la fuente",
+    "resetFonts": "Restablecer fuentes predeterminadas",
+    "previewHeading": "Ingresos trimestrales por región",
+    "previewUser": "Preguntaste: ¿qué región creció más rápido?",
+    "previewAssistant": "Norte creció más rápido, un 12,4 % intertrimestral.",
+    "previewColRegion": "Región",
+    "previewColOrders": "Pedidos",
     "language": "Idioma",
     "installApp": "Instalar aplicación",
     "updateAvailable": "Hay una nueva versión disponible.",
@@ -135,8 +146,7 @@
   "questionNavigator": {
     "label": "Preguntas",
     "itemLabel": "Ir a la pregunta: {{question}}",
-    "toggleLabel": "Alternar lista de preguntas",
-    "closeLabel": "Cerrar lista de preguntas"
+    "toggleLabel": "Alternar lista de preguntas"
   },
   "chat": {
     "placeholder": "Haz una pregunta sobre tus datos...",
@@ -151,7 +161,8 @@
     "sourcesLabel": "Fuentes",
     "words": "palabras",
     "noRecordedAnswer": "Este mensaje no tiene una respuesta registrada.",
-    "scrollToLatest": "Desplazarse al último mensaje"
+    "scrollToLatest": "Desplazarse al último mensaje",
+    "spokenAnswerLabel": "Respuesta hablada"
   },
   "sql": {
     "title": "SQL generado",

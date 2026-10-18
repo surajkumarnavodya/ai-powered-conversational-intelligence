@@ -474,12 +474,20 @@ if _cors_origins:
 # 2026 Phase 3 security review: matches what the built React dashboard
 # (frontend/dist/index.html) actually loads -- no inline <script> (Vite
 # bundles every script into an external, hashed file, so `script-src 'self'`
-# needs no `unsafe-inline`/`unsafe-eval`), the Google Fonts stylesheet/font
-# files `index.html` links directly, `blob:` object URLs for generated/
+# needs no `unsafe-inline`/`unsafe-eval`), `blob:` object URLs for generated/
 # fetched media (`MediaResultCard.tsx`, `useVoiceConversation.ts`'s spoken-
-# answer audio), and `data:` URIs for the inline SVG favicon. `style-src`
-# allows `unsafe-inline` -- React's inline `style={{...}}` (used by this
-# app's dynamic accent-color/theme system, `src/lib/theme.ts`) would
+# answer audio), and `data:` URIs for the inline SVG favicon.
+#
+# `style-src`/`font-src` no longer allow `https://fonts.googleapis.com`/
+# `https://fonts.gstatic.com`: the selectable fonts are self-hosted
+# (`frontend/src/lib/fonts.ts`, bundled from `@fontsource-variable/*`), so
+# the dashboard loads every font from its own origin and those two
+# third-party allowances became dead grants. They are removed rather than
+# left in place -- an unused external origin in a CSP is attack surface for
+# no benefit.
+#
+# `style-src` still allows `unsafe-inline` -- React's inline `style={{...}}`
+# (used by this app's dynamic accent-color/theme/font system) would
 # otherwise be blocked, and unlike `script-src`, an inline-style allowance
 # is a narrow, low-severity relaxation (it cannot execute script) that many
 # production CSPs accept as a pragmatic tradeoff for exactly this reason.
@@ -526,8 +534,8 @@ def _default_csp(settings) -> str:
     return (
         "default-src 'self'; "
         f"script-src {script_src}; "
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-        "font-src 'self' https://fonts.gstatic.com data:; "
+        "style-src 'self' 'unsafe-inline'; "
+        "font-src 'self' data:; "
         "img-src 'self' data: blob:; "
         "media-src 'self' blob:; "
         f"connect-src {connect_src}; "

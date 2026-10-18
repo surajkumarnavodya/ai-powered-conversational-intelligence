@@ -172,7 +172,7 @@ export function ResizeImageDialog({
                   max={maxDimension}
                   value={width}
                   onChange={(e) => setWidth(e.target.value)}
-                  className="h-9 rounded-md border border-[var(--border)] bg-[var(--input)] px-2.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                  className="h-9 rounded-md border border-[var(--border-control)] bg-[var(--input)] px-2.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
                 />
               </label>
               <label className="flex flex-col gap-1 text-xs">
@@ -186,7 +186,7 @@ export function ResizeImageDialog({
                   value={lockAspect ? (computedHeight ?? '') : height}
                   disabled={lockAspect}
                   onChange={(e) => setHeight(e.target.value)}
-                  className="h-9 rounded-md border border-[var(--border)] bg-[var(--input)] px-2.5 text-sm disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                  className="h-9 rounded-md border border-[var(--border-control)] bg-[var(--input)] px-2.5 text-sm disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
                 />
               </label>
             </div>

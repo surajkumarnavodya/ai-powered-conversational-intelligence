@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import type { KeyboardEvent, RefObject } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { KeyboardEvent, PointerEvent as ReactPointerEvent, RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ScrollingText } from '@/components/ui/scrolling-text'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -27,18 +27,43 @@ import { cn } from '@/lib/utils'
  * what keeps it genuinely absent from the accessibility tree (and from
  * this component's own tests) until it's actually open.
  *
- * **The panel stays open until it is explicitly closed.** There is
- * deliberately no hover-to-open and no auto-hide: it closes only on the
- * panel's own close button, on the toggle icon, or on Escape. The
- * earlier version opened on `mouseenter` and closed on `mouseleave` of
- * the wrapper, which made the panel genuinely unusable in practice --
- * the panel sits to the *left* of the icon with an 8px gap (`mr-2`)
- * between them, and that gap belongs to neither the wrapper's own box
- * nor any descendant, so a pointer travelling from the icon to the list
- * crossed it, fired `mouseleave`, and closed the panel before it could
- * be reached. Closing on `blur` had the same effect for keyboard users.
- * An explicit close is also simply the right affordance for a panel a
- * reader scrolls through and clicks items in.
+ * **The panel opens on hover and closes when the pointer leaves**, with no
+ * close button. Hover-to-open was tried once before and reverted, so the
+ * two things that made it unusable then are both fixed here rather than
+ * re-litigated:
+ *
+ * 1. *The dead gap.* The old panel sat to the **left** of the icon with an
+ *    8px margin (`mr-2`) between them. That gap belonged to neither the
+ *    wrapper nor any descendant, so a pointer travelling from icon to list
+ *    crossed it, fired `mouseleave`, and closed the panel before it could
+ *    be reached. The panel is now anchored `right-0` -- flush to the
+ *    wrapper's own right edge, *underneath* the icon rather than beside it
+ *    -- so icon and list are one continuous hover surface with no gap to
+ *    cross at all. The icon's lane is reserved by the panel's `pr-9`, so
+ *    nothing is ever hidden behind it.
+ * 2. *Twitchy closes.* Leaving does not close immediately; it arms a
+ *    `CLOSE_DELAY_MS` timer that any re-entry cancels. A pointer that
+ *    clips a corner, or crosses a sub-pixel seam between two children,
+ *    re-enters long before the timer fires. This is the ordinary menu
+ *    grace period, and it is what makes the interaction feel settled
+ *    rather than flickery.
+ *
+ * Hover is a mouse affordance only: `onPointerEnter`/`onPointerLeave`
+ * ignore `pointerType: 'touch'`/`'pen'`, because a touch tap synthesizes a
+ * mouseenter *before* the click and the two would fight -- hover would
+ * open the panel and the click would immediately toggle it shut. Touch
+ * users get the same control through the toggle (tap to open, tap to
+ * close) plus tap-outside-to-dismiss. Keyboard users get the toggle and
+ * Escape. Closing on `blur` is still deliberately absent: it would shut
+ * the panel the moment a keyboard user tabbed into the list.
+ *
+ * **The panel must stay inside the chat column's own box.** `AppShell`'s
+ * `<main>` is `overflow-hidden`, so anything that reached past it would be
+ * clipped rather than overlaid. Anchoring to `right-0` of a wrapper that
+ * is itself inset by `right-4` keeps the panel 16px clear of that edge,
+ * and the `max-w-[calc(100vw-2rem)]` clamp keeps the left edge on screen
+ * at phone widths. A future change that moves the panel outward (a
+ * negative offset, a wider fixed width) will be silently cropped there.
  *
  * The icon sits inside a tall vertical rail (`h-44`, centered via flex)
  * whose hairline and end-cap dots (purely decorative, `aria-hidden`)
@@ -74,6 +99,17 @@ import { cn } from '@/lib/utils'
  * position number is therefore `aria-hidden` -- it orients a sighted
  * reader scanning the list and carries nothing for anyone else.
  */
+/** How long the pointer may be outside the control before it collapses.
+ * Long enough to absorb a clipped corner or a sub-pixel seam between the
+ * icon and the list; short enough that a deliberate "move away" still
+ * feels like it closed on purpose. */
+const CLOSE_DELAY_MS = 180
+
+/** Shared look for the decorative rail pieces, including the fade they do
+ * when the panel takes over their lane. */
+const railSegment =
+  'bg-[var(--border)] transition-opacity duration-150 ease-out motion-reduce:transition-none'
+
 export function QuestionNavigator({
   entries,
   scrollContainerRef,
@@ -99,10 +135,68 @@ export function QuestionNavigator({
   const activeDomId = useActiveElementId(domIds, scrollContainerRef)
 
   const [isOpen, setIsOpen] = useState(false)
-  // Focus returns here whenever the panel is dismissed, so closing it from
-  // the panel's own close button (or with Escape) never strands focus on a
-  // node that has just been unmounted.
+  // Focus returns here whenever the panel is dismissed with Escape, so
+  // dismissing never strands focus on a node that has just been unmounted.
   const toggleRef = useRef<HTMLButtonElement>(null)
+  const wrapperRef = useRef<HTMLDivElement>(null)
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const cancelPendingClose = useCallback(() => {
+    if (closeTimerRef.current === null) return
+    clearTimeout(closeTimerRef.current)
+    closeTimerRef.current = null
+  }, [])
+
+  const openNow = useCallback(() => {
+    cancelPendingClose()
+    setIsOpen(true)
+  }, [cancelPendingClose])
+
+  /** Arms the grace period rather than closing outright -- see the
+   * component docstring's "twitchy closes". Any re-entry cancels it. */
+  const closeAfterGrace = useCallback(() => {
+    cancelPendingClose()
+    closeTimerRef.current = setTimeout(() => {
+      closeTimerRef.current = null
+      setIsOpen(false)
+    }, CLOSE_DELAY_MS)
+  }, [cancelPendingClose])
+
+  // A pending timer that fires after unmount would call setState on a dead
+  // component; one that survives a close/reopen would shut the panel the
+  // user just reopened.
+  useEffect(() => cancelPendingClose, [cancelPendingClose])
+
+  // Tap-outside-to-dismiss -- the touch counterpart to "the pointer left".
+  // `pointerdown` rather than `click` so a tap that starts outside dismisses
+  // immediately, and in the capture phase so it still runs when the target
+  // stops propagation. Bound only while open, so the app carries no global
+  // listener in its normal state.
+  useEffect(() => {
+    if (!isOpen) return
+    const handlePointerDownOutside = (event: PointerEvent) => {
+      const wrapper = wrapperRef.current
+      if (!wrapper) return
+      if (event.target instanceof Node && wrapper.contains(event.target)) return
+      cancelPendingClose()
+      setIsOpen(false)
+    }
+    document.addEventListener('pointerdown', handlePointerDownOutside, true)
+    return () => document.removeEventListener('pointerdown', handlePointerDownOutside, true)
+  }, [isOpen, cancelPendingClose])
+
+  // Hover is a mouse-only affordance (see the docstring): a touch tap
+  // synthesizes mouseenter before its click, so honouring it here would
+  // open the panel and let the click immediately toggle it shut again.
+  const handlePointerEnter = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'touch' || event.pointerType === 'pen') return
+    openNow()
+  }
+
+  const handlePointerLeave = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'touch' || event.pointerType === 'pen') return
+    closeAfterGrace()
+  }
 
   // Keyed by this item's own DOM id (not entryId directly) so it lines up
   // with `activeDomId` without a re-derivation on every render.
@@ -140,11 +234,11 @@ export function QuestionNavigator({
     target.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' })
   }
 
-  // The dismissal path for the two actions that close the panel from
-  // somewhere other than the toggle itself (the panel's close button and
-  // Escape), so focus handling cannot diverge between them. The toggle
-  // needs no such restore -- focus is already on it.
+  // Escape's dismissal path. Focus may be deep inside the list (a keyboard
+  // user tabbing through items), and those nodes unmount on close, so it is
+  // returned to the toggle rather than left to fall back to <body>.
   const handleClose = () => {
+    cancelPendingClose()
     setIsOpen(false)
     toggleRef.current?.focus()
   }
@@ -157,15 +251,21 @@ export function QuestionNavigator({
 
   return (
     <div
-      /* Shown only from `xl` up. The rail is an overlay in the right
-         margin, and that margin only exists once the viewport is wider
-         than the reading column plus the rail's own 52px lane: at
-         1024-1280px with the sidebar open the main area is narrower
-         than the column, so the rail would sit on top of the answer
-         text it is meant to sit beside. Below `xl` the questions stay
-         reachable by scrolling and from the conversation list. */
-      className="pointer-events-none absolute right-4 top-1/2 z-20 hidden h-44 w-9 -translate-y-1/2 flex-col items-center xl:flex"
+      ref={wrapperRef}
+      /* The rail is an overlay pinned to the right margin at every size.
+         It used to be `xl`-only, because the old panel opened to the
+         *left* of the icon and on a narrow viewport would land on top of
+         the answer text. The panel now opens flush to this same right
+         edge and clamps its own width to the viewport
+         (`w-[calc(100vw-2rem)]` until `sm`), so it no longer has that
+         problem -- and the control has to exist on tablets and phones,
+         which is where scrolling back through a long conversation by hand
+         is worst. The wrapper stays `pointer-events-none` so only the
+         real controls take clicks; nothing else about the rail changed. */
+      className="pointer-events-none absolute right-4 top-1/2 z-20 flex h-44 w-9 -translate-y-1/2 flex-col items-center"
       onKeyDown={handleKeyDown}
+      onPointerEnter={handlePointerEnter}
+      onPointerLeave={handlePointerLeave}
     >
       {/* Decorative rail -- a hairline with end-cap dots marking where this
           control sits against an otherwise empty right edge. `aria-hidden`
@@ -175,16 +275,26 @@ export function QuestionNavigator({
           fill whatever space is left once the dots and icon take their
           fixed size, so the icon stays exactly centered regardless of the
           rail's own height. */}
-      <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--border)]" />
-      <span aria-hidden="true" className="w-px flex-1 bg-[var(--border)]" />
+      {/* The rail fades out while the panel is open -- the panel covers the
+          same lane, so leaving the hairline visible just showed a seam
+          through the icon's gutter. `motion-reduce` defers to the global
+          reduced-motion rule in index.css. */}
+      <span
+        aria-hidden="true"
+        className={cn(railSegment, 'h-1.5 w-1.5 shrink-0 rounded-full', isOpen && 'opacity-0')}
+      />
+      <span aria-hidden="true" className={cn(railSegment, 'w-px flex-1', isOpen && 'opacity-0')} />
       <button
         ref={toggleRef}
         type="button"
         aria-label={t('questionNavigator.toggleLabel')}
         aria-expanded={isOpen}
         aria-haspopup="true"
-        onClick={() => setIsOpen((prev) => !prev)}
-        className="pointer-events-auto relative z-10 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--popover-surface)] text-[var(--muted-foreground)] shadow-md transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+        onClick={() => (isOpen ? handleClose() : openNow())}
+        /* z-30 keeps the icon above the panel, which now extends
+           underneath it (see the docstring). The panel reserves this exact
+           36px lane with its own `pr-9`, so the icon covers no content. */
+        className="pointer-events-auto relative z-30 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--popover-surface)] text-[var(--muted-foreground)] shadow-md transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
       >
         {/* Hamburger/sandwich icon -- three short horizontal bars */}
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -193,67 +303,63 @@ export function QuestionNavigator({
           <path d="M2 12H14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
         </svg>
       </button>
-      <span aria-hidden="true" className="w-px flex-1 bg-[var(--border)]" />
-      <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--border)]" />
+      <span aria-hidden="true" className={cn(railSegment, 'w-px flex-1', isOpen && 'opacity-0')} />
+      <span
+        aria-hidden="true"
+        className={cn(railSegment, 'h-1.5 w-1.5 shrink-0 rounded-full', isOpen && 'opacity-0')}
+      />
 
       {isOpen && (
         <nav
           aria-label={t('questionNavigator.label')}
-          className="pointer-events-auto absolute right-full top-1/2 mr-2 flex w-64 max-w-[calc(100vw-5rem)] -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--popover-surface)] shadow-lg"
+          data-testid="question-navigator-panel"
+          /* Anchored `right-0` -- flush to the wrapper's right edge rather
+             than beside the icon, so the panel reaches the screen's right
+             margin and sits *under* the icon, leaving no gap for a pointer
+             to fall through (see the docstring).
+             `pr-9` reserves the icon's own 36px lane so no row ever runs
+             underneath it.
+             Width is clamped to the viewport on phones and steps up with
+             the breakpoints; `max-h` keeps a tall list inside the window on
+             a short laptop. The open animation is a short fade/slide, and
+             `motion-reduce` hands off to index.css's global reduced-motion
+             rule. */
+          className="animate-flyout-in pointer-events-auto absolute right-0 top-1/2 flex w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--popover-surface)] pr-9 shadow-lg sm:w-80 lg:w-96 xl:w-[26rem]"
         >
-          {/* `justify-between` is what puts the close control hard against
-              the panel's right edge, opposite the title -- the conventional
-              place to look for it, and the only way to dismiss this panel
-              with a pointer besides the toggle icon. */}
-          <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] py-2 pl-3 pr-2">
+          <div className="border-b border-[var(--border)] py-2 pl-3 pr-2">
             <p className="text-xs font-semibold text-[var(--muted-foreground)]">
               {t('questionNavigator.label')}
             </p>
-            <button
-              type="button"
-              aria-label={t('questionNavigator.closeLabel')}
-              onClick={handleClose}
-              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-            >
-              {/* Close (X) icon */}
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-                <path
-                  d="M3.5 3.5L10.5 10.5"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                />
-                <path
-                  d="M10.5 3.5L3.5 10.5"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                />
-              </svg>
-            </button>
           </div>
           <TooltipProvider delayDuration={300}>
             {/* The one and only scroll region this panel owns, capped at
-                exactly five rows so the panel keeps the same compact
-                footprint whether the conversation has six questions or
-                sixty. Everything past the fifth scrolls; nothing is
-                dropped from the list.
+                ten rows so the panel keeps the same footprint whether the
+                conversation has eleven questions or sixty. Everything past
+                the tenth scrolls; nothing is dropped from the list.
 
                 The cap is derived, not eyeballed -- one row is the
                 `text-xs` line box (1rem) plus this button's `py-1.5`
-                (0.375rem x 2), so 1.75rem; five of those is 8.75rem, and
+                (0.375rem x 2), so 1.75rem; ten of those is 17.5rem, and
                 `box-border` means this element's own `py-1` (0.5rem)
-                counts inside `max-height`, giving 9.25rem total. Change
-                the row's padding or text size and this number has to
-                move with it.
+                counts inside `max-height`, giving 18rem total. Change the
+                row's padding or text size and this number has to move with
+                it. It is a *maximum*: a three-question list is still three
+                rows tall.
 
-                `min(50vh, ...)` only engages on a viewport under ~300px
-                tall, where five rows genuinely would not fit -- it is a
-                floor for an extreme window, not the usual behaviour. */}
-            <ul
-              role="list"
+                `min(60vh, ...)` is the adaptive half of requirement
+                "display 10 questions": ten rows need 288px, which a short
+                laptop window or a landscape phone does not have, and on
+                those the list takes 60% of the viewport and scrolls
+                instead of overflowing off-screen. */}
+            {/* `role="list"` below is not redundant: Tailwind preflight
+                removes the list marker, and WebKit then drops list
+                semantics, so VoiceOver on Safari/iOS stops announcing this
+                as a list. See ConversationContextPanel.tsx for the full
+                note. */}
+            {/* oxlint-disable-next-line jsx-a11y/no-redundant-roles */}
+            <ul role="list"
               data-testid="question-navigator-list"
-              className="max-h-[min(50vh,9.25rem)] overflow-y-auto overscroll-contain py-1"
+              className="max-h-[min(60vh,18rem)] overflow-y-auto overscroll-contain py-1"
             >
               {navigable.map((entry, index) => {
                 const domId = `turn-${entry.entryId}`
@@ -275,7 +381,7 @@ export function QuestionNavigator({
                             question: oneLineQuestion,
                           })}
                           className={cn(
-                            'flex w-full items-center gap-2 border-l-2 px-3 py-1.5 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-inset',
+                            'flex w-full items-center gap-2 border-l-2 px-3 py-1.5 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:ring-inset',
                             isActive
                               ? 'border-[var(--accent)] bg-[var(--accent-soft)] font-semibold text-[var(--foreground)]'
                               : 'border-transparent text-[var(--muted-foreground)] hover:bg-[var(--muted)] hover:text-[var(--foreground)]',

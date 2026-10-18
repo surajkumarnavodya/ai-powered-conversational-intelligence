@@ -35,7 +35,7 @@ export const ConversationSearch = forwardRef<HTMLInputElement, ConversationSearc
           }}
           placeholder={t('history.searchPlaceholder')}
           aria-label={t('history.searchPlaceholder')}
-          className="h-9 w-full rounded-md border border-[var(--border)] bg-[var(--input)] pl-8 pr-8 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+          className="h-9 w-full rounded-md border border-[var(--border-control)] bg-[var(--input)] pl-8 pr-8 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
         />
         {isSearching ? (
           <Loader2

@@ -30,7 +30,7 @@ export function ThemeToggle() {
           title={t(`theme.${key}`)}
           onClick={() => setThemeMode(mode)}
           className={cn(
-            'flex h-7 w-7 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
+            'flex h-7 w-7 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]',
             themeMode === mode
               ? 'bg-[var(--card)] text-[var(--accent)] shadow-sm'
               : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]',

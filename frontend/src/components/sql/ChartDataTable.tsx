@@ -38,7 +38,7 @@ export function ChartDataTable({
 
   return (
     <details className="group mt-2 rounded-md border border-[var(--border)]">
-      <summary className="cursor-pointer list-none px-2.5 py-1.5 text-xs text-[var(--muted-foreground)] marker:content-none hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]">
+      <summary className="cursor-pointer list-none px-2.5 py-1.5 text-xs text-[var(--muted-foreground)] marker:content-none hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]">
         {t('chart.showDataTable', { count: rows.length })}
       </summary>
       <div className="scroll-x max-h-64 border-t border-[var(--border)]">

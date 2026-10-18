@@ -183,7 +183,7 @@ function HeadlineRow({
         onClick={() => setOpen((previous) => !previous)}
         aria-expanded={open}
         aria-controls={panelId}
-        className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-inset"
+        className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:ring-inset"
       >
         <span
           className={cn(

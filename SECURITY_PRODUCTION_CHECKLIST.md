@@ -54,7 +54,7 @@ Legend:
 ## 8. Security Headers / CORS
 
 - [x] **IMPLEMENTED AND VERIFIED** — HSTS, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy all on by default. CORS wildcard+credentials rejected at config time.
-- [ ] **Action required if using a non-default font provider or embedding this app in a frame** — the default CSP is scoped to this app's actual asset origins (self + Google Fonts); override `CONTENT_SECURITY_POLICY` in `.env` if your deployment needs something different.
+- [ ] **Action required only if embedding this app in a frame** — the default CSP is now scoped to this app's own origin for styles and fonts (`style-src 'self' 'unsafe-inline'`, `font-src 'self' data:`), because the selectable fonts are self-hosted rather than fetched from Google Fonts; no third-party font origin is granted. Override `CONTENT_SECURITY_POLICY` in `.env` if your deployment needs something different — but re-adding a font CDN is not required and would reintroduce a third-party request on every page load.
 
 ## 9. Docker / Container Security
 

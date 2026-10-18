@@ -92,6 +92,14 @@ export function ConversationContextPanel({ entries }: { entries: QueryHistoryEnt
             <p className="text-[var(--muted-foreground)]">
               {t(`context.provenanceHint.${group.provenance}`)}
             </p>
+            {/* `role="list"` looks redundant on a <ul> and oxlint flags it
+                as such, but it is load-bearing here: Tailwind's preflight
+                sets `ol,ul,menu{list-style:none}`, and WebKit drops list
+                semantics from a list with no marker -- so without this,
+                VoiceOver stops announcing "list, N items" on Safari and
+                iOS. Keep it. This is the canonical note; the other sites
+                point back here. */}
+            {/* oxlint-disable-next-line jsx-a11y/no-redundant-roles */}
             <ul role="list" className="flex flex-col gap-1">
               {group.items.map((item) => (
                 <ContextRow
@@ -115,6 +123,11 @@ export function ConversationContextPanel({ entries }: { entries: QueryHistoryEnt
           />
         )}
 
+        {/* `role="list"` is not redundant here: Tailwind preflight removes the
+            list marker, and WebKit then drops list semantics, so VoiceOver on
+            Safari/iOS stops announcing this as a list. See
+            ConversationContextPanel.tsx for the full note. */}
+        {/* oxlint-disable-next-line jsx-a11y/no-redundant-roles */}
         <ul role="list" className="flex flex-col gap-0.5 text-[var(--muted-foreground)]">
           {snapshot.beyondWindowCount > 0 && (
             <li>{t('context.beyondWindow', { count: snapshot.beyondWindowCount })}</li>
@@ -129,7 +142,7 @@ export function ConversationContextPanel({ entries }: { entries: QueryHistoryEnt
             type="button"
             onClick={clearConversationContext}
             disabled={snapshot.carriedCount === 0}
-            className="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] px-2 py-1 font-medium hover:bg-[var(--accent-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] px-2 py-1 font-medium hover:bg-[var(--accent-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Eraser className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
             {t('context.clear')}
@@ -137,7 +150,7 @@ export function ConversationContextPanel({ entries }: { entries: QueryHistoryEnt
           <button
             type="button"
             onClick={startNewChat}
-            className="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] px-2 py-1 font-medium hover:bg-[var(--accent-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            className="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] px-2 py-1 font-medium hover:bg-[var(--accent-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
           >
             <RotateCcw className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
             {t('context.startFresh')}
@@ -184,7 +197,7 @@ function ContextRow({ item, onRemove }: { item: ContextItem; onRemove: () => voi
             type="button"
             onClick={onRemove}
             aria-label={t('context.removeItem', { value: item.value })}
-            className="rounded p-0.5 text-[var(--muted-foreground)] hover:bg-[var(--accent-soft)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            className="rounded p-0.5 text-[var(--muted-foreground)] hover:bg-[var(--accent-soft)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
           >
             <X className="h-3.5 w-3.5" aria-hidden="true" />
           </button>
@@ -211,6 +224,11 @@ function RemovedTurns({
       <h4 className="font-medium text-[var(--foreground)]">
         {t('context.removedTitle', { count: removed.length })}
       </h4>
+      {/* `role="list"` is not redundant here: Tailwind preflight removes the
+          list marker, and WebKit then drops list semantics, so VoiceOver on
+          Safari/iOS stops announcing this as a list. See
+          ConversationContextPanel.tsx for the full note. */}
+      {/* oxlint-disable-next-line jsx-a11y/no-redundant-roles */}
       <ul role="list" className="flex flex-col gap-1">
         {removed.map((entry) => (
           <li
@@ -225,7 +243,7 @@ function RemovedTurns({
               type="button"
               onClick={() => onRestore(entry.entryId)}
               aria-label={t('context.restoreItem', { value: entry.question })}
-              className="ml-auto inline-flex items-center gap-1 rounded p-0.5 text-[var(--muted-foreground)] hover:bg-[var(--accent-soft)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              className="ml-auto inline-flex items-center gap-1 rounded p-0.5 text-[var(--muted-foreground)] hover:bg-[var(--accent-soft)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
             >
               <Undo2 className="h-3.5 w-3.5" aria-hidden="true" />
               {t('context.restore')}

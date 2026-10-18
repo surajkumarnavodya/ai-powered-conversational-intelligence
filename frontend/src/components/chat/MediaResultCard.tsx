@@ -78,7 +78,18 @@ export function MediaResultCard({ result, entryId }: { result: MediaGenerationRe
         <p className="text-[var(--muted-foreground)]">Loading generated media...</p>
       )}
       {!error && blobUrl && result.media_type === 'video' && (
-        <video src={blobUrl} controls className="max-w-full rounded-md" />
+        // No <track>: this is model-generated video and the app holds no
+        // transcript for it, so there is nothing truthful to caption it
+        // with -- inventing one would be worse than omitting it. This is a
+        // disclosed accessibility limitation of generated media, not an
+        // oversight. The label at least names the player.
+        // oxlint-disable-next-line jsx-a11y/media-has-caption
+        <video
+          src={blobUrl}
+          controls
+          aria-label="Generated video"
+          className="max-w-full rounded-md"
+        />
       )}
       {!error && blobUrl && result.media_type !== 'video' && (
         <img src={blobUrl} alt="Generated" className="max-w-full rounded-md" />

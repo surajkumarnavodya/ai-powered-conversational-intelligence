@@ -1,0 +1,48 @@
+Bundled font licenses
+=====================
+
+This application self-hosts the typefaces offered by the font picker in
+Settings > Appearance (see frontend/src/lib/fonts.ts). They are bundled as
+WOFF2 and served from this application's own origin; no font is fetched
+from a third-party CDN.
+
+Every bundled typeface is licensed under the SIL Open Font License v1.1
+(OFL-1.1), which permits bundling and redistribution provided the copyright
+notice and license accompany the font files. That notice is reproduced
+below. The full, unmodified license text for each family ships inside its
+npm package at node_modules/@fontsource-variable/<family>/LICENSE.
+
+  Inter              Copyright 2016 The Inter Project Authors
+                     https://github.com/rsms/inter
+
+  Geist Sans         Copyright 2024 The Geist Project Authors
+  Geist Mono         https://github.com/vercel/geist-font
+
+  IBM Plex Sans      Copyright 2019 IBM Corp. All rights reserved.
+                     https://github.com/IBM/plex
+
+  Plus Jakarta Sans  Copyright 2020 The Plus Jakarta Sans Project Authors
+                     https://github.com/tokotype/PlusJakartaSans
+
+  JetBrains Mono     Copyright 2020 The JetBrains Mono Project Authors
+                     https://github.com/JetBrains/JetBrainsMono
+
+  Roboto             Copyright 2011 The Roboto Project Authors
+                     https://github.com/googlefonts/roboto-classic
+
+  Merriweather       Copyright 2024 The Merriweather Project Authors
+                     https://github.com/EbenSorkin/Merriweather4
+
+SIL OPEN FONT LICENSE Version 1.1 - summary of terms
+----------------------------------------------------
+The fonts and derivatives may be used, studied, modified and redistributed
+freely, including bundled with software, so long as they are not sold by
+themselves, any derivative keeps the OFL, and this notice is retained.
+Reserved Font Names, where a family declares them, may not be used by
+derivatives without permission.
+
+Full license text: https://openfontlicense.org/
+
+The "System default" and "System monospace" options bundle nothing -- they
+resolve to whichever sans-serif or monospace face the operating system
+already provides, and carry no license obligation here.

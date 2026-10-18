@@ -164,7 +164,20 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
             // revoked on unmount: switching conversations and back must
             // not break replay, and one blob URL per voice turn is a
             // bounded, accepted cost for the life of the tab.
-            <audio src={entry.spokenAudioUrl} controls className="h-8 max-w-[200px]" />
+            // No <track>, and oxlint's media-has-caption is suppressed
+            // rather than satisfied: this audio *is* a spoken rendering of
+            // the answer text sitting directly above it on screen, so the
+            // text alternative WCAG 1.2.1 asks for already exists and is
+            // the primary content. A caption file would transcribe the
+            // page back to itself. The label is what was missing -- an
+            // unlabelled player is announced only as "audio".
+            // oxlint-disable-next-line jsx-a11y/media-has-caption
+            <audio
+              src={entry.spokenAudioUrl}
+              controls
+              aria-label={t('chat.spokenAnswerLabel')}
+              className="h-8 max-w-[200px]"
+            />
           )}
         </div>
 

@@ -22,16 +22,13 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Text-to-SQL" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <!-- Optional web fonts for the font picker (src/lib/theme.ts's FONT_OPTIONS)
-         -- each has a system-font fallback in its CSS stack, so the app still
-         renders correctly if this request is blocked (e.g. offline/air-gapped
-         deployment), matching the project's local-first posture. -->
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Merriweather:wght@400;700&family=Roboto:wght@400;500;700&display=swap"
-      rel="stylesheet"
-    />
+    <!-- No web-font <link> here on purpose. The selectable fonts
+         (src/lib/fonts.ts) are self-hosted via @fontsource-variable and
+         lazy-loaded by the picker, so this app makes no third-party request
+         to render its own UI and works unchanged in an air-gapped
+         deployment -- the same local-first posture as the LLM, database and
+         vector store. This previously pulled four families from the Google
+         Fonts CDN on every page load, whether or not they were selected. -->
   </head>
   <body>
     <div id="root"></div>
