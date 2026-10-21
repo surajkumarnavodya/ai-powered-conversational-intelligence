@@ -1536,12 +1536,34 @@ def synthesis_node(state: OrchestratorState) -> dict[str, Any]:
         pending_any = any(
             result and result.get("status") == "pending_approval" for result in source_results
         )
+        # "Searched correctly and matched nothing" is not a failure, and
+        # saying it is produces a run the user cannot make sense of: a red
+        # "The request failed." banner sitting directly above a perfectly
+        # coherent "I couldn't find any relevant information" answer and a
+        # "Not available" badge, all describing the same outcome. The
+        # pending_approval branch above already exists because of exactly
+        # this mistake in another guise; this is the same class of bug.
+        #
+        # The distinction is the *source's own* status, which already
+        # separates the two cases: "insufficient_information" means the
+        # search ran and nothing matched, "failed" means the source itself
+        # broke (an exception, an unreachable search API). Only the latter
+        # is a failed run.
+        #
+        # This also aligns the text sources with SQL, where a query that
+        # executes cleanly and returns zero rows has always been
+        # "succeeded" -- a search that runs cleanly and returns zero chunks
+        # is the same thing, and the emptiness is carried by the answer
+        # text and the per-source badge rather than by the run status.
+        errored_any = any(result and result.get("status") == "failed" for result in source_results)
         if found_any:
             status_update = {"status": "succeeded"}
         elif pending_any:
             status_update = {}
-        else:
+        elif errored_any:
             status_update = {"status": "failed"}
+        else:
+            status_update = {"status": "succeeded"}
 
     if len(sources_used) <= 1:
         return status_update

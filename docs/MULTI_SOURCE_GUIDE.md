@@ -360,6 +360,16 @@ assuming something's broken.
   Sources page, and that you asked a question the document actually
   answers — check the "Sources: ..." citation line under a document/
   policy/web answer to see which file(s) it actually drew from.
+- **A document is clearly in the store, but a question about it finds
+  nothing.** Check which *collection* it was uploaded into. `documents`
+  and `policies` are separate collections searched by separate sources,
+  and the router picks the source from the question's wording — so a
+  policy PDF uploaded as a plain document is invisible to a question
+  phrased as a policy question, and vice versa. The `[router]` log line
+  shows which source ran, and `[rag.retrieve] collection=... retrieved=0`
+  shows which collection was searched and came back empty. Either
+  re-upload it into the matching collection, or narrow the question to
+  the source that holds it with the composer's source picker.
 - **A policy question always gets refused.** Check whether the retrieved
   chunk(s) are tagged with a sensitivity category on the Knowledge Sources
   page — that's a hard gate (see step 3), not a bug. If the content

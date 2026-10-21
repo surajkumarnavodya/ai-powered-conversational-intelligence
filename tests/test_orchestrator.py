@@ -1692,7 +1692,24 @@ class TestSynthesisNode:
         result = synthesis_node(state)
         assert "status" not in result
 
-    def test_sets_status_failed_when_the_single_non_sql_source_found_nothing(self):
+    def test_a_source_that_searched_and_matched_nothing_is_not_a_failed_run(self):
+        """Changed deliberately: this used to assert "failed".
+
+        A source that ran correctly and matched nothing has not failed, and
+        reporting it as such produced a run the user could not make sense
+        of -- `TurnCard.tsx` renders a red "The request failed." for a
+        failed status, which appeared directly above the perfectly coherent
+        "I couldn't find any relevant information" answer and the source's
+        own "Not available" badge, all three describing the same outcome.
+
+        It also puts the text sources back in step with SQL, where a query
+        that executes cleanly and returns zero rows has always been
+        "succeeded". The emptiness is carried by the answer text and the
+        per-source badge, which is where a user actually reads it.
+
+        A source that genuinely broke is still a failed run -- see the test
+        below, which is the half of this behaviour that must not regress.
+        """
         state = {
             "sources_used": ["web"],
             "web_result": {
@@ -1701,7 +1718,42 @@ class TestSynthesisNode:
                 "status": "insufficient_information",
             },
         }
+        assert synthesis_node(state) == {"status": "succeeded"}
+
+    def test_a_source_that_errored_is_still_a_failed_run(self):
+        """The distinction the status now rests on: "insufficient_information"
+        means the search ran and found nothing, "failed" means the source
+        itself broke (an exception, an unreachable search API). Only the
+        latter is a failed run, and collapsing the two is what the test
+        above used to do."""
+        state = {
+            "sources_used": ["web"],
+            "web_result": {
+                "answer": "Web search failed: provider unreachable.",
+                "citations": [],
+                "status": "failed",
+            },
+        }
         assert synthesis_node(state) == {"status": "failed"}
+
+    def test_one_errored_source_fails_the_run_even_beside_an_empty_one(self):
+        """A real error must not be masked by an ordinary empty result."""
+        state = {
+            "sources_used": ["web", "policy"],
+            "web_result": {
+                "answer": "Web search failed: provider unreachable.",
+                "citations": [],
+                "status": "failed",
+            },
+            "policy_result": {
+                "answer": "No matching policy content.",
+                "citations": [],
+                "status": "insufficient_information",
+            },
+        }
+        # A multi-source run also returns a synthesized answer, so this
+        # asserts the status rather than the whole dict.
+        assert synthesis_node(state)["status"] == "failed"
 
     def test_sets_status_succeeded_for_a_restricted_single_source(self):
         """A restricted match means something relevant was found, just not
