@@ -39,6 +39,22 @@ models:
       ability -- a strong alternative to the default for SQL generation at
       a similar hardware footprint.
 
+  - id: qwen2.5-coder:7b
+    display_name: Qwen2.5-Coder 7B
+    parameter_size: 7B
+    context_length: 32000
+    resource_level: medium
+    capabilities: [text, sql, reasoning, tools]
+    recommended: true
+    description: >
+      The code-specialised sibling of Qwen 2.5 7B, trained on a far larger
+      proportion of code (SQL included) and documented for strong
+      structured/JSON output -- the closest thing in this list to a
+      purpose-built Text-to-SQL model that is still actively maintained,
+      unlike SQLCoder below. Same hardware footprint as the plain 7B.
+      Note the quantisation is whatever the `:7b` tag currently points at
+      in the Ollama registry; this project does not pin it.
+
   - id: qwen2.5:14b
     display_name: Qwen 2.5 14B
     parameter_size: 14B

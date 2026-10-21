@@ -196,6 +196,15 @@ class TestOllamaModelCatalog:
         assert "llama3.1:8b" in catalog
         assert catalog["llama3.1:8b"].display_name
 
+    def test_load_real_catalog_includes_the_code_specialised_model(self):
+        # qwen2.5-coder:7b is the model this deployment runs for Text-to-SQL;
+        # a missing catalog entry would quietly degrade it to a generic
+        # display name in the picker rather than failing loudly.
+        catalog = load_ollama_model_catalog()
+        assert "qwen2.5-coder:7b" in catalog
+        assert catalog["qwen2.5-coder:7b"].display_name == "Qwen2.5-Coder 7B"
+        assert "sql" in catalog["qwen2.5-coder:7b"].capabilities
+
     def test_missing_file_returns_empty_dict_not_an_error(self, tmp_path):
         catalog = load_ollama_model_catalog(tmp_path / "does-not-exist.yaml")
         assert catalog == {}
@@ -204,6 +213,25 @@ class TestOllamaModelCatalog:
         catalog = load_ollama_model_catalog()
         info = describe_model("llama3.1:8b", catalog)
         assert info.display_name == "Llama 3.1 8B"
+
+    def test_catalog_entries_are_structurally_complete(self):
+        """Every curated entry must carry the fields the UI renders.
+
+        A half-filled entry is worse than no entry at all: `describe_model`
+        only falls back to a generic description when the id is *absent*,
+        so an id that is present but missing a display name renders as a
+        blank option rather than a sensible default.
+        """
+        catalog = load_ollama_model_catalog()
+        assert catalog, "the real catalog should not be empty"
+        for model_id, info in catalog.items():
+            assert info.display_name, f"{model_id} has no display_name"
+            assert info.parameter_size, f"{model_id} has no parameter_size"
+            assert info.context_length > 0, f"{model_id} has no context_length"
+            assert info.capabilities, f"{model_id} declares no capabilities"
+            assert "sql" in info.capabilities, (
+                f"{model_id} is offered for Text-to-SQL but does not claim the " "'sql' capability"
+            )
 
     def test_describe_model_falls_back_gracefully_for_unknown_id(self):
         info = describe_model("some-new-model:20b", {})

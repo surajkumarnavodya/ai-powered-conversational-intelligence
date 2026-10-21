@@ -18,6 +18,59 @@ malformed values (not missing ones) fail fast at startup with a
 | `OLLAMA_MODEL_SELECTION_ENABLED` | `true` | Master switch for per-question model selection (see below). `false` collapses every request to `OLLAMA_MODEL`, matching this app's behavior before this feature existed. |
 | `OLLAMA_ALLOWED_MODELS` | *(unset → a small starter set)* | Comma-separated list of additional Ollama model names selectable for Text-to-SQL. `OLLAMA_MODEL` is always included even if you omit it here. |
 
+### Where Ollama stores model files
+
+**`OLLAMA_MODELS` is an Ollama setting, not one of this app's.** It is not a
+`Settings` field and nothing in this repository reads it — the app only ever
+talks to `OLLAMA_HOST` over HTTP. It is documented here because it decides
+which drive needs tens of gigabytes free, which is a setup question people
+hit immediately.
+
+Default is `%USERPROFILE%\.ollama\models` on Windows. To keep weights off a
+small system drive, point it elsewhere **before starting Ollama**:
+
+```powershell
+# One-time. User scope is correct when Ollama runs as the desktop app
+# (the usual Windows install): the tray app inherits the user environment.
+[Environment]::SetEnvironmentVariable("OLLAMA_MODELS", "D:\OllamaModels", "User")
+```
+
+Then restart Ollama so the new value is actually picked up — a running
+server keeps the path it started with:
+
+```powershell
+Get-Process "ollama app", "ollama" -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Process "$env:LOCALAPPDATA\Programs\Ollama\ollama app.exe"
+```
+
+**If Ollama runs as a Windows service instead**, a user-scope variable will
+not reach it — set the variable in the service's own environment (or at
+machine scope) and restart the service. Check with
+`Get-Service *ollama*`; on this project's reference machine there is no such
+service, only the desktop app.
+
+**Moving existing models.** Copy, do not move, and keep the originals until
+the new location is proven:
+
+```powershell
+robocopy "$env:USERPROFILE\.ollama\models" "D:\OllamaModels" /E /COPY:DAT
+# robocopy exit codes 0-7 are success (1 = "files were copied"); >=8 is a real failure.
+```
+
+After restarting, `ollama list` must still show every model you had. Only
+then delete the old directory to reclaim the space.
+
+**Verify the path is really in effect, rather than trusting the variable.**
+The variable being set does not prove the running process read it. Compare
+free space before and after a pull, or check where the bytes landed:
+
+```powershell
+(Get-ChildItem "D:\OllamaModels" -Recurse -File | Measure-Object Length -Sum).Sum / 1GB
+```
+
+A pull that grows `C:` instead means the running Ollama never saw the
+variable — restart it rather than re-pulling.
+
 ### Model selection
 
 Users (or any `POST /ask` caller) can choose which locally-installed Ollama
