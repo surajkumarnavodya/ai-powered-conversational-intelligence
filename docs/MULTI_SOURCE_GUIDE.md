@@ -361,15 +361,25 @@ assuming something's broken.
   answers — check the "Sources: ..." citation line under a document/
   policy/web answer to see which file(s) it actually drew from.
 - **A document is clearly in the store, but a question about it finds
-  nothing.** Check which *collection* it was uploaded into. `documents`
-  and `policies` are separate collections searched by separate sources,
-  and the router picks the source from the question's wording — so a
-  policy PDF uploaded as a plain document is invisible to a question
-  phrased as a policy question, and vice versa. The `[router]` log line
-  shows which source ran, and `[rag.retrieve] collection=... retrieved=0`
-  shows which collection was searched and came back empty. Either
-  re-upload it into the matching collection, or narrow the question to
-  the source that holds it with the composer's source picker.
+  nothing.** `documents` and `policies` are separate collections, split by
+  how a file was flagged at upload rather than by subject. When you have
+  *not* narrowed the question with the source picker, the router now
+  always searches **both**: whichever one the classifier picks, the other
+  is paired in automatically, because you have no way of knowing which
+  collection a given PDF landed in. The `[router]` log line shows the
+  pairing (`'documents' paired in -- ...`), and
+  `[rag.retrieve] collection=... retrieved=0` shows a collection that was
+  searched and came back empty.
+
+  This does **not** apply when you *have* picked a source explicitly —
+  that is an instruction, and narrowing to Policy searches Policy only.
+  So if you deliberately selected one collection and got nothing, try
+  clearing the selection, or select the other one.
+
+  The pairing requests the second collection; it never grants access to
+  it. A caller without the policy permission still has `policy` dropped
+  by the authorization filter, exactly as if the classifier had asked for
+  it directly.
 - **A policy question always gets refused.** Check whether the retrieved
   chunk(s) are tagged with a sensitivity category on the Knowledge Sources
   page — that's a hard gate (see step 3), not a bug. If the content

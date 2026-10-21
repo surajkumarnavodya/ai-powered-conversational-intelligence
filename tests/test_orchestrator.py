@@ -340,6 +340,113 @@ class TestRouterNode:
         assert decision["sources"] == ["sql", "policy"]
         assert decision["short_circuited"] is False
 
+    def _doc_and_policy_settings(self):
+        return _settings(
+            enable_document_rag=True,
+            enable_policy_rag=True,
+            rag_store_connection_string=SecretStr("x"),
+        )
+
+    def test_picking_policy_alone_also_searches_documents(self, monkeypatch):
+        """'documents' and 'policy' hold the same kind of uploaded text,
+        split by an upload-time flag rather than by subject, so a user has
+        no way to know which one their file landed in.
+
+        The real report: a leave-policy PDF uploaded as a plain document
+        was invisible to "provide me the sick leave policy", because the
+        classifier read the word "policy" and committed to that collection
+        alone. `_SOURCE_DESCRIPTIONS` already warns against exactly this
+        and whether the warning is honoured turns out to vary by model --
+        measured on the same question, llama3.1:8b picked both while
+        qwen2.5-coder:7b picked "policy" alone -- so the pairing is
+        deterministic rather than left to the prompt.
+        """
+        monkeypatch.setattr(
+            orchestrator_nodes, "get_settings", lambda: self._doc_and_policy_settings()
+        )
+        monkeypatch.setattr(
+            orchestrator_nodes,
+            "classify_sources",
+            lambda q, avail, s: (["policy"], "classified from question intent: 'policy'"),
+        )
+        result = router_node(
+            {"question": "provide me the sick leave policy", "caller_roles": ("admin",)}
+        )
+        assert set(result["route_decision"]["sources"]) == {"policy", "documents"}
+
+    def test_picking_documents_alone_also_searches_policy(self, monkeypatch):
+        """The pairing is symmetric -- a sensitive document filed into
+        'policy' must not be missed by a question the classifier reads as
+        an ordinary document lookup."""
+        monkeypatch.setattr(
+            orchestrator_nodes, "get_settings", lambda: self._doc_and_policy_settings()
+        )
+        monkeypatch.setattr(
+            orchestrator_nodes,
+            "classify_sources",
+            lambda q, avail, s: (["documents"], "classified from question intent: 'documents'"),
+        )
+        result = router_node({"question": "what do the handbooks say?", "caller_roles": ("admin",)})
+        assert set(result["route_decision"]["sources"]) == {"policy", "documents"}
+
+    def test_pairing_does_not_duplicate_when_the_classifier_picked_both(self, monkeypatch):
+        monkeypatch.setattr(
+            orchestrator_nodes, "get_settings", lambda: self._doc_and_policy_settings()
+        )
+        monkeypatch.setattr(
+            orchestrator_nodes,
+            "classify_sources",
+            lambda q, avail, s: (["documents", "policy"], "both"),
+        )
+        result = router_node({"question": "anything", "caller_roles": ("admin",)})
+        sources = result["route_decision"]["sources"]
+        assert sorted(sources) == ["documents", "policy"]
+        assert len(sources) == len(set(sources))
+
+    def test_pairing_leaves_a_route_with_neither_collection_alone(self, monkeypatch):
+        """A pure SQL question must not start searching documents."""
+        monkeypatch.setattr(
+            orchestrator_nodes, "get_settings", lambda: self._doc_and_policy_settings()
+        )
+        monkeypatch.setattr(
+            orchestrator_nodes, "classify_sources", lambda q, avail, s: (["sql"], "sql only")
+        )
+        result = router_node({"question": "how many orders?", "caller_roles": ("admin",)})
+        assert result["route_decision"]["sources"] == ["sql"]
+
+    def test_pairing_is_skipped_when_the_sibling_is_not_configured(self, monkeypatch):
+        """Policy RAG off: nothing to pair with, and the route must not
+        name a source this deployment cannot run."""
+        settings = _settings(
+            enable_document_rag=True,
+            enable_policy_rag=False,
+            rag_store_connection_string=SecretStr("x"),
+        )
+        monkeypatch.setattr(orchestrator_nodes, "get_settings", lambda: settings)
+        monkeypatch.setattr(
+            orchestrator_nodes, "classify_sources", lambda q, avail, s: (["documents"], "docs")
+        )
+        result = router_node({"question": "what do the handbooks say?", "caller_roles": ("admin",)})
+        assert result["route_decision"]["sources"] == ["documents"]
+
+    def test_pairing_requests_policy_but_cannot_grant_it(self, monkeypatch):
+        """The security half of the pairing: it is applied *before* the
+        authorization filter, so it can put 'policy' on the route but
+        never past the permission check. A caller without the policy
+        permission still gets it dropped, exactly as if the classifier had
+        asked for it directly."""
+        monkeypatch.setattr(
+            orchestrator_nodes, "get_settings", lambda: self._doc_and_policy_settings()
+        )
+        monkeypatch.setattr(
+            orchestrator_nodes, "classify_sources", lambda q, avail, s: (["documents"], "docs")
+        )
+        result = router_node(
+            {"question": "what do the handbooks say?", "caller_roles": ("viewer",)}
+        )
+        assert result["route_decision"]["sources"] == ["documents"]
+        assert "policy" not in result["route_decision"]["sources"]
+
     def test_attachments_are_forced_into_the_route_even_if_the_classifier_omits_them(
         self, monkeypatch
     ):

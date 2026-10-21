@@ -593,6 +593,41 @@ def router_node(state: OrchestratorState) -> dict[str, Any]:
         sources, reasoning = classify_sources(question, available, settings)
         short_circuited = False
 
+    # "documents" and "policy" are two collections of the same *kind* of
+    # thing -- uploaded text -- split by how a file was flagged at upload,
+    # not by subject. A user asking a question has no way of knowing which
+    # of the two their PDF landed in, so letting the classifier commit to
+    # one and silently skip the other loses answers that are sitting right
+    # there: a leave-policy PDF uploaded as a plain document is invisible
+    # to "provide me the sick leave policy" the moment the model reads the
+    # word "policy" and picks that source alone.
+    #
+    # `_SOURCE_DESCRIPTIONS` already warns about exactly this ("most
+    # policy-titled documents (e.g. a leave or holiday policy) live in
+    # 'documents' instead") and it is not enough: whether the warning is
+    # honoured varies by model. Measured on the same four questions,
+    # llama3.1:8b picked both collections every time while
+    # qwen2.5-coder:7b picked "policy" alone for three of four. Routing
+    # correctness should not rest on which local model happens to be
+    # configured, so the pairing is deterministic here.
+    #
+    # Cheap by construction: both collections are local vector search
+    # against infrastructure this deployment already owns -- neither is in
+    # `_EXPENSIVE_SOURCES`, so this adds no third-party call and no cost.
+    # The extra collection usually returns nothing and is then dropped
+    # from the answer by `synthesis_node`, which already omits empty
+    # sources when another source found something.
+    _TEXT_COLLECTION_SOURCES = ("documents", "policy")
+    picked_collections = [s for s in _TEXT_COLLECTION_SOURCES if s in sources]
+    if len(picked_collections) == 1:
+        sibling = next(s for s in _TEXT_COLLECTION_SOURCES if s not in picked_collections)
+        if sibling in available:
+            sources.append(sibling)
+            reasoning += (
+                f" ({sibling!r} paired in -- 'documents' and 'policy' hold the same kind "
+                "of uploaded text, split by upload flag rather than subject)"
+            )
+
     # "attachments" is never left to the classifier's discretion -- the
     # user explicitly attached file(s) to this exact question, so silently
     # dropping them (e.g. the classifier deciding the question "sounds
