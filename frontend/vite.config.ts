@@ -81,6 +81,13 @@ const BACKEND_ROUTES = [
   // reason. The chat page itself has no `/artifacts` route, so this
   // prefix is the API's alone.
   '/artifacts',
+  // Asynchronous question queue (api/jobs.py): POST /questions and its
+  // status/cancel/stats siblings. Added up front rather than found the
+  // hard way, the same recurring dev-proxy gap every new backend prefix
+  // since Prompt 26 has needed fixed. NetworkOnly matters more than usual
+  // here: a cached job-status response would show a stale `queued` after
+  // the answer had already arrived, which reads as the queue being stuck.
+  '/questions',
   // Operational metrics (api/main.py): `/metrics/performance`, which
   // `frontend/src/lib/api.ts` has always called, and `/metrics/harness`.
   // Missing here until the harness work added a second route under the

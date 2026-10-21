@@ -97,6 +97,7 @@ from api.eval_platform import router as eval_platform_router
 from api.generation import router as generation_router
 from api.governance import router as governance_router
 from api.identity_auth import router as identity_auth_router
+from api.jobs import router as jobs_router
 from api.kpi_monitoring import router as kpi_monitoring_router
 from api.lineage import router as lineage_router
 from api.media import router as media_router
@@ -328,6 +329,57 @@ def _warn_on_ask_concurrency_pool_mismatch(settings) -> None:
     )
 
 
+def run_question_queue_startup_checks(settings) -> list[str]:
+    """Runs `jobs.sizing`'s capacity cross-checks at startup.
+
+    A thin wrapper so `api/main.py` keeps one naming convention for its
+    startup steps and so the import stays local to this module. Returns
+    the findings (also logged) rather than nothing, which is what lets
+    `tests/test_question_queue_sizing.py` assert on them without
+    capturing log output. Never raises -- a sizing finding is advisory,
+    and failing startup over one would be worse than the mis-sizing it
+    reports.
+
+    A separate, plain function (mirroring
+    `_enforce_database_write_privileges`'s own reasoning) so it is
+    unit-testable without spinning up the whole app.
+    """
+    from jobs.sizing import run_startup_checks
+
+    return run_startup_checks(settings)
+
+
+def _shutdown_question_queue(settings) -> None:
+    """Gracefully drains the asynchronous question queue on shutdown.
+
+    Mirrors `_shutdown_ask_executor` below, for the subsystem that has
+    strictly more to lose: a question job has no caller blocking on it,
+    so without this a SIGTERM during a rolling deployment would discard
+    in-flight work with nothing to tell its owner what happened.
+
+    `QuestionQueue.shutdown` stops admitting, marks every QUEUED job
+    CANCELLED (it never started -- there is nothing to wait for), signals
+    every RUNNING job's envelope so it stops at its next node boundary,
+    then waits up to `QUESTION_SHUTDOWN_GRACE_SECONDS`. A worker still
+    inside a C extension at the end of the grace outlives it, which is
+    the same limitation `_shutdown_ask_executor` and `db.execution` both
+    document; the cost is a discarded result, never a corrupted one.
+
+    `get_question_queue` is passed no runner here on purpose: it returns
+    `None` unless a queue was already built, so shutdown never *creates*
+    one just to tear it down.
+
+    A separate, plain function (mirroring
+    `_enforce_database_write_privileges`'s own reasoning) so it is
+    unit-testable without spinning up the whole app.
+    """
+    from jobs.queue import get_question_queue
+
+    queue = get_question_queue(settings)
+    if queue is not None:
+        queue.shutdown()
+
+
 def _shutdown_ask_executor(settings) -> None:
     """Drains `_get_ask_executor`'s bounded `/ask` thread pool on shutdown.
 
@@ -395,6 +447,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.db_engines = db_engines
     _enforce_database_write_privileges(db_engines, settings)
     _warn_on_ask_concurrency_pool_mismatch(settings)
+    # The question queue's own capacity cross-checks (jobs/sizing.py):
+    # warnings only, never a refusal, for the same reason
+    # `_warn_on_ask_concurrency_pool_mismatch` just above is a warning.
+    run_question_queue_startup_checks(settings)
 
     app.state.ollama_client = get_ollama_client(settings)
     app.state.compiled_graph = build_graph()
@@ -408,6 +464,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     yield
 
+    # Drained before the /ask pool: a question job runs the same graph an
+    # /ask request does, so its in-flight work has to be signalled and
+    # given its grace period first, or the pool shutdown below would
+    # block on work nobody had told to stop.
+    _shutdown_question_queue(settings)
     _shutdown_ask_executor(settings)
 
 
@@ -447,6 +508,11 @@ app.include_router(bi_integration_router)
 app.include_router(platform_admin_router)
 app.include_router(tenant_admin_router)
 app.include_router(model_routing_router)
+# The asynchronous question queue (`jobs/`). Registered like any other
+# router; `ENABLE_QUESTION_QUEUE=false` makes its routes answer 503
+# rather than disappear, so a frontend can show a clear message
+# instead of a 404 (see api/jobs.py's `_require_queue`).
+app.include_router(jobs_router)
 app.include_router(navigation_router)
 app.include_router(sources_router)
 # Registered after `ask` is defined above: api/streaming.py imports it
@@ -1008,6 +1074,12 @@ def _ask_response_from_state(
     error_history = state.get("error_history", [])
     query_plan = state.get("query_plan")
     return AskResponse(
+        # Both default to `{}` so a run that never went through the
+        # orchestrator (the router-off path, eval/runner.py, the
+        # standalone scripts) is unchanged rather than reporting a
+        # confidence or a grounding verdict nobody computed.
+        source_confidence=dict(state.get("source_confidence", {}) or {}),
+        grounding=dict(state.get("grounding", {}) or {}),
         session_id=session_id,
         conversation_id=conversation_id,
         status=state.get("status", "failed"),

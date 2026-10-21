@@ -506,5 +506,30 @@
     "openSettings": "Abrir ajustes",
     "focusComposer": "Ir al cuadro de pregunta",
     "showHelp": "Mostrar esta lista"
+  },
+  "questionQueue": {
+    "title": "Tus preguntas",
+    "capacity": "{{running}} de {{max}} en curso · {{queued}} en espera",
+    "atLimit": "Tienes {{max}} preguntas en curso, que es el límite de esta instalación. Las demás esperarán su turno y comenzarán automáticamente.",
+    "waiting": "esperando {{seconds}} s",
+    "ran": "tardó {{seconds}} s",
+    "attempts": "intento {{count}}",
+    "cancel": "Cancelar esta pregunta",
+    "dismiss": "Quitar de esta lista",
+    "blockedExplanation": "Esta pregunta no se respondió porque no superó las comprobaciones de seguridad de esta instalación.",
+    "status": {
+      "queued": "En espera",
+      "running": "Procesando",
+      "completed": "Respondida",
+      "failed": "Error",
+      "cancelled": "Cancelada",
+      "timeout": "Tiempo agotado",
+      "blockedByGuardrail": "No permitida"
+    },
+    "confidence": {
+      "high": "{{source}}: coincidencia alta",
+      "medium": "{{source}}: coincidencia parcial",
+      "low": "{{source}}: coincidencia baja"
+    }
   }
 }

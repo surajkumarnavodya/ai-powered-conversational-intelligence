@@ -48,8 +48,13 @@ describe('chatStore askQuestion / cancelPendingQuestion', () => {
     useChatStore.getState().cancelPendingQuestion()
     const entry = await promise
 
-    expect(entry.agentStatus).toBe('failed')
-    expect(entry.finalState.failure_explanation).toBe('Cancelled.')
+    // Not undefined here: nothing was pending when `askQuestion` was
+    // called, so this question took the inline path and must return its
+    // own history entry. `undefined` is reserved for a question handed to
+    // the asynchronous queue, which this one was not.
+    expect(entry).toBeDefined()
+    expect(entry?.agentStatus).toBe('failed')
+    expect(entry?.finalState.failure_explanation).toBe('Cancelled.')
     expect(useChatStore.getState().pendingQuestion).toBeNull()
   })
 

@@ -40,6 +40,7 @@ task actually touches its area.
 | Every configuration setting | [`../CONFIGURATION.md`](../CONFIGURATION.md) | settings reference |
 | Tool/MCP abstraction | [`../TOOLS.md`](../TOOLS.md) | the tool contract |
 | Multi-source setup and use | [`../MULTI_SOURCE_GUIDE.md`](../MULTI_SOURCE_GUIDE.md) | configuring each source |
+| Asynchronous question queue, per-user concurrency, deterministic source routing, per-task model pins, the guardrail façade and the grounding gate | [`../CONCURRENCY.md`](../CONCURRENCY.md) | concurrency limits and behaviour, routing rules, model fallback, guardrail configuration, hallucination controls, scaling guidance |
 | Per-capability implementation **status**, file evidence and priority | [`feature-inventory.md`](feature-inventory.md) | what state a capability is actually in |
 | Source-type **capability/auth/ACL comparison**, including unimplemented sources | [`data-source-matrix.md`](data-source-matrix.md) | per-source-type capabilities, auth model and verification status |
 | Source-connectivity batch plan, prerequisites, rollback | [`implementation-roadmap.md`](implementation-roadmap.md) | sequencing of the connector programme |

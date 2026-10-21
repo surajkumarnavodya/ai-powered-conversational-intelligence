@@ -94,7 +94,13 @@ export function ChatInput({ onSend }: { onSend?: () => void } = {}) {
   const askQuestion = useChatStore((state) => state.askQuestion)
   const tryApplyChartTypeFollowup = useChatStore((state) => state.tryApplyChartTypeFollowup)
   const cancelPendingQuestion = useChatStore((state) => state.cancelPendingQuestion)
+  // "A turn is in flight." Still gates the controls that belong to that
+  // turn (attachments, the source picker, voice capture), which a queued
+  // follow-up question does not participate in.
   const disabled = pendingQuestion !== null
+  // Whether the primary button means Stop rather than Send. Only when a
+  // question is pending *and* nothing is typed -- see the button itself.
+  const showStop = disabled && !value.trim()
   const { toast } = useToast()
 
   const voice = useVoiceConversation((text) => {
@@ -159,7 +165,14 @@ export function ChatInput({ onSend }: { onSend?: () => void } = {}) {
     // Blocked while any attachment is still uploading/processing -- sending
     // early would either omit it entirely or race the server still writing
     // its record, neither of which should silently happen.
-    if (!trimmed || disabled || attachments.isUploading) return
+    // `disabled` (a question already in flight) is deliberately NOT a
+    // guard here any more. `chatStore.askQuestion` now routes a question
+    // submitted while another is pending to the asynchronous queue
+    // instead of overwriting the single pending slot, so submitting is
+    // safe and is what lets a user ask several things at once. Still
+    // blocked while an attachment is uploading: sending early would
+    // either omit it or race the server still writing its record.
+    if (!trimmed || attachments.isUploading) return
 
     // A "show this as a pie chart"/"switch to line" style follow-up is
     // answered instantly, client-side, against the most recent chartable
@@ -225,11 +238,17 @@ export function ChatInput({ onSend }: { onSend?: () => void } = {}) {
     // couldn't answer" still means the attachment was received and
     // processed -- the sent bubble above already carries its own read-only
     // reference, so nothing is lost by clearing the now-stale pending chips.
-    if (entry.finalState.session_id) {
+    //
+    // `entry` is undefined when this question went to the asynchronous
+    // queue instead of being answered inline (another was already in
+    // flight). The attachment chips are cleared in that case too: the
+    // server accepted the submission and already holds the attachment
+    // ids, so leaving the chips would invite the user to send them twice.
+    if (!entry || entry.finalState.session_id) {
       attachments.clearAll()
     }
 
-    if (voiceOriginated && entry.spokenAudioUrl) {
+    if (voiceOriginated && entry?.spokenAudioUrl) {
       await voice.playAnswer(entry.spokenAudioUrl)
     }
   }
@@ -387,20 +406,27 @@ export function ChatInput({ onSend }: { onSend?: () => void } = {}) {
             </Button>
           )}
           <Button
-            variant={disabled ? 'secondary' : 'primary'}
+            variant={showStop ? 'secondary' : 'primary'}
             size="icon"
-            onClick={() => (disabled ? cancelPendingQuestion() : void submit())}
-            // Stop is always available the instant a question is pending --
-            // there is no real token stream to interrupt (see
-            // docs/frontend-ui-audit.md), but the single outstanding /ask
-            // request can genuinely be aborted (AbortController, chatStore
-            // .cancelPendingQuestion), so this is a real cancel, not a fake one.
-            disabled={!disabled && (voiceLocked || !value.trim() || attachments.isUploading)}
-            aria-label={disabled ? t('common.stop') : t('chat.send')}
-            title={disabled ? t('common.stop') : t('chat.send')}
+            onClick={() => (showStop ? cancelPendingQuestion() : void submit())}
+            // Stop stays a real cancel of the one outstanding streaming
+            // request (AbortController, chatStore.cancelPendingQuestion) --
+            // there is no token stream to interrupt (see
+            // docs/frontend-ui-audit.md), but the request itself genuinely
+            // aborts.
+            //
+            // It is now shown only while a question is pending AND the box
+            // is empty. With text typed, the button sends: that question
+            // goes to the asynchronous queue rather than replacing the
+            // one in flight, which is what lets several questions run at
+            // once. Keeping Stop as the only option whenever anything was
+            // pending is exactly what made the UI single-threaded.
+            disabled={!showStop && (voiceLocked || !value.trim() || attachments.isUploading)}
+            aria-label={showStop ? t('common.stop') : t('chat.send')}
+            title={showStop ? t('common.stop') : t('chat.send')}
             className="rounded-xl"
           >
-            {disabled ? <Square className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+            {showStop ? <Square className="h-4 w-4" /> : <Send className="h-4 w-4" />}
           </Button>
           </div>
         </div>

@@ -209,7 +209,7 @@ class TestClassifySources:
 
         captured: dict[str, str] = {}
 
-        def _capture(system_prompt, user_prompt, settings, max_tokens):
+        def _capture(system_prompt, user_prompt, settings, max_tokens, **kwargs):
             captured["system_prompt"] = system_prompt
             return "sql"
 
@@ -298,7 +298,7 @@ class TestAttachmentVsSqlGuidance:
 
         captured: dict[str, str] = {}
 
-        def _capture(system_prompt, user_prompt, settings, max_tokens):
+        def _capture(system_prompt, user_prompt, settings, max_tokens, **kwargs):
             captured["system_prompt"] = system_prompt
             return "attachments"
 
@@ -340,30 +340,26 @@ class TestRouterNode:
         assert decision["sources"] == ["sql", "policy"]
         assert decision["short_circuited"] is False
 
-    def _doc_and_policy_settings(self):
-        return _settings(
-            enable_document_rag=True,
-            enable_policy_rag=True,
-            rag_store_connection_string=SecretStr("x"),
-        )
+    def _all_sources_settings(self, **overrides):
+        base = {
+            "enable_document_rag": True,
+            "enable_policy_rag": True,
+            "enable_web_search": True,
+            "web_search_api_key": SecretStr("k"),
+            "rag_store_connection_string": SecretStr("x"),
+            "enable_multi_source_router": True,
+        }
+        base.update(overrides)
+        return _settings(**base)
 
-    def test_picking_policy_alone_also_searches_documents(self, monkeypatch):
-        """'documents' and 'policy' hold the same kind of uploaded text,
-        split by an upload-time flag rather than by subject, so a user has
-        no way to know which one their file landed in.
-
-        The real report: a leave-policy PDF uploaded as a plain document
-        was invisible to "provide me the sick leave policy", because the
-        classifier read the word "policy" and committed to that collection
-        alone. `_SOURCE_DESCRIPTIONS` already warns against exactly this
-        and whether the warning is honoured turns out to vary by model --
-        measured on the same question, llama3.1:8b picked both while
-        qwen2.5-coder:7b picked "policy" alone -- so the pairing is
-        deterministic rather than left to the prompt.
+    def test_an_unselected_question_reaches_every_retrieval_source(self, monkeypatch):
+        """The routing guarantee: which sources a question reaches must not
+        depend on how well the configured local model followed the routing
+        prompt. Measured on one question, llama3.1:8b and qwen2.5-coder:7b
+        disagreed, and the model that picked "policy" alone missed the
+        leave-policy PDF sitting in "documents".
         """
-        monkeypatch.setattr(
-            orchestrator_nodes, "get_settings", lambda: self._doc_and_policy_settings()
-        )
+        monkeypatch.setattr(orchestrator_nodes, "get_settings", self._all_sources_settings)
         monkeypatch.setattr(
             orchestrator_nodes,
             "classify_sources",
@@ -372,80 +368,111 @@ class TestRouterNode:
         result = router_node(
             {"question": "provide me the sick leave policy", "caller_roles": ("admin",)}
         )
-        assert set(result["route_decision"]["sources"]) == {"policy", "documents"}
+        assert set(result["route_decision"]["sources"]) == {"sql", "documents", "policy", "web"}
 
-    def test_picking_documents_alone_also_searches_policy(self, monkeypatch):
-        """The pairing is symmetric -- a sensitive document filed into
-        'policy' must not be missed by a question the classifier reads as
-        an ordinary document lookup."""
-        monkeypatch.setattr(
-            orchestrator_nodes, "get_settings", lambda: self._doc_and_policy_settings()
-        )
+    def test_fan_out_does_not_duplicate_what_the_classifier_already_picked(self, monkeypatch):
+        monkeypatch.setattr(orchestrator_nodes, "get_settings", self._all_sources_settings)
         monkeypatch.setattr(
             orchestrator_nodes,
             "classify_sources",
-            lambda q, avail, s: (["documents"], "classified from question intent: 'documents'"),
+            lambda q, avail, s: (["sql", "documents"], "two"),
         )
-        result = router_node({"question": "what do the handbooks say?", "caller_roles": ("admin",)})
-        assert set(result["route_decision"]["sources"]) == {"policy", "documents"}
-
-    def test_pairing_does_not_duplicate_when_the_classifier_picked_both(self, monkeypatch):
-        monkeypatch.setattr(
-            orchestrator_nodes, "get_settings", lambda: self._doc_and_policy_settings()
-        )
-        monkeypatch.setattr(
-            orchestrator_nodes,
-            "classify_sources",
-            lambda q, avail, s: (["documents", "policy"], "both"),
-        )
-        result = router_node({"question": "anything", "caller_roles": ("admin",)})
-        sources = result["route_decision"]["sources"]
-        assert sorted(sources) == ["documents", "policy"]
+        sources = router_node({"question": "anything", "caller_roles": ("admin",)})[
+            "route_decision"
+        ]["sources"]
+        assert sorted(sources) == ["documents", "policy", "sql", "web"]
         assert len(sources) == len(set(sources))
 
-    def test_pairing_leaves_a_route_with_neither_collection_alone(self, monkeypatch):
-        """A pure SQL question must not start searching documents."""
+    def test_fan_out_keeps_a_generation_pick_the_classifier_made(self, monkeypatch):
+        """generation is never fanned in -- it creates a paid artifact
+        rather than retrieving anything -- so the classifier's pick is
+        unioned with the retrieval set rather than replaced by it."""
+        monkeypatch.setattr(orchestrator_nodes, "get_settings", self._all_sources_settings)
         monkeypatch.setattr(
-            orchestrator_nodes, "get_settings", lambda: self._doc_and_policy_settings()
+            orchestrator_nodes, "classify_sources", lambda q, avail, s: (["generation"], "gen")
         )
-        monkeypatch.setattr(
-            orchestrator_nodes, "classify_sources", lambda q, avail, s: (["sql"], "sql only")
-        )
-        result = router_node({"question": "how many orders?", "caller_roles": ("admin",)})
-        assert result["route_decision"]["sources"] == ["sql"]
+        sources = router_node(
+            {"question": "generate an image of a cat", "caller_roles": ("admin",)}
+        )["route_decision"]["sources"]
+        assert "generation" in sources
+        assert {"sql", "documents", "policy", "web"} <= set(sources)
 
-    def test_pairing_is_skipped_when_the_sibling_is_not_configured(self, monkeypatch):
-        """Policy RAG off: nothing to pair with, and the route must not
-        name a source this deployment cannot run."""
-        settings = _settings(
-            enable_document_rag=True,
-            enable_policy_rag=False,
-            rag_store_connection_string=SecretStr("x"),
-        )
-        monkeypatch.setattr(orchestrator_nodes, "get_settings", lambda: settings)
+    def test_fan_out_never_adds_generation_or_media_search_on_its_own(self, monkeypatch):
+        monkeypatch.setattr(orchestrator_nodes, "get_settings", self._all_sources_settings)
         monkeypatch.setattr(
-            orchestrator_nodes, "classify_sources", lambda q, avail, s: (["documents"], "docs")
+            orchestrator_nodes, "classify_sources", lambda q, avail, s: (["sql"], "sql")
         )
-        result = router_node({"question": "what do the handbooks say?", "caller_roles": ("admin",)})
-        assert result["route_decision"]["sources"] == ["documents"]
+        sources = router_node({"question": "how many orders?", "caller_roles": ("admin",)})[
+            "route_decision"
+        ]["sources"]
+        assert "generation" not in sources
+        assert "media_search" not in sources
 
-    def test_pairing_requests_policy_but_cannot_grant_it(self, monkeypatch):
-        """The security half of the pairing: it is applied *before* the
-        authorization filter, so it can put 'policy' on the route but
-        never past the permission check. A caller without the policy
-        permission still gets it dropped, exactly as if the classifier had
-        asked for it directly."""
-        monkeypatch.setattr(
-            orchestrator_nodes, "get_settings", lambda: self._doc_and_policy_settings()
-        )
-        monkeypatch.setattr(
-            orchestrator_nodes, "classify_sources", lambda q, avail, s: (["documents"], "docs")
-        )
+    def test_an_explicit_source_selection_is_not_fanned_out(self, monkeypatch):
+        """Picking a source is an instruction, not a guess -- narrowing to
+        one collection must still search that one collection."""
+        monkeypatch.setattr(orchestrator_nodes, "get_settings", self._all_sources_settings)
         result = router_node(
-            {"question": "what do the handbooks say?", "caller_roles": ("viewer",)}
+            {
+                "question": "provide me the sick leave policy",
+                "caller_roles": ("admin",),
+                "selected_sources": ["documents"],
+            }
         )
         assert result["route_decision"]["sources"] == ["documents"]
-        assert "policy" not in result["route_decision"]["sources"]
+
+    def test_fan_out_is_skipped_when_the_setting_is_off(self, monkeypatch):
+        monkeypatch.setattr(
+            orchestrator_nodes,
+            "get_settings",
+            lambda: self._all_sources_settings(route_to_all_sources=False),
+        )
+        monkeypatch.setattr(
+            orchestrator_nodes, "classify_sources", lambda q, avail, s: (["policy"], "policy")
+        )
+        result = router_node({"question": "anything", "caller_roles": ("admin",)})
+        assert result["route_decision"]["sources"] == ["policy"]
+
+    def test_an_attachment_only_question_is_never_fanned_out(self, monkeypatch):
+        """The fan-out must not undo `_looks_like_attachment_only_question`.
+
+        That pre-check exists because "Read this image" was dragging full
+        schema retrieval and SQL generation into a request that was never
+        about the database. It short-circuits before the classifier runs,
+        and the fan-out has to respect that short circuit -- otherwise the
+        same storm comes straight back, now with a web search attached.
+
+        Deliberately tested with the multi-source router *enabled*: with it
+        off the fan-out is skipped for an unrelated reason, which would
+        make this pass without proving anything.
+        """
+        monkeypatch.setattr(orchestrator_nodes, "get_settings", self._all_sources_settings)
+
+        def _classifier_must_not_run(*args, **kwargs):
+            raise AssertionError("an attachment-only question must not reach the classifier")
+
+        monkeypatch.setattr(orchestrator_nodes, "classify_sources", _classifier_must_not_run)
+        result = router_node(
+            {
+                "question": "Read this image.",
+                "caller_roles": ("admin",),
+                "pending_attachment_ids": ["att_1"],
+            }
+        )
+        assert result["route_decision"]["sources"] == ["attachments"]
+
+    def test_fan_out_requests_policy_but_cannot_grant_it(self, monkeypatch):
+        """The security half: the fan-out is applied *before* the
+        authorization filter, so it can put a restricted source on the
+        route but never past the permission check."""
+        monkeypatch.setattr(orchestrator_nodes, "get_settings", self._all_sources_settings)
+        monkeypatch.setattr(
+            orchestrator_nodes, "classify_sources", lambda q, avail, s: (["sql"], "sql")
+        )
+        sources = router_node({"question": "anything", "caller_roles": ("viewer",)})[
+            "route_decision"
+        ]["sources"]
+        assert "policy" not in sources
 
     def test_attachments_are_forced_into_the_route_even_if_the_classifier_omits_them(
         self, monkeypatch
@@ -1954,15 +1981,42 @@ class TestSynthesisNode:
             != "I couldn't find any relevant information to answer that question."
         )
 
-    def test_multi_source_with_sql_never_overrides_sql_status(self):
+    def test_another_source_answering_overrides_a_failed_sql_leg(self):
+        """Changed deliberately: this used to assert SQL's status always won.
+
+        That held while SQL was only routed when a question looked like a
+        database question. `route_to_all_sources` runs it on every
+        unselected question, so a question the database cannot answer ends
+        with the SQL leg "failed" -- correctly -- and letting that verdict
+        become the run's status reported a failure to a user who had just
+        been given a correct answer from somewhere else. Measured on
+        "provide me the sick leave policy" across all three local models:
+        documents returned the real policy every time, and the run was
+        still reported failed/rejected.
+        """
         state = {
             "sources_used": ["sql", "policy"],
             "status": "failed",
             "failure_explanation": "Gave up after 3 attempts.",
             "policy_result": {"answer": "Policy says X.", "citations": [], "status": "succeeded"},
         }
-        result = synthesis_node(state)
-        assert "status" not in result  # sql_subgraph_node's own status stands
+        assert synthesis_node(state)["status"] == "succeeded"
+
+    def test_sql_keeps_the_last_word_when_nothing_else_contributed(self):
+        """The half that must not regress: with every other source empty,
+        SQL's own status (and the richer failure detail that goes with it)
+        is still what the run reports."""
+        state = {
+            "sources_used": ["sql", "policy"],
+            "status": "failed",
+            "failure_explanation": "Gave up after 3 attempts.",
+            "policy_result": {
+                "answer": "No matching policy content.",
+                "citations": [],
+                "status": "insufficient_information",
+            },
+        }
+        assert "status" not in synthesis_node(state)
 
     def test_attributes_each_source_separately_for_multiple_sources(self):
         state = {

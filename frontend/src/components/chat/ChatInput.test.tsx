@@ -210,18 +210,42 @@ describe('ChatInput -- typing while an answer is pending', () => {
     useChatStore.setState({ pendingQuestion: null } as never)
   })
 
-  it('keeps the textbox editable and offers stop instead of send while the agent works', async () => {
+  it('offers stop while the agent works and nothing is typed', async () => {
     useChatStore.setState({ pendingQuestion: { question: 'first', startedAt: Date.now() } } as never)
     renderChatInput()
 
     const textarea = screen.getByRole('textbox', { name: /chat|ask|placeholder/i }) as HTMLTextAreaElement
     expect(textarea).toBeEnabled()
     expect(textarea).not.toHaveAttribute('readonly')
+
+    // With an empty box the button is still a real cancel of the one
+    // outstanding streaming request.
+    expect(screen.queryByRole('button', { name: /send/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /stop/i })).toBeInTheDocument()
+  })
+
+  it('offers send again once a next question is typed, so it can be queued', async () => {
+    // Behaviour change, deliberate: this used to keep showing Stop even
+    // with text typed, which is what made the composer single-threaded --
+    // the only thing a user could do while waiting was abandon the
+    // question in flight. Now a typed question is submitted and, because
+    // one is already pending, `chatStore.askQuestion` routes it to the
+    // asynchronous queue instead of replacing the running one. Stop is
+    // not lost: it returns the moment the box is empty again (the test
+    // above).
+    useChatStore.setState({ pendingQuestion: { question: 'first', startedAt: Date.now() } } as never)
+    renderChatInput()
+
+    const textarea = screen.getByRole('textbox', { name: /chat|ask|placeholder/i }) as HTMLTextAreaElement
     await userEvent.type(textarea, 'next question')
     expect(textarea.value).toBe('next question')
 
-    expect(screen.queryByRole('button', { name: /^send$/i })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /stop/i })).toBeInTheDocument()
+    // `/send/i`, not `/^send$/i`: i18n renders raw keys in this test
+    // environment, so the accessible name is "chat.send" and an anchored
+    // pattern can never match it -- which is why the original negative
+    // assertion here passed vacuously.
+    expect(screen.getByRole('button', { name: /send/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /stop/i })).not.toBeInTheDocument()
   })
 })
 

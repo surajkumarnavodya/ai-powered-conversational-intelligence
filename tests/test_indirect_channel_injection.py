@@ -185,7 +185,7 @@ class TestWebSearchToolOutputInjectionNeutralized:
 
         import rag.llm
 
-        def _capture_call(system_prompt, user_prompt, settings, max_tokens):
+        def _capture_call(system_prompt, user_prompt, settings, max_tokens, **kwargs):
             captured["system_prompt"] = system_prompt
             captured["user_prompt"] = user_prompt
             return "According to a live web search: nothing relevant found."
@@ -236,7 +236,7 @@ class TestRagDocumentInjectionNeutralized:
     def test_poisoned_chunk_reaches_the_prompt_and_is_framed_as_data(self, monkeypatch):
         captured: dict[str, str] = {}
 
-        def _capture_call(system_prompt, user_prompt, settings, max_tokens):
+        def _capture_call(system_prompt, user_prompt, settings, max_tokens, **kwargs):
             captured["system_prompt"] = system_prompt
             captured["user_prompt"] = user_prompt
             return "The document does not authorize that."
@@ -320,7 +320,7 @@ class TestMediaSearchOcrCaptionInjectionNeutralized:
 
         import rag.llm
 
-        def _capture_call(system_prompt, user_prompt, settings, max_tokens):
+        def _capture_call(system_prompt, user_prompt, settings, max_tokens, **kwargs):
             captured["system_prompt"] = system_prompt
             captured["user_prompt"] = user_prompt
             return "Found one matching image."

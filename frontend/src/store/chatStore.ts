@@ -185,7 +185,14 @@ interface ChatState {
        * bubble -- see `SentAttachmentPreview`'s own docstring. */
       sentAttachments?: SentAttachmentPreview[]
     },
-  ) => Promise<QueryHistoryEntry>
+    /** `undefined` when this question was handed to the asynchronous
+     * queue instead of being answered inline -- which happens when
+     * another question is already in flight. There is no history entry
+     * to return in that case: the question is tracked by
+     * `questionQueueStore` and rendered by `QuestionQueuePanel` until it
+     * finishes. Callers that read the result must handle `undefined`;
+     * callers that only fire-and-forget are unaffected. */
+  ) => Promise<QueryHistoryEntry | undefined>
   confirmAndRun: (entryId: string) => Promise<void>
   confirmGeneration: (entryId: string) => Promise<void>
   rerunEntry: (entryId: string) => Promise<void>
@@ -486,6 +493,33 @@ export const useChatStore = create<ChatState>((set, get) => ({
       conversations,
       excludedContextEntryIds,
     } = get()
+
+    // Overflow to the asynchronous queue when a question is already in
+    // flight. This store holds exactly one `pendingQuestion` and one
+    // abort controller by design, so a second synchronous ask would
+    // overwrite the first one's pending state and orphan its stream --
+    // which is why the UI previously had to block the composer.
+    //
+    // Deliberately additive: the *first* question still takes the
+    // existing synchronous `/ask/stream` path unchanged, with its live
+    // per-node progress. Only the ones that would otherwise have been
+    // blocked go to the queue, where they are tracked by
+    // `questionQueueStore` and rendered by `QuestionQueuePanel`. A
+    // deployment whose auth mode cannot attribute a job to a user (or
+    // with the queue switched off) gets `null` back from `submit`, and
+    // then falls through to the pre-existing behaviour rather than
+    // silently dropping the question.
+    if (get().pendingQuestion !== null) {
+      const { useQuestionQueueStore } = await import('@/store/questionQueueStore')
+      const jobId = await useQuestionQueueStore.getState().submit({
+        question,
+        enable_insight: enableInsight,
+        conversation_id: activeConversationId,
+        attachment_ids: options?.attachmentIds ?? [],
+      })
+      if (jobId) return
+    }
+
     const startedAt = performance.now()
     set({ pendingQuestion: { question, startedAt, stage: null } })
 
@@ -890,7 +924,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  clearHistory: () =>
+  clearHistory: () => {
+    // Queued questions belong to the user who submitted them, so logging
+    // out (or switching user in the same tab) has to clear them here too
+    // -- otherwise the next session would see the previous user's
+    // questions and, once a poll returned, their answers. Imported lazily
+    // for the same reason `askQuestion` does: these two stores must not
+    // import each other at module load.
+    void import('@/store/questionQueueStore').then(({ useQuestionQueueStore }) =>
+      useQuestionQueueStore.getState().reset(),
+    )
     set({
       ...freshConversationState(),
       conversations: {},
@@ -900,5 +943,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       goldenFeedbackGiven: new Set(),
       pinnedEntryIds: new Set(),
       messageFeedbackGiven: new Map(),
-    }),
+    })
+  },
 }))

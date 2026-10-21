@@ -42,6 +42,15 @@ class RouteDecision(TypedDict):
             `agent.orchestrator.nodes._looks_like_attachment_only_question`)
             -- either way, no LLM classification call was made for this
             question.
+        source_confidence: Per-source deterministic confidence, 0..1, from
+            `agent.orchestrator.source_signals.score_sources`. Reported
+            for every source that was *scored*, not only the ones routed
+            to -- "why didn't this search the documents?" is answered by
+            a low score, which is absent if only the winners are
+            reported. Empty `{}` when `SOURCE_ROUTING_ENABLED` is off or
+            only one source is configured (nothing to choose between).
+            **Evidence, not a calibrated probability** -- see that
+            module's own docstring.
         requires_database: Whether "sql" ended up in `sources` -- a plain,
             debuggable summary of "did this question actually touch the
             database," independent of parsing `sources` yourself. Always
@@ -53,6 +62,7 @@ class RouteDecision(TypedDict):
     reasoning: str
     short_circuited: bool
     requires_database: bool
+    source_confidence: dict[str, float]
 
 
 class SourceAnswer(TypedDict):
@@ -176,6 +186,13 @@ class OrchestratorState(AgentState, total=False):
     # Set by router_node -- see RouteDecision above.
     route_decision: RouteDecision | None
 
+    # The same per-source confidence map `route_decision["source_confidence"]`
+    # carries, lifted to a top-level key purely so the API layer and
+    # `jobs/` can read it without having to know the shape of
+    # `route_decision`. Not a second owner of the fact: router_node writes
+    # both from one value in one return statement (CLAUDE.md 4.8).
+    source_confidence: dict[str, float]
+
     # Set by router_node whenever the LLM's own source selection included a
     # source the caller's role(s) don't have permission for (see
     # agent.orchestrator.nodes.SOURCE_PERMISSIONS) -- a short, human-
@@ -193,6 +210,13 @@ class OrchestratorState(AgentState, total=False):
     # contributions from every subgraph that fired rather than the last one
     # to run overwriting the others.
     sources_used: Annotated[list[str], operator.add]
+
+    # Set by _run_rag_node, one entry per retrieval source that was
+    # grounding-checked: reason code, citation counts and the measured
+    # evidence overlap. Counts and codes only -- never the evidence text
+    # (CLAUDE.md 5.6). Lets a caller see why one leg of a multi-source
+    # answer declined while another answered. See guardrails/grounding.py.
+    grounding: dict[str, dict[str, object]]
 
     # Set by document_rag_node/policy_rag_node -- see rag/graph.py::RagState
     # for what actually produces these (SourceAnswer is a trimmed view of it).

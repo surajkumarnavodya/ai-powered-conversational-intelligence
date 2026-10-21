@@ -105,6 +105,8 @@ each boundary:** [`docs/architecture/repository-map.md`](docs/architecture/repos
 | `sources/` | The source-type contract and registry — single owner of each source's routing description, permission and availability. `agent/orchestrator/` derives its tables from here |
 | `rest/` | REST/OpenAPI connector, read-only over allowlisted hosts. Off by default; **not routable yet** (no descriptor, no orchestrator node) |
 | `mcp_client/` | Client *of* remote MCP servers — the opposite direction to `agent/tools/`, no shared code. Off by default. Administrator-controlled trust only |
+| `jobs/` | The asynchronous question queue -- per-user concurrency, queueing, job status, cancellation, graceful shutdown. Sits *below* `api/` and never imports it: the work a job performs is injected as a `JobRunner`, so there is no second pipeline to drift from the governed one |
+| `guardrails/` | The configurable façade over the layered safety controls, plus the grounding/citation gate. **Adds a seam, not a second security model** -- `GUARDRAIL_ACTION` governs advisory layers only and can never soften a fail-closed control |
 | `api/` | The FastAPI app — the REST surface every UI action goes through, and (once `frontend/dist` exists) the server for the dashboard itself |
 | `frontend/` | The React dashboard, the only UI this project ships |
 
@@ -500,6 +502,7 @@ authoritative, and explains how to resolve a conflict.
 | Authentication / authorization | [`docs/AUTHENTICATION.md`](docs/AUTHENTICATION.md), [`docs/AUTHORIZATION.md`](docs/AUTHORIZATION.md) |
 | Multi-tenancy rules and limitations | [`docs/MULTI_TENANCY.md`](docs/MULTI_TENANCY.md) |
 | Configuration reference | [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) |
+| Per-user concurrency, the question queue, deterministic source routing, per-task model pins, guardrails, grounding | [`docs/CONCURRENCY.md`](docs/CONCURRENCY.md) |
 | Production readiness verdict | [`docs/PRODUCTION_READINESS_RELEASE_GATE.md`](docs/PRODUCTION_READINESS_RELEASE_GATE.md) |
 | One feature's full design, tests and limitations | `NN_*_CONTRACT.md` at the repo root — one per numbered prompt; indexed in the context map |
 
@@ -682,14 +685,36 @@ contract lists its specific limitations; these are the cross-cutting ones.
   benchmark-pinned (§12), so streaming the model's own tokens is a
   separate, evidence-gated change. No WebSocket endpoint exists.
 - **Process-local state**: rate limiters, circuit breakers, the performance
-  rollup, the result cache, the security-event ring buffer and the compiled
-  graph/Ollama singletons are all per-worker. A multi-worker deployment has
-  one of each per worker.
+  rollup, the result cache, the security-event ring buffer, **the
+  asynchronous question queue (`jobs/`)** and the compiled graph/Ollama
+  singletons are all per-worker. A multi-worker deployment has one of each
+  per worker. The queue is the sharpest case, because its cap is advertised
+  to users: N workers admit up to N x `MAX_CONCURRENT_QUESTIONS_PER_USER`,
+  and queued/running jobs do not survive a restart. See
+  [`docs/CONCURRENCY.md`](docs/CONCURRENCY.md) 2.9.
+- **The asynchronous question queue requires a real user account.**
+  `POST /questions` returns 403 in `none`/`static_token` auth mode, by
+  design: those modes give every caller the same subject, so job ownership
+  cannot be enforced, and one shared bucket would let each caller read the
+  others' results. Deny-by-default — not a gap to close by relaxing it.
+- **Routing-confidence and grounding thresholds are judgement calls, not
+  measurements.** `SOURCE_CONFIDENCE_THRESHOLD` (0.70),
+  `MIN_SOURCE_CONFIDENCE` (0.70) and
+  `guardrails.grounding.MIN_LEXICAL_OVERLAP` (0.15) were chosen to err
+  toward deferring to the LLM classifier and toward *not* refusing a
+  correct answer. The deterministic router's signal patterns are
+  hand-authored, and the eval harness still covers the SQL path only, so
+  routing accuracy has no labelled-corpus measurement behind it. Treat
+  `AskResponse.source_confidence` as evidence, never as a probability that
+  an answer is correct.
 - **Environment-blocked verifications** (not oversights — no infrastructure
   exists here): DAST has never run against a live deployment, OIDC has never
   been verified against a live IdP, ClamAV's fail-closed path has never seen
-  a real daemon, and `docs/EVALUATION_CURRENT.md`'s accuracy numbers predate
-  many pipeline changes.
+  a real daemon, `docs/EVALUATION_CURRENT.md`'s accuracy numbers predate
+  many pipeline changes, and **the question queue's 100-concurrent path has
+  only been exercised against a mocked runner** — never against a live
+  database and Ollama, which is what `python scripts/integration_test.py`
+  is for.
 - **Lint/type findings — measure before claiming one is, or is not, yours.**
   Measured 2026-10-17: `mypy .` reports **631 errors across 115 files**, of
   which **616 are in `tests/`** and 8 in `eval/security_benchmark/` (largely

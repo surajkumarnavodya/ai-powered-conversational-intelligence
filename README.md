@@ -60,6 +60,24 @@ result rows, retry/attempt history, and (if enabled) a grounded
 plain-English insight — see `api/schemas.py::AskResponse` for the full
 shape.
 
+`POST /ask` answers one question and blocks until it has an answer. To run
+**many questions at once as a single user**, submit them to the
+asynchronous queue instead — it returns a job id immediately and runs the
+question through the identical governed pipeline:
+
+```bash
+# Submit; returns 202 with {"job_id": "...", "status": "queued"}
+curl -X POST http://localhost:8000/questions   -H "Content-Type: application/json"   -H "Authorization: Bearer $TOKEN"   -d '{"question": "What were total sales last quarter?"}'
+
+# Poll it; add /cancel to stop it, or GET /questions for all of yours
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/questions/$JOB_ID
+```
+
+Up to `MAX_CONCURRENT_QUESTIONS_PER_USER` (default 100) run at once per
+user; the rest **queue** rather than being refused. This path requires a
+real user account (`LOCAL_AUTH_ENABLED` or OIDC), since a job has to
+belong to someone. See [`docs/CONCURRENCY.md`](docs/CONCURRENCY.md).
+
 <a id="get-started-and-stay-tuned"></a>
 
 ## 🌟 Get Started & Stay Tuned
@@ -458,6 +476,7 @@ connectivity and reverse-proxy placement.
 | Run the opt-in live tests, or set up a Microsoft 365 tenant for them | [`docs/LIVE_INTEGRATION_TESTING.md`](docs/LIVE_INTEGRATION_TESTING.md) |
 | Look up REST API endpoints and auth | [`docs/API.md`](docs/API.md) |
 | Find every `.env` variable | [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) |
+| Run many questions at once per user, or tune source/model routing, guardrails and grounding | [`docs/CONCURRENCY.md`](docs/CONCURRENCY.md) |
 | Deploy with Docker / an external DB or Ollama | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) |
 | See the latest measured benchmark accuracy | [`docs/EVALUATION.md`](docs/EVALUATION.md) |
 | Diagnose a common failure mode | [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) |

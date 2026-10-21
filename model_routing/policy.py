@@ -178,19 +178,28 @@ def _drop_slow(
     return tuple(kept)
 
 
-def _best_upgrade(candidates: tuple[RoutableModel, ...]) -> RoutableModel:
-    """Strongest sensible escalation, with a fully deterministic
-    tie-break: recorded evaluation score (highest first), then tier, then
-    the `recommended` flag, then model id."""
-    return sorted(
-        candidates,
-        key=lambda c: (
-            -(c.evaluation_quality_score if c.evaluation_quality_score is not None else -1.0),
-            -TIER_RANK[c.tier],
-            not c.recommended,
-            c.model_id,
-        ),
-    )[0]
+def _best_upgrade(
+    candidates: tuple[RoutableModel, ...],
+    strategy: str = "capability",
+    observed_p95_latency_ms: Mapping[str, float] | None = None,
+) -> RoutableModel:
+    """Strongest sensible escalation, with a fully deterministic tie-break.
+
+    The ordering comes from `model_routing.tasks.strategy_sort_key`, whose
+    `"capability"` key is this function's own original ordering (recorded
+    evaluation score highest first, then tier, then the `recommended`
+    flag, then model id) -- so the default `MODEL_ROUTING_STRATEGY`
+    leaves this byte-for-byte unchanged. `"cost"` and `"latency"` make
+    the cheapest or fastest *eligible* candidate preferred instead.
+
+    A strategy only ever reorders candidates `_eligible` has already
+    approved. It cannot reach a model outside `ollama_allowed_models`,
+    relax a task's risk level, or widen a budget: a strategy chooses
+    between permitted options and is never itself a permission.
+    """
+    from model_routing.tasks import strategy_sort_key
+
+    return sorted(candidates, key=strategy_sort_key(strategy, observed_p95_latency_ms))[0]
 
 
 def _best_downgrade(candidates: tuple[RoutableModel, ...]) -> RoutableModel:
@@ -310,7 +319,7 @@ def decide_route(
     if baseline.model_id in unavailable_model_ids:
         rescue_pool = evidence_backed or eligible
         if rescue_pool:
-            chosen = _best_upgrade(rescue_pool)
+            chosen = _best_upgrade(rescue_pool, settings.model_routing_strategy, latency)
             return _decision(
                 task=task,
                 chosen=chosen,
@@ -372,7 +381,7 @@ def decide_route(
         fast_enough = _drop_slow(reviewed, latency, settings.model_routing_max_p95_latency_ms)
         if not fast_enough:
             return unchanged(RouteReason.UPGRADE_BLOCKED_BY_LATENCY, reviewed)
-        chosen = _best_upgrade(fast_enough)
+        chosen = _best_upgrade(fast_enough, settings.model_routing_strategy, latency)
         return _decision(
             task=task,
             chosen=chosen,

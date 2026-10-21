@@ -506,5 +506,30 @@
     "openSettings": "Ouvrir les paramètres",
     "focusComposer": "Aller au champ de question",
     "showHelp": "Afficher cette liste"
+  },
+  "questionQueue": {
+    "title": "Vos questions",
+    "capacity": "{{running}} sur {{max}} en cours · {{queued}} en attente",
+    "atLimit": "Vous avez {{max}} questions en cours, ce qui correspond à la limite de ce déploiement. Les suivantes attendront leur tour et démarreront automatiquement.",
+    "waiting": "en attente depuis {{seconds}} s",
+    "ran": "a pris {{seconds}} s",
+    "attempts": "tentative {{count}}",
+    "cancel": "Annuler cette question",
+    "dismiss": "Retirer de cette liste",
+    "blockedExplanation": "Cette question n'a pas reçu de réponse car elle n'a pas passé les contrôles de sécurité de ce déploiement.",
+    "status": {
+      "queued": "En attente",
+      "running": "En cours",
+      "completed": "Répondue",
+      "failed": "Échec",
+      "cancelled": "Annulée",
+      "timeout": "Délai dépassé",
+      "blockedByGuardrail": "Non autorisée"
+    },
+    "confidence": {
+      "high": "{{source}} : correspondance forte",
+      "medium": "{{source}} : correspondance partielle",
+      "low": "{{source}} : correspondance faible"
+    }
   }
 }
