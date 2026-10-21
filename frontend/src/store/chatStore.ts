@@ -280,6 +280,35 @@ function freshConversationState(): Pick<
   }
 }
 
+/** What the SSE stream reported before giving up, if anything. */
+type StreamFailure = { status: number; detail: string } | null
+
+/** Turns a stream failure into something true and actionable.
+ *
+ * The server's own `detail` is preferred wherever it has one, because it
+ * is the specific thing that went wrong. The two statuses below are
+ * special-cased only because their raw detail is written for an API
+ * caller rather than a person mid-conversation: a 401 says the header was
+ * missing or invalid, which tells a user nothing about what to do, and a
+ * 429's wording varies by which limiter tripped.
+ *
+ * `null` means the stream failed without reporting anything at all --
+ * a genuinely unreachable server, which is the one case the old blanket
+ * "could not be reached" message was actually right about.
+ */
+function describeStreamFailure(failure: StreamFailure): string {
+  if (!failure) return 'The agent could not be reached.'
+  if (failure.status === 401) {
+    // Reached only when the silent refresh in `askQuestionStreaming` also
+    // failed, i.e. the session is genuinely gone rather than just stale.
+    return 'Your session has expired. Please sign in again.'
+  }
+  if (failure.status === 429) {
+    return failure.detail || 'The server is busy right now. Please try again in a moment.'
+  }
+  return failure.detail || `The request failed with status ${failure.status}.`
+}
+
 function emptyAskResponse(message: string): AskResponse {
   return {
     session_id: '',
@@ -488,6 +517,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     currentAbortController = controller
 
     let finalState: AskResponse
+    // Captured by the stream's `onError` below, since that path signals
+    // failure by resolving to null rather than throwing.
+    let streamFailure: StreamFailure = null
     try {
       finalState =
         cached ??
@@ -526,9 +558,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
               const pending = get().pendingQuestion
               if (pending) set({ pendingQuestion: { ...pending, stage: event.stage } })
             },
+            // The stream reports a failure by calling this and resolving
+            // to null, rather than rejecting. Without it, every such
+            // failure collapsed into the `??` fallback below and was shown
+            // as "The agent could not be reached" -- which for an expired
+            // session or a rate limit is simply untrue, and sends the user
+            // looking for a connectivity problem that does not exist.
+            onError: (status, detail) => {
+              streamFailure = { status, detail }
+            },
           },
           controller.signal,
-        )) ?? emptyAskResponse('The agent could not be reached.')
+        )) ?? emptyAskResponse(describeStreamFailure(streamFailure))
     } catch (error) {
       const message =
         error instanceof DOMException && error.name === 'AbortError'

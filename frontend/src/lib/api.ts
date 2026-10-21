@@ -95,6 +95,27 @@ export function setUnauthorizedHandler(handler: UnauthorizedHandler): void {
 // load) triggers exactly one `/auth/refresh` call, not one per request.
 let refreshInFlight: Promise<string | null> | null = null
 
+/** Runs the stale-access-token refresh, coalescing concurrent callers onto
+ * one `/auth/refresh` call. Returns the new token, or `null` when there is
+ * no live session to recover (a normal outcome, not an error).
+ *
+ * Exported for `lib/askStream.ts`, which cannot go through `request()`: it
+ * needs the raw `Response` to read an SSE body, while `request()` parses
+ * JSON and returns a value. Before this, `/ask/stream` was the one
+ * authenticated call in the app with no refresh path at all -- an access
+ * token that went stale mid-session turned the next question into a hard
+ * 401, even though every other route would have refreshed and retried
+ * without the user noticing. Sharing `refreshInFlight` (rather than giving
+ * the streaming path its own) is what keeps "exactly one refresh per
+ * expiry" true when a question is asked while other calls are in flight. */
+export function refreshAccessTokenOnce(): Promise<string | null> {
+  if (!unauthorizedHandler) return Promise.resolve(null)
+  refreshInFlight ??= unauthorizedHandler().finally(() => {
+    refreshInFlight = null
+  })
+  return refreshInFlight
+}
+
 /** Exported so `frontend/src/lib/identityApi.ts` can reuse the exact same
  * fetch/error-handling/auth-header logic for `/auth/*` calls, rather than
  * duplicating it -- every other function in this file is just a thin
@@ -133,10 +154,7 @@ export async function request<T>(
     !path.startsWith('/auth/') &&
     unauthorizedHandler
   ) {
-    refreshInFlight ??= unauthorizedHandler().finally(() => {
-      refreshInFlight = null
-    })
-    const refreshedToken = await refreshInFlight
+    const refreshedToken = await refreshAccessTokenOnce()
     if (refreshedToken) {
       return request<T>(path, init, refreshedToken)
     }

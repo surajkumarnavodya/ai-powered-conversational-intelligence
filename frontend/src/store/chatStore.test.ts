@@ -170,3 +170,59 @@ describe('chatStore conversation context', () => {
     expect(bodies).toHaveLength(1)
   })
 })
+
+// Regression coverage for a failure a user actually hit: an expired
+// session produced "Agent could not be reached" in 0.0s. The stream had
+// the real 401 and its detail in hand, but `askQuestion` passed no
+// `onError`, so the status was dropped and every stream failure collapsed
+// into one blanket message -- which pointed at connectivity for a problem
+// that was nothing of the kind.
+describe('chatStore surfaces why a streamed question failed', () => {
+  beforeEach(() => {
+    useChatStore.setState(initialState, true)
+  })
+
+  afterEach(() => {
+    useChatStore.setState(initialState, true)
+    vi.unstubAllGlobals()
+  })
+
+  /** Responds to /ask/stream with a pre-stream HTTP failure. */
+  function failingStream(status: number, detail: string) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail }), { status })),
+    )
+  }
+
+  function lastAnswer(): string {
+    const history = useChatStore.getState().queryHistory
+    return history[history.length - 1]?.finalState.failure_explanation ?? ''
+  }
+
+  it('tells an expired session to sign in, not that the agent is unreachable', async () => {
+    failingStream(401, 'Missing or invalid Authorization header.')
+
+    await useChatStore.getState().askQuestion('Tell me the sick leave policy.')
+
+    expect(lastAnswer()).toBe('Your session has expired. Please sign in again.')
+    expect(lastAnswer()).not.toMatch(/could not be reached/i)
+  })
+
+  it("passes the server's own wording through for other failures", async () => {
+    failingStream(422, 'Unknown source: policies.')
+
+    await useChatStore.getState().askQuestion('anything')
+
+    expect(lastAnswer()).toBe('Unknown source: policies.')
+  })
+
+  it('still says "could not be reached" when the stream reported nothing', async () => {
+    // A genuinely unreachable server -- the one case that message fits.
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
+
+    await useChatStore.getState().askQuestion('anything')
+
+    expect(lastAnswer()).toBe('The agent could not be reached.')
+  })
+})
