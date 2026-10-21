@@ -148,6 +148,16 @@ class TestSystemCatalogAccessIsRejected:
             ("tsql", "SELECT name FROM sys.database_principals"),
             ("tsql", "SELECT * FROM information_schema.tables"),
             ("tsql", "SELECT * FROM master.sys.databases"),  # cross-database catalog reference
+            # mssql's pre-2005 compatibility views resolve *unqualified*
+            # from inside any database, so the schema-qualifier check above
+            # never sees them -- the same bare-name hole already covered for
+            # postgres (`pg_roles`) and Oracle (`dba_users`).
+            ("tsql", "SELECT name FROM sysobjects"),
+            ("tsql", "SELECT * FROM syscolumns"),
+            ("tsql", "SELECT text FROM syscomments"),  # view/procedure source text
+            ("tsql", "SELECT * FROM syslogins"),
+            ("tsql", "SELECT * FROM sysdatabases"),
+            ("tsql", "SELECT TOP 5 o.name FROM sysobjects o JOIN syscolumns c ON o.id = c.id"),
             ("oracle", "SELECT username, password FROM dba_users"),
             ("oracle", "SELECT * FROM all_tab_privs"),
             ("oracle", "SELECT * FROM user_tab_columns"),
@@ -168,7 +178,17 @@ class TestSystemCatalogAccessIsRejected:
 
     @pytest.mark.parametrize(
         "table_name",
-        ["user_accounts", "system_events", "sys_config_log"],
+        [
+            "user_accounts",
+            "system_events",
+            "sys_config_log",
+            # Would be swept up by a blind `startswith("sys")` denylist --
+            # the mssql compatibility views are matched as a curated set of
+            # exact names precisely so these stay usable.
+            "system_settings",
+            "sysadmin_audit",
+            "system_user_roles",
+        ],
     )
     def test_table_name_merely_containing_a_catalog_word_is_not_flagged(self, table_name):
         """A business table whose *name* happens to share a word with a
