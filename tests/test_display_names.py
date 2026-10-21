@@ -223,6 +223,70 @@ class TestSchemaMetadata:
         assert resolve_display_name(parsed) == resolve_display_name(DIM_PRODUCT)
 
 
+class TestDateDimensionsAreNeverLabelled:
+    """A date key is a grain, not an entity reference.
+
+    Found by running the resolver against a real AdventureWorks schema
+    rather than this file's fixture: `DimDate` carries
+    `EnglishMonthName`, which matches the name patterns, so
+    `OrderDateKey` resolved to it. "Sales by order date" would have been
+    silently rewritten into "sales by month name" -- collapsing every
+    year together and changing what the query answers. That is exactly
+    the silent wrongness this guard exists to prevent, arriving from
+    the inside.
+    """
+
+    def test_a_date_dimension_gets_no_inferred_display_name(self) -> None:
+        dim_date = _table(
+            "DimDate",
+            [
+                _col("DateKey", pk=True),
+                _col("FullDateAlternateKey", "date"),
+                _col("EnglishMonthName", "nvarchar"),
+                _col("CalendarYear"),
+            ],
+        )
+        assert resolve_display_name(dim_date) is None
+
+    def test_a_date_key_is_not_indexed_as_an_entity(self, display_map) -> None:
+        assert display_map.for_key("OrderDateKey") is None
+
+    def test_a_date_key_is_not_disclosed_as_a_missing_name_either(self, display_map) -> None:
+        """Nothing to apologise for: a date is already readable.
+
+        A notice here would put a misleading caveat on a perfectly good
+        answer, so the key is skipped silently rather than reported.
+        """
+        assert display_map.has_known_gap("OrderDateKey") is False
+
+    def test_grouping_by_a_date_key_is_left_completely_alone(self, display_map) -> None:
+        sql = (
+            "SELECT f.OrderDateKey, SUM(f.SalesAmount) AS Total "
+            "FROM FactInternetSales f GROUP BY f.OrderDateKey"
+        )
+        result = _repair(sql, display_map)
+        assert result.status == "ok"
+        assert result.sql == sql
+        assert result.message == ""
+
+    def test_a_date_and_an_entity_together_repair_only_the_entity(self, display_map) -> None:
+        result = _repair(
+            "SELECT f.OrderDateKey, f.ProductKey, SUM(f.SalesAmount) AS Total "
+            "FROM FactInternetSales f GROUP BY f.OrderDateKey, f.ProductKey",
+            display_map,
+        )
+        assert result.status == "repaired"
+        assert "f.OrderDateKey" in result.sql
+        assert "EnglishProductName" in result.sql
+        assert result.repaired_keys == ("ProductKey",)
+
+    def test_a_system_table_is_never_an_entity(self) -> None:
+        """`sysdiagrams` has a single PK and a `name` column, so it looked
+        like a dimension. It is not a business entity."""
+        sysdiagrams = _table("sysdiagrams", [_col("diagram_id", pk=True), _col("name", "nvarchar")])
+        assert resolve_display_name(sysdiagrams) is None
+
+
 class TestGeneratedSqlIsRepaired:
     """The nine question scenarios the brief names (brief 7)."""
 

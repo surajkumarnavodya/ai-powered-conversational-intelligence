@@ -85,6 +85,24 @@ In order, first match wins:
 `AlternateKey`. `ProductAlternateKey` is a text column that would
 otherwise match a name pattern; it is a key.
 
+**Whole dimensions excluded: date/time and system tables.** A date key is
+a *grain*, not an entity reference, and a date is already readable. This
+was found by running the resolver against a real AdventureWorks schema
+rather than a fixture: `DimDate` carries `EnglishMonthName`, which
+matches the name patterns, so `OrderDateKey` resolved to it — and
+"sales by order date" would have been silently rewritten into "sales by
+month name", collapsing every year together and changing what the query
+answers. Exactly the silent wrongness this guard exists to prevent,
+arriving from the inside.
+
+A date key is therefore **skipped silently** — neither repaired nor
+disclosed. There is nothing to apologise for, and a notice would put a
+misleading caveat on a perfectly good answer. System/catalog tables
+(`sysdiagrams`, `dtproperties`) are excluded for a duller reason: they
+are not business entities. An explicit `config/display_names.yaml` entry
+still overrides both exclusions — that is a decision rather than an
+inference.
+
 **No match returns `None`**, which is the point — the caller must be able
 to tell "no readable name exists" from "here is one".
 
@@ -268,7 +286,7 @@ tables:
 
 ## 6. Test coverage
 
-`tests/test_display_names.py` — 41 tests, fully mocked against an
+`tests/test_display_names.py` — 47 tests, fully mocked against an
 AdventureWorks-shaped schema. All nine scenarios the brief names:
 
 | Scenario | Asserted |
@@ -282,6 +300,12 @@ AdventureWorks-shaped schema. All nine scenarios the brief names:
 | Sales by category and subcategory | **both** entities named in one query |
 | Year-wise sales by customer | `CalendarYear` untouched, customer named |
 | No matching dimension name | `no_display_name`, SQL unchanged, disclosure returned |
+
+Plus a `TestDateDimensionsAreNeverLabelled` class pinning the rule
+above: a date dimension resolves to nothing, a date key is neither
+indexed nor disclosed, grouping by one is left byte-for-byte alone, a
+query mixing a date and an entity repairs *only* the entity, and a
+system table is never treated as an entity.
 
 Plus: no guessed join, specific retry feedback, aggregates untouched,
 correct SQL left byte-for-byte alone, no double join, measures preserved,
@@ -301,6 +325,13 @@ write statement is ever produced.
 - **Only tables retrieved for this question.** If schema retrieval did not
   return the dimension, the guard cannot use it. This is deliberate — it
   bounds the guard to what the model itself was shown.
+- **Verified against the live AdventureWorks schema** (36 tables): 10
+  facts, 18 dimensions, 8 correctly-unknown views/system tables, and 20
+  key columns resolved — including labels inference had to work for
+  rather than pattern-match, such as `DimAccount.AccountDescription`,
+  `DimGeography.EnglishCountryRegionName` and `DimSalesTerritory
+  .SalesTerritoryRegion`. Degenerate dimensions (`SalesOrderNumber`)
+  correctly reach the "no readable name" disclosure.
 - **Display-column inference is pattern-based.** It is right on the
   shapes tested here and on AdventureWorks-style schemas; a schema with
   unusual conventions should use `config/display_names.yaml`. The choice

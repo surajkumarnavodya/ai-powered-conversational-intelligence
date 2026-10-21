@@ -106,6 +106,37 @@ _COMPOSITE_NAME_PAIRS: tuple[tuple[str, str], ...] = (
     ("forename", "surname"),
 )
 
+#: Dimensions that must NEVER get a display name, matched on the table's
+#: core name.
+#:
+#: A date dimension is the important one, and real-schema testing is what
+#: found it. `DimDate` carries `EnglishMonthName`, which matches the
+#: name patterns below and would make "sales by order date" silently
+#: become "sales by month name" -- collapsing every year together and
+#: changing what the query answers. That is precisely the silent
+#: wrongness this module exists to avoid, arriving from the inside.
+#:
+#: A date key needs no lookup anyway: the model already joins the date
+#: dimension and selects the grain it wants (`CalendarYear`,
+#: `FullDateAlternateKey`), and those are readable on their own.
+#:
+#: System/catalog tables are excluded for a duller reason: they are not
+#: business entities, and `sysdiagrams` resolving to `sysdiagrams.name`
+#: is noise in the map.
+#:
+#: An explicit `config/display_names.yaml` entry still wins over this --
+#: an operator who genuinely wants a label for one of these may declare
+#: it, and that is a decision rather than an inference.
+_NEVER_INFERRED_RE = re.compile(
+    r"^(date|time|calendar|period|fiscal\w*|sys\w*|dtproperties)$", re.IGNORECASE
+)
+
+#: Key columns that are date/time grains rather than entity references.
+#: Checked on the FK column itself as well as the target table, because a
+#: schema may name the dimension unusually while still spelling the key
+#: `OrderDateKey`.
+_DATE_KEY_RE = re.compile(r"\w*(date|time)key$", re.IGNORECASE)
+
 #: Table-name tokens that mark a *fact* table. A fact table is never a
 #: display-name source: it holds measures and foreign keys, and its own
 #: "name"-ish columns (if any) are not entity labels.
@@ -422,6 +453,13 @@ def resolve_display_name(
     if classify_table(table) != "dimension":
         return None
 
+    # A date/time dimension or a system table is never given an inferred
+    # label -- see `_NEVER_INFERRED_RE`. Checked after the config
+    # override above, so an explicit declaration still wins.
+    core = _TABLE_AFFIX_RE.sub("", short_name)
+    if _NEVER_INFERRED_RE.match(core):
+        return None
+
     key_column = _primary_key_of(table)
     if key_column is None:
         return None
@@ -484,10 +522,23 @@ def build_display_name_map(
                 # The FK resolves to a real table that has no readable
                 # name. Recorded so the caller can say exactly that,
                 # rather than reporting the key as unrecognised.
+                #
+                # A date/time grain is excluded from that disclosure: a
+                # date key is already readable, so there is nothing to
+                # apologise for, and a notice here would put a misleading
+                # caveat on a perfectly good "sales by order date"
+                # answer. Such a key is skipped silently -- neither
+                # repaired nor disclosed.
                 if referred_short in by_short_name:
-                    result.keys_without_names.update(c.lower() for c in fk.constrained_columns)
+                    result.keys_without_names.update(
+                        c.lower() for c in fk.constrained_columns if not _DATE_KEY_RE.match(c)
+                    )
                 continue
             for constrained in fk.constrained_columns:
+                # A date-grain key is a grain, not an entity reference,
+                # whatever the dimension it points at is called.
+                if _DATE_KEY_RE.match(constrained):
+                    continue
                 result.by_key_column.setdefault(constrained.lower(), display)
 
     logger.debug(
