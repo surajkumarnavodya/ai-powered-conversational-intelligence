@@ -38,7 +38,7 @@ mistake a session makes here**:
 
 | State | Meaning | Example |
 |---|---|---|
-| **Live** | Wired into a request path and running | the 18-node SQL graph, RBAC, result governance |
+| **Live** | Wired into a request path and running | the 19-node SQL graph, RBAC, result governance |
 | **Built, not wired** | Implemented and tested, no live caller | `analytics.root_cause` (needs a second dataset the pipeline never produces), `recommendation.RecommendationProvider` (Protocol only), `agent.translation` (no route, node or setting calls it) |
 | **Off by default** | Live only when an operator enables it | web search, media search/generation, result cache, model routing, BI integrations |
 | **Disclosed gap** | Deliberately absent, with a reason | no scheduler/background worker, no delivery channel for alerts or briefings, no streaming |
@@ -68,7 +68,7 @@ the feature's own contract document (§8) rather than inferring from code.
 | Concern | Choice |
 |---|---|
 | LLM runtime | Ollama, default `llama3.1:8b` (swappable via `.env` — e.g. `sqlcoder`, `duckdb-nsql`). Per-request selection via `AskRequest.model`, validated against `Settings.ollama_allowed_models` |
-| Orchestration | LangGraph — explicit state machines, not free-form agents. `agent/graph.py` (the 18-node SQL pipeline) and, when multi-source is on, `agent/orchestrator/graph.py` in front of it |
+| Orchestration | LangGraph — explicit state machines, not free-form agents. `agent/graph.py` (the 19-node SQL pipeline) and, when multi-source is on, `agent/orchestrator/graph.py` in front of it |
 | Config / validation | Pydantic v2. `config/settings.py::Settings` is a frozen `pydantic_settings.BaseSettings`; secrets are `pydantic.SecretStr` |
 | User's database | PostgreSQL, MySQL, SQL Server, or Oracle via SQLAlchemy. One or more named connections (`DB_CONNECTIONS`), auto-routed per question |
 | SQL parsing / validation | sqlglot — AST allowlist in the dialect matching the target `DB_TYPE` |
@@ -137,7 +137,7 @@ These hold across the platform. Breaking one is a regression even if tests
 pass.
 
 1. **The graph is an explicit, bounded state machine.** `agent/graph.py` is
-   18 nodes with a conditional retry edge back to `generate_sql` (or to
+   19 nodes with a conditional retry edge back to `generate_sql` (or to
    `retrieve_schema` for a missing reference), capped by
    `state["max_retries"]`. Never introduce an unbounded loop or a second
    retry budget. Adding or renaming a node means updating
@@ -502,6 +502,7 @@ authoritative, and explains how to resolve a conflict.
 | Authentication / authorization | [`docs/AUTHENTICATION.md`](docs/AUTHENTICATION.md), [`docs/AUTHORIZATION.md`](docs/AUTHORIZATION.md) |
 | Multi-tenancy rules and limitations | [`docs/MULTI_TENANCY.md`](docs/MULTI_TENANCY.md) |
 | Configuration reference | [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) |
+| Entity display names: metadata, SQL repair, join and chart-label rules | [`docs/DISPLAY_NAMES.md`](docs/DISPLAY_NAMES.md) |
 | Per-user concurrency, the question queue, deterministic source routing, per-task model pins, guardrails, grounding | [`docs/CONCURRENCY.md`](docs/CONCURRENCY.md) |
 | Production readiness verdict | [`docs/PRODUCTION_READINESS_RELEASE_GATE.md`](docs/PRODUCTION_READINESS_RELEASE_GATE.md) |
 | One feature's full design, tests and limitations | `NN_*_CONTRACT.md` at the repo root — one per numbered prompt; indexed in the context map |

@@ -169,6 +169,7 @@ from api.tenant_admin import router as tenant_admin_router
 from api.voice import router as voice_router
 from api.workflow import router as workflow_router
 from config.settings import ConfigurationError, Settings, configure_logging, get_settings
+from db.column_formatting import get_key_column_names
 from db.connection import (
     check_write_privileges,
     get_connection,
@@ -1078,6 +1079,8 @@ def _ask_response_from_state(
         # orchestrator (the router-off path, eval/runner.py, the
         # standalone scripts) is unchanged rather than reporting a
         # confidence or a grounding verdict nobody computed.
+        display_name_notice=state.get("display_name_notice"),
+        display_names_repaired=list(state.get("display_names_repaired") or []),
         source_confidence=dict(state.get("source_confidence", {}) or {}),
         grounding=dict(state.get("grounding", {}) or {}),
         session_id=session_id,
@@ -1882,7 +1885,19 @@ def execute(
             )
     result_df = pd.DataFrame(rows, columns=columns)
     column_types: dict[str, str] = dict(classify_columns(result_df)) if not result_df.empty else {}
-    recommendation = recommend_chart(result_df, column_types)
+    # Surrogate keys are excluded from both chart axes -- a key is not a
+    # category and not a measure (see `recommend_chart`). The key set comes
+    # from the live introspected schema for the database this result came
+    # from, which is the same source `db.column_formatting` uses, so the
+    # table and the chart agree about what is a key.
+    chart_key_columns: set[str] = set()
+    try:
+        chart_key_columns = get_key_column_names(
+            list(introspect_schema(get_read_only_engine(db_config), db_config.db_schema) or [])
+        )
+    except Exception:  # noqa: BLE001 - an accuracy aid, never a blocker
+        logger.debug("[execute] could not resolve key columns for chart selection", exc_info=True)
+    recommendation = recommend_chart(result_df, column_types, chart_key_columns)
 
     # Prompt 15: a fuller, deterministic visualization spec -- additive and
     # parallel to chart_recommendation/column_types above, which remain the

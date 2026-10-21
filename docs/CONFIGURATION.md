@@ -289,6 +289,28 @@ bucket where each could read the others' results. Enable
 **Process-local.** A multi-worker deployment has one queue — and one set
 of per-user counters — *per worker*.
 
+## Readable business names (`db/display_names.py`)
+
+Stops a result being labelled by a raw key: "total sales by product"
+returns a product **name**, not a `ProductKey`. Full behaviour, join
+rules and limitations: [`docs/DISPLAY_NAMES.md`](DISPLAY_NAMES.md).
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ENABLE_DISPLAY_NAME_ENFORCEMENT` | `true` | After generation and before validation, rewrites a query that labels rows by a surrogate key so it joins the dimension and selects the readable column. Repaired SQL still passes the SELECT-only validator, so this can never widen what a query may do. `false` makes the node a pass-through, leaving only the generation prompt's advisory rule. |
+
+**It never guesses a join.** Only foreign keys declared in the live
+schema are used. Where a relationship is not declared, the finding
+becomes retry feedback for the next generation attempt (sharing the one
+`MAX_RETRIES` budget). Where the dimension has no readable column at all,
+the key is kept and `AskResponse.display_name_notice` discloses why —
+rather than a label being invented.
+
+Which column holds each entity's name is derived from live introspection
+and needs no configuration. Override a specific table in
+`config/display_names.yaml` when inference would pick wrong; that file
+ships as an empty template and documents the format.
+
 ## Per-task model pins (`model_routing/tasks.py`)
 
 Which model each *kind* of LLM work starts from. Blank (the default for

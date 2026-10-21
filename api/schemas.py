@@ -896,6 +896,27 @@ class AskResponse(BaseModel):
             "locally (see model_routing.models.TIER_COST_UNITS)."
         ),
     )
+    display_name_notice: str | None = Field(
+        default=None,
+        description=(
+            "Set when a result column is still labelled by an identifier because the "
+            "related table has no human-readable name column for it. An honest "
+            "disclosure rather than a fabricated label -- the key is shown as-is and "
+            "this explains why (see agent/display_name_guard.py). None when every "
+            "label is readable, which is the normal case."
+        ),
+    )
+    display_names_repaired: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Key columns the display-name guard rewrote into a joined readable name, "
+            'e.g. ["ProductKey"]. Recorded so a reader can see that the SQL shown is '
+            "not byte-for-byte what the model produced, and why. Empty when nothing "
+            "needed repairing. The rewritten SQL is still validated by "
+            "agent/sql_validator.py before execution, so a repair never widens what "
+            "the query may do."
+        ),
+    )
     source_confidence: dict[str, float] = Field(
         default_factory=dict,
         description=(

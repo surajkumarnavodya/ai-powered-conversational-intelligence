@@ -44,6 +44,10 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from agent.analytical_plan import AnalyticalPlan, render_plan_as_steps
 from agent.authz import Permission, has_role_permission
+from agent.display_name_guard import (
+    NO_DISPLAY_NAME_NOTICE,
+    enforce_display_names,
+)
 from agent.error_classification import ExecutionErrorCategory, classify_execution_error
 from agent.exceptions import (
     MalformedLLMOutputError,
@@ -104,10 +108,11 @@ from config.sensitive_columns import load_sensitive_columns
 from config.settings import get_settings
 from config.table_descriptions import apply_table_description, load_table_descriptions
 from db.connection import get_connection, get_read_only_engine, get_sqlglot_dialect
+from db.display_names import build_display_name_map
 from db.execution import execute_readonly_sql
 from db.query_cost import MODERATE_COST_NOTICE, estimate_query_cost, high_cost_error_message
 from db.query_store import QueryStoreFindings, get_cached_query_store_findings
-from db.schema_introspection import extract_ddl_column_names
+from db.schema_introspection import extract_ddl_column_names, parse_ddl_table_info
 from embeddings.golden_examples import retrieve_golden_examples
 from embeddings.retriever import retrieve_relevant_schema, select_database
 from governance.domains import BusinessDomain
@@ -1637,6 +1642,149 @@ def review_metric_conformance_node(state: AgentState) -> dict[str, Any]:
     return update
 
 
+@_timed_node("enforce_display_names")
+def enforce_display_names_node(state: AgentState) -> dict[str, Any]:
+    """Makes sure the result is labelled by a readable name, not a raw key.
+
+    Runs between `review_metric_conformance` and `validate_sql` (see
+    `agent/graph.py`), so anything it rewrites is still validated by
+    `agent.sql_validator` before it can reach the database -- a repair can
+    never widen what the SQL is permitted to do.
+
+    **Why a deterministic node rather than a better prompt.**
+    `agent.llm_client._system_prompt` has instructed the model to join in
+    a readable column instead of returning a surrogate key since long
+    before this node existed, and local models follow it inconsistently:
+    "total sales by product" still came back grouped by `ProductKey`. An
+    instruction the model may ignore is not a control (CLAUDE.md 4.3), so
+    the check is made here, on the generated SQL, where it is decided
+    rather than requested.
+
+    Three outcomes, from `agent.display_name_guard`:
+
+      - **repaired** -- the join was added and the key swapped for the
+        name. Proceeds to validation with the rewritten SQL.
+      - **needs_retry** -- the shape was more complex than a provably
+        safe repair, so the finding becomes this attempt's error feedback
+        for the next `generate_sql` call, naming the exact table, join
+        column and display column. Shares the one `state["max_retries"]`
+        budget every other retryable category uses -- never a second,
+        separate loop (CLAUDE.md 4.1).
+      - **no_display_name** -- the key reaches a dimension that genuinely
+        has no readable column. Nothing is repaired and nothing is
+        retried; the limitation is recorded in
+        `display_name_notice` and disclosed in the answer, because
+        inventing a label would be worse than an honest key.
+
+    **Fails open**, like `plan_query`/`review_sql`: this is an accuracy
+    aid, and an unreadable label is a worse answer, never an unsafe one
+    (CLAUDE.md 4.2). Any unexpected error leaves the SQL exactly as
+    generated and lets validation proceed.
+    """
+    sql = state.get("sql")
+    settings = get_settings()
+    if not sql or not settings.enable_display_name_enforcement:
+        return {"status": "validating"}
+
+    try:
+        # The graph carries retrieved schema as DDL *text*
+        # (`AgentState.schema_tables`), which is what the prompt needs.
+        # The structure is rebuilt from that same text rather than by
+        # re-introspecting the live database inside the request --
+        # `db.schema_introspection.parse_ddl_table_info` parses the exact
+        # format `render_ddl` emitted, so this costs nothing and adds no
+        # round trip. Only the tables retrieved for *this* question are
+        # considered, so the guard can never reach for a relationship the
+        # model was not itself shown.
+        tables = [
+            parse_ddl_table_info(entry["table_name"], entry["ddl"])
+            for entry in (state.get("schema_tables") or [])
+            if entry.get("ddl")
+        ]
+        if not tables:
+            return {"status": "validating"}
+
+        db_config = get_connection(settings, _selected_db_name(state))
+        display_map = build_display_name_map(tables)
+        finding = enforce_display_names(
+            sql,
+            tables,
+            display_map,
+            dialect=get_sqlglot_dialect(db_config.db_type) or "",
+        )
+    except Exception as exc:  # noqa: BLE001 - accuracy aid, never a blocker
+        logger.warning(
+            "[enforce_display_names] skipped after an unexpected error: %s", exc, exc_info=exc
+        )
+        return {"status": "validating"}
+
+    if finding.status == "ok":
+        return {"status": "validating"}
+
+    if finding.status == "repaired":
+        logger.info(
+            "[enforce_display_names] rewrote %d key label(s) to readable names: %s",
+            len(finding.repaired_keys),
+            list(finding.repaired_keys),
+        )
+        update: dict[str, Any] = {
+            "sql": finding.sql,
+            "display_names_repaired": list(finding.repaired_keys),
+            "status": "validating",
+        }
+        if finding.message:
+            update["display_name_notice"] = finding.message
+        return update
+
+    if finding.status == "no_display_name":
+        # Not a failure and not retryable: the database has no readable
+        # name here, and asking the model again cannot conjure one.
+        logger.info(
+            "[enforce_display_names] no readable name for %s -- disclosing",
+            list(finding.unresolved_keys),
+        )
+        return {
+            "display_name_notice": finding.message,
+            "status": "validating",
+        }
+
+    retry_count = state.get("retry_count", 0)
+    max_retries = _effective_max_retries(state, settings)
+    can_retry = retry_count < max_retries
+    attempt_number = retry_count + 1
+    logger.warning(
+        "[enforce_display_names] attempt %d: key label(s) %s not readable "
+        "(retry %d/%d, will_retry=%s)",
+        attempt_number,
+        list(finding.unresolved_keys),
+        retry_count,
+        max_retries,
+        can_retry,
+    )
+    record: AttemptRecord = {
+        "attempt": attempt_number,
+        "sql": sql,
+        "outcome": "key_instead_of_display_name",
+        "error": finding.message,
+        "will_retry": can_retry,
+    }
+    retry_update: dict[str, Any] = {
+        "error_history": [f"Display name: {finding.message}"],
+        "attempt_history": [record],
+        "last_error_category": "key_instead_of_display_name",
+        "retry_count": retry_count + 1,
+        "status": "generating" if can_retry else "validating",
+    }
+    if not can_retry:
+        # Deliberately NOT a failed run: a query labelled by a key still
+        # answers the question, just less readably. Proceeding with a
+        # disclosure beats refusing to answer at all.
+        retry_update["display_name_notice"] = NO_DISPLAY_NAME_NOTICE
+        retry_update["error_history"] = []
+        retry_update["retry_count"] = retry_count
+    return retry_update
+
+
 @_timed_node("validate_sql")
 def validate_sql_node(state: AgentState) -> dict[str, Any]:
     """Runs the generated SQL through the allowlist validator.
@@ -2803,6 +2951,24 @@ def route_after_metric_conformance(state: AgentState) -> str:
     if status == "failed":
         return "failed"
     return "generate_sql"
+
+
+def route_after_display_names(state: AgentState) -> str:
+    """Conditional edge after enforce_display_names: validate, or retry.
+
+    Mirrors `route_after_metric_conformance`'s shape. "validating"
+    proceeds to `validate_sql` -- which is the path for an untouched
+    query, a repaired one, and one carrying an honest "no readable name"
+    disclosure alike. Anything else loops back to `generate_sql` with the
+    guard's precise feedback now in `error_history`.
+
+    There is deliberately no "failed" branch: an unreadable label is a
+    quality problem, not a reason to refuse an answer the database can
+    actually produce.
+    """
+    if state.get("status") == "generating":
+        return "generate_sql"
+    return "validate_sql"
 
 
 def route_after_validation(state: AgentState) -> str:

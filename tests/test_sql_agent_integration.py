@@ -232,6 +232,7 @@ class TestGraphStructure:
             "generate_sql",
             "review_sql",
             "review_metric_conformance",
+            "enforce_display_names",
             "validate_sql",
             "estimate_cost",
             "execute_sql",

@@ -476,6 +476,7 @@ connectivity and reverse-proxy placement.
 | Run the opt-in live tests, or set up a Microsoft 365 tenant for them | [`docs/LIVE_INTEGRATION_TESTING.md`](docs/LIVE_INTEGRATION_TESTING.md) |
 | Look up REST API endpoints and auth | [`docs/API.md`](docs/API.md) |
 | Find every `.env` variable | [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) |
+| Understand why results show business names instead of database keys | [`docs/DISPLAY_NAMES.md`](docs/DISPLAY_NAMES.md) |
 | Run many questions at once per user, or tune source/model routing, guardrails and grounding | [`docs/CONCURRENCY.md`](docs/CONCURRENCY.md) |
 | Deploy with Docker / an external DB or Ollama | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) |
 | See the latest measured benchmark accuracy | [`docs/EVALUATION.md`](docs/EVALUATION.md) |

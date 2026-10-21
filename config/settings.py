@@ -2083,6 +2083,28 @@ class Settings(BaseSettings):
     # masking, secret redaction). Both are no-ops for data with nothing
     # classified and no secret-shaped text, so the defaults change nothing for
     # a plain deployment. Turn off only to roll back.
+    # Deterministic display-name enforcement (agent/display_name_guard.py,
+    # db/display_names.py). On by default: a result labelled by
+    # `ProductKey` instead of a product name is the single most common
+    # complaint about generated SQL, and the generation prompt's own
+    # instruction to avoid it is advisory -- local models follow it
+    # inconsistently.
+    #
+    # What it does: after generation and before validation, if the query
+    # labels rows by a surrogate key that a DECLARED foreign key connects
+    # to a dimension with a readable column, the join is added and the key
+    # swapped for the name. Repaired SQL still passes through
+    # `agent.sql_validator`, so this can never widen what a query may do.
+    #
+    # It never guesses a join. Where a relationship is not declared, the
+    # finding becomes retry feedback for the next generation attempt
+    # instead, sharing the one MAX_RETRIES budget. Where the dimension has
+    # no readable column at all, the key is kept and the limitation
+    # disclosed rather than a label invented.
+    #
+    # False restores the pre-existing behaviour exactly: the node becomes
+    # a pass-through and the prompt's advisory rule is all that applies.
+    enable_display_name_enforcement: bool = True
     enable_request_governance: bool = True
     enable_result_governance: bool = True
 

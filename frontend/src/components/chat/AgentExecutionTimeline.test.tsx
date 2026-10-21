@@ -42,6 +42,7 @@ const NORMAL_RUN: StageTiming[] = [
   ok('generate_sql', 1, 3400),
   noOp('review_sql', 1),
   noOp('review_metric_conformance', 1),
+  noOp('enforce_display_names', 1),
   ok('validate_sql', 1, 5.3),
   noOp('estimate_cost', 1),
   ok('execute_sql', 1, 45),
@@ -245,7 +246,7 @@ describe('AgentExecutionTimeline: normal execution', () => {
   it('discloses how many stages it left out rather than hiding them silently', () => {
     renderTimeline(NORMAL_RUN)
     open()
-    expect(screen.getByText(/7 stage\(s\) that did nothing/)).toBeInTheDocument()
+    expect(screen.getByText(/8 stage\(s\) that did nothing/)).toBeInTheDocument()
   })
 
   it('shows each stage duration, in milliseconds below a second', () => {

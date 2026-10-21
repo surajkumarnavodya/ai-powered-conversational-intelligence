@@ -107,6 +107,7 @@ const STAGE_LABELS: Record<string, string> = {
   generate_sql: 'SQL generation',
   review_sql: 'Plan conformance review',
   review_metric_conformance: 'Metric conformance review',
+  enforce_display_names: 'Readable name check',
   validate_sql: 'SQL validation',
   estimate_cost: 'Cost estimate',
   execute_sql: 'Read-only execution',
