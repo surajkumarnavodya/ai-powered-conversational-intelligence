@@ -174,6 +174,31 @@ cite the supporting result inline as a markdown link under that source's
 own title, and to say plainly when results disagree, when a claim rests
 on a single result, or when they do not cover part of the question.
 
+It is also told to **size the answer to the question** rather than giving
+every question the same shape: a quick fact (a price, a score, who holds a
+role) gets 1–3 sentences and nothing more, while a news briefing is
+grouped by theme — Politics & Governance, Economy & Markets, International
+Relations, Courts & Law, Society & Environment, Sports, Science & Tech,
+including only the themes that have real stories — with each story a
+bolded headline and 2–4 sentences on what happened, the key numbers, who
+is involved and why it matters. An explanation gets sections or numbered
+steps; a comparison gets a table of the same attributes across the
+options. A briefing, research or comparison answer may never be a single
+paragraph. Quotes are capped at 15 words and used only where the exact
+wording matters, and the answer is written in the language the question
+was asked in.
+
+**On dates, the prompt is a guard, not an instruction to report one.**
+The current date and time are passed in, so "today" and "latest" can be
+judged at all — without it the model anchors on whatever its training data
+implies "now" is. But `search.web_search.WebResult` carries only
+`retrieved_at`, which is when *this app* fetched the page, and **no
+publication date whatsoever**. So the model is told explicitly that the
+retrieval time is not a publication date, never to state or estimate when
+a page was published, and to take a date only from a result's own text,
+attributed to that result. Asking a model to weigh freshness without this
+is how a date from nowhere ends up presented as observed fact.
+
 The answer carries **no trailing "Sources" section** by design — the
 dashboard's `SourceAnswerCard` already renders the source list from the
 structured `citations`, and this repo keeps one owner per fact. The inline
