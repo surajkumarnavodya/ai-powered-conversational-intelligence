@@ -3386,7 +3386,54 @@ class Settings(BaseSettings):
     # (`session_expensive_source_limit`) still applies on top, so a session
     # that fans out to web on every question eventually has web dropped
     # rather than billing without bound.
-    route_to_all_sources: bool = True
+    #
+    # **Default flipped to False on 2026-10-22.** With it on, "Sick leave
+    # policy" was routed to `policy` correctly and then had `sql` added
+    # anyway, so the SQL pipeline ran for 30.6s, refused, and the UI
+    # reported "Agent stopped at SQL generation" and "Database: 0 row(s)
+    # returned" above the real answer. Paying the slowest source on every
+    # question to insure against a classifier mistake is the wrong trade
+    # when the classifier was right.
+    #
+    # The recall argument above is now also weaker than when it was
+    # written. The specific regression it cites -- a leave-policy PDF
+    # filed under `documents` being invisible to a question routed to
+    # `policy` -- is handled directly by `_TEXT_COLLECTION_SOURCES`
+    # pairing those two collections together (commit `07dbfd6`), which
+    # runs whether or not this flag is on. So the fan-out is no longer
+    # what protects that case.
+    #
+    # Still a setting, not a deletion: an operator who wants recall-first
+    # behaviour back sets ROUTE_TO_ALL_SOURCES=true and gets exactly the
+    # previous conduct.
+    route_to_all_sources: bool = False
+    # --- Router budget (2026-10-22) ---
+    # The router call sits in front of every other piece of work a
+    # question does, so its cost is paid even by questions that end up
+    # needing nothing. 400 tokens is the JSON contract in
+    # `prompts/router.md` plus headroom for a long `clarifying_question`;
+    # the decision itself is ~120 tokens, and a cap this size is a guard
+    # against a model that starts narrating rather than a target.
+    router_max_tokens: int = Field(default=400, gt=0, le=2000)
+    # Wall-clock budget for routing. Exceeding it is not an error: the
+    # question falls through to `router_contract.keyword_fallback`, which
+    # needs no model at all, so a slow or down Ollama costs this many
+    # seconds rather than the whole question.
+    router_timeout_seconds: float = Field(default=5.0, gt=0.0, le=60.0)
+    # Show pipeline internals -- skipped stages, failed stages, refusal
+    # reasons, row counts for empty results -- in the UI.
+    #
+    # Off by default, and that default is the point. A normal user asking
+    # "Sick leave policy" was being shown "Agent stopped at SQL
+    # generation" and "Database: 0 row(s) returned" above the real
+    # answer: true statements about the pipeline's internals, and noise
+    # to the person who asked. They stay in the logs either way; this
+    # only decides whether they are rendered. `api.schemas` exposes it so
+    # the frontend can honour it without a second source of truth, and
+    # the server still withholds the detail when it is off rather than
+    # trusting the client to hide it (CLAUDE.md 5.2 -- a UI gate is never
+    # a boundary).
+    show_pipeline_debug: bool = False
 
     # --- Deterministic source routing (agent/orchestrator/source_signals.py)
     # The deterministic signal pre-pass in front of `classify_sources`.

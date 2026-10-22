@@ -868,6 +868,7 @@ def _stage_timings_out(state: Mapping[str, Any]) -> list[StageTimingOut]:
     as a failure, so the fallback never invents a problem that was not
     recorded.
     """
+    settings = get_settings()
     timings: list[StageTimingOut] = []
     for record in state.get("stage_timings", []) or []:
         stage = record.get("stage") if isinstance(record, Mapping) else None
@@ -875,6 +876,18 @@ def _stage_timings_out(state: Mapping[str, Any]) -> list[StageTimingOut]:
             continue
         outcome = record.get("outcome")
         category = record.get("error_category")
+        # Stages that errored are withheld unless SHOW_PIPELINE_DEBUG is
+        # on. "Sick leave policy" used to render "Agent stopped at SQL
+        # generation" and a red failed stage above the real answer from
+        # the policy store -- true about the pipeline, noise to the
+        # person who asked, who never mentioned a database. The frontend
+        # derives its "stopped" verdict from a stage whose outcome is
+        # "error", so withholding the row removes the banner at source
+        # rather than hiding it in the client. Server-side on purpose: a
+        # UI gate is never a boundary here (CLAUDE.md 5.2). The detail
+        # stays in the logs and the structured trace either way.
+        if outcome == "error" and not settings.show_pipeline_debug:
+            continue
         timings.append(
             StageTimingOut(
                 stage=str(stage),

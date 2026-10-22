@@ -13,7 +13,7 @@ through `agent.graph.run_agent` directly or through the orchestrator -- see
 from __future__ import annotations
 
 import operator
-from typing import Annotated
+from typing import Annotated, NotRequired
 
 # typing_extensions.TypedDict (not stdlib typing.TypedDict) is required here:
 # this TypedDict is used as a LangGraph node's state, and LangGraph's
@@ -51,6 +51,22 @@ class RouteDecision(TypedDict):
             only one source is configured (nothing to choose between).
             **Evidence, not a calibrated probability** -- see that
             module's own docstring.
+        primary_source: The single source the router led with, in this
+            graph's own vocabulary ("policy", "sql", ...), or None when
+            the route was short-circuited deterministically and no
+            primary was chosen. `synthesis_node` leads the merged answer
+            with this source's contribution.
+        answer_style: One of `router_contract.ANSWER_STYLES` -- how long
+            and in what shape the answer should be. Advisory: it shapes
+            prose, never which data is returned.
+        needs_clarification: True when the router judged the question
+            genuinely ambiguous between sources. The orchestrator then
+            answers with `clarifying_question` instead of running any
+            source.
+        clarifying_question: The one short question to ask, when
+            `needs_clarification` is set.
+        fallback_source: The source to try when the primary returns
+            nothing useful, in this graph's vocabulary, or None.
         requires_database: Whether "sql" ended up in `sources` -- a plain,
             debuggable summary of "did this question actually touch the
             database," independent of parsing `sources` yourself. Always
@@ -63,6 +79,11 @@ class RouteDecision(TypedDict):
     short_circuited: bool
     requires_database: bool
     source_confidence: dict[str, float]
+    primary_source: NotRequired[str | None]
+    answer_style: NotRequired[str | None]
+    needs_clarification: NotRequired[bool]
+    clarifying_question: NotRequired[str | None]
+    fallback_source: NotRequired[str | None]
 
 
 class SourceAnswer(TypedDict):

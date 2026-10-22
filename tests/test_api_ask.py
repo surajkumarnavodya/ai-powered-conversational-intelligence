@@ -308,6 +308,63 @@ class TestAsk:
         assert [t["attempt"] for t in generate] == [1, 2]
         assert generate[0]["duration_ms"] == 3400.0
 
+    def _state_with_a_failed_stage(self) -> AgentState:
+        return {
+            "status": "succeeded",
+            "sql": "SELECT 1",
+            "result_columns": ["c"],
+            "result_rows": [(1,)],
+            "row_count": 1,
+            "retry_count": 0,
+            "attempt_history": [],
+            "error_history": [],
+            "stage_timings": [
+                {"stage": "retrieve_schema", "attempt": 1, "duration_ms": 120.5},
+                {
+                    "stage": "generate_sql",
+                    "attempt": 1,
+                    "duration_ms": 30630.0,
+                    "outcome": "error",
+                    "error_category": "off_topic",
+                },
+            ],
+        }
+
+    def test_a_failed_stage_is_withheld_from_a_normal_caller(self, monkeypatch, client):
+        """Reported 2026-10-22: asking "Sick leave policy" rendered "Agent
+        stopped at SQL generation" and a red failed stage above the real
+        answer from the policy store.
+
+        The frontend derives that banner from a stage whose `outcome` is
+        `"error"`, so withholding the row removes the banner at its
+        source. Withheld on the server, not hidden in the client: a UI
+        gate is never a boundary here (CLAUDE.md 5.2).
+        """
+        monkeypatch.setattr(
+            "api.main.run_orchestrated", lambda *a, **k: self._state_with_a_failed_stage()
+        )
+
+        body = client.post("/ask", json={"question": "Sick leave policy"}).json()
+
+        stages = [t["stage"] for t in body["stage_timings"]]
+        assert stages == ["retrieve_schema"], "an errored stage must not reach a normal caller"
+        assert all(t["outcome"] != "error" for t in body["stage_timings"])
+
+    def test_pipeline_debug_restores_the_failed_stage(self, monkeypatch, client):
+        """The detail is a developer view, not a deleted one -- an
+        operator who turns SHOW_PIPELINE_DEBUG on gets it back whole."""
+        monkeypatch.setattr(
+            "api.main.run_orchestrated", lambda *a, **k: self._state_with_a_failed_stage()
+        )
+        monkeypatch.setattr("api.main.get_settings", lambda: _settings(show_pipeline_debug=True))
+
+        body = client.post("/ask", json={"question": "Sick leave policy"}).json()
+
+        stages = [t["stage"] for t in body["stage_timings"]]
+        assert stages == ["retrieve_schema", "generate_sql"]
+        failed = [t for t in body["stage_timings"] if t["outcome"] == "error"]
+        assert failed and failed[0]["error_category"] == "off_topic"
+
     def test_stage_timings_default_to_empty_for_an_existing_client(self, monkeypatch, client):
         """Additive and optional: a run that recorded none (e.g. a
         rejected question) still answers, with an empty list rather than

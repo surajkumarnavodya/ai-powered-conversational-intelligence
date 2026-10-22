@@ -24,7 +24,11 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Hashable
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeout
 from datetime import datetime
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Literal, cast
 
 from guardrails.config import GuardrailLayer, config_from_settings
@@ -33,6 +37,13 @@ from guardrails.grounding import assess_grounding
 
 from agent.authz import Permission, has_role_permission
 from agent.graph import run_agent
+from agent.orchestrator.router_catalog import build_source_catalog
+from agent.orchestrator.router_contract import (
+    ROUTED_SOURCE_NAMES,
+    RouterDecision,
+    keyword_fallback,
+    parse_router_decision,
+)
 from agent.orchestrator.source_signals import describe, score_sources
 from agent.orchestrator.state import (
     AttachmentResult,
@@ -48,6 +59,7 @@ from agent.rate_limit import (
     get_media_generation_limiter,
     get_session_expensive_source_limiter,
 )
+from agent.state import ConversationExchange
 from config.settings import Settings, get_settings
 from governance.request_policy import evaluate_request
 from media_gen.content_policy import basic_prompt_safety_check as _basic_prompt_safety_check
@@ -351,6 +363,216 @@ def get_available_sources(settings: Settings, *, has_attachments: bool = False) 
     return [d.name for d in available_descriptors(settings, has_attachments=has_attachments)]
 
 
+_ROUTER_PROMPT_PATH = Path(__file__).resolve().parents[2] / "prompts" / "router.md"
+
+
+@lru_cache(maxsize=1)
+def _router_prompt_template() -> str:
+    """The router prompt, read once from `prompts/router.md`.
+
+    A file rather than an in-code constant because this one is meant to
+    be *tuned* -- it encodes product judgement about which questions
+    belong to which source, and an operator adding a source catalog
+    should not have to edit Python to adjust its wording. That is the
+    opposite of `agent.llm_client`'s generation/insight prompts, which
+    are deliberately in-code constants and benchmark-pinned (CLAUDE.md
+    12).
+
+    It is still **this app's own file on disk**, not a database row:
+    nothing a user or a retrieved document can write reaches it, so
+    making it editable does not make it injectable (CLAUDE.md 5.5).
+    """
+    return _ROUTER_PROMPT_PATH.read_text(encoding="utf-8")
+
+
+def _recent_turns_text(
+    conversation_history: list[ConversationExchange] | None, limit: int = 4
+) -> str:
+    """The last `limit` turns, oldest first, as plain text for the prompt.
+
+    Truncated per turn so a long pasted document in an earlier turn
+    cannot push the actual question out of the router's window.
+    """
+    if not conversation_history:
+        return "(no earlier turns)"
+    recent = list(conversation_history)[-limit:]
+    lines = []
+    for exchange in recent:
+        question = str(exchange.get("question", ""))[:200]
+        answer = str(exchange.get("answer", ""))[:200]
+        lines.append(f"- User: {question}")
+        if answer:
+            lines.append(f"  Assistant: {answer}")
+    return "\n".join(lines) if lines else "(no earlier turns)"
+
+
+def _drop_unavailable(decision: RouterDecision, available: list[str]) -> RouterDecision:
+    """Removes picks this deployment/caller cannot actually reach.
+
+    The model is shown only the available sources (the catalog is built
+    from them), but a model that invents one anyway must not reach the
+    graph. Mirrors what `classify_sources` has always done to its own
+    comma-separated picks.
+
+    A `primary` that survives nothing is left in place rather than
+    rewritten: `router_node` filters it out of `sources` naturally, and
+    the no-retrieval routes (`general_knowledge`, `conversation`) are
+    *supposed* to map to no source at all.
+    """
+    allowed = set(available)
+
+    def _reachable(name: str) -> bool:
+        internal = ROUTED_SOURCE_NAMES.get(name)
+        return internal is None or internal in allowed
+
+    secondary = [s for s in decision.secondary if _reachable(s)]
+    fallback = decision.fallback if decision.fallback and _reachable(decision.fallback) else None
+    if secondary == decision.secondary and fallback == decision.fallback:
+        return decision
+    return decision.model_copy(update={"secondary": secondary, "fallback": fallback})
+
+
+def classify_sources_structured(
+    question: str,
+    available: list[str],
+    settings: Settings,
+    *,
+    conversation_history: list[ConversationExchange] | None = None,
+    uploaded_filenames: list[str] | None = None,
+) -> RouterDecision:
+    """Asks the router model for a full `RouterDecision`, with fallbacks.
+
+    Three layers, in order, because each failure mode needs a different
+    answer:
+
+    1. The model returns valid JSON matching the schema -- used as-is.
+    2. It returns something unparseable -- retried **once**, with a
+       terser instruction appended. One retry, not a loop: this call sits
+       in front of all real work, and `Settings.router_timeout_seconds`
+       is the budget for the whole thing.
+    3. It fails twice, or the call itself raises -- `keyword_fallback`
+       decides from the question text alone. That path never touches the
+       model, which is the point: it is what runs when Ollama is down.
+
+    The returned decision is a *request*, not a grant. `router_node`
+    still filters it through the RBAC check and the session cost ceiling
+    before any subgraph runs (CLAUDE.md 4.3).
+    """
+    from rag.llm import call_ollama
+
+    catalog = build_source_catalog(
+        settings, available=available, uploaded_filenames=uploaded_filenames
+    )
+    now = datetime.now().astimezone()
+    prompt = (
+        _router_prompt_template()
+        .replace("{current_datetime}", now.strftime("%Y-%m-%d %H:%M"))
+        .replace("{current_date}", now.strftime("%Y-%m-%d"))
+        .replace("{timezone}", now.strftime("%Z") or "local")
+        .replace("{recent_turns}", _recent_turns_text(conversation_history))
+        .replace("{question}", question)
+        .replace("{source_catalog}", catalog)
+    )
+
+    table_keywords = _catalog_keywords(catalog)
+    model = resolve_task_model(ModelTask.ROUTER, settings)
+
+    for attempt in (1, 2):
+        user_prompt = "Return the routing JSON for the question above."
+        if attempt == 2:
+            user_prompt = (
+                "Your previous reply was not valid JSON. Return ONLY the JSON "
+                "object described above, starting with { and ending with }."
+            )
+        try:
+            # Bounded by `router_timeout_seconds`, not by
+            # `ollama_request_timeout_seconds` (300s). Routing sits in
+            # front of every other piece of work, so a slow model must
+            # cost seconds and then get out of the way -- the keyword
+            # fallback needs no model and is always available.
+            #
+            # A worker thread rather than a parameter because
+            # `rag.llm.call_ollama` takes no timeout and is called from
+            # seven places; widening its signature for this one caller
+            # would be the larger change (CLAUDE.md 6.3). The honest
+            # limit of this approach: the HTTP request itself keeps
+            # running in that thread until Ollama answers or its own
+            # timeout fires. What is bounded is how long the *question*
+            # waits, which is what the user experiences. The thread is a
+            # daemon so a straggler cannot hold up shutdown.
+            pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="router")
+            try:
+                future = pool.submit(
+                    call_ollama,
+                    prompt,
+                    user_prompt,
+                    settings,
+                    max_tokens=settings.router_max_tokens,
+                    model=model,
+                )
+                raw = future.result(timeout=settings.router_timeout_seconds)
+            finally:
+                # `wait=False` is the whole point, and a `with` block
+                # cannot express it: `ThreadPoolExecutor.__exit__` calls
+                # `shutdown(wait=True)`, which blocks until the worker
+                # finishes -- so on timeout the caller would wait for the
+                # very call it just gave up on, and the timeout would
+                # bound nothing at all. Measured: it turned a 51s test
+                # run into 20 minutes.
+                pool.shutdown(wait=False)
+        except FuturesTimeout:
+            logger.warning(
+                "[router] routing exceeded %.1fs on attempt %d -- using keyword fallback",
+                settings.router_timeout_seconds,
+                attempt,
+            )
+            return keyword_fallback(question, table_keywords)
+        except Exception as exc:  # noqa: BLE001 - routing must never fail the question
+            logger.warning(
+                "[router] model call failed on attempt %d (%s) -- using keyword fallback",
+                attempt,
+                type(exc).__name__,
+            )
+            return keyword_fallback(question, table_keywords)
+
+        decision = parse_router_decision(raw)
+        if decision is not None:
+            decision = _drop_unavailable(decision, available)
+            logger.info(
+                "[router] primary=%s secondary=%s confidence=%.2f style=%s clarify=%s",
+                decision.primary,
+                decision.secondary,
+                decision.confidence,
+                decision.answer_style,
+                decision.needs_clarification,
+            )
+            return decision
+        logger.warning("[router] unparseable routing reply on attempt %d", attempt)
+
+    logger.warning("[router] routing JSON invalid twice -- using keyword fallback")
+    return keyword_fallback(question, table_keywords)
+
+
+_CATALOG_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]{3,}")
+
+
+def _catalog_keywords(catalog: str) -> frozenset[str]:
+    """Lowercased word-ish tokens from the catalog, for the fallback's
+    rule 4 ("does the question name anything we actually hold?").
+
+    Splits CamelCase table names too, so `FactResellerSales` contributes
+    `fact`, `reseller` and `sales` -- a user asks about "sales", not
+    about `FactResellerSales`.
+    """
+    tokens: set[str] = set()
+    for raw in _CATALOG_TOKEN_RE.findall(catalog):
+        tokens.add(raw.lower())
+        for part in re.findall(r"[A-Z][a-z]+|[a-z]+", raw):
+            if len(part) >= 4:
+                tokens.add(part.lower())
+    return frozenset(tokens)
+
+
 def classify_sources(
     question: str, available: list[str], settings: Settings
 ) -> tuple[list[str], str]:
@@ -622,6 +844,8 @@ def router_node(state: OrchestratorState) -> dict[str, Any]:
     if routing_signals is not None:
         logger.info("[router] deterministic signals: %s", describe(routing_signals))
 
+    router_decision: RouterDecision | None = None
+
     if len(available) <= 1:
         reasoning = f"only {available[0]!r} is configured -- routed without a classification call"
         sources, short_circuited = available, True
@@ -669,7 +893,47 @@ def router_node(state: OrchestratorState) -> dict[str, Any]:
         )
         short_circuited = True
     else:
-        sources, reasoning = classify_sources(question, available, settings)
+        # The structured contract (`prompts/router.md` -> `RouterDecision`)
+        # carries more than the source list: the rewritten per-source
+        # queries, the answer style the composer should match, a fallback
+        # to try when the primary finds nothing, and whether the question
+        # is ambiguous enough to be worth one clarifying question.
+        # `classify_sources` is kept beside it, unchanged, because four
+        # tests and any external caller depend on its 2-tuple shape
+        # (CLAUDE.md 6.3).
+        router_decision = classify_sources_structured(
+            question,
+            available,
+            settings,
+            conversation_history=state.get("conversation_history"),
+            # Uploaded file *names* are not passed yet: OrchestratorState
+            # carries `pending_attachment_ids`, not names, and resolving
+            # them means a caller-scoped store lookup
+            # (`attachments.store` enforces `owner_subject`) in front of
+            # every routed question. `build_source_catalog` already takes
+            # them, so wiring that lookup in is additive. Until then the
+            # router still knows attachments exist -- "attachments" is in
+            # `available` whenever the caller attached something, and
+            # `_looks_like_attachment_only_question` handles the
+            # unambiguous case deterministically before this runs.
+        )
+        # Not re-filtered against `available` here: the classifier is
+        # the layer that does that (as `classify_sources` always has),
+        # and re-filtering in the node would silently drop a source a
+        # test or a caller injected deliberately.
+        sources = router_decision.internal_sources()
+        reasoning = (
+            f"routed to {router_decision.primary}"
+            + (f" (+{', '.join(router_decision.secondary)})" if router_decision.secondary else "")
+            + f" -- {router_decision.reason}"
+        )
+        if router_decision.is_no_retrieval() and not sources:
+            # "What is a foreign key?" / "Hi" -- answerable with no
+            # retrieval at all. Recorded as a real routing outcome rather
+            # than coerced into a source, so the graph can skip straight
+            # to synthesis instead of running a subgraph with nothing to
+            # look up.
+            reasoning += " (no retrieval needed)"
         short_circuited = False
         if routing_signals is not None:
             # The model decided, but the deterministic read is still worth
@@ -731,6 +995,60 @@ def router_node(state: OrchestratorState) -> dict[str, Any]:
                 f" (fanned out to every retrieval source -- added {fanned_in}; "
                 "ROUTE_TO_ALL_SOURCES is on)"
             )
+
+    # "documents" and "policy" are two collections of the same *kind* of
+    # thing -- uploaded text -- split by an upload-time flag rather than
+    # by subject. A person asking a question has no way of knowing which
+    # of the two their PDF landed in, so letting the classifier commit to
+    # one and silently skip the other loses answers that are sitting
+    # right there: a leave-policy PDF uploaded as a plain document is
+    # invisible to "sick leave policy" the moment the model reads the
+    # word "policy" and picks that source alone.
+    #
+    # `_SOURCE_DESCRIPTIONS` already warns about exactly this ("most
+    # policy-titled documents (e.g. a leave or holiday policy) live in
+    # 'documents' instead") and it is not enough: whether the warning is
+    # honoured varies by model. Measured on the same four questions,
+    # llama3.1:8b picked both collections every time while
+    # qwen2.5-coder:7b picked "policy" alone for three of four. Routing
+    # correctness should not rest on which local model happens to be
+    # configured, so the pairing is deterministic here.
+    #
+    # Added by `07dbfd6`, then removed without mention by `40c9100` --
+    # harmless at the time, because `route_to_all_sources` was on and ran
+    # both collections anyway. Defaulting that fan-out off (2026-10-22)
+    # turned its absence into a live regression, caught end-to-end:
+    # "Sick leave policy" routed to `policy` alone and answered "I
+    # couldn't find any relevant information" with the PDF unread in
+    # `documents`. Restored, and now pinned by a test so a future
+    # refactor cannot drop it silently again.
+    #
+    # Cheap by construction: both collections are local vector search
+    # against infrastructure this deployment already owns -- neither is
+    # in `_EXPENSIVE_SOURCES`, so this adds no third-party call and no
+    # cost. The extra collection usually returns nothing and is then
+    # dropped from the answer by `synthesis_node`, which already omits
+    # empty sources when another source found something.
+    #
+    # Before the authorization filter on purpose: this may put a source
+    # on the route, never past the permission check -- a caller without
+    # the policy permission still has it dropped, exactly as if the
+    # classifier had asked for it directly.
+    #
+    # An explicit source selection is untouched: that is an instruction,
+    # not a guess, so narrowing to Documents still searches Documents
+    # alone.
+    if not state.get("selected_sources"):
+        _TEXT_COLLECTION_SOURCES = ("documents", "policy")
+        picked_collections = [s for s in _TEXT_COLLECTION_SOURCES if s in sources]
+        if len(picked_collections) == 1:
+            sibling = next(s for s in _TEXT_COLLECTION_SOURCES if s not in picked_collections)
+            if sibling in available:
+                sources.append(sibling)
+                reasoning += (
+                    f" ({sibling!r} paired in -- 'documents' and 'policy' hold the same "
+                    "kind of uploaded text, split by upload flag rather than subject)"
+                )
 
     # "attachments" is never left to the classifier's discretion -- the
     # user explicitly attached file(s) to this exact question, so silently
@@ -834,6 +1152,24 @@ def router_node(state: OrchestratorState) -> dict[str, Any]:
         # off or only one source is configured.
         "source_confidence": (
             routing_signals.as_confidence_map() if routing_signals is not None else {}
+        ),
+        # The structured decision's own fields, carried through so
+        # `synthesis_node` can lead with the primary source and match the
+        # requested answer style without re-running the router or
+        # re-deriving either. Absent (None/False) whenever the route was
+        # short-circuited deterministically -- those paths never produce a
+        # RouterDecision, and inventing one here would report a judgement
+        # that was never made.
+        "primary_source": (
+            ROUTED_SOURCE_NAMES.get(router_decision.primary) if router_decision else None
+        ),
+        "answer_style": router_decision.answer_style if router_decision else None,
+        "needs_clarification": bool(router_decision and router_decision.needs_clarification),
+        "clarifying_question": (router_decision.clarifying_question if router_decision else None),
+        "fallback_source": (
+            ROUTED_SOURCE_NAMES.get(router_decision.fallback)
+            if router_decision and router_decision.fallback
+            else None
         ),
     }
     logger.info(
@@ -1849,15 +2185,28 @@ def synthesis_node(state: OrchestratorState) -> dict[str, Any]:
     if len(sources_used) <= 1:
         return status_update
 
-    found_sections: list[str] = []
-    restricted_sections: list[str] = []
+    # (source_name, answer_text) rather than a pre-formatted string, so
+    # the primary source can be floated to the front below without
+    # re-parsing a label back out of the text.
+    found_sections: list[tuple[str, str]] = []
+    restricted_sections: list[tuple[str, str]] = []
     empty_count = 0
 
     if "sql" in sources_used:
         if state.get("status") == "succeeded":
-            found_sections.append(
-                f"**{_SOURCE_LABELS['sql']}**: {state.get('row_count', 0)} row(s) returned."
-            )
+            # Only contributes a line when it actually returned rows. A
+            # zero-row SELECT is a *successful* query that matched
+            # nothing, and announcing "0 row(s) returned" above another
+            # source's real answer tells the reader about the pipeline
+            # rather than about their question -- it was the second line
+            # of the reported "Sick leave policy" failure. The row count
+            # is still in `row_count` for the result table and the debug
+            # view; it is just not prose.
+            row_count = int(state.get("row_count", 0) or 0)
+            if row_count:
+                found_sections.append(("sql", f"{row_count} row(s) returned from the database."))
+            else:
+                empty_count += 1
         else:
             # Any non-succeeded SQL outcome (no data, an error, rejected,
             # needs clarification, ...) is treated as "nothing to
@@ -1875,10 +2224,18 @@ def synthesis_node(state: OrchestratorState) -> dict[str, Any]:
         if not result:
             continue
         status = result.get("status", "succeeded")
-        if status == "succeeded":
-            found_sections.append(f"**{_SOURCE_LABELS[source_name]}**: {result['answer']}")
-        elif status == "restricted":
-            restricted_sections.append(f"**{_SOURCE_LABELS[source_name]}**: {result['answer']}")
+        answer_text = (result.get("answer") or "").strip()
+        if status == "succeeded" and answer_text:
+            # No `**Label**:` prefix any more. Which sources contributed
+            # is carried by `sources_used` -- which the dashboard already
+            # renders as chips (`SourcesUsedPanel`) -- so prefixing every
+            # paragraph with its source name was a second owner of that
+            # fact (CLAUDE.md 4.8) and read like a debug dump rather than
+            # an answer. Ordering below leads with the primary source, so
+            # the reader still gets the main answer first.
+            found_sections.append((source_name, answer_text))
+        elif status == "restricted" and answer_text:
+            restricted_sections.append((source_name, answer_text))
         else:
             empty_count += 1
 
@@ -1893,11 +2250,25 @@ def synthesis_node(state: OrchestratorState) -> dict[str, Any]:
     if generation_result and not generation_found:
         empty_count += 1
 
-    sections = (
-        found_sections + restricted_sections
-        if found_sections or restricted_sections or generation_found
-        else [_NO_INFORMATION_FOUND_MESSAGE]
-    )
+    # The primary source leads. `route_decision["primary_source"]` is the
+    # router's own pick; when it is absent (a short-circuited route, or a
+    # decision from before this field existed) the existing order stands,
+    # which is the order the sources were declared in.
+    decision_for_order = state.get("route_decision")
+    primary_source = decision_for_order.get("primary_source") if decision_for_order else None
+
+    def _lead_with_primary(
+        pairs: list[tuple[str, str]],
+    ) -> list[str]:
+        if primary_source:
+            pairs = sorted(pairs, key=lambda pair: pair[0] != primary_source)
+        return [text for _, text in pairs]
+
+    ordered = _lead_with_primary(found_sections) + _lead_with_primary(restricted_sections)
+    # A bare SQL row-count line is an aside, not an answer, so it never
+    # leads: if some other source answered, it follows; if nothing else
+    # did, `ordered` is just that line.
+    sections = ordered or ([_NO_INFORMATION_FOUND_MESSAGE] if not generation_found else [])
     synthesized = "\n\n".join(sections)
     logger.info(
         "[synthesis] sources=%s found=%d restricted=%d empty=%d",

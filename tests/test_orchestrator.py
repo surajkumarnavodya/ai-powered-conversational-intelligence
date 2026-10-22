@@ -318,6 +318,29 @@ class TestAttachmentVsSqlGuidance:
         assert "Extract text from this image" not in captured["system_prompt"]
 
 
+def _structured_stub(sources, reason="stubbed"):
+    """A `classify_sources_structured` replacement from a source list.
+
+    `router_node` maps the decision's prompt-vocabulary names back to the
+    graph's internal ones, so the internal names the tests already use
+    ("sql", "policy", ...) are translated here rather than in every test.
+    """
+    from agent.orchestrator.router_contract import ROUTED_SOURCE_NAMES, RouterDecision
+
+    reverse = {internal: external for external, internal in ROUTED_SOURCE_NAMES.items() if internal}
+    external = [reverse.get(name, name) for name in sources]
+
+    def _stub(question, available, settings, **kwargs):
+        return RouterDecision(
+            primary=external[0],
+            secondary=external[1:],
+            confidence=0.9,
+            reason=reason,
+        )
+
+    return _stub
+
+
 class TestRouterNode:
     def test_short_circuits_when_only_sql_is_available(self, monkeypatch):
         monkeypatch.setattr(orchestrator_nodes, "get_settings", lambda: _settings())
@@ -332,8 +355,8 @@ class TestRouterNode:
         monkeypatch.setattr(orchestrator_nodes, "get_settings", lambda: settings)
         monkeypatch.setattr(
             orchestrator_nodes,
-            "classify_sources",
-            lambda q, avail, s: (["sql", "policy"], "reason"),
+            "classify_sources_structured",
+            _structured_stub(["sql", "policy"], "reason"),
         )
         result = router_node({"question": "compare sales with policy", "caller_roles": ("admin",)})
         decision = result["route_decision"]
@@ -348,6 +371,13 @@ class TestRouterNode:
             "web_search_api_key": SecretStr("k"),
             "rag_store_connection_string": SecretStr("x"),
             "enable_multi_source_router": True,
+            # Explicit since 2026-10-22: `route_to_all_sources` now
+            # defaults to False, because fanning every question out to
+            # the SQL pipeline made "Sick leave policy" pay a 30s
+            # generation-and-refusal detour. This helper exists to
+            # exercise the fan-out, so it asks for it by name -- and the
+            # one test that wants it off still overrides it below.
+            "route_to_all_sources": True,
         }
         base.update(overrides)
         return _settings(**base)
@@ -362,8 +392,8 @@ class TestRouterNode:
         monkeypatch.setattr(orchestrator_nodes, "get_settings", self._all_sources_settings)
         monkeypatch.setattr(
             orchestrator_nodes,
-            "classify_sources",
-            lambda q, avail, s: (["policy"], "classified from question intent: 'policy'"),
+            "classify_sources_structured",
+            _structured_stub(["policy"], "classified from question intent: 'policy'"),
         )
         result = router_node(
             {"question": "provide me the sick leave policy", "caller_roles": ("admin",)}
@@ -374,8 +404,8 @@ class TestRouterNode:
         monkeypatch.setattr(orchestrator_nodes, "get_settings", self._all_sources_settings)
         monkeypatch.setattr(
             orchestrator_nodes,
-            "classify_sources",
-            lambda q, avail, s: (["sql", "documents"], "two"),
+            "classify_sources_structured",
+            _structured_stub(["sql", "documents"], "two"),
         )
         sources = router_node({"question": "anything", "caller_roles": ("admin",)})[
             "route_decision"
@@ -389,7 +419,9 @@ class TestRouterNode:
         unioned with the retrieval set rather than replaced by it."""
         monkeypatch.setattr(orchestrator_nodes, "get_settings", self._all_sources_settings)
         monkeypatch.setattr(
-            orchestrator_nodes, "classify_sources", lambda q, avail, s: (["generation"], "gen")
+            orchestrator_nodes,
+            "classify_sources_structured",
+            _structured_stub(["generation"], "gen"),
         )
         sources = router_node(
             {"question": "generate an image of a cat", "caller_roles": ("admin",)}
@@ -400,7 +432,7 @@ class TestRouterNode:
     def test_fan_out_never_adds_generation_or_media_search_on_its_own(self, monkeypatch):
         monkeypatch.setattr(orchestrator_nodes, "get_settings", self._all_sources_settings)
         monkeypatch.setattr(
-            orchestrator_nodes, "classify_sources", lambda q, avail, s: (["sql"], "sql")
+            orchestrator_nodes, "classify_sources_structured", _structured_stub(["sql"], "sql")
         )
         sources = router_node({"question": "how many orders?", "caller_roles": ("admin",)})[
             "route_decision"
@@ -428,10 +460,70 @@ class TestRouterNode:
             lambda: self._all_sources_settings(route_to_all_sources=False),
         )
         monkeypatch.setattr(
-            orchestrator_nodes, "classify_sources", lambda q, avail, s: (["policy"], "policy")
+            orchestrator_nodes,
+            "classify_sources_structured",
+            _structured_stub(["policy"], "policy"),
         )
         result = router_node({"question": "anything", "caller_roles": ("admin",)})
-        assert result["route_decision"]["sources"] == ["policy"]
+        sources = result["route_decision"]["sources"]
+
+        # The fan-out is what this test is about: `sql` and `web` must not
+        # be added. `documents` is a different rule -- the deterministic
+        # documents/policy pairing, which holds whether or not the fan-out
+        # is on, because the two collections hold the same kind of
+        # uploaded text split by an upload flag rather than by subject.
+        assert "sql" not in sources
+        assert "web" not in sources
+        assert set(sources) == {"policy", "documents"}
+
+    def test_the_text_collections_are_paired_with_the_fan_out_off(self, monkeypatch):
+        """Regression guard for a silently-dropped rule.
+
+        Added by `07dbfd6`, removed without mention by `40c9100`, and
+        unnoticed because `route_to_all_sources` was on at the time and
+        ran both collections anyway. Defaulting that off turned its
+        absence into a live failure: "Sick leave policy" routed to
+        `policy` alone and answered "I couldn't find any relevant
+        information", with the leave-policy PDF unread in `documents`.
+        """
+        monkeypatch.setattr(
+            orchestrator_nodes,
+            "get_settings",
+            lambda: self._all_sources_settings(route_to_all_sources=False),
+        )
+        monkeypatch.setattr(
+            orchestrator_nodes,
+            "classify_sources_structured",
+            _structured_stub(["policy"], "short noun phrase naming an HR policy"),
+        )
+
+        sources = router_node({"question": "Sick leave policy", "caller_roles": ("admin",)})[
+            "route_decision"
+        ]["sources"]
+
+        assert "documents" in sources, (
+            "a policy question must still reach the documents collection -- "
+            "the two hold the same kind of uploaded text"
+        )
+
+    def test_an_explicit_selection_is_not_paired(self, monkeypatch):
+        """Narrowing to one collection by hand is an instruction, not a
+        guess, so it is honoured exactly."""
+        monkeypatch.setattr(
+            orchestrator_nodes,
+            "get_settings",
+            lambda: self._all_sources_settings(route_to_all_sources=False),
+        )
+
+        sources = router_node(
+            {
+                "question": "Sick leave policy",
+                "caller_roles": ("admin",),
+                "selected_sources": ["policy"],
+            }
+        )["route_decision"]["sources"]
+
+        assert sources == ["policy"]
 
     def test_an_attachment_only_question_is_never_fanned_out(self, monkeypatch):
         """The fan-out must not undo `_looks_like_attachment_only_question`.
@@ -451,7 +543,9 @@ class TestRouterNode:
         def _classifier_must_not_run(*args, **kwargs):
             raise AssertionError("an attachment-only question must not reach the classifier")
 
-        monkeypatch.setattr(orchestrator_nodes, "classify_sources", _classifier_must_not_run)
+        monkeypatch.setattr(
+            orchestrator_nodes, "classify_sources_structured", _classifier_must_not_run
+        )
         result = router_node(
             {
                 "question": "Read this image.",
@@ -467,7 +561,7 @@ class TestRouterNode:
         route but never past the permission check."""
         monkeypatch.setattr(orchestrator_nodes, "get_settings", self._all_sources_settings)
         monkeypatch.setattr(
-            orchestrator_nodes, "classify_sources", lambda q, avail, s: (["sql"], "sql")
+            orchestrator_nodes, "classify_sources_structured", _structured_stub(["sql"], "sql")
         )
         sources = router_node({"question": "anything", "caller_roles": ("viewer",)})[
             "route_decision"
@@ -489,8 +583,8 @@ class TestRouterNode:
         monkeypatch.setattr(orchestrator_nodes, "get_settings", lambda: _settings())
         monkeypatch.setattr(
             orchestrator_nodes,
-            "classify_sources",
-            lambda q, avail, s: (["sql"], "classifier picked only sql"),
+            "classify_sources_structured",
+            _structured_stub(["sql"], "classifier picked only sql"),
         )
         result = router_node(
             {
@@ -519,7 +613,7 @@ class TestRouterNode:
                 "classify_sources must not be called for an unambiguous " "attachment-only question"
             )
 
-        monkeypatch.setattr(orchestrator_nodes, "classify_sources", _must_not_be_called)
+        monkeypatch.setattr(orchestrator_nodes, "classify_sources_structured", _must_not_be_called)
 
         result = router_node(
             {"question": "Extract text from this image.", "pending_attachment_ids": ["att_1"]}
@@ -552,7 +646,7 @@ class TestRouterNode:
         def _must_not_be_called(q, available, settings):
             raise AssertionError(f"classify_sources must not be called for {q!r}")
 
-        monkeypatch.setattr(orchestrator_nodes, "classify_sources", _must_not_be_called)
+        monkeypatch.setattr(orchestrator_nodes, "classify_sources_structured", _must_not_be_called)
 
         result = router_node({"question": question, "pending_attachment_ids": ["att_1"]})
         decision = result["route_decision"]
@@ -567,8 +661,8 @@ class TestRouterNode:
         monkeypatch.setattr(orchestrator_nodes, "get_settings", lambda: _settings())
         monkeypatch.setattr(
             orchestrator_nodes,
-            "classify_sources",
-            lambda q, avail, s: (["sql", "attachments"], "classified"),
+            "classify_sources_structured",
+            _structured_stub(["sql", "attachments"], "classified"),
         )
         result = router_node(
             {
@@ -610,7 +704,9 @@ class TestRouterNode:
         )
         monkeypatch.setattr(orchestrator_nodes, "get_settings", lambda: settings)
         monkeypatch.setattr(
-            orchestrator_nodes, "classify_sources", lambda q, avail, s: (["sql", "web"], "reason")
+            orchestrator_nodes,
+            "classify_sources_structured",
+            _structured_stub(["sql", "web"], "reason"),
         )
         session_id = f"test-session-{uuid.uuid4().hex}"
 
@@ -636,7 +732,9 @@ class TestRouterNode:
         )
         monkeypatch.setattr(orchestrator_nodes, "get_settings", lambda: settings)
         monkeypatch.setattr(
-            orchestrator_nodes, "classify_sources", lambda q, avail, s: (["sql", "web"], "reason")
+            orchestrator_nodes,
+            "classify_sources_structured",
+            _structured_stub(["sql", "web"], "reason"),
         )
         first = router_node({"question": "q1", "caller_roles": ("admin",)})
         second = router_node({"question": "q2", "caller_roles": ("admin",)})
@@ -653,7 +751,9 @@ class TestRouterNode:
         )
         monkeypatch.setattr(orchestrator_nodes, "get_settings", lambda: settings)
         monkeypatch.setattr(
-            orchestrator_nodes, "classify_sources", lambda q, avail, s: (["sql", "web"], "reason")
+            orchestrator_nodes,
+            "classify_sources_structured",
+            _structured_stub(["sql", "web"], "reason"),
         )
         session_a = f"test-session-{uuid.uuid4().hex}"
         session_b = f"test-session-{uuid.uuid4().hex}"
@@ -681,7 +781,9 @@ class TestRouterNode:
         )
         monkeypatch.setattr(orchestrator_nodes, "get_settings", lambda: settings)
         monkeypatch.setattr(
-            orchestrator_nodes, "classify_sources", lambda q, avail, s: (["sql", "web"], "reason")
+            orchestrator_nodes,
+            "classify_sources_structured",
+            _structured_stub(["sql", "web"], "reason"),
         )
 
         first = router_node(
@@ -740,8 +842,8 @@ class TestRouterNodeAuthorization:
         monkeypatch.setattr(orchestrator_nodes, "get_settings", lambda: settings)
         monkeypatch.setattr(
             orchestrator_nodes,
-            "classify_sources",
-            lambda q, avail, s: (["sql", "policy", "web"], "all relevant"),
+            "classify_sources_structured",
+            _structured_stub(["sql", "policy", "web"], "all relevant"),
         )
 
         result = router_node({"question": "compare policy with sales", "caller_roles": ("viewer",)})
@@ -756,8 +858,8 @@ class TestRouterNodeAuthorization:
         monkeypatch.setattr(orchestrator_nodes, "get_settings", lambda: settings)
         monkeypatch.setattr(
             orchestrator_nodes,
-            "classify_sources",
-            lambda q, avail, s: (["sql", "policy"], "relevant"),
+            "classify_sources_structured",
+            _structured_stub(["sql", "policy"], "relevant"),
         )
 
         result = router_node({"question": "compare policy with sales"})
@@ -774,8 +876,8 @@ class TestRouterNodeAuthorization:
         monkeypatch.setattr(orchestrator_nodes, "get_settings", lambda: settings)
         monkeypatch.setattr(
             orchestrator_nodes,
-            "classify_sources",
-            lambda q, avail, s: (["sql", "policy"], "relevant"),
+            "classify_sources_structured",
+            _structured_stub(["sql", "policy"], "relevant"),
         )
 
         result = router_node(
@@ -791,8 +893,8 @@ class TestRouterNodeAuthorization:
         monkeypatch.setattr(orchestrator_nodes, "get_settings", lambda: settings)
         monkeypatch.setattr(
             orchestrator_nodes,
-            "classify_sources",
-            lambda q, avail, s: (["sql", "policy"], "relevant"),
+            "classify_sources_structured",
+            _structured_stub(["sql", "policy"], "relevant"),
         )
 
         analyst_result = router_node(
@@ -813,8 +915,8 @@ class TestRouterNodeAuthorization:
         monkeypatch.setattr(orchestrator_nodes, "get_settings", lambda: settings)
         monkeypatch.setattr(
             orchestrator_nodes,
-            "classify_sources",
-            lambda q, avail, s: (["policy", "web"], "relevant"),
+            "classify_sources_structured",
+            _structured_stub(["policy", "web"], "relevant"),
         )
 
         result = router_node({"question": "compare policy with sales", "caller_roles": ("viewer",)})
@@ -828,8 +930,8 @@ class TestRouterNodeAuthorization:
         monkeypatch.setattr(orchestrator_nodes, "get_settings", lambda: settings)
         monkeypatch.setattr(
             orchestrator_nodes,
-            "classify_sources",
-            lambda q, avail, s: (["sql", "policy"], "relevant"),
+            "classify_sources_structured",
+            _structured_stub(["sql", "policy"], "relevant"),
         )
 
         with caplog.at_level(logging.WARNING, logger="security.audit"):
@@ -849,8 +951,8 @@ class TestRouterNodeAuthorization:
         monkeypatch.setattr(orchestrator_nodes, "get_settings", lambda: settings)
         monkeypatch.setattr(
             orchestrator_nodes,
-            "classify_sources",
-            lambda q, avail, s: (["sql", "policy", "web"], "all relevant"),
+            "classify_sources_structured",
+            _structured_stub(["sql", "policy", "web"], "all relevant"),
         )
 
         result = router_node({"question": "compare policy with sales", "caller_roles": ("admin",)})
@@ -866,8 +968,8 @@ class TestRouterNodeAuthorization:
         monkeypatch.setattr(orchestrator_nodes, "get_settings", lambda: settings)
         monkeypatch.setattr(
             orchestrator_nodes,
-            "classify_sources",
-            lambda q, avail, s: (["policy", "web"], "relevant"),
+            "classify_sources_structured",
+            _structured_stub(["policy", "web"], "relevant"),
         )
 
         result = router_node({"question": "compare policy with sales", "caller_roles": ("viewer",)})
@@ -881,8 +983,8 @@ class TestRouterNodeAuthorization:
         monkeypatch.setattr(orchestrator_nodes, "get_settings", lambda: settings)
         monkeypatch.setattr(
             orchestrator_nodes,
-            "classify_sources",
-            lambda q, avail, s: (["sql", "policy"], "relevant"),
+            "classify_sources_structured",
+            _structured_stub(["sql", "policy"], "relevant"),
         )
 
         result = router_node({"question": "compare policy with sales", "caller_roles": ("admin",)})
@@ -2101,9 +2203,14 @@ class TestSynthesisNode:
         }
         result = synthesis_node(state)
         synthesized = result["synthesized_answer"]
-        assert "Database" in synthesized
-        assert "Policy" in synthesized
+        # Merged, not labelled: every contributing source's content is
+        # present, and none of it is prefixed with the source's name.
+        # `sources_used` is what says where it came from (CLAUDE.md 4.8),
+        # and the dashboard renders that as chips.
         assert "Policy says X." in synthesized
+        assert "3 row(s) returned from the database." in synthesized
+        assert "**Policy**" not in synthesized
+        assert "**Database**" not in synthesized
 
     def test_media_search_contributes_a_text_bullet_unlike_generation(self):
         """Unlike `generation_result` (a freshly-created asset with no
@@ -2122,7 +2229,8 @@ class TestSynthesisNode:
             },
         }
         synthesized = synthesis_node(state)["synthesized_answer"]
-        assert "Media Library" in synthesized
+        # Merged without labels; the content is what matters.
+        assert "**Media Library**" not in synthesized
         assert "Found a photo of the site inspection." in synthesized
 
     def test_suppresses_an_empty_source_when_another_one_succeeded(self):
@@ -2140,7 +2248,8 @@ class TestSynthesisNode:
             },
         }
         synthesized = synthesis_node(state)["synthesized_answer"]
-        assert "Database" in synthesized
+        assert "row(s) returned from the database." in synthesized
+        assert "**Database**" not in synthesized
         assert "3 row(s)" in synthesized
         assert "Policy" not in synthesized
         assert "couldn't find" not in synthesized
@@ -2192,8 +2301,12 @@ class TestSynthesisNode:
             },
         }
         synthesized = synthesis_node(state)["synthesized_answer"]
-        assert "Database" in synthesized
-        assert "Policy" in synthesized
+        assert "row(s) returned from the database." in synthesized
+        assert "**Database**" not in synthesized
+        # The restricted notice itself still reaches the reader -- that is
+        # what this test is about -- it just no longer wears a label.
+        assert "policy content classified" in synthesized
+        assert "**Policy**" not in synthesized
         assert "classified 'compensation'" in synthesized
 
 
@@ -2266,6 +2379,67 @@ class TestRunOrchestrated:
         assert final_state["route_decision"]["short_circuited"] is True
         assert final_state.get("synthesized_answer") is None
 
+    def test_a_policy_question_runs_no_sql_stage_and_shows_no_database_section(self, monkeypatch):
+        """The reported failure, end to end.
+
+        "Sick leave policy" was answered in 117s with "Agent stopped at
+        SQL generation", "This question was not answerable from the
+        connected data" and "Database: 0 row(s) returned" rendered above
+        the real answer from Documents. The router had picked `policy`
+        correctly; `route_to_all_sources` then added `sql` anyway, so the
+        SQL pipeline ran for 30.6s and refused.
+
+        Three assertions, because three separate things had to be true
+        for that to happen and any one of them regressing brings it back:
+        the SQL subgraph must not be *entered*, `sources_used` must not
+        claim it, and the composed answer must not carry a per-source
+        label.
+        """
+        settings = _settings(
+            enable_multi_source_router=True,
+            enable_policy_rag=True,
+            rag_store_connection_string=SecretStr("x"),
+        )
+        monkeypatch.setattr(orchestrator_graph, "get_settings", lambda: settings)
+        monkeypatch.setattr(orchestrator_nodes, "get_settings", lambda: settings)
+        monkeypatch.setattr(
+            orchestrator_nodes,
+            "classify_sources_structured",
+            _structured_stub(["policy"], "short noun phrase naming an HR policy"),
+        )
+
+        sql_ran: list[str] = []
+
+        def _sql_must_not_run(*args, **kwargs):
+            sql_ran.append("entered")
+            return {"status": "succeeded", "sql": "SELECT 1", "row_count": 0}
+
+        monkeypatch.setattr(orchestrator_nodes, "run_agent", _sql_must_not_run)
+
+        import rag.graph
+
+        monkeypatch.setattr(
+            rag.graph,
+            "run_rag",
+            lambda question, collection, **kwargs: {
+                "answer": "Employees accrue 12 sick days a year.",
+                "citations": [],
+                "status": "succeeded",
+            },
+        )
+
+        final_state = orchestrator_graph.run_orchestrated(
+            "Sick leave policy", None, True, caller_roles=("admin",)
+        )
+
+        answer = final_state["synthesized_answer"] or final_state["policy_result"]["answer"]
+
+        assert sql_ran == [], "the SQL pipeline must not run for a policy question"
+        assert "sql" not in final_state["sources_used"]
+        assert "Employees accrue 12 sick days a year." in answer
+        assert "Database" not in answer
+        assert "row(s) returned" not in answer
+
     def test_flag_on_fans_out_to_sql_and_policy_and_synthesizes(self, monkeypatch):
         settings = _settings(
             enable_multi_source_router=True,
@@ -2276,8 +2450,8 @@ class TestRunOrchestrated:
         monkeypatch.setattr(orchestrator_nodes, "get_settings", lambda: settings)
         monkeypatch.setattr(
             orchestrator_nodes,
-            "classify_sources",
-            lambda q, avail, s: (["sql", "policy"], "both relevant"),
+            "classify_sources_structured",
+            _structured_stub(["sql", "policy"], "both relevant"),
         )
         monkeypatch.setattr(
             orchestrator_nodes,
@@ -2307,7 +2481,8 @@ class TestRunOrchestrated:
         assert set(final_state["sources_used"]) == {"sql", "policy"}
         assert final_state["policy_result"]["answer"] == "Policy allows 20 days leave."
         assert "Policy allows 20 days leave." in final_state["synthesized_answer"]
-        assert "Database" in final_state["synthesized_answer"]
+        assert "row(s) returned from the database." in final_state["synthesized_answer"]
+        assert "**Database**" not in final_state["synthesized_answer"]
 
     def test_flag_off_with_attachments_still_runs_the_orchestrator_graph(self, monkeypatch):
         """Attaching a file is a per-request opt-in the caller makes
