@@ -71,7 +71,17 @@ are about the shell around it, not the measure.
 | `< sm` (640px) | 12px gutters. The composer's four controls drop to their own right-aligned row beneath the textarea — beside it they left the text ~150px wide, narrow enough that the placeholder itself wrapped. Icon buttons are 36px (`size="icon"` is `h-9 w-9 sm:h-8 sm:w-8`). A message bubble may take 85% of the line. Toasts inset from both edges. Header: tighter padding, the product title truncates. |
 | `sm` – `lg` | 24px gutters, 32px icon buttons, bubbles back to 75%, composer controls back on the textarea's row. Sidebar still hidden; `MobileNav`'s drawer is the way into it. |
 | `lg` (1024px) | The persistent left sidebar appears (`lg:w-72`, `lg:w-14` collapsed) and `SidebarToggle` becomes available. |
-| `xl` (1280px) | `QuestionNavigator`'s right-edge rail appears. It is an overlay in the margin beside the column, and that margin only exists once the viewport exceeds the column plus the rail's own ~52px lane — below `xl` with the sidebar open it would sit on top of the answer text. Below `xl` the questions stay reachable by scrolling and from the conversation list. |
+| `xl` (1280px) | `QuestionNavigator`'s flyout reaches its widest (`xl:w-[26rem]`); the rail itself is present at every size. |
+
+`QuestionNavigator` used to appear only at `xl`, because its panel opened
+to the *left* of the rail icon and on a narrower viewport would land on
+top of the answer text. The panel now opens flush to the same right margin
+the rail sits in and clamps its own width
+(`w-[calc(100vw-2rem)]` → `sm:w-80` → `lg:w-96` → `xl:w-[26rem]`), so it
+no longer has that problem and is available on phones and tablets too —
+which is where scrolling back through a long conversation by hand is
+worst. It expands on hover (mouse) or tap (touch), and collapses when the
+pointer leaves, on a tap outside, or on Escape; there is no close button.
 
 ## How this was verified
 

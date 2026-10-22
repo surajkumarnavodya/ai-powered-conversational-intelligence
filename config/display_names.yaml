@@ -1,0 +1,68 @@
+# Entity display names -- which column holds the human-readable name for
+# each dimension, so a question like "total sales by product" returns a
+# product name instead of a ProductKey.
+#
+# *** EMPTY TEMPLATE -- nothing is declared yet, and that is fine ***
+# Same bootstrap posture as config/sensitive_columns.yaml and
+# config/table_descriptions.yaml.
+#
+# You usually do not need this file. `db/display_names.py` derives the
+# display column from live schema introspection on its own and gets the
+# common shapes right without help:
+#
+#   DimProduct      -> EnglishProductName   (matched before ProductAlternateKey)
+#   DimCustomer     -> FirstName + LastName (composite, NULL-guarded)
+#   DimEmployee     -> FirstName + LastName
+#   DimSalesTerritory -> SalesTerritoryRegion / ...Name
+#
+# Declare a table here when inference would get it wrong, or when you want
+# the choice pinned rather than pattern-dependent:
+#
+#   - the readable column is not name-shaped
+#     (DimAccount -> AccountDescription)
+#   - the table has several name-ish columns and you want a specific one
+#   - a person entity whose name parts are spelled unusually
+#
+# An entry here ALWAYS wins over inference. An entry naming a column the
+# live table does not actually have is ignored with a warning -- the
+# database remains the source of truth for what exists, so a stale entry
+# can never produce SQL referencing a dropped column.
+#
+# An unlisted table is never an error: it falls through to inference, and
+# if inference also finds nothing the answer says so plainly rather than
+# returning an unexplained key.
+#
+# Format:
+#
+# tables:
+#   <TableName>:                    # bare or schema-qualified; case-insensitive
+#     columns: [<Col>]              # one column, or several to concatenate
+#     key_column: <KeyCol>          # optional; defaults to the single-column PK
+#     separator: " "                # optional; used between composite parts
+#
+# Worked examples -- uncomment and adapt to your own schema:
+#
+# tables:
+#   DimProduct:
+#     columns: [EnglishProductName]
+#     key_column: ProductKey
+#
+#   DimCustomer:
+#     columns: [FirstName, LastName]
+#     key_column: CustomerKey
+#     separator: " "
+#
+#   DimEmployee:
+#     columns: [FirstName, MiddleName, LastName]
+#     key_column: EmployeeKey
+#
+#   DimSalesTerritory:
+#     columns: [SalesTerritoryRegion]
+#     key_column: SalesTerritoryKey
+#
+#   # A label that is not name-shaped, so inference would miss it:
+#   DimAccount:
+#     columns: [AccountDescription]
+#     key_column: AccountKey
+
+tables: {}

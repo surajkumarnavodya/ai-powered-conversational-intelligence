@@ -1,4 +1,7 @@
 {
+  "a11y": {
+    "skipToContent": "मुख्य सामग्रीवर जा"
+  },
   "app": {
     "homeLabel": "नवीन चॅट सुरू करा",
     "title": "AI-Powered Conversational Intelligence",
@@ -113,7 +116,15 @@
     "appearance": "स्वरूप",
     "theme": "थीम",
     "accentColor": "अ‍ॅक्सेंट रंग",
-    "font": "फॉन्ट",
+    "appFont": "अ‍ॅप्लिकेशन फॉन्ट",
+    "codeFont": "कोड आणि SQL फॉन्ट",
+    "fontPreview": "फॉन्ट पूर्वावलोकन",
+    "resetFonts": "फॉन्ट डीफॉल्टवर रीसेट करा",
+    "previewHeading": "प्रदेशानुसार तिमाही महसूल",
+    "previewUser": "तुम्ही विचारले: कोणता प्रदेश सर्वात वेगाने वाढला?",
+    "previewAssistant": "उत्तर सर्वात वेगाने वाढला, तिमाहीगणिक 12.4%.",
+    "previewColRegion": "प्रदेश",
+    "previewColOrders": "ऑर्डर",
     "language": "भाषा",
     "installApp": "अ‍ॅप इंस्टॉल करा",
     "updateAvailable": "नवीन आवृत्ती उपलब्ध आहे.",
@@ -135,8 +146,7 @@
   "questionNavigator": {
     "label": "प्रश्न",
     "itemLabel": "प्रश्नावर जा: {{question}}",
-    "toggleLabel": "प्रश्न सूची टॉगल करा",
-    "closeLabel": "प्रश्न यादी बंद करा"
+    "toggleLabel": "प्रश्न सूची टॉगल करा"
   },
   "chat": {
     "placeholder": "तुमच्या डेटाबद्दल प्रश्न विचारा...",
@@ -151,7 +161,8 @@
     "sourcesLabel": "स्रोत",
     "words": "शब्द",
     "noRecordedAnswer": "या संदेशाचे कोणतेही जतन केलेले उत्तर नाही.",
-    "scrollToLatest": "नवीनतम संदेशावर जा"
+    "scrollToLatest": "नवीनतम संदेशावर जा",
+    "spokenAnswerLabel": "बोललेले उत्तर"
   },
   "sql": {
     "title": "तयार केलेले SQL",
@@ -495,5 +506,30 @@
     "openSettings": "सेटिंग्ज उघडा",
     "focusComposer": "प्रश्न बॉक्सवर जा",
     "showHelp": "ही यादी दाखवा"
+  },
+  "questionQueue": {
+    "title": "तुमचे प्रश्न",
+    "capacity": "{{max}} पैकी {{running}} सुरू · {{queued}} प्रतीक्षेत",
+    "atLimit": "तुमचे {{max}} प्रश्न सुरू आहेत, ही या परिनियोजनाची मर्यादा आहे. पुढील प्रश्न आपल्या वेळेची वाट पाहतील आणि स्वयंचलितपणे सुरू होतील.",
+    "waiting": "{{seconds}} सेकंद प्रतीक्षा",
+    "ran": "{{seconds}} सेकंद लागले",
+    "attempts": "प्रयत्न {{count}}",
+    "cancel": "हा प्रश्न रद्द करा",
+    "dismiss": "या यादीतून काढा",
+    "blockedExplanation": "या प्रश्नाचे उत्तर दिले गेले नाही कारण तो या परिनियोजनाच्या सुरक्षा तपासण्यांमध्ये उत्तीर्ण झाला नाही.",
+    "status": {
+      "queued": "प्रतीक्षेत",
+      "running": "काम सुरू",
+      "completed": "उत्तर मिळाले",
+      "failed": "अपयशी",
+      "cancelled": "रद्द",
+      "timeout": "वेळ संपली",
+      "blockedByGuardrail": "परवानगी नाही"
+    },
+    "confidence": {
+      "high": "{{source}}: ठळक जुळणी",
+      "medium": "{{source}}: अंशतः जुळणी",
+      "low": "{{source}}: कमकुवत जुळणी"
+    }
   }
 }

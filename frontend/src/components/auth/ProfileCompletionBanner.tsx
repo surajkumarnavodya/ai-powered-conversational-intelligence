@@ -45,7 +45,7 @@ export function ProfileCompletionBanner() {
           value={displayName}
           onChange={(event) => setDisplayName(event.target.value)}
           placeholder={t('auth.localDisplayNameLabel')}
-          className="h-8 w-48 rounded-md border border-[var(--border)] bg-[var(--background)] px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          className="h-8 w-48 rounded-md border border-[var(--border)] bg-[var(--background)] px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
         />
         <Button type="submit" size="sm" variant="primary" disabled={submitting || !displayName.trim()}>
           {submitting ? t('auth.localSigningIn') : t('auth.completeProfileSave')}

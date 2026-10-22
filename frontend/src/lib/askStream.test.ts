@@ -1,5 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import * as api from '@/lib/api'
 import { askQuestionStreaming, parseSseChunk } from './askStream'
+
+// Stubbed so the refresh path is observable without standing up the real
+// auth store; `refreshAccessTokenOnce` is itself covered in api.test.ts.
+vi.mock('@/lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api')>()),
+  refreshAccessTokenOnce: vi.fn().mockResolvedValue(null),
+}))
 
 /** Builds a Response whose body streams `chunks` in order, so a test can
  * split an SSE message across reads exactly as a network would. */
@@ -135,6 +143,66 @@ describe('askQuestionStreaming', () => {
 
     expect(errors).toEqual([[422, 'Unknown source.']])
     expect(result).toBeNull()
+  })
+
+  // A stale access token mid-session is routine, not exceptional. Every
+  // other authenticated route refreshes and retries through `request()`;
+  // this one could not use it (it needs the raw Response to read an SSE
+  // body), so before this it was the single call that turned a
+  // recoverable expiry into a visible failure.
+  describe('stale access token', () => {
+    it('refreshes once and retries, so the question still succeeds', async () => {
+      vi.mocked(api.refreshAccessTokenOnce).mockResolvedValue('fresh-token')
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'expired' }), { status: 401 }))
+        .mockResolvedValueOnce(streamingResponse([sse('result', { answer: 'ok' })]))
+      vi.stubGlobal('fetch', fetchMock)
+
+      const errors: Array<[number, string]> = []
+      const result = await askQuestionStreaming(
+        { question: 'q' },
+        { onError: (status, detail) => errors.push([status, detail]) },
+      )
+
+      expect(api.refreshAccessTokenOnce).toHaveBeenCalledTimes(1)
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe('Bearer fresh-token')
+      // The user never sees the expiry: it resolves with a real result.
+      expect(result).toEqual({ answer: 'ok' })
+      expect(errors).toEqual([])
+    })
+
+    it('reports the 401 when there is no session left to refresh', async () => {
+      vi.mocked(api.refreshAccessTokenOnce).mockResolvedValue(null)
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(new Response(JSON.stringify({ detail: 'expired' }), { status: 401 }))
+      vi.stubGlobal('fetch', fetchMock)
+
+      const errors: Array<[number, string]> = []
+      const result = await askQuestionStreaming(
+        { question: 'q' },
+        { onError: (status, detail) => errors.push([status, detail]) },
+      )
+
+      // Retried at most once -- never a refresh loop.
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(errors).toEqual([[401, 'expired']])
+      expect(result).toBeNull()
+    })
+
+    it('does not attempt a refresh for a non-401 failure', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(new Response(JSON.stringify({ detail: 'nope' }), { status: 422 }))
+      vi.stubGlobal('fetch', fetchMock)
+
+      await askQuestionStreaming({ question: 'q' }, {})
+
+      expect(api.refreshAccessTokenOnce).not.toHaveBeenCalled()
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
   })
 
   it('returns null when the run produced no result event', async () => {

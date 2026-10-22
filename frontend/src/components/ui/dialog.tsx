@@ -32,7 +32,13 @@ export function DialogContent({
       />
       <DialogPrimitive.Content
         className={cn(
-          'fixed left-1/2 top-1/2 w-full max-w-lg -translate-x-1/2 -translate-y-1/2',
+          // `w-[calc(100%-2rem)]`, not `w-full`: below `max-w-lg` (512px)
+          // the panel took the entire viewport width, so on a 320-430px
+          // phone it sat flush against both screen edges with its own
+          // `p-6` as the only breathing room. The 1rem gutter each side
+          // keeps it reading as a panel over the page rather than a new
+          // page, and costs nothing above 512px where max-w-lg wins.
+          'fixed left-1/2 top-1/2 w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2',
           'rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--modal-surface)] text-[var(--modal-surface-foreground)] p-6 shadow-xl outline-none',
           'max-h-[calc(100vh-2rem)] overflow-y-auto',
           className,

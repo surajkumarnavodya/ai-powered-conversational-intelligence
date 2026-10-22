@@ -131,7 +131,9 @@ class ChartRecommendation(TypedDict):
 
 
 def recommend_chart(
-    df: pd.DataFrame, column_types: Mapping[str, str]
+    df: pd.DataFrame,
+    column_types: Mapping[str, str],
+    key_columns: set[str] | None = None,
 ) -> ChartRecommendation | None:
     """Suggests one chart type for `df`, or `None` if nothing about this
     shape suggests a chart at all (the frontend still independently checks
@@ -148,15 +150,43 @@ def recommend_chart(
       comparison across categories, so a bar chart.
     - Two or more numeric columns and nothing else -- a possible
       relationship between two measures, so a scatter chart.
+
+    `key_columns` (from `db.column_formatting.get_key_column_names`) names
+    the result columns that are surrogate keys. They are excluded from
+    both axes: a key is not a category and not a measure, so charting one
+    is misleading rather than merely unhelpful. Omitting the argument
+    preserves the previous behaviour exactly, which is what keeps every
+    existing caller and test unchanged.
     - Anything else (all-text, no numeric column at all, empty) -- no
       recommendation; table-only is the honest default.
     """
     if df.empty or len(df.columns) == 0:
         return None
 
-    numeric_cols = [c for c, t in column_types.items() if t == "numeric"]
-    date_cols = [c for c, t in column_types.items() if t == "date"]
-    text_cols = [c for c, t in column_types.items() if t == "text"]
+    # A surrogate key is neither a label nor a measure, and treating it as
+    # either produces a chart that is actively misleading. Two real cases
+    # this closes, both reported against "total sales by product":
+    #
+    #   - a numeric `ProductKey` classifies as "numeric", so a
+    #     (ProductKey, TotalSales) result fell through to the two-measure
+    #     branch and rendered a SCATTER PLOT OF KEY AGAINST SALES -- a
+    #     cloud of points whose x-axis means nothing at all;
+    #   - a string key would have been picked as the bar chart's category
+    #     axis purely by being the first text column.
+    #
+    # `agent/display_name_guard.py` now repairs most such queries before
+    # execution, so a key usually does not reach here. This is the second
+    # layer for the cases it cannot repair (no declared foreign key, or a
+    # dimension with no readable name), where the table still shows the
+    # key honestly but a chart built on it would not be honest at all.
+    keys = {c.lower() for c in (key_columns or set())}
+
+    def _usable(column: str) -> bool:
+        return column.lower() not in keys
+
+    numeric_cols = [c for c, t in column_types.items() if t == "numeric" and _usable(c)]
+    date_cols = [c for c, t in column_types.items() if t == "date" and _usable(c)]
+    text_cols = [c for c, t in column_types.items() if t == "text" and _usable(c)]
 
     if len(df) == 1 and len(numeric_cols) == 1 and len(df.columns) <= 2:
         return ChartRecommendation(

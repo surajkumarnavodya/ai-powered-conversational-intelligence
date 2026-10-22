@@ -48,6 +48,23 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 # Project root is the parent of this file's parent (config/settings.py -> repo root).
 PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent
 
+#: Safe hard maximum, enforced in code, for
+#: `MAX_CONCURRENT_QUESTIONS_PER_USER` -- an operator may configure any
+#: value up to this and no higher. This is a guard against a typo, not a
+#: capacity claim: every RUNNING question holds a worker thread, a
+#: database connection from that database's own pool, and an in-flight
+#: Ollama call for its full duration, so a mis-keyed 10000 would exhaust
+#: the process long before the limiter ever tripped. Named (not inlined
+#: into the `Field(le=...)`) so the bound is greppable, testable, and
+#: quotable in the error message a rejected value produces.
+MAX_SAFE_CONCURRENT_QUESTIONS_PER_USER: int = 500
+
+#: The same guard for `MAX_CONCURRENT_QUESTIONS_GLOBAL`. Deliberately an
+#: order of magnitude above the per-user bound rather than equal to it:
+#: the global ceiling has to accommodate many users each well under their
+#: own cap, which is the ordinary case, not a pathological one.
+MAX_SAFE_CONCURRENT_QUESTIONS_GLOBAL: int = 5000
+
 # Load .env once at import time. Safe to call even if .env doesn't exist yet
 # (e.g. a fresh checkout that hasn't run `Copy-Item .env.example .env`).
 # Kept as an explicit python-dotenv call (rather than pydantic-settings'
@@ -1980,6 +1997,84 @@ class Settings(BaseSettings):
     harness_max_result_bytes: int = Field(default=8_000_000, gt=0)
     harness_max_context_chars: int = Field(default=400_000, gt=0)
     max_concurrent_ask_requests_per_caller: int = Field(default=2, gt=0)
+
+    # --- Durable question queue (jobs/) ------------------------------
+    # The asynchronous submission path (`POST /questions`), which is what
+    # lets ONE authenticated user have many questions in flight at once.
+    # Distinct from `max_concurrent_ask_requests_per_caller` just above:
+    # that bounds the *synchronous* `POST /ask`, where a caller is
+    # blocking on a response and a small cap plus an immediate 429 is the
+    # right UX. Here the caller gets a job id back, so exceeding the cap
+    # queues instead of failing (CLAUDE.md 4.5 -- a new caller reuses the
+    # governed path rather than reimplementing it; `jobs/` submits through
+    # the same `run_orchestrated` entry point `/ask` uses, with the same
+    # envelope, governance and result gate).
+    #
+    # The master switch. False leaves `/questions` registered but
+    # refusing with 503, so an operator can roll the whole subsystem back
+    # without unrouting the frontend -- the same independent-rollback
+    # pattern ENABLE_REQUEST_GOVERNANCE and friends already follow.
+    enable_question_queue: bool = Field(default=True)
+    # How many questions ONE authenticated user may have RUNNING at once.
+    # `le=MAX_SAFE_CONCURRENT_QUESTIONS_PER_USER` is the "safe hard
+    # maximum in code" the brief asks for: a typo of 10000 must not be
+    # accepted, because every running question holds a worker thread, a
+    # database connection and an in-flight Ollama call for its full
+    # duration. A non-numeric, zero or negative value is rejected by
+    # pydantic before the app starts; `_validate_question_queue_sizing`
+    # below turns each rejection into an actionable message.
+    max_concurrent_questions_per_user: int = Field(
+        default=100, gt=0, le=MAX_SAFE_CONCURRENT_QUESTIONS_PER_USER
+    )
+    # Process-wide ceiling across every user. Must be >= the per-user cap
+    # (see `_validate_question_queue_sizing`) -- a global smaller than the
+    # per-user cap would make the per-user cap unreachable and therefore
+    # a lie.
+    max_concurrent_questions_global: int = Field(
+        default=500, gt=0, le=MAX_SAFE_CONCURRENT_QUESTIONS_GLOBAL
+    )
+    # Wall-clock budget for one queued question, measured from the moment
+    # it starts RUNNING (not from submission -- queue wait is not the
+    # model's fault and must not consume its execution budget). Reaching
+    # it is a TIMEOUT status, which is deliberately distinct from FAILED.
+    question_timeout_seconds: int = Field(default=120, gt=0)
+    # How long a question may sit QUEUED before the queue gives up on it
+    # and marks it TIMEOUT. Without this a queue that is draining slower
+    # than it fills keeps jobs alive indefinitely, and a caller polling a
+    # job id can never tell "still waiting" from "will never run".
+    question_queue_wait_timeout_seconds: int = Field(default=900, gt=0)
+    # Bounded backpressure (CLAUDE.md 8): beyond this many QUEUED jobs the
+    # queue refuses admission with 429 rather than accepting work it has
+    # no realistic prospect of running. An unbounded queue is not
+    # backpressure, it is a memory leak with a progress bar.
+    question_queue_max_depth: int = Field(default=1000, gt=0)
+    # Per-user share of that depth, so one user cannot fill the shared
+    # queue and starve everyone else.
+    question_queue_max_depth_per_user: int = Field(default=200, gt=0)
+    # How long a terminal job (COMPLETED/FAILED/...) and its result stay
+    # readable before eviction. A result is re-governed on every read
+    # against the *current* caller's roles (CLAUDE.md 5.4), so this is a
+    # retention budget, not a trust window.
+    question_result_ttl_seconds: int = Field(default=3600, gt=0)
+    # How long a client-supplied idempotency key is remembered, so a
+    # retried submission returns the original job instead of starting a
+    # second identical run.
+    question_idempotency_ttl_seconds: int = Field(default=900, gt=0)
+    # Hard cap on jobs retained per user (terminal + live). Bounds memory
+    # independently of the TTL above, which cannot bound a burst that
+    # arrives faster than it expires.
+    question_max_retained_jobs_per_user: int = Field(default=500, gt=0)
+    # Automatic retries of a job whose failure the harness classified as
+    # transient (`agent.harness.retry`). Exponential backoff with jitter
+    # comes from `agent.harness.retry.RetryPolicy`; this only bounds how
+    # many times. 0 disables job-level retry entirely -- the graph's own
+    # `max_retries` self-correction loop is unaffected and separate.
+    question_max_retries: int = Field(default=2, ge=0, le=10)
+    # Seconds a graceful shutdown waits for in-flight jobs to finish
+    # before abandoning the wait. In-flight jobs are signalled to cancel
+    # at their next node boundary either way (see `jobs/queue.py`).
+    question_shutdown_grace_seconds: float = Field(default=30.0, gt=0.0)
+
     api_action_rate_limit_per_minute: int = Field(default=20, gt=0)
     enable_database_concurrency_limit: bool = True
     database_concurrency_limit_overhead: int = Field(default=0, ge=0)
@@ -1988,8 +2083,118 @@ class Settings(BaseSettings):
     # masking, secret redaction). Both are no-ops for data with nothing
     # classified and no secret-shaped text, so the defaults change nothing for
     # a plain deployment. Turn off only to roll back.
+    # Deterministic display-name enforcement (agent/display_name_guard.py,
+    # db/display_names.py). On by default: a result labelled by
+    # `ProductKey` instead of a product name is the single most common
+    # complaint about generated SQL, and the generation prompt's own
+    # instruction to avoid it is advisory -- local models follow it
+    # inconsistently.
+    #
+    # What it does: after generation and before validation, if the query
+    # labels rows by a surrogate key that a DECLARED foreign key connects
+    # to a dimension with a readable column, the join is added and the key
+    # swapped for the name. Repaired SQL still passes through
+    # `agent.sql_validator`, so this can never widen what a query may do.
+    #
+    # It never guesses a join. Where a relationship is not declared, the
+    # finding becomes retry feedback for the next generation attempt
+    # instead, sharing the one MAX_RETRIES budget. Where the dimension has
+    # no readable column at all, the key is kept and the limitation
+    # disclosed rather than a label invented.
+    #
+    # False restores the pre-existing behaviour exactly: the node becomes
+    # a pass-through and the prompt's advisory rule is all that applies.
+    enable_display_name_enforcement: bool = True
+    # --- Latency budgets (measured 2026-10-22; see docs/PERFORMANCE.md) ---
+    # Context for every value here: on the reference machine this app is
+    # developed against, `qwen2.5-coder:7b` loads only 41% into a 4GB
+    # T1200 GPU and runs the rest on CPU, giving ~185 tok/s prompt
+    # processing and ~9.6 tok/s generation. Latency is therefore almost
+    # entirely `prompt_tokens / 185 + generated_tokens / 9.6`, and the
+    # levers that matter are *how many model calls* a question makes and
+    # *how big each prompt is* -- not the database, which measured 0.05s.
+    #
+    # The target a first useful response lands within. Advisory: it is
+    # what `docs/PERFORMANCE.md` reports against and what the progress
+    # stream is tuned for, not a deadline that cancels work -- cutting a
+    # correct answer off at N seconds would trade accuracy for a number.
+    target_first_response_seconds: float = Field(default=5.0, gt=0.0, le=120.0)
+    # Skip the analytical-intent LLM call for a question showing no
+    # complexity signal. Measured 12-25s per question on the reference
+    # machine, for a classification whose only consumer is
+    # `plan_query_node`'s gate -- and that gate, per
+    # `classify_analytical_intent_node`'s own docstring, "reduces to
+    # exactly `agent.complexity`'s signals alone" when the intent is
+    # None. So a simple question pays a full model call for a result that
+    # changes nothing. False restores the previous always-classify
+    # behaviour.
+    skip_intent_classification_for_simple_questions: bool = True
+    # Hard ceiling on tables rendered into the generation prompt. Schema
+    # measured 2,968 of the 6,632 prompt tokens (7 tables at ~1,700 chars
+    # each) because relationship expansion adds tables beyond
+    # SCHEMA_TOP_K. 0 disables the ceiling, restoring the previous
+    # behaviour exactly.
+    max_schema_tables_in_prompt: int = Field(default=0, ge=0, le=50)
     enable_request_governance: bool = True
     enable_result_governance: bool = True
+
+    # --- Guardrails (guardrails/) -------------------------------------
+    # The configurable façade over the layered safety controls. These
+    # tune the *advisory* layers only -- injection detection, abuse
+    # screening, PII redaction of free text, and grounding.
+    #
+    # They CANNOT soften a fail-closed control. With
+    # GUARDRAILS_ENABLED=false and GUARDRAIL_ACTION=warn both set, the
+    # SQL validator still rejects a non-SELECT, RBAC still denies an
+    # unauthorized source, CREDENTIAL/PAYMENT columns are still withheld
+    # from everyone, tenant resolution still fails closed, and a
+    # sensitivity-categorised policy chunk is still never summarised.
+    # `guardrails.engine.resolve_action` is the one function that
+    # enforces that split and `tests/test_guardrails.py` proves it for
+    # every fail-closed layer. See `guardrails/__init__.py`.
+    #
+    # Master switch for the advisory screening this package performs.
+    guardrails_enabled: bool = True
+    # What an advisory layer does when it fires. "block" is the default;
+    # "warn" answers anyway with a notice attached (useful while tuning a
+    # detector); "redact" drops the offending span where a layer has one
+    # to drop. Never consulted for a fail-closed layer.
+    guardrail_action: Literal["block", "warn", "redact"] = "block"
+    # Prompt-injection and jailbreak detection, on the question and on
+    # retrieved/supplied content alike. **Detection, not the boundary** --
+    # `agent/sql_validator.py` and the RBAC gates bound the consequences,
+    # which is why turning this off does not create an escalation path.
+    prompt_injection_protection: bool = True
+    # Redaction of secret-shaped and personal data in free text
+    # (`security.redaction`). Result *columns* are governed separately and
+    # unconditionally by `governance.result_policy`, which this does not
+    # affect.
+    pii_redaction_enabled: bool = True
+    # Narrow abuse screening over question text. Deliberately not a
+    # content classifier -- `moderation/gate.py` is the real content gate
+    # for ingested assets. See `guardrails.engine._ABUSE_PATTERNS` on why
+    # it is kept narrow: over-blocking ordinary analytics is its own
+    # failure mode (CLAUDE.md 5.8).
+    toxicity_check_enabled: bool = True
+    # Whether grounding is assessed at all. With this on and
+    # SOURCE_GROUNDING_REQUIRED off, a weakly-grounded answer is still
+    # returned but labelled, rather than suppressed.
+    hallucination_check_enabled: bool = True
+    # Whether a retrieval-backed answer that fails the grounding check is
+    # replaced with "I cannot verify this". On by default: an unverifiable
+    # answer presented as an answer is the failure that discredits every
+    # other answer the platform gives.
+    source_grounding_required: bool = True
+    # Whether a model-proposed tool call that deterministic validation
+    # rejects is refused. Kept as an explicit setting because the brief
+    # asks for it, but note it is **not** the enforcement: the tool
+    # registry and `agent/sql_validator.py` refuse an invalid call
+    # regardless, so this cannot be used to permit one.
+    block_unsafe_tool_calls: bool = True
+    # Retrieval confidence floor for treating a source's answer as
+    # grounded. Below it, the answer is unverifiable rather than wrong --
+    # see `guardrails/grounding.py` on why that distinction is kept.
+    min_source_confidence: float = Field(default=0.70, ge=0.0, le=1.0)
     # Prompt: Enterprise Data Privacy, Domain Safety & Governance Engine.
     # The default k-anonymity threshold for a grouped result containing
     # individual-level sensitive measures (governance/suppression.py). A
@@ -2596,6 +2801,46 @@ class Settings(BaseSettings):
     # caller's own validated AskRequest.model), byte-identically to
     # pre-Prompt-47 behavior.
     enable_model_routing: bool = False
+
+    # --- Per-task model pins (model_routing/tasks.py) -----------------
+    # Which model each *kind* of LLM work starts from. Blank (the
+    # default for all of them) means "use OLLAMA_MODEL", which is exactly
+    # the behaviour before these existed -- so a deployment that sets
+    # none of them is byte-for-byte unchanged.
+    #
+    # These are baselines, not overrides: a caller-supplied
+    # `AskRequest.model` still wins, and `model_routing.policy` may still
+    # escalate or de-escalate from the baseline when
+    # ENABLE_MODEL_ROUTING is on. See `model_routing/tasks.py` for why
+    # the two layers are separate.
+    #
+    # Every non-blank value here is checked against
+    # `ollama_allowed_models` at startup and the app refuses to boot on a
+    # pin outside it (`_validate_task_model_pins` below). An unapproved
+    # pin is not a degraded experience -- it is a model the operator
+    # never approved receiving this deployment's prompts.
+    #
+    # Source/intent classification. Wants a small, fast model: the output
+    # is a few tokens and the call sits in the user's latency path.
+    router_model: str = ""
+    # SQL generation -- the one task where a SQL-specialised model
+    # (`sqlcoder`, `duckdb-nsql`) can beat a larger general model.
+    sql_model: str = ""
+    # Answer composition over retrieved chunks. Wants instruction
+    # following and faithfulness to the excerpts, not SQL ability.
+    rag_answer_model: str = ""
+    # The approved alternate used when a task has no pin of its own.
+    # Distinct from `model_routing.policy`'s runtime fallback chain,
+    # which handles a model that is *down* rather than one that is
+    # unconfigured.
+    fallback_model: str = ""
+    # How `model_routing.policy` orders otherwise-equally-eligible
+    # candidates. "capability" is the pre-existing behaviour and the
+    # default, so this knob changes nothing until an operator sets it --
+    # a new setting whose default silently altered routing would be a
+    # regression disguised as a feature. See
+    # `model_routing.tasks.STRATEGY_DESCRIPTIONS`.
+    model_routing_strategy: Literal["capability", "cost", "latency", "quality"] = "capability"
     # A model is only ever chosen *over* ollama_model when an approved or
     # deployed `model`-typed governed asset version exists for it with
     # recorded evaluation_results (governance_center, Prompt 44) -- the
@@ -3113,6 +3358,77 @@ class Settings(BaseSettings):
     moderation_store_pool_recycle_seconds: int = Field(default=1800, gt=0)
     media_ingest_workers: int = Field(default=4, gt=0)
     media_image_tile_threshold_px: int = Field(default=2048, gt=0)
+    # When a question arrives with no explicit source selection, search
+    # every configured *retrieval* source rather than asking the LLM to
+    # pick. The four it covers are the ones that answer from data this
+    # deployment already holds or can look up: the database, the two
+    # document collections, and web search.
+    #
+    # Why this is a setting and not just the behavior: it trades latency
+    # and web-search cost for never missing an answer. With it on, every
+    # unselected question also runs the SQL pipeline (schema retrieval,
+    # generation, validation -- the slowest source by far) and a web
+    # search, whether or not either could plausibly help. With it off, an
+    # LLM classifier picks instead, which is faster and cheaper but only
+    # as good as the model: measured on one question across three local
+    # models, the picks differed, and a leave-policy PDF filed under
+    # `documents` was invisible to a question the classifier sent to
+    # `policy` alone.
+    #
+    # `generation` and `media_search` are deliberately NOT included. They
+    # are not places an answer is looked up: generation *creates* a paid
+    # artifact, and firing it on every question would attach an unasked-for
+    # image (or an approval prompt) to ordinary questions. Both stay with
+    # the classifier, which is good at spotting the explicit "generate
+    # an image of ..." phrasing that actually wants them.
+    #
+    # The session-level expensive-source ceiling
+    # (`session_expensive_source_limit`) still applies on top, so a session
+    # that fans out to web on every question eventually has web dropped
+    # rather than billing without bound.
+    route_to_all_sources: bool = True
+
+    # --- Deterministic source routing (agent/orchestrator/source_signals.py)
+    # The deterministic signal pre-pass in front of `classify_sources`.
+    # On by default, because what it does when it finds nothing is
+    # nothing: an ambiguous question still goes to the LLM classifier
+    # exactly as it did before, so the default behaviour for an
+    # ambiguous question is unchanged. What it changes is the
+    # *unambiguous* case -- "extract the text from this image" no longer
+    # costs a classification call and no longer depends on the configured
+    # model following a prompt.
+    #
+    # False restores the pre-existing path exactly: no scoring, no
+    # confidence reported, classification for every multi-source
+    # question. The same independent-rollback pattern
+    # ENABLE_REQUEST_GOVERNANCE and friends already follow.
+    source_routing_enabled: bool = True
+    # Confidence at or above which the deterministic scorer's own pick is
+    # trusted and the classification call is skipped. Deliberately high:
+    # a wrong skip routes a question with no model to catch it, while a
+    # wrong non-skip costs one LLM call. Below this, the scores are still
+    # reported (for the UI and the audit record) but never act on their
+    # own.
+    source_confidence_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    # Hard ceiling on retrieved chunks carried into a RAG answer prompt,
+    # across every retrieval source. Bounds context amplification
+    # independently of each store's own top-k: a question that fans out
+    # to documents *and* policy must not be able to assemble twice the
+    # context one source alone could.
+    max_retrieval_chunks: int = Field(default=10, gt=0, le=200)
+    # Whether a retrieval-grounded answer must carry at least one
+    # citation to be presented as an answer. See
+    # `guardrails/grounding.py` -- this is the control that turns "the
+    # model said something plausible" into "the model said something the
+    # retrieved evidence supports".
+    require_citations: bool = True
+    # Whether the model may answer from its own parametric knowledge when
+    # retrieval found nothing. False (the default) is the conservative
+    # choice for a platform whose whole point is answering from *this*
+    # deployment's data: an unsourced answer that looks like a sourced
+    # one is the failure mode that destroys trust in every other answer.
+    allow_general_knowledge: bool = False
+
     session_expensive_source_limit: int = Field(default=10, gt=0)
     session_expensive_source_window_seconds: float = Field(default=3600.0, gt=0)
     # `NoDecode`: see `ollama_allowed_models`'s own comment above -- without
@@ -3328,6 +3644,77 @@ class Settings(BaseSettings):
                 f"COST_MODERATE_ROW_THRESHOLD ({self.cost_moderate_row_threshold}) must be "
                 f"strictly less than COST_HIGH_ROW_THRESHOLD ({self.cost_high_row_threshold}) "
                 f"-- otherwise a query is never classified 'moderate', only 'low' or 'high'. "
+                f"Fix both in .env."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_task_model_pins(self) -> Settings:
+        """Every per-task model pin must be inside `OLLAMA_ALLOWED_MODELS`.
+
+        Fail-closed, and deliberately at startup rather than at the call
+        site. `ollama_allowed_models` is the only gate on what this
+        application will ever ask Ollama to run; a pin that bypassed it
+        would send this deployment's prompts and retrieved data to a
+        model the operator never approved, and the first anyone would
+        hear of it is in a provider's logs.
+
+        Reports every offending pin in one message rather than the first,
+        so an operator with two typos fixes both in one restart.
+        `EMBEDDING_MODEL_NAME` is excluded: it is a
+        sentence-transformers model, not an Ollama chat model, so
+        checking it against this allowlist would reject every correct
+        value. See `model_routing.tasks.validate_task_model_pins`.
+        """
+        from model_routing.tasks import validate_task_model_pins
+
+        offenders = validate_task_model_pins(self)
+        if offenders:
+            raise ConfigurationError(
+                f"Per-task model pin(s) outside OLLAMA_ALLOWED_MODELS: "
+                f"{', '.join(offenders)}. Every model this application may call has to be "
+                f"listed in OLLAMA_ALLOWED_MODELS (OLLAMA_MODEL is always implicitly "
+                f"allowed). Add the model there, or correct the pin in .env."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_question_queue_sizing(self) -> Settings:
+        """The question queue's capacity values have to be consistent with
+        each other, or a cap silently becomes unreachable.
+
+        Pydantic's own `Field` constraints already reject the malformed
+        cases on their own -- a non-numeric value, zero, a negative, or
+        anything above `MAX_SAFE_CONCURRENT_QUESTIONS_PER_USER` -- and do
+        it before the app finishes starting. What they cannot see is the
+        relationship *between* two fields, which is what this checks:
+
+          - A global ceiling below the per-user cap makes the per-user cap
+            a number no user can ever reach, so one of the two is wrong
+            and an operator needs to be told which.
+          - A per-user queue-depth share above the shared queue depth is
+            the same mistake one layer down.
+
+        Raises `ConfigurationError` (not a bare `ValueError`) for the same
+        reason `_validate_model_routing_threshold_ordering` does: this is
+        "you set something, and it is wrong", which must fail loudly at
+        startup rather than surface as a confusing runtime behaviour.
+        """
+        if self.max_concurrent_questions_global < self.max_concurrent_questions_per_user:
+            raise ConfigurationError(
+                f"MAX_CONCURRENT_QUESTIONS_GLOBAL "
+                f"({self.max_concurrent_questions_global}) must be greater than or equal to "
+                f"MAX_CONCURRENT_QUESTIONS_PER_USER "
+                f"({self.max_concurrent_questions_per_user}) -- otherwise no single user could "
+                f"ever reach their own configured limit, and the per-user value would be "
+                f"misleading. Raise the global value or lower the per-user one in .env."
+            )
+        if self.question_queue_max_depth_per_user > self.question_queue_max_depth:
+            raise ConfigurationError(
+                f"QUESTION_QUEUE_MAX_DEPTH_PER_USER "
+                f"({self.question_queue_max_depth_per_user}) must not exceed "
+                f"QUESTION_QUEUE_MAX_DEPTH ({self.question_queue_max_depth}) -- the per-user "
+                f"share cannot be larger than the shared queue it is a share of. "
                 f"Fix both in .env."
             )
         return self

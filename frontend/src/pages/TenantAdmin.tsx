@@ -279,7 +279,13 @@ function UserRow({ user, canManage }: { user: PlatformUserOut; canManage: boolea
               value={newRole}
               onChange={(event) => setNewRole(event.target.value)}
               placeholder="role name"
-              className="w-28 rounded-md border border-[var(--border)] bg-[var(--background)] px-2 py-1 text-xs"
+              // A placeholder is not an accessible name: it is announced
+              // inconsistently and disappears as soon as the field has
+              // content. Each row repeats this control, so a visible label
+              // per row would be noise -- an aria-label naming the row's
+              // own subject is the readable equivalent.
+              aria-label={`Role name to grant ${user.email}`}
+              className="w-28 rounded-md border border-[var(--border-control)] bg-[var(--background)] px-2 py-1 text-xs"
             />
             <Button size="sm" variant="secondary" disabled={assignRole.isPending} onClick={handleAssign}>
               Add

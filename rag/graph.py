@@ -49,6 +49,7 @@ from langgraph.graph import END, StateGraph
 from typing_extensions import TypedDict
 
 from config.settings import Settings, get_settings
+from model_routing.tasks import ModelTask, resolve_task_model
 from rag.store import ChunkResult, Collection, get_rag_engine
 from security.audit_log import log_security_event
 
@@ -222,7 +223,18 @@ def _generate_node(state: RagState, *, settings: Settings) -> dict[str, Any]:
 
     excerpts = "\n\n".join(f"[{c.filename}]\n{c.chunk_text}" for c in chunks)
     user_prompt = f"Question: {state['question']}\n\nExcerpts:\n{excerpts}"
-    answer = call_ollama(_GENERATE_SYSTEM_PROMPT, user_prompt, settings, max_tokens=400)
+    # RAG_ANSWER_MODEL (model_routing/tasks.py): composing an answer over
+    # retrieved excerpts wants instruction-following and faithfulness to
+    # those excerpts, which is a different strength from SQL generation --
+    # so it gets its own pin. Blank (the default) resolves to
+    # OLLAMA_MODEL, leaving existing deployments unchanged.
+    answer = call_ollama(
+        _GENERATE_SYSTEM_PROMPT,
+        user_prompt,
+        settings,
+        max_tokens=400,
+        model=resolve_task_model(ModelTask.RAG_ANSWER, settings),
+    )
     citations: list[Citation] = [
         {
             "filename": c.filename,

@@ -141,7 +141,33 @@ cadence) — this entry should be updated with the result each time.
 
 ### R-004 — Dependency pins verified against Python 3.14, not 3.11
 
-**Severity:** Medium · **Status:** Open
+**Severity:** Medium · **Status:** **Mitigated** (was: Open) — the
+mitigation is now a *measurement* rather than an argument
+
+**Update (2026-10-17, evening, at `08f385e`).** The scipy correction
+below is no longer only reasoned from package metadata — the 3.11
+resolution was executed and inspected:
+
+- The production image runs **`python 3.11.16`** with **`scipy 1.17.1`**
+  and `numpy 2.4.6` installed, confirmed by running the interpreter
+  inside it (`docker run --rm --entrypoint python …`).
+- All **five** scipy-dependent production modules import inside that
+  image — `analytics.causal`, `analytics.forecasting`,
+  `analytics.models`, `analytics.predictive`, `optimization.engine` —
+  plus `api.main`, `agent.graph` and `agent.sql_validator`.
+- The full backend suite re-ran clean on the downgraded pin:
+  **7,274 passed, 11 deselected, 0 failed.**
+
+So for `scipy` specifically, the 3.11 target is now verified rather than
+assumed, and F-008 is closed
+([`certification/2026-10-17_release_gate_v2.md`](certification/2026-10-17_release_gate_v2.md)
+§11.2). **The risk itself stays open in substance**, because the entry
+is about the *class* of pin, not that one package: the DB drivers
+(`pyodbc`, `oracledb`) are still chosen for `cp314` wheel availability
+and still have **no** live 3.11 verification against a database of their
+type. The image importing `api.main` shows the driver *installs* on
+3.11; it does not show it connects. The "cheap check before pinning
+anything" below remains the operative instruction.
 
 `requirements.txt`'s own header comment discloses that several DB-driver
 version pins (`pyodbc==5.3.0`, `oracledb==4.0.2`, others) were selected for
@@ -161,8 +187,13 @@ it was corrected to `scipy==1.17.1` (cp311 *and* cp314 wheels) on
 part is the failure *mode*: an unsatisfiable pin fails at the dependency
 install step, so the test suite never runs and "a pin that broke
 import/basic behavior would surface in tests" does not apply — there are
-no test results to read. Note this is reasoned from package metadata, not
-from a CI run log (no `gh` CLI on this machine).
+no test results to read. The build failure itself was measured, not
+inferred — the 2026-10-17 certification pass started a Docker daemon,
+attempted the build, and filed it as **F-008**, the single
+release-blocking defect behind that gate's NO-GO verdict
+([`docs/certification/2026-10-17_release_gate_v2.md`](certification/2026-10-17_release_gate_v2.md)).
+The CI consequence, by contrast, is reasoned from package metadata
+rather than a run log (no `gh` CLI on this machine).
 
 **Mitigation today:** CI runs the full mocked test suite against 3.11 on
 every push/PR, and because `requirements-dev.txt` line 16 is `-r
@@ -636,6 +667,64 @@ never been tabletop-tested against a simulated scenario with an actual
 on-call owner. Also: wire `log_security_event` into
 `_validate_download_url`'s rejection paths (a small, concrete follow-up
 named in the incident-response document itself).
+
+### R-020 — Multi-database auto-routing can select a database that holds no data
+
+**Severity:** Medium · **Status:** Open (found 2026-10-17, not fixed)
+
+With two or more connections in `DB_CONNECTIONS`,
+`embeddings/retriever.py::select_database` picks the database whose single
+best-matching **table embedding** scores highest. Schema-text similarity
+is the only signal; whether a table contains rows is not considered. Its
+docstring does say a database is skipped when its index "isn't built yet
+(or is empty)" — that means an empty **index**, not an empty **table**.
+
+**Reproduced live** against the development deployment (4 connections):
+"How many employees are in each department?" routed to `hr`, whose
+`Employee` and `EmployeeOrganizationAssignment` tables both hold **0**
+rows, while `employee_management_database` — configured, indexed and
+holding **15** employees across 6 departments — was not selected. `hr`'s
+richer HR vocabulary (`EmployeeOrganizationAssignment`, similarity
+`0.7513`) outranked the plainer `Employee`/`Department` naming. Filed as
+**F-012** in
+[`certification/2026-10-17_release_gate_v2.md`](certification/2026-10-17_release_gate_v2.md)
+§11.4.
+
+**Why this is Medium and not High.** Nothing incorrect was returned and
+nothing was fabricated: `insight` was `null`, the analytical layer
+reported `shape: "empty"` with `insufficient_data_reasons`, and the
+persisted answer read *"Query succeeded. 0 row(s) returned."* The
+provenance rule (`CLAUDE.md` §4.4) held. The failure is **usefulness**,
+not correctness — and it cannot occur at all in a single-database
+deployment, where `select_database` short-circuits with no Chroma query.
+
+**What makes it worse than it first looks:** there is no user recourse.
+`AskRequest` has no `database` field — `extra="forbid"` rejects one with
+a 422, confirmed — and the UI's `SourcePicker` selects *source types*
+(sql / documents / web / …), not database connections. A user who can
+see that the answer came from the wrong database still cannot redirect
+the question.
+
+**Mitigation today:** none in code. Operationally, point a deployment at
+one database, or remove schema-only/empty connections from
+`DB_CONNECTIONS`.
+
+**Options, none chosen — this is an owner decision:**
+
+1. An operator- or user-selectable database (a new `AskRequest` field
+   plus a picker). Most direct; adds a surface that must be RBAC- and
+   tenant-filtered exactly as `sources` already is, or it becomes a way
+   to reach a connection the caller should not see.
+2. Make routing row-count-aware. Needs a cheap, cached, periodically
+   refreshed row-count signal — and note that row counts are themselves
+   information about the data, so caching them has its own disclosure
+   question.
+3. Document the limitation and treat multi-database routing as suitable
+   only when every configured database is populated.
+
+**Review date:** before any demo or UAT session that has more than one
+database configured — this is the most likely cause of a UAT J5.1
+failure.
 
 ## Accepted exceptions
 

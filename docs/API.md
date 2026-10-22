@@ -1073,6 +1073,120 @@ generation/insight prompts are benchmark-pinned, so that is a separate
 change. What streams is the pipeline's progress, which is what makes a
 slow run legible.
 
+### Asynchronous questions: `/questions/*`
+
+`POST /ask` answers one question and blocks. These routes let **one
+authenticated user** have many questions in flight at once: submission
+returns a job id immediately and the question runs through the *same*
+`run_orchestrated` entry point and the *same* `_ask_response_from_state`
+serializer `/ask` uses — so the SQL validator, the twice-enforced row
+cap, the query timeout, the restricted-column gate, result governance and
+provenance all apply identically, because it is literally the same code.
+
+Behaviour, limits and the security model:
+[`docs/CONCURRENCY.md`](CONCURRENCY.md).
+
+| Route | Purpose |
+|---|---|
+| `POST /questions` | Submit. `202` with a job id. |
+| `GET /questions/{job_id}` | One job, with its result once it has one. |
+| `GET /questions` | This caller's jobs, newest first. `?status=`, `?limit=`. |
+| `POST /questions/{job_id}/cancel` | Cancel. |
+| `GET /questions/stats` | Capacity counts. |
+
+All five require authentication; submission additionally requires
+`Permission.ASK`, the same permission `/ask` requires.
+
+**Requires a real user account.** `none`/`static_token` auth modes
+provide no distinct per-caller subject, so ownership cannot be enforced
+and these routes return **403**. Putting every caller in one bucket would
+let each read the others' results.
+
+```bash
+curl -X POST http://localhost:8000/questions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"question": "What were total sales last quarter?"}'
+```
+
+```json
+{
+  "job_id": "q_8f2c1d...",
+  "status": "queued",
+  "duplicate": false,
+  "queued_for_caller": 1,
+  "running_for_caller": 0,
+  "max_concurrent_per_user": 100
+}
+```
+
+Then poll `GET /questions/{job_id}`:
+
+```json
+{
+  "job_id": "q_8f2c1d...",
+  "status": "completed",
+  "question": "What were total sales last quarter?",
+  "agent_status": "succeeded",
+  "attempts": 1,
+  "queue_wait_seconds": 0.4,
+  "run_seconds": 7.2,
+  "result": { "...": "an AskResponse-shaped payload" },
+  "sources_used": ["sql"],
+  "model_used": "llama3.1:8b",
+  "source_confidence": { "sql": 0.9, "documents": 0.3 },
+  "error_message": null,
+  "guardrail_reason": null
+}
+```
+
+**Statuses** — `queued`, `running`, `completed`, `failed`, `cancelled`,
+`timeout`, `blocked_by_guardrail`. The four unsuccessful ones are
+deliberately distinct: `blocked_by_guardrail` means nothing
+malfunctioned, and reporting it as a failure would make a correct refusal
+indistinguishable from an outage. `agent_status` maps all of them onto
+`AskResponse`'s frozen four-value vocabulary for a client that already
+renders it.
+
+**Over the limit queues; a full queue is a 429.** Exceeding
+`MAX_CONCURRENT_QUESTIONS_PER_USER` is not an error — the question waits
+and starts automatically. Only `QUESTION_QUEUE_MAX_DEPTH` (or its
+per-user share) produces a `429`, which is genuine backpressure.
+
+**Duplicate submissions are absorbed.** An identical resubmission
+returns the original `job_id` with `"duplicate": true`. Pass
+`idempotency_key` to make two *differently worded* submissions one
+operation; it is hashed with the owner and tenant server-side, never
+stored as given, so it cannot collide with another user's.
+
+**A guardrail refusal is a job, not a 4xx.** The caller asked for a job
+id and a status, so they get a terminal job with status
+`blocked_by_guardrail` — one code path on the client, and an auditable
+record.
+
+**Ownership.** A job is readable, listable and cancellable only by its
+owner. Another user's job id returns the **same 404 a nonexistent one
+does**, never a distinguishable 403, so job ids cannot be enumerated.
+Cancelling an already-finished job is a `409`.
+
+**Results are re-governed on every read**, against the *reader's current*
+roles — never served as captured. Roles change, and a result captured for
+a caller holding `VIEW_RESTRICTED_COLUMNS` must not come back unredacted
+once that role is gone. The same control `api/artifacts.py` and
+`api/shares.py` apply on their own read-back surfaces.
+
+**Nothing internal is exposed.** `model_used` is the model name
+`AskResponse.model` already returns and `sources_used` the source names
+the "Sources used" panel already shows. No provider name, key, routing
+rule, raw prompt or system instruction appears in any of these
+responses.
+
+`GET /questions/stats` returns counts only. The global numbers are
+included for any authenticated caller — they are what a client needs to
+explain a queued question honestly ("the system is busy" versus "you are
+at your own limit") — while `running_for_caller`/`queued_for_caller` are
+this caller's own, so one user cannot read another's load.
+
 ### Other routes
 
 `POST /execute` (SQL "Confirm and Run" equivalent), `POST /schema/refresh`,

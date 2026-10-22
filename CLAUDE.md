@@ -38,7 +38,7 @@ mistake a session makes here**:
 
 | State | Meaning | Example |
 |---|---|---|
-| **Live** | Wired into a request path and running | the 18-node SQL graph, RBAC, result governance |
+| **Live** | Wired into a request path and running | the 19-node SQL graph, RBAC, result governance |
 | **Built, not wired** | Implemented and tested, no live caller | `analytics.root_cause` (needs a second dataset the pipeline never produces), `recommendation.RecommendationProvider` (Protocol only), `agent.translation` (no route, node or setting calls it) |
 | **Off by default** | Live only when an operator enables it | web search, media search/generation, result cache, model routing, BI integrations |
 | **Disclosed gap** | Deliberately absent, with a reason | no scheduler/background worker, no delivery channel for alerts or briefings, no streaming |
@@ -68,7 +68,7 @@ the feature's own contract document (§8) rather than inferring from code.
 | Concern | Choice |
 |---|---|
 | LLM runtime | Ollama, default `llama3.1:8b` (swappable via `.env` — e.g. `sqlcoder`, `duckdb-nsql`). Per-request selection via `AskRequest.model`, validated against `Settings.ollama_allowed_models` |
-| Orchestration | LangGraph — explicit state machines, not free-form agents. `agent/graph.py` (the 18-node SQL pipeline) and, when multi-source is on, `agent/orchestrator/graph.py` in front of it |
+| Orchestration | LangGraph — explicit state machines, not free-form agents. `agent/graph.py` (the 19-node SQL pipeline) and, when multi-source is on, `agent/orchestrator/graph.py` in front of it |
 | Config / validation | Pydantic v2. `config/settings.py::Settings` is a frozen `pydantic_settings.BaseSettings`; secrets are `pydantic.SecretStr` |
 | User's database | PostgreSQL, MySQL, SQL Server, or Oracle via SQLAlchemy. One or more named connections (`DB_CONNECTIONS`), auto-routed per question |
 | SQL parsing / validation | sqlglot — AST allowlist in the dialect matching the target `DB_TYPE` |
@@ -105,6 +105,8 @@ each boundary:** [`docs/architecture/repository-map.md`](docs/architecture/repos
 | `sources/` | The source-type contract and registry — single owner of each source's routing description, permission and availability. `agent/orchestrator/` derives its tables from here |
 | `rest/` | REST/OpenAPI connector, read-only over allowlisted hosts. Off by default; **not routable yet** (no descriptor, no orchestrator node) |
 | `mcp_client/` | Client *of* remote MCP servers — the opposite direction to `agent/tools/`, no shared code. Off by default. Administrator-controlled trust only |
+| `jobs/` | The asynchronous question queue -- per-user concurrency, queueing, job status, cancellation, graceful shutdown. Sits *below* `api/` and never imports it: the work a job performs is injected as a `JobRunner`, so there is no second pipeline to drift from the governed one |
+| `guardrails/` | The configurable façade over the layered safety controls, plus the grounding/citation gate. **Adds a seam, not a second security model** -- `GUARDRAIL_ACTION` governs advisory layers only and can never soften a fail-closed control |
 | `api/` | The FastAPI app — the REST surface every UI action goes through, and (once `frontend/dist` exists) the server for the dashboard itself |
 | `frontend/` | The React dashboard, the only UI this project ships |
 
@@ -135,7 +137,7 @@ These hold across the platform. Breaking one is a regression even if tests
 pass.
 
 1. **The graph is an explicit, bounded state machine.** `agent/graph.py` is
-   18 nodes with a conditional retry edge back to `generate_sql` (or to
+   19 nodes with a conditional retry edge back to `generate_sql` (or to
    `retrieve_schema` for a missing reference), capped by
    `state["max_retries"]`. Never introduce an unbounded loop or a second
    retry budget. Adding or renaming a node means updating
@@ -335,6 +337,18 @@ restriction as a boundary.** Full detail:
   and a failing `mypy` silently stopped `bandit`/`pytest`/`pip-audit` from
   running at all. So treat a type error as a real defect to fix — CI will
   *report* it and still go green. The standing backlog is in §13.
+  **`mypy` is not the only non-blocking step** — `gitleaks`, the Trivy
+  container scan and the load-test smoke scenario are too, for their own
+  dated reasons. §13's "Four CI steps are non-blocking" bullet is the
+  authoritative list; read it before concluding that a green CI run
+  proves anything about those four.
+- **Do not assume the blocking gates are currently green.** Measured
+  2026-10-17 at `08f385e`: `ruff`, `bandit` and `pip-audit` all exit
+  non-zero, so three blocking steps fail, while `black` and `pytest`
+  pass. Every one of the three is a verified-benign finding awaiting an
+  owner decision, not a vulnerability — see §13 and
+  [`docs/certification/2026-10-17_release_gate_v2.md`](docs/certification/2026-10-17_release_gate_v2.md)
+  §11.6. Never "fix" one by weakening the gate.
 
 ### 5.8 Domain privacy and safety — consult the policy before changing behavior
 
@@ -488,6 +502,10 @@ authoritative, and explains how to resolve a conflict.
 | Authentication / authorization | [`docs/AUTHENTICATION.md`](docs/AUTHENTICATION.md), [`docs/AUTHORIZATION.md`](docs/AUTHORIZATION.md) |
 | Multi-tenancy rules and limitations | [`docs/MULTI_TENANCY.md`](docs/MULTI_TENANCY.md) |
 | Configuration reference | [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) |
+| Entity display names: metadata, SQL repair, join and chart-label rules | [`docs/DISPLAY_NAMES.md`](docs/DISPLAY_NAMES.md) |
+| Result-column semantics and chart axis binding (measure vs key) | [`docs/CHART_AXIS_BINDING.md`](docs/CHART_AXIS_BINDING.md) |
+| Measured latency, what causes it, and the hardware ceiling | [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) |
+| Per-user concurrency, the question queue, deterministic source routing, per-task model pins, guardrails, grounding | [`docs/CONCURRENCY.md`](docs/CONCURRENCY.md) |
 | Production readiness verdict | [`docs/PRODUCTION_READINESS_RELEASE_GATE.md`](docs/PRODUCTION_READINESS_RELEASE_GATE.md) |
 | One feature's full design, tests and limitations | `NN_*_CONTRACT.md` at the repo root — one per numbered prompt; indexed in the context map |
 
@@ -643,8 +661,13 @@ contract lists its specific limitations; these are the cross-cutting ones.
   `agent/followup.py`'s `classify_followup_node` sees only the
   `conversation_history` the caller resends, capped at
   `MAX_FOLLOWUP_EXCHANGES`; no LangGraph checkpointer exists (none ships for
-  SQL Server at the pinned `langgraph==0.2.62` — it would need a custom
-  `BaseCheckpointSaver`).
+  SQL Server, so it would need a custom `BaseCheckpointSaver`).
+  *Corrected 2026-10-17: this entry cited `langgraph==0.2.62`.*
+  **The real pin is `langgraph==1.0.10rc1`** (`requirements.txt:2`) — three
+  major versions on, and a release candidate in a production requirements
+  file, which is itself worth a deliberate decision. The conclusion is
+  unchanged and re-verified: zero `BaseCheckpointSaver`/`checkpointer=`
+  usage anywhere in this repo.
 - **Chat history and artifacts cover locally-authenticated users only.** An
   OIDC or unauthenticated caller is answered normally but nothing is
   persisted — there is no `identity.users` row to attach a conversation to.
@@ -665,14 +688,36 @@ contract lists its specific limitations; these are the cross-cutting ones.
   benchmark-pinned (§12), so streaming the model's own tokens is a
   separate, evidence-gated change. No WebSocket endpoint exists.
 - **Process-local state**: rate limiters, circuit breakers, the performance
-  rollup, the result cache, the security-event ring buffer and the compiled
-  graph/Ollama singletons are all per-worker. A multi-worker deployment has
-  one of each per worker.
+  rollup, the result cache, the security-event ring buffer, **the
+  asynchronous question queue (`jobs/`)** and the compiled graph/Ollama
+  singletons are all per-worker. A multi-worker deployment has one of each
+  per worker. The queue is the sharpest case, because its cap is advertised
+  to users: N workers admit up to N x `MAX_CONCURRENT_QUESTIONS_PER_USER`,
+  and queued/running jobs do not survive a restart. See
+  [`docs/CONCURRENCY.md`](docs/CONCURRENCY.md) 2.9.
+- **The asynchronous question queue requires a real user account.**
+  `POST /questions` returns 403 in `none`/`static_token` auth mode, by
+  design: those modes give every caller the same subject, so job ownership
+  cannot be enforced, and one shared bucket would let each caller read the
+  others' results. Deny-by-default — not a gap to close by relaxing it.
+- **Routing-confidence and grounding thresholds are judgement calls, not
+  measurements.** `SOURCE_CONFIDENCE_THRESHOLD` (0.70),
+  `MIN_SOURCE_CONFIDENCE` (0.70) and
+  `guardrails.grounding.MIN_LEXICAL_OVERLAP` (0.15) were chosen to err
+  toward deferring to the LLM classifier and toward *not* refusing a
+  correct answer. The deterministic router's signal patterns are
+  hand-authored, and the eval harness still covers the SQL path only, so
+  routing accuracy has no labelled-corpus measurement behind it. Treat
+  `AskResponse.source_confidence` as evidence, never as a probability that
+  an answer is correct.
 - **Environment-blocked verifications** (not oversights — no infrastructure
   exists here): DAST has never run against a live deployment, OIDC has never
   been verified against a live IdP, ClamAV's fail-closed path has never seen
-  a real daemon, and `docs/EVALUATION_CURRENT.md`'s accuracy numbers predate
-  many pipeline changes.
+  a real daemon, `docs/EVALUATION_CURRENT.md`'s accuracy numbers predate
+  many pipeline changes, and **the question queue's 100-concurrent path has
+  only been exercised against a mocked runner** — never against a live
+  database and Ollama, which is what `python scripts/integration_test.py`
+  is for.
 - **Lint/type findings — measure before claiming one is, or is not, yours.**
   Measured 2026-10-17: `mypy .` reports **631 errors across 115 files**, of
   which **616 are in `tests/`** and 8 in `eval/security_benchmark/` (largely
@@ -690,6 +735,61 @@ contract lists its specific limitations; these are the cross-cutting ones.
   `identity/repositories/semantic_intelligence.py:199,200,242` and
   `identity/repositories/recommendation_governance.py:402`. `mypy` is
   report-only in CI (§5.7), so nothing is blocking them.
+  **Re-measured 2026-10-17 at `08f385e`: every figure above still holds
+  exactly** — 631 mypy errors in 115 files with the same 7 production
+  findings, black clean over 1,635 files, one ruff `I001`. No drift, so a
+  new finding is attributable. The one addition: **`bandit` now reports 4
+  Low findings, not 3** — `agent/sql_validator.py:842`
+  (`B112 try_except_continue`) joined the set, introduced by `933cfff`'s
+  `describe_sql`, alongside `agent/harness/retry.py:75` (B311),
+  `api/streaming.py:82` (B101) and `security/audit_log.py:255` (B110).
+  Still 0 High and 0 Medium, and all four are deliberate and already
+  annotated for `ruff` but not for `bandit` — which is why that blocking
+  gate fails (§5.7).
+- **Three tests fail only in file order, and the cause is cross-file
+  state, not the tests.** Measured 2026-10-22: a full `pytest` run
+  reports 6 failures, three of which are
+  `tests/test_agent_nodes.py::TestGenerateRecommendationsNodeQueryStore::{test_non_mssql_database_never_calls_query_store,test_feature_flag_off_never_calls_query_store,test_query_store_failure_fails_open}`.
+  All three pass when that file runs alone and fail when
+  `tests/security/` runs first (`pytest tests/security
+  tests/test_agent_nodes.py::TestGenerateRecommendationsNodeQueryStore`
+  reproduces it in ~1 min) — `tests/security/` sorts before every root
+  `test_*.py`, so a default full run always hits it. Each asserts
+  `recommendations == []`, so something in `tests/security/` leaves a
+  recommendation-producing state behind that `tests/conftest.py`'s three
+  cache clears do not cover. **Verified pre-existing**, by stashing the
+  working tree and reproducing identically. Not yet attributed to a
+  specific leaking test.
+
+- **The local 7B model still refuses some answerable terse questions.**
+  Measured 2026-10-22, after the retrieval fix in
+  `embeddings.retriever._select_by_relevance` (see
+  [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)'s `retrieve_schema_node`
+  entry): of six phrasings of "top selling products", four now answer
+  correctly, while **"Worst selling products" and "Most popular
+  products" still end in `rejection_reason=off_topic`**. This is no
+  longer a retrieval problem -- the generation prompt verifiably contains
+  `FactResellerSales` and `SalesAmount` (19,494 chars, one model call),
+  and `qwen2.5-coder:7b` returns the literal string `NOT_A_QUERY`
+  anyway. Deterministic across repeated runs. **Confirmed to be model
+  capacity, not the pipeline: re-running the same two questions with
+  `model="llama3.1:8b"` answered both** -- "Worst selling products" in
+  316.1s (10 rows) and "Most popular products" in 110.7s (10 rows),
+  through the identical graph, schema and prompt. So `OLLAMA_MODEL` is a
+  real lever an operator already has; note the latency it costs on this
+  hardware (see [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)), which is
+  why it is not simply changed here. The other lever is the generation
+  system prompt, and that is benchmark-pinned (§12), so changing it needs
+  the benchmark re-run -- a deliberate, separate exercise at ~80s per
+  question. **Do not "fix" this
+  by retrying the off-topic sentinel**: `agent.nodes.generate_sql_node`
+  deliberately never retries it (there is no error to feed back), and
+  turning a refusal path into a retry path would both cost a second full
+  generation cycle and weaken a control. Note also that SQL *quality* on
+  these terse questions is uneven even when they succeed -- one phrasing
+  returned a bare product list with no measure column, another a single
+  row -- which is the same model-capacity limitation, not a pipeline bug.
+
 - **Four CI steps are non-blocking** by deliberate, dated decision:
   `gitleaks`, `mypy` (§5.7), the Trivy container scan — report-only because
   the action only fails a step when its `exit-code` input is set, which it

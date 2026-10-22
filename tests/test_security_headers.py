@@ -66,6 +66,21 @@ class TestSecurityHeadersPresentByDefault:
         assert "script-src 'self' 'unsafe-inline'" not in csp
         assert "script-src 'self' 'unsafe-eval'" not in csp
 
+    def test_csp_grants_no_third_party_font_origin(self, client):
+        """The selectable fonts are self-hosted (frontend/src/lib/fonts.ts
+        bundles @fontsource-variable/* into the app's own origin), so the
+        dashboard needs no Google Fonts grant. Pinned because the obvious
+        way to "fix" a font that fails to load is to re-add the CDN origin,
+        which would quietly reintroduce a third-party request on every page
+        load -- the local-first posture this project states elsewhere."""
+        response = client.get("/health")
+        csp = response.headers.get("Content-Security-Policy", "")
+        assert "fonts.googleapis.com" not in csp
+        assert "fonts.gstatic.com" not in csp
+        # Self-hosted woff2 must still be allowed, or the picker silently
+        # falls back to system fonts for every option.
+        assert "font-src 'self'" in csp
+
     def test_frame_src_is_self_only_when_oidc_not_configured(self, client):
         response = client.get("/health")
         csp = response.headers.get("Content-Security-Policy", "")

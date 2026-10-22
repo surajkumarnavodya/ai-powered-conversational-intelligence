@@ -1,6 +1,6 @@
 """Wires the agent nodes into a compiled LangGraph state machine.
 
-    sanitize_input -> classify_followup -> retrieve_schema -> retrieve_golden_examples -> retrieve_business_context -> classify_analytical_intent -> build_analytical_plan -> plan_query -> generate_sql -+-> review_sql -+-> review_metric_conformance -+-> validate_sql -+-> estimate_cost -+-> execute_sql -+-> compute_analytics -> generate_forecast -> generate_recommendations -> generate_insight -> END
+    sanitize_input -> classify_followup -> retrieve_schema -> retrieve_golden_examples -> retrieve_business_context -> classify_analytical_intent -> build_analytical_plan -> plan_query -> generate_sql -+-> review_sql -+-> review_metric_conformance -+-> enforce_display_names -+-> validate_sql -+-> estimate_cost -+-> execute_sql -+-> compute_analytics -> generate_forecast -> generate_recommendations -> generate_insight -> END
          |                    |                    ^                                                                  |               ^                              |                 ^                |                  ^                 |                |
          |                    |                    +----------------------------------(retry, up to max_retries)------+---------------+------------------------------+-----------------+---(retry, high    |               |
          |                    |                                                                                       |                                                                                    cost only)      +--(retry, only  |
@@ -233,6 +233,7 @@ from agent.nodes import (
     classify_analytical_intent_node,
     classify_followup_node,
     compute_analytics_node,
+    enforce_display_names_node,
     estimate_query_cost_node,
     execute_sql_node,
     generate_forecast_node,
@@ -247,6 +248,7 @@ from agent.nodes import (
     review_sql_node,
     route_after_classification,
     route_after_cost_estimate,
+    route_after_display_names,
     route_after_execution,
     route_after_generation,
     route_after_metric_conformance,
@@ -315,6 +317,10 @@ def build_graph():
         "review_metric_conformance",
         guard_node("review_metric_conformance", review_metric_conformance_node),
     )
+    graph.add_node(
+        "enforce_display_names",
+        guard_node("enforce_display_names", enforce_display_names_node),
+    )
     graph.add_node("validate_sql", guard_node("validate_sql", validate_sql_node))
     graph.add_node("estimate_cost", guard_node("estimate_cost", estimate_query_cost_node))
     graph.add_node("execute_sql", guard_node("execute_sql", execute_sql_node))
@@ -372,9 +378,20 @@ def build_graph():
         "review_metric_conformance",
         route_after_metric_conformance,
         {
-            "validate_sql": "validate_sql",
+            # Routes to the display-name guard rather than straight to
+            # validation: the guard may rewrite the SQL, and anything it
+            # rewrites must still be validated before it can execute.
+            "validate_sql": "enforce_display_names",
             "generate_sql": "generate_sql",
             "failed": END,
+        },
+    )
+    graph.add_conditional_edges(
+        "enforce_display_names",
+        route_after_display_names,
+        {
+            "validate_sql": "validate_sql",
+            "generate_sql": "generate_sql",
         },
     )
 

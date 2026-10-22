@@ -1,3 +1,4 @@
+import { refreshAccessTokenOnce } from '@/lib/api'
 import { getBearerToken } from '@/store/authStore'
 import type { AskResponse } from '@/lib/types'
 
@@ -90,16 +91,32 @@ export async function askQuestionStreaming(
   handlers: AskStreamHandlers = {},
   signal?: AbortSignal,
 ): Promise<AskResponse | null> {
-  const token = getBearerToken()
-  const response = await fetch('/ask/stream', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify(payload),
-    signal,
-  })
+  const send = (bearer: string | null | undefined) =>
+    fetch('/ask/stream', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
+      },
+      body: JSON.stringify(payload),
+      signal,
+    })
+
+  let response = await send(getBearerToken())
+
+  // Access tokens are short-lived, so one going stale mid-session is
+  // routine rather than exceptional. `request()` has always refreshed and
+  // retried transparently; this route could not use it (it needs the raw
+  // Response to read an SSE body), and so was the single authenticated
+  // call in the app that turned a recoverable expiry into a hard failure
+  // -- the user saw the question fail and had to sign in again, while any
+  // other route would have carried on silently. Retried exactly once, via
+  // the shared single-flight refresh, so a question asked alongside other
+  // in-flight calls still triggers only one `/auth/refresh`.
+  if (response.status === 401) {
+    const refreshedToken = await refreshAccessTokenOnce()
+    if (refreshedToken) response = await send(refreshedToken)
+  }
 
   // A pre-stream rejection (422 from request validation, 401 from auth)
   // is a real HTTP status, because those happen before the generator runs.

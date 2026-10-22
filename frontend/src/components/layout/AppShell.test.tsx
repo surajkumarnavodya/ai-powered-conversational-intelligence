@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useChatStore } from '@/store/chatStore'
 import { useLocalAuthStore } from '@/store/localAuthStore'
 import * as navigationApi from '@/lib/navigationApi'
+import { expectNoAccessibilityViolations } from '@/test/axe'
 import { serveNavigation } from '@/test/navigationFixtures'
 import { AppShell } from './AppShell'
 
@@ -277,6 +278,89 @@ describe('AppShell Tenant Admin nav gating', () => {
       expect(
         screen.getByText('AI-Powered Conversational Intelligence'),
       ).toBeInTheDocument()
+    })
+  })
+
+  // WCAG 2.4.1 Bypass Blocks (Level A). Every route repeats the sidebar and
+  // the primary nav; without this a keyboard user tabs all of it on every
+  // navigation before reaching the answer they came for.
+  describe('skip link', () => {
+    it('is the first thing Tab reaches', async () => {
+      signOut()
+      await renderAndSettle()
+
+      await userEvent.tab()
+
+      expect(document.activeElement).toBe(
+        screen.getByRole('link', { name: 'Skip to main content' }),
+      )
+    })
+
+    it('points at the main landmark', async () => {
+      signOut()
+      await renderAndSettle()
+
+      const link = screen.getByRole('link', { name: 'Skip to main content' })
+      const main = document.querySelector('main')
+
+      expect(main).not.toBeNull()
+      expect(link.getAttribute('href')).toBe(`#${main?.id}`)
+      expect(main?.id).toBeTruthy()
+    })
+
+    it('actually moves focus into main, not just the URL hash', async () => {
+      // The part most skip links get wrong: following a fragment scrolls to
+      // the target but only *focuses* it when it is focusable, so the next
+      // Tab resumes from the link -- back at the top of the nav, which is
+      // the very thing being skipped.
+      signOut()
+      await renderAndSettle()
+
+      await userEvent.click(screen.getByRole('link', { name: 'Skip to main content' }))
+
+      const main = document.querySelector('main')
+      expect(main).toHaveAttribute('tabindex', '-1')
+      expect(document.activeElement).toBe(main)
+    })
+
+    it('leaves the router location alone', async () => {
+      // A plain fragment navigation would append #main-content to the URL,
+      // which then rides along in anything the user copies or shares.
+      signOut()
+      await renderAndSettle()
+      const hashBefore = window.location.hash
+
+      await userEvent.click(screen.getByRole('link', { name: 'Skip to main content' }))
+
+      expect(window.location.hash).toBe(hashBefore)
+    })
+
+    it('leaves the shell free of axe violations, landmarks included', async () => {
+      // Scoped to the shell's *structure* -- landmarks, the skip link's
+      // target reference, heading order -- not a whole-page audit, which
+      // `src/test/axe.ts` explains still needs a real browser (and is the
+      // only place colour contrast can be checked at all). What this adds
+      // over the primitive-level checks is composition: a skip link whose
+      // href resolves to nothing, or a second <main>, only shows up once
+      // the shell is assembled.
+      signOut()
+      await renderAndSettle()
+
+      await expectNoAccessibilityViolations(document.body)
+    })
+
+    it('is visually hidden until focused, then revealed', async () => {
+      signOut()
+      await renderAndSettle()
+      const link = screen.getByRole('link', { name: 'Skip to main content' })
+
+      // Parked off-screen by transform (not `sr-only`, whose `not-sr-only`
+      // counterpart would zero the padding on focus), and brought back by
+      // the focus-visible variant.
+      expect(link.className).toMatch(/-translate-y-24/)
+      expect(link.className).toMatch(/focus-visible:translate-y-0/)
+      // Still a real link in the a11y tree the whole time, not hidden.
+      expect(link).toBeVisible()
     })
   })
 })

@@ -321,6 +321,99 @@ def extract_ddl_foreign_key_targets(ddl: str) -> list[str]:
     return [match.group(1) for match in _DDL_FOREIGN_KEY_RE.finditer(ddl)]
 
 
+#: One rendered column line: four spaces, a name, a type, then whatever
+#: modifiers `render_ddl` appended. The trailing group is inspected for
+#: `PRIMARY KEY` rather than matched structurally, because the modifier
+#: order is `render_ddl`'s own and may grow.
+_DDL_COLUMN_DEF_RE = re.compile(r"^\s{4}(\w+)\s+([^\s,]+)(.*)$", re.MULTILINE)
+
+#: The full `FOREIGN KEY (a, b) REFERENCES T (x, y)` line, with both
+#: column lists captured -- unlike `_DDL_FOREIGN_KEY_RE` above, which
+#: deliberately captures only the referred table for its own caller.
+_DDL_FOREIGN_KEY_FULL_RE = re.compile(
+    r"FOREIGN KEY\s*\(([^)]*)\)\s*REFERENCES\s+(\S+)\s*\(([^)]*)\)", re.IGNORECASE
+)
+
+
+def parse_ddl_table_info(table_name: str, ddl: str) -> TableSchemaInfo:
+    """Rebuilds a `TableSchemaInfo` from one `render_ddl`-rendered block.
+
+    **Why this exists.** The agent graph carries retrieved schema as DDL
+    *text* (`agent.state.TableSchema.ddl`), not as the structured
+    `TableSchemaInfo` introspection produced -- the text is what the LLM
+    prompt needs, and nothing downstream had needed the structure. The
+    display-name guard (`agent/display_name_guard.py`) does need it:
+    deciding that `ProductKey` is a foreign key to `DimProduct` requires
+    the real primary/foreign keys, not a name that looks like one.
+
+    Parsing text this module itself rendered is the cheap, offline
+    option. The alternative -- re-introspecting the live database inside
+    a request -- would add a round trip per question to recover
+    information the request already has in hand.
+
+    This lives here, beside `render_ddl`, because the two share one
+    format. A parser kept anywhere else would be a second owner of that
+    format and would drift the first time a modifier was added
+    (CLAUDE.md 4.8).
+
+    **Lossy by design, in the safe direction.** Nullability, defaults,
+    identity/computed flags and sample values are not recovered -- no
+    caller needs them, and inventing a value for one would be worse than
+    its absence. A column whose line does not parse is skipped rather
+    than guessed at, so the result under-reports rather than misreports.
+
+    Args:
+        table_name: The table's name, as the caller knows it. Taken from
+            the caller rather than parsed back out of the `CREATE` line,
+            which `_sanitize_identifier` may have altered.
+        ddl: One table's rendered DDL block.
+
+    Returns:
+        A `TableSchemaInfo` carrying columns (name, type, primary-key
+        flag) and single- or multi-column foreign keys. Never raises: an
+        unparseable block yields a table with no columns, which every
+        caller already treats as "nothing known about this table".
+    """
+    columns: list[ColumnInfo] = []
+    foreign_keys: list[ForeignKeyInfo] = []
+
+    for match in _DDL_COLUMN_DEF_RE.finditer(ddl):
+        name, type_name, modifiers = match.group(1), match.group(2), match.group(3)
+        # Table-level constraint lines match the same shape as a column
+        # line; they are not columns.
+        if name.upper() in ("FOREIGN", "PRIMARY", "UNIQUE", "CONSTRAINT", "CHECK"):
+            continue
+        columns.append(
+            ColumnInfo(
+                name=name,
+                type=type_name,
+                nullable="NOT NULL" not in modifiers.upper(),
+                is_primary_key="PRIMARY KEY" in modifiers.upper(),
+            )
+        )
+
+    for match in _DDL_FOREIGN_KEY_FULL_RE.finditer(ddl):
+        constrained = tuple(c.strip() for c in match.group(1).split(",") if c.strip())
+        referred_columns = tuple(c.strip() for c in match.group(3).split(",") if c.strip())
+        if not constrained or not referred_columns:
+            continue
+        foreign_keys.append(
+            ForeignKeyInfo(
+                constrained_columns=constrained,
+                referred_table=match.group(2).strip(),
+                referred_columns=referred_columns,
+            )
+        )
+
+    return TableSchemaInfo(
+        table_name=table_name,
+        columns=tuple(columns),
+        foreign_keys=tuple(foreign_keys),
+        ddl=ddl,
+        is_view="CREATE VIEW" in ddl.upper(),
+    )
+
+
 def _build_column_info(col: ReflectedColumn) -> ColumnInfo:
     """Builds one `ColumnInfo` from one raw column dict returned by
     `Inspector.get_columns()`.

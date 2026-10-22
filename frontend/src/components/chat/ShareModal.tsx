@@ -337,7 +337,7 @@ export function ShareModal({ conversationId, conversationTitle, onClose }: Share
                   onChange={(event) => setInviteEmail(event.target.value)}
                   placeholder={t('share.invitePlaceholder')}
                   aria-label={t('share.invitePlaceholder')}
-                  className="h-9 min-w-0 flex-1 rounded-md border border-[var(--border)] bg-[var(--input)] px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+                  className="h-9 min-w-0 flex-1 rounded-md border border-[var(--border-control)] bg-[var(--input)] px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
                 />
                 <Button
                   type="submit"

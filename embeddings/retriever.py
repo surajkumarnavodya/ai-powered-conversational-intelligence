@@ -65,11 +65,14 @@ the primary vector query already returns* -- deliberately not a wider pool
     (two independent literal name matches is itself strong evidence of a
     genuine multi-table question, even if one still leads the other by a
     wide margin -- see `_select_by_relevance`'s docstring for the concrete
-    regression this guards against). Deliberately conservative, checked
-    against this project's own retrieved score distributions (real
-    fact-table pairs like FactInternetSales vs. FactResellerSales routinely
-    score within ~0.02-0.05 of each other, too close to safely separate by
-    any threshold). When there's no decisive winner, behavior is unchanged
+    regression this guards against), AND the question is not asking for a
+    measure that the lone winner has no column to supply (the star-schema
+    failure in that same docstring: a short, on-topic dimension table
+    outscores every fact table on exactly the questions that need one).
+    Deliberately conservative, checked against this project's own retrieved
+    score distributions (real fact-table pairs like FactInternetSales vs.
+    FactResellerSales routinely score within ~0.02-0.05 of each other, too
+    close to safely separate by any threshold). When there's no decisive winner, behavior is unchanged
     from before this rework: the full `top_k` candidates are kept.
 
 Tried and reverted: widening the primary Chroma query to a pool larger than
@@ -168,6 +171,45 @@ _DOMINANT_GAP_THRESHOLD = 0.18
 
 _COLUMN_LINE_RE = re.compile(r"^\s{4}(\w+)\s", re.MULTILINE)
 
+# A question whose answer is a *measure* -- a ranking, a superlative, or an
+# aggregate -- rather than a lookup of rows that already exist. Used by
+# `_select_by_relevance` to withhold the dominant-gap trim when the lone
+# winning table could not supply such a measure on its own; see that
+# function's docstring for the concrete failure this was written after.
+#
+# Deliberately broader than `agent.complexity`'s `_TOP_N_PATTERN`, which
+# requires an explicit digit ("top 5") because it is sizing a retry budget.
+# Here a bare "top selling products" matters just as much as "top 10", so
+# the digit is not required. This is a recall guard, not a security
+# control -- a question it misses simply keeps today's behavior.
+_MEASURE_INTENT_PATTERN = re.compile(
+    r"\b(top|bottom|best|worst|highest|lowest|most|least|largest|smallest|"
+    r"biggest|greatest|leading|fewest|maximum|minimum|"
+    r"total|sum|count|average|avg|mean|median|revenue|sales|sold|selling|"
+    r"profit|margin|popular|rank|ranked|ranking|growth|trend|performance)\b",
+    re.IGNORECASE,
+)
+
+# Column line including its declared type, for `_table_has_measure_column`.
+# Same 4-space convention as `_COLUMN_LINE_RE` above (every real column
+# line, per `db.schema_introspection.render_ddl`); the trailing comma is
+# optional because the last column before `);` carries none.
+_COLUMN_LINE_WITH_TYPE_RE = re.compile(r"^\s{4}(\w+)\s+(.*?),?$", re.MULTILINE)
+
+# Numeric SQL types across the four supported dialects. A measure has to be
+# numeric; the reverse does not hold, which is what `_KEY_LIKE_COLUMN_RE`
+# below is for.
+_NUMERIC_TYPE_RE = re.compile(
+    r"\b(int|integer|bigint|smallint|tinyint|decimal|numeric|float|real|"
+    r"money|smallmoney|double|number)\b",
+    re.IGNORECASE,
+)
+
+# Numeric columns that are identifiers, not quantities. A surrogate key is
+# the single most common numeric column in a star schema's dimension
+# tables, and counting one as a measure would defeat the check entirely.
+_KEY_LIKE_COLUMN_RE = re.compile(r"(key|id|number|code|guid|uuid)$", re.IGNORECASE)
+
 # Common question words, and terms generic enough that pure vector
 # similarity already handles them well (broad concepts like "sales" or
 # "date" match many tables' embeddings directly), excluded so the fallback
@@ -238,6 +280,35 @@ def _column_names_from_ddl(ddl: str) -> list[str]:
     ]
 
 
+def _table_has_measure_column(ddl: str) -> bool:
+    """Whether this table carries a quantity something could be aggregated over.
+
+    True when the table declares at least one numeric column that is
+    neither a primary key nor identifier-shaped -- `SalesAmount MONEY` and
+    `OrderQuantity SMALLINT` count; `ProductSubcategoryKey INTEGER` does
+    not. Read from the rendered DDL the retriever already holds, so this
+    costs no extra Chroma or database round-trip.
+
+    Deliberately local to retrieval rather than delegated to
+    `db.column_semantics`: that module classifies the columns a query
+    *returned*, by name, to decide how to chart them. The question here is
+    structural and happens before any SQL exists -- can this table supply a
+    measure at all -- and it is answered from the declared type, which
+    `db.column_semantics` never sees.
+    """
+    for match in _COLUMN_LINE_WITH_TYPE_RE.finditer(ddl):
+        name, rest = match.group(1), match.group(2)
+        if name.upper() == "FOREIGN":  # a FOREIGN KEY (...) line, not a column
+            continue
+        if "PRIMARY KEY" in rest.upper():
+            continue
+        if _KEY_LIKE_COLUMN_RE.search(name):
+            continue
+        if _NUMERIC_TYPE_RE.search(rest):
+            return True
+    return False
+
+
 def _lexical_bonus(table_name: str, ddl: str, keywords: set[str]) -> float:
     """Additive relevance bonus from distinctive question keywords matching
     this table's own name or its column names -- see this module's
@@ -257,7 +328,10 @@ def _lexical_bonus(table_name: str, ddl: str, keywords: set[str]) -> float:
 
 
 def _select_by_relevance(
-    candidates: list[TableSchema], top_k: int, lexically_matched_count: int
+    candidates: list[TableSchema],
+    top_k: int,
+    lexically_matched_count: int,
+    question: str = "",
 ) -> list[TableSchema]:
     """Trims a combined-score-sorted candidate list to its adaptively-sized subset.
 
@@ -277,12 +351,51 @@ def _select_by_relevance(
     itself strong evidence of a genuine multi-table question -- trimming to
     one in that situation would be exactly the kind of recall regression
     this adaptive selection is meant to avoid.
+
+    Also never trims when the question asks for a **measure** (a ranking, a
+    superlative, an aggregate -- `_MEASURE_INTENT_PATTERN`) and the lone
+    winner has no measure column of its own to supply it
+    (`_table_has_measure_column`). A star schema makes this failure
+    routine: a dimension table's DDL is short and entirely on-topic, so it
+    outscores every fact table by a wide margin on exactly the questions
+    that need a fact table. Measured against the real AdventureWorks index,
+    "top selling products", "best selling products", "which products sold
+    the most?", "worst selling products", "most popular products" and
+    "most profitable products" each trimmed to `DimProductSubcategory`
+    alone -- a table with no sales measure anywhere in it. Nothing
+    downstream could recover: `_expand_with_keyword_matches` matches table
+    *names* ("products" is not a substring of "DimProduct"), and
+    `_expand_with_fk_bridges` only joins disconnected islands, of which a
+    single table has none. The model was handed a schema that genuinely
+    could not answer the question, correctly answered `NOT_A_QUERY`, and
+    the user saw "I can only answer questions about this database."
+
+    The measure check is what keeps this narrow. "Top products by sales"
+    already selects `FactResellerSales` first -- a table that *does* carry
+    measures -- so a decisive win there is still trusted and still trimmed.
+    Only a measure question that has decisively landed on a table which
+    cannot answer it is widened back to `top_k`.
     """
     if len(candidates) >= 2 and lexically_matched_count < 2:
         gap = candidates[0]["similarity_score"] - candidates[1]["similarity_score"]
-        if gap >= _DOMINANT_GAP_THRESHOLD:
+        if gap >= _DOMINANT_GAP_THRESHOLD and not _needs_more_than_the_winner(
+            question, candidates[0]
+        ):
             return candidates[:1]
     return candidates[:top_k]
+
+
+def _needs_more_than_the_winner(question: str, winner: TableSchema) -> bool:
+    """Whether trimming to `winner` alone would drop a measure the question needs.
+
+    Split out from `_select_by_relevance` so the two independent reasons
+    not to trim stay separately readable and separately testable. Returns
+    False for an empty question, which keeps every existing caller that
+    omits it on exactly its previous behavior.
+    """
+    if not question or not _MEASURE_INTENT_PATTERN.search(question):
+        return False
+    return not _table_has_measure_column(winner["ddl"])
 
 
 def _expand_with_keyword_matches(
@@ -676,7 +789,7 @@ def retrieve_relevant_schema(
         )
 
     candidates.sort(key=lambda t: t["similarity_score"], reverse=True)
-    tables = _select_by_relevance(candidates, resolved_top_k, lexically_matched_count)
+    tables = _select_by_relevance(candidates, resolved_top_k, lexically_matched_count, question)
 
     tables = _expand_with_keyword_matches(tables, question, collection)
     tables = _expand_with_fk_bridges(tables, collection)

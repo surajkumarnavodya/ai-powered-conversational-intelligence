@@ -1,4 +1,7 @@
 {
+  "a11y": {
+    "skipToContent": "मुख्य सामग्री पर जाएँ"
+  },
   "app": {
     "homeLabel": "नई चैट शुरू करें",
     "title": "AI-Powered Conversational Intelligence",
@@ -113,7 +116,15 @@
     "appearance": "रूप-रंग",
     "theme": "थीम",
     "accentColor": "एक्सेंट रंग",
-    "font": "फ़ॉन्ट",
+    "appFont": "एप्लिकेशन फ़ॉन्ट",
+    "codeFont": "कोड और SQL फ़ॉन्ट",
+    "fontPreview": "फ़ॉन्ट पूर्वावलोकन",
+    "resetFonts": "फ़ॉन्ट डिफ़ॉल्ट पर रीसेट करें",
+    "previewHeading": "क्षेत्र के अनुसार तिमाही राजस्व",
+    "previewUser": "आपने पूछा: कौन-सा क्षेत्र सबसे तेज़ी से बढ़ा?",
+    "previewAssistant": "उत्तर सबसे तेज़ी से बढ़ा, तिमाही-दर-तिमाही 12.4%।",
+    "previewColRegion": "क्षेत्र",
+    "previewColOrders": "ऑर्डर",
     "language": "भाषा",
     "installApp": "ऐप इंस्टॉल करें",
     "updateAvailable": "एक नया संस्करण उपलब्ध है।",
@@ -135,8 +146,7 @@
   "questionNavigator": {
     "label": "प्रश्न",
     "itemLabel": "प्रश्न पर जाएँ: {{question}}",
-    "toggleLabel": "प्रश्न सूची टॉगल करें",
-    "closeLabel": "प्रश्न सूची बंद करें"
+    "toggleLabel": "प्रश्न सूची टॉगल करें"
   },
   "chat": {
     "placeholder": "अपने डेटा के बारे में एक सवाल पूछें...",
@@ -151,7 +161,8 @@
     "sourcesLabel": "स्रोत",
     "words": "शब्द",
     "noRecordedAnswer": "इस संदेश का कोई सहेजा हुआ उत्तर नहीं है।",
-    "scrollToLatest": "नवीनतम संदेश पर जाएं"
+    "scrollToLatest": "नवीनतम संदेश पर जाएं",
+    "spokenAnswerLabel": "बोला गया उत्तर"
   },
   "sql": {
     "title": "जनरेट किया गया SQL",
@@ -495,5 +506,30 @@
     "openSettings": "सेटिंग्स खोलें",
     "focusComposer": "प्रश्न बॉक्स पर जाएं",
     "showHelp": "यह सूची दिखाएं"
+  },
+  "questionQueue": {
+    "title": "आपके प्रश्न",
+    "capacity": "{{max}} में से {{running}} चल रहे · {{queued}} प्रतीक्षा में",
+    "atLimit": "आपके {{max}} प्रश्न चल रहे हैं, जो इस परिनियोजन की सीमा है। आगे पूछे गए प्रश्न अपनी बारी की प्रतीक्षा करेंगे और स्वतः शुरू हो जाएंगे।",
+    "waiting": "{{seconds}} से प्रतीक्षा",
+    "ran": "{{seconds}} से लगे",
+    "attempts": "प्रयास {{count}}",
+    "cancel": "यह प्रश्न रद्द करें",
+    "dismiss": "इस सूची से हटाएं",
+    "blockedExplanation": "इस प्रश्न का उत्तर नहीं दिया गया क्योंकि यह इस परिनियोजन की सुरक्षा जांच में उत्तीर्ण नहीं हुआ।",
+    "status": {
+      "queued": "प्रतीक्षा में",
+      "running": "कार्य प्रगति पर",
+      "completed": "उत्तर मिला",
+      "failed": "विफल",
+      "cancelled": "रद्द",
+      "timeout": "समय समाप्त",
+      "blockedByGuardrail": "अनुमति नहीं"
+    },
+    "confidence": {
+      "high": "{{source}}: मजबूत मेल",
+      "medium": "{{source}}: आंशिक मेल",
+      "low": "{{source}}: कमजोर मेल"
+    }
   }
 }

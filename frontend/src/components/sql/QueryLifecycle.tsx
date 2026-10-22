@@ -122,7 +122,7 @@ const STAGE_NODES: Record<LifecycleStageId, readonly string[]> = {
     'review_sql',
     'review_metric_conformance',
   ],
-  validation: ['validate_sql'],
+  validation: ['enforce_display_names', 'validate_sql'],
   cost: ['estimate_cost'],
   ready: ['execute_sql'],
   executed: [],

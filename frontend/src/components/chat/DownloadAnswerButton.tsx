@@ -1,6 +1,7 @@
 import { FileDown, FileText, Loader2 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ActionTooltip } from '@/components/ui/action-tooltip'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -49,16 +50,27 @@ export function DownloadAnswerButton({ question, answer }: { question: string; a
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button size="sm" variant="ghost" disabled={isGenerating}>
-          {isGenerating ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <FileDown className="h-3.5 w-3.5" />
-          )}
-          {t('common.downloadAnswer')}
-        </Button>
-      </DropdownMenuTrigger>
+      {/* Three triggers nested on one button, each `asChild`: the tooltip
+          names it on hover/focus, the dropdown opens the format menu, and
+          the Button is the single rendered element. The menu items keep
+          their own text -- going icon-only applies to the toolbar, not to
+          a menu where "Markdown" and "PDF" are the whole choice. */}
+      <ActionTooltip label={t('common.downloadAnswer')}>
+        <DropdownMenuTrigger asChild>
+          <Button
+            size="icon"
+            variant="ghost"
+            disabled={isGenerating}
+            aria-label={t('common.downloadAnswer')}
+          >
+            {isGenerating ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <FileDown className="h-4 w-4" />
+            )}
+          </Button>
+        </DropdownMenuTrigger>
+      </ActionTooltip>
       <DropdownMenuContent>
         <DropdownMenuItem onSelect={handleMarkdown}>
           <FileText className="h-3.5 w-3.5" />

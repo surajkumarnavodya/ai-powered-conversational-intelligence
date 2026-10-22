@@ -3,6 +3,7 @@ import { ArtifactWorkspace } from '@/components/chat/ArtifactWorkspace'
 import { ConversationContextPanel } from '@/components/chat/ConversationContextPanel'
 import { ChatLiveRegion } from '@/components/chat/ChatLiveRegion'
 import { PendingTurn } from '@/components/chat/PendingTurn'
+import { QuestionQueuePanel } from '@/components/sql/QuestionQueuePanel'
 import { QuestionNavigator } from '@/components/chat/QuestionNavigator'
 import { ScrollToBottomButton } from '@/components/chat/ScrollToBottomButton'
 import { TurnCard } from '@/components/chat/TurnCard'
@@ -105,6 +106,15 @@ export function Chat() {
               <TurnCard key={entry.entryId} entry={entry} isMultiDb={isMultiDb} />
             ))}
             {pendingQuestion && <PendingTurn pendingQuestion={pendingQuestion} />}
+            {/* Questions submitted while another was already in flight.
+                Renders nothing at all when there are none, and nothing on
+                a deployment whose auth mode cannot attribute a job to a
+                user -- so a single-question session looks exactly as it
+                did before. It deliberately does NOT render answers:
+                `TurnCard` already owns rendering a result, a chart, an
+                insight and citations, and a second renderer for those
+                would be a second owner of every one of them. */}
+            <QuestionQueuePanel />
           </div>
 
           {/* Sticky at the bottom of the scroll region: the composer stays in view

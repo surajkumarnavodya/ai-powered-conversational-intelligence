@@ -174,6 +174,31 @@ cite the supporting result inline as a markdown link under that source's
 own title, and to say plainly when results disagree, when a claim rests
 on a single result, or when they do not cover part of the question.
 
+It is also told to **size the answer to the question** rather than giving
+every question the same shape: a quick fact (a price, a score, who holds a
+role) gets 1–3 sentences and nothing more, while a news briefing is
+grouped by theme — Politics & Governance, Economy & Markets, International
+Relations, Courts & Law, Society & Environment, Sports, Science & Tech,
+including only the themes that have real stories — with each story a
+bolded headline and 2–4 sentences on what happened, the key numbers, who
+is involved and why it matters. An explanation gets sections or numbered
+steps; a comparison gets a table of the same attributes across the
+options. A briefing, research or comparison answer may never be a single
+paragraph. Quotes are capped at 15 words and used only where the exact
+wording matters, and the answer is written in the language the question
+was asked in.
+
+**On dates, the prompt is a guard, not an instruction to report one.**
+The current date and time are passed in, so "today" and "latest" can be
+judged at all — without it the model anchors on whatever its training data
+implies "now" is. But `search.web_search.WebResult` carries only
+`retrieved_at`, which is when *this app* fetched the page, and **no
+publication date whatsoever**. So the model is told explicitly that the
+retrieval time is not a publication date, never to state or estimate when
+a page was published, and to take a date only from a result's own text,
+attributed to that result. Asking a model to weigh freshness without this
+is how a date from nowhere ends up presented as observed fact.
+
 The answer carries **no trailing "Sources" section** by design — the
 dashboard's `SourceAnswerCard` already renders the source list from the
 structured `citations`, and this repo keeps one owner per fact. The inline
@@ -360,6 +385,26 @@ assuming something's broken.
   Sources page, and that you asked a question the document actually
   answers — check the "Sources: ..." citation line under a document/
   policy/web answer to see which file(s) it actually drew from.
+- **A document is clearly in the store, but a question about it finds
+  nothing.** `documents` and `policies` are separate collections, split by
+  how a file was flagged at upload rather than by subject. When you have
+  *not* narrowed the question with the source picker, the router now
+  always searches **both**: whichever one the classifier picks, the other
+  is paired in automatically, because you have no way of knowing which
+  collection a given PDF landed in. The `[router]` log line shows the
+  pairing (`'documents' paired in -- ...`), and
+  `[rag.retrieve] collection=... retrieved=0` shows a collection that was
+  searched and came back empty.
+
+  This does **not** apply when you *have* picked a source explicitly —
+  that is an instruction, and narrowing to Policy searches Policy only.
+  So if you deliberately selected one collection and got nothing, try
+  clearing the selection, or select the other one.
+
+  The pairing requests the second collection; it never grants access to
+  it. A caller without the policy permission still has `policy` dropped
+  by the authorization filter, exactly as if the classifier had asked for
+  it directly.
 - **A policy question always gets refused.** Check whether the retrieved
   chunk(s) are tagged with a sensitivity category on the Knowledge Sources
   page — that's a hard gate (see step 3), not a bug. If the content

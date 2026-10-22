@@ -97,6 +97,7 @@ from api.eval_platform import router as eval_platform_router
 from api.generation import router as generation_router
 from api.governance import router as governance_router
 from api.identity_auth import router as identity_auth_router
+from api.jobs import router as jobs_router
 from api.kpi_monitoring import router as kpi_monitoring_router
 from api.lineage import router as lineage_router
 from api.media import router as media_router
@@ -127,6 +128,7 @@ from api.schemas import (
     ChartSortOut,
     CitationOut,
     ColumnOut,
+    ColumnSemanticsOut,
     ComponentHealth,
     ConversationExchangeOut,
     DatabaseHealth,
@@ -168,6 +170,8 @@ from api.tenant_admin import router as tenant_admin_router
 from api.voice import router as voice_router
 from api.workflow import router as workflow_router
 from config.settings import ConfigurationError, Settings, configure_logging, get_settings
+from db.column_formatting import get_key_column_names
+from db.column_semantics import classify_result_columns
 from db.connection import (
     check_write_privileges,
     get_connection,
@@ -328,6 +332,57 @@ def _warn_on_ask_concurrency_pool_mismatch(settings) -> None:
     )
 
 
+def run_question_queue_startup_checks(settings) -> list[str]:
+    """Runs `jobs.sizing`'s capacity cross-checks at startup.
+
+    A thin wrapper so `api/main.py` keeps one naming convention for its
+    startup steps and so the import stays local to this module. Returns
+    the findings (also logged) rather than nothing, which is what lets
+    `tests/test_question_queue_sizing.py` assert on them without
+    capturing log output. Never raises -- a sizing finding is advisory,
+    and failing startup over one would be worse than the mis-sizing it
+    reports.
+
+    A separate, plain function (mirroring
+    `_enforce_database_write_privileges`'s own reasoning) so it is
+    unit-testable without spinning up the whole app.
+    """
+    from jobs.sizing import run_startup_checks
+
+    return run_startup_checks(settings)
+
+
+def _shutdown_question_queue(settings) -> None:
+    """Gracefully drains the asynchronous question queue on shutdown.
+
+    Mirrors `_shutdown_ask_executor` below, for the subsystem that has
+    strictly more to lose: a question job has no caller blocking on it,
+    so without this a SIGTERM during a rolling deployment would discard
+    in-flight work with nothing to tell its owner what happened.
+
+    `QuestionQueue.shutdown` stops admitting, marks every QUEUED job
+    CANCELLED (it never started -- there is nothing to wait for), signals
+    every RUNNING job's envelope so it stops at its next node boundary,
+    then waits up to `QUESTION_SHUTDOWN_GRACE_SECONDS`. A worker still
+    inside a C extension at the end of the grace outlives it, which is
+    the same limitation `_shutdown_ask_executor` and `db.execution` both
+    document; the cost is a discarded result, never a corrupted one.
+
+    `get_question_queue` is passed no runner here on purpose: it returns
+    `None` unless a queue was already built, so shutdown never *creates*
+    one just to tear it down.
+
+    A separate, plain function (mirroring
+    `_enforce_database_write_privileges`'s own reasoning) so it is
+    unit-testable without spinning up the whole app.
+    """
+    from jobs.queue import get_question_queue
+
+    queue = get_question_queue(settings)
+    if queue is not None:
+        queue.shutdown()
+
+
 def _shutdown_ask_executor(settings) -> None:
     """Drains `_get_ask_executor`'s bounded `/ask` thread pool on shutdown.
 
@@ -395,6 +450,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.db_engines = db_engines
     _enforce_database_write_privileges(db_engines, settings)
     _warn_on_ask_concurrency_pool_mismatch(settings)
+    # The question queue's own capacity cross-checks (jobs/sizing.py):
+    # warnings only, never a refusal, for the same reason
+    # `_warn_on_ask_concurrency_pool_mismatch` just above is a warning.
+    run_question_queue_startup_checks(settings)
 
     app.state.ollama_client = get_ollama_client(settings)
     app.state.compiled_graph = build_graph()
@@ -408,6 +467,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     yield
 
+    # Drained before the /ask pool: a question job runs the same graph an
+    # /ask request does, so its in-flight work has to be signalled and
+    # given its grace period first, or the pool shutdown below would
+    # block on work nobody had told to stop.
+    _shutdown_question_queue(settings)
     _shutdown_ask_executor(settings)
 
 
@@ -447,6 +511,11 @@ app.include_router(bi_integration_router)
 app.include_router(platform_admin_router)
 app.include_router(tenant_admin_router)
 app.include_router(model_routing_router)
+# The asynchronous question queue (`jobs/`). Registered like any other
+# router; `ENABLE_QUESTION_QUEUE=false` makes its routes answer 503
+# rather than disappear, so a frontend can show a clear message
+# instead of a 404 (see api/jobs.py's `_require_queue`).
+app.include_router(jobs_router)
 app.include_router(navigation_router)
 app.include_router(sources_router)
 # Registered after `ask` is defined above: api/streaming.py imports it
@@ -474,12 +543,20 @@ if _cors_origins:
 # 2026 Phase 3 security review: matches what the built React dashboard
 # (frontend/dist/index.html) actually loads -- no inline <script> (Vite
 # bundles every script into an external, hashed file, so `script-src 'self'`
-# needs no `unsafe-inline`/`unsafe-eval`), the Google Fonts stylesheet/font
-# files `index.html` links directly, `blob:` object URLs for generated/
+# needs no `unsafe-inline`/`unsafe-eval`), `blob:` object URLs for generated/
 # fetched media (`MediaResultCard.tsx`, `useVoiceConversation.ts`'s spoken-
-# answer audio), and `data:` URIs for the inline SVG favicon. `style-src`
-# allows `unsafe-inline` -- React's inline `style={{...}}` (used by this
-# app's dynamic accent-color/theme system, `src/lib/theme.ts`) would
+# answer audio), and `data:` URIs for the inline SVG favicon.
+#
+# `style-src`/`font-src` no longer allow `https://fonts.googleapis.com`/
+# `https://fonts.gstatic.com`: the selectable fonts are self-hosted
+# (`frontend/src/lib/fonts.ts`, bundled from `@fontsource-variable/*`), so
+# the dashboard loads every font from its own origin and those two
+# third-party allowances became dead grants. They are removed rather than
+# left in place -- an unused external origin in a CSP is attack surface for
+# no benefit.
+#
+# `style-src` still allows `unsafe-inline` -- React's inline `style={{...}}`
+# (used by this app's dynamic accent-color/theme/font system) would
 # otherwise be blocked, and unlike `script-src`, an inline-style allowance
 # is a narrow, low-severity relaxation (it cannot execute script) that many
 # production CSPs accept as a pragmatic tradeoff for exactly this reason.
@@ -526,8 +603,8 @@ def _default_csp(settings) -> str:
     return (
         "default-src 'self'; "
         f"script-src {script_src}; "
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-        "font-src 'self' https://fonts.gstatic.com data:; "
+        "style-src 'self' 'unsafe-inline'; "
+        "font-src 'self' data:; "
         "img-src 'self' data: blob:; "
         "media-src 'self' blob:; "
         f"connect-src {connect_src}; "
@@ -1000,6 +1077,14 @@ def _ask_response_from_state(
     error_history = state.get("error_history", [])
     query_plan = state.get("query_plan")
     return AskResponse(
+        # Both default to `{}` so a run that never went through the
+        # orchestrator (the router-off path, eval/runner.py, the
+        # standalone scripts) is unchanged rather than reporting a
+        # confidence or a grounding verdict nobody computed.
+        display_name_notice=state.get("display_name_notice"),
+        display_names_repaired=list(state.get("display_names_repaired") or []),
+        source_confidence=dict(state.get("source_confidence", {}) or {}),
+        grounding=dict(state.get("grounding", {}) or {}),
         session_id=session_id,
         conversation_id=conversation_id,
         status=state.get("status", "failed"),
@@ -1802,7 +1887,39 @@ def execute(
             )
     result_df = pd.DataFrame(rows, columns=columns)
     column_types: dict[str, str] = dict(classify_columns(result_df)) if not result_df.empty else {}
-    recommendation = recommend_chart(result_df, column_types)
+    # Surrogate keys are excluded from both chart axes -- a key is not a
+    # category and not a measure (see `recommend_chart`). The key set comes
+    # from the live introspected schema for the database this result came
+    # from, which is the same source `db.column_formatting` uses, so the
+    # table and the chart agree about what is a key.
+    chart_key_columns: set[str] = set()
+    try:
+        chart_key_columns = get_key_column_names(
+            list(introspect_schema(get_read_only_engine(db_config), db_config.db_schema) or [])
+        )
+    except Exception:  # noqa: BLE001 - an accuracy aid, never a blocker
+        logger.debug("[execute] could not resolve key columns for chart selection", exc_info=True)
+    recommendation = recommend_chart(result_df, column_types, chart_key_columns)
+
+    # Per-column semantics for the client's chart engine. Built from the
+    # same key set the recommendation above uses, so the two cannot
+    # disagree about what is a key. `ORDER BY` is threaded in because a
+    # measure the query ranks by is the one the question asked about --
+    # see `db.column_semantics._ORDER_BY_BOOST`.
+    column_semantics_out: list[ColumnSemanticsOut] = []
+    try:
+        shape = describe_sql(safe_sql, dialect)
+        column_semantics_out = [
+            ColumnSemanticsOut.model_validate(semantics.as_dict())
+            for semantics in classify_result_columns(
+                list(columns),
+                column_types,
+                chart_key_columns,
+                order_by=list(shape.order_by) if shape else None,
+            )
+        ]
+    except Exception:  # noqa: BLE001 - an accuracy aid, never a blocker
+        logger.debug("[execute] could not classify column semantics", exc_info=True)
 
     # Prompt 15: a fuller, deterministic visualization spec -- additive and
     # parallel to chart_recommendation/column_types above, which remain the
@@ -1859,6 +1976,7 @@ def execute(
         row_count=len(rows),
         duration_ms=duration_ms,
         column_types=column_types,
+        column_semantics=column_semantics_out,
         chart_recommendation=(
             ChartRecommendationOut(**recommendation) if recommendation is not None else None
         ),

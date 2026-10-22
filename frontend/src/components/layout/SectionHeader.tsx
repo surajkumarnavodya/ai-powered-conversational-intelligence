@@ -39,7 +39,7 @@ export function SectionHeader({
       onClick={() => toggle(id)}
       aria-expanded={!collapsed}
       aria-controls={`section-${id}`}
-      className="flex w-full items-center justify-between rounded-md px-1 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+      className="flex w-full items-center justify-between rounded-md px-1 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
     >
       <span className="flex items-center gap-2">
         {title}

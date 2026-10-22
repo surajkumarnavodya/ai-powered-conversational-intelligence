@@ -63,7 +63,7 @@ export function ConversationListItem({
               if (event.key === 'Escape') onCancelRename()
             }}
             aria-label={t('history.rename')}
-            className="h-6 flex-1 rounded border border-[var(--border)] bg-[var(--input)] px-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+            className="h-6 flex-1 rounded border border-[var(--border-control)] bg-[var(--input)] px-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
           />
           <Button size="icon" variant="ghost" onClick={onCommitRename} aria-label={t('common.save')}>
             <Check className="h-3.5 w-3.5" />
@@ -87,7 +87,12 @@ export function ConversationListItem({
                 conversation title in the history list isn't just a dead
                 ellipsis with no way to read the rest short of renaming or
                 opening it. */}
-            <ScrollingText text={conversation.title} className="flex-1 font-medium" />
+            {/* Normal weight, matching the app's body text. `font-medium`
+                (500) made every row in the list read as emphasised, which
+                is the opposite of what a long history list wants: when
+                everything is bold, nothing is, and the active row's own
+                accent colour is what should carry selection. */}
+            <ScrollingText text={conversation.title} className="flex-1" />
             {isActive && isLoading && (
               <>
                 <Loader2 className="h-3 w-3 shrink-0 animate-spin" aria-hidden="true" />

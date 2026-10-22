@@ -11,7 +11,11 @@ const buttonVariants = cva(
         secondary:
           'bg-transparent border border-[var(--border)] text-[var(--foreground)] hover:bg-[var(--muted)]',
         ghost: 'bg-transparent text-[var(--foreground)] hover:bg-[var(--muted)]',
-        danger: 'bg-[var(--danger)] text-white hover:opacity-90',
+        // --danger-strong, not --danger: this is the only solid status
+        // fill in the app, and in dark mode --danger lightens so error
+        // *text* stays legible on a near-black page, which would drop this
+        // white label to 3.76:1. See index.css's token comments.
+        danger: 'bg-[var(--danger-strong)] text-white hover:opacity-90',
       },
       size: {
         sm: 'h-8 px-2.5 text-xs',

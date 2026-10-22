@@ -25,7 +25,7 @@ import { RegenerateAnswerButton } from './RegenerateAnswerButton'
 import { ResponseFeedbackWidget } from './ResponseFeedbackWidget'
 import { SentAttachmentsPreview } from './SentAttachmentsPreview'
 import { SourceLineagePanel } from './SourceLineagePanel'
-import { SourcesUsedPanel } from './SourcesUsedPanel'
+import { SourcesUsedChips, SourcesUsedPanel } from './SourcesUsedPanel'
 import { TimingBadge } from './TimingBadge'
 
 // Chart.js is the largest remaining chunk in this app -- lazy-loaded so a
@@ -134,25 +134,25 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
           answer 40px in from the composer and the question's own right
           edge. Everything in a turn now shares one pair of edges. */}
       <div className="flex flex-col gap-3">
+        {/* Top row: metadata, plus the three controls that act on the
+            *turn* rather than on the answer's text -- re-run it, pin it,
+            hear it. They belong next to the timing and timestamp for the
+            same reason: all five describe or operate on the exchange as a
+            whole, and none of them needs you to have read the answer
+            first. The controls that consume the finished text -- copy,
+            download, rate it -- sit at the foot instead, where the eye
+            lands after reading. */}
         <div className="flex flex-wrap items-center gap-2">
           <TimingBadge mode="done" durationMs={entry.answerDurationMs} />
           <time dateTime={entry.timestamp} className="text-xs text-[var(--muted-foreground)]">
             {formatTurnTime(entry.timestamp)}
           </time>
           {answerMarkdown && (
-            <>
-              <CopyAnswerButton answer={answerMarkdown} />
-              <DownloadAnswerButton question={entry.question} answer={answerMarkdown} />
-              {/* Only on a turn that produced an answer -- `answerMarkdown`
-                  already gates this whole row. Re-running a turn that
-                  failed or needs clarification would just repeat the
-                  failure, and the composer is the right place to retry
-                  that. */}
+            <div className="flex items-center gap-0.5">
               <RegenerateAnswerButton entryId={entry.entryId} />
               <SaveArtifactButton entry={entry} />
-              <ResponseFeedbackWidget entryId={entry.entryId} />
               {showReadAloud && <ReadAloudButton text={buildSpokenAnswerText(entry)} />}
-            </>
+            </div>
           )}
           {entry.spokenAudioUrl && (
             // Playback itself already happened once, automatically, via
@@ -164,7 +164,20 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
             // revoked on unmount: switching conversations and back must
             // not break replay, and one blob URL per voice turn is a
             // bounded, accepted cost for the life of the tab.
-            <audio src={entry.spokenAudioUrl} controls className="h-8 max-w-[200px]" />
+            // No <track>, and oxlint's media-has-caption is suppressed
+            // rather than satisfied: this audio *is* a spoken rendering of
+            // the answer text sitting directly above it on screen, so the
+            // text alternative WCAG 1.2.1 asks for already exists and is
+            // the primary content. A caption file would transcribe the
+            // page back to itself. The label is what was missing -- an
+            // unlabelled player is announced only as "audio".
+            // oxlint-disable-next-line jsx-a11y/media-has-caption
+            <audio
+              src={entry.spokenAudioUrl}
+              controls
+              aria-label={t('chat.spokenAnswerLabel')}
+              className="h-8 max-w-[200px]"
+            />
           )}
         </div>
 
@@ -338,6 +351,7 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
                     columns={entry.confirmedColumns}
                     rows={entry.confirmedRows}
                     columnTypes={entry.confirmedColumnTypes ?? {}}
+                    columnSemantics={entry.confirmedColumnSemantics}
                     chartRecommendation={entry.confirmedChartRecommendation}
                     truncated={entry.confirmedTruncated}
                     chartOptions={entry.chartOptions}
@@ -348,6 +362,29 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
             )}
           </>
         )}
+
+        {/* Bottom row: the controls that act on the finished answer --
+            take it away (copy, download) or judge it (rate). Left-aligned,
+            after everything the answer produced: text, provenance, SQL,
+            results, chart. `answerMarkdown` gates it, so a turn that
+            failed, was rejected or needs clarification shows nothing here
+            -- there is no text to copy or rate. `justify-start` is
+            explicit rather than inherited so a later `justify-*` change to
+            the parent cannot quietly re-centre the row. */}
+        {answerMarkdown && (
+          <div className="flex flex-wrap items-center justify-start gap-0.5 pt-1">
+            <CopyAnswerButton answer={answerMarkdown} />
+            <DownloadAnswerButton question={entry.question} answer={answerMarkdown} />
+            <ResponseFeedbackWidget entryId={entry.entryId} />
+          </div>
+        )}
+
+        {/* Attribution last, under the actions. It used to sit above the
+            answer, inside `SourcesUsedPanel` -- which put a row of chips
+            between the question and the first line of the response. Which
+            sources were consulted is something you check *after* reading,
+            so it reads better here. */}
+        <SourcesUsedChips state={state} />
       </div>
     </div>
   )

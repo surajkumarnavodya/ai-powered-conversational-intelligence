@@ -50,7 +50,7 @@ function countWords(text: string): number {
 
 /** Sizes the textarea to its content: one line when empty or short, growing
  * with each wrapped/entered line up to MAX_HEIGHT_PX, then scrolling. The
- * CSS `min-h-10` keeps the one-line minimum level with the 40px send and mic
+ * CSS `min-h-8` keeps the one-line minimum level with the 32px send and mic
  * buttons. Setting `auto` first lets the box also shrink again when text is
  * removed. */
 function resizeToFitContent(el: HTMLTextAreaElement): void {
@@ -94,7 +94,13 @@ export function ChatInput({ onSend }: { onSend?: () => void } = {}) {
   const askQuestion = useChatStore((state) => state.askQuestion)
   const tryApplyChartTypeFollowup = useChatStore((state) => state.tryApplyChartTypeFollowup)
   const cancelPendingQuestion = useChatStore((state) => state.cancelPendingQuestion)
+  // "A turn is in flight." Still gates the controls that belong to that
+  // turn (attachments, the source picker, voice capture), which a queued
+  // follow-up question does not participate in.
   const disabled = pendingQuestion !== null
+  // Whether the primary button means Stop rather than Send. Only when a
+  // question is pending *and* nothing is typed -- see the button itself.
+  const showStop = disabled && !value.trim()
   const { toast } = useToast()
 
   const voice = useVoiceConversation((text) => {
@@ -159,7 +165,14 @@ export function ChatInput({ onSend }: { onSend?: () => void } = {}) {
     // Blocked while any attachment is still uploading/processing -- sending
     // early would either omit it entirely or race the server still writing
     // its record, neither of which should silently happen.
-    if (!trimmed || disabled || attachments.isUploading) return
+    // `disabled` (a question already in flight) is deliberately NOT a
+    // guard here any more. `chatStore.askQuestion` now routes a question
+    // submitted while another is pending to the asynchronous queue
+    // instead of overwriting the single pending slot, so submitting is
+    // safe and is what lets a user ask several things at once. Still
+    // blocked while an attachment is uploading: sending early would
+    // either omit it or race the server still writing its record.
+    if (!trimmed || attachments.isUploading) return
 
     // A "show this as a pie chart"/"switch to line" style follow-up is
     // answered instantly, client-side, against the most recent chartable
@@ -225,11 +238,17 @@ export function ChatInput({ onSend }: { onSend?: () => void } = {}) {
     // couldn't answer" still means the attachment was received and
     // processed -- the sent bubble above already carries its own read-only
     // reference, so nothing is lost by clearing the now-stale pending chips.
-    if (entry.finalState.session_id) {
+    //
+    // `entry` is undefined when this question went to the asynchronous
+    // queue instead of being answered inline (another was already in
+    // flight). The attachment chips are cleared in that case too: the
+    // server accepted the submission and already holds the attachment
+    // ids, so leaving the chips would invite the user to send them twice.
+    if (!entry || entry.finalState.session_id) {
       attachments.clearAll()
     }
 
-    if (voiceOriginated && entry.spokenAudioUrl) {
+    if (voiceOriginated && entry?.spokenAudioUrl) {
       await voice.playAnswer(entry.spokenAudioUrl)
     }
   }
@@ -283,7 +302,7 @@ export function ChatInput({ onSend }: { onSend?: () => void } = {}) {
         onDragLeave={() => setIsDraggingOver(false)}
         onDrop={handleDrop}
         onPaste={handlePaste}
-        className={`flex flex-col gap-1 rounded-2xl border p-3 shadow-sm transition-shadow focus-within:border-[var(--accent)] focus-within:shadow-md ${
+        className={`flex flex-col gap-0.5 rounded-2xl border p-1.5 shadow-sm transition-shadow focus-within:border-[var(--accent)] focus-within:shadow-md ${
           isDraggingOver ? 'border-[var(--accent)] bg-[var(--accent-soft)]' : 'border-[var(--border)] bg-[var(--card)]'
         }`}
       >
@@ -315,17 +334,24 @@ export function ChatInput({ onSend }: { onSend?: () => void } = {}) {
             </div>
           </div>
         )}
-        {/* One row from `sm` up; on a phone the textarea takes the full
-            width and the controls drop to their own right-aligned row
-            beneath it, because four 36px buttons beside the text left it
-            about 150px wide -- narrow enough that the placeholder itself
-            wrapped onto two lines.
+        {/* One row at every width: attach + source sit to the LEFT of the
+            text, mic + send to the right. Splitting the four buttons across
+            the two ends is what lets a single row survive on a phone -- the
+            previous layout put all four on the right, which left the
+            textarea about 150px wide and wrapped the placeholder onto two
+            lines, so it had to stack below `sm`. Two buttons per end leaves
+            the text roughly 215px at 360px, so the stacked breakpoint is no
+            longer needed and the composer keeps one shape everywhere.
 
-            gap-0.5 between the buttons, not gap-2: each is a 32-36px box
-            around a 16px icon, so it already carries its own breathing
-            room -- a row gap on top of that read as four separate
-            controls rather than one toolbar. */}
-        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:gap-0.5">
+            No gap between the icon buttons: each is already a 32-36px box
+            around a 16px icon, so it carries its own breathing room, and a
+            gap on top of that read as four separate controls rather than
+            one toolbar. */}
+        <div className="flex items-end">
+          <div className="flex items-center">
+            <ImageUploader onFilesSelected={(files) => void attachments.addFiles(files)} disabled={disabled} />
+            <SourcePicker disabled={disabled} />
+          </div>
           <textarea
             ref={textareaRef}
             // Lets the global `/` shortcut find the composer from
@@ -354,11 +380,9 @@ export function ChatInput({ onSend }: { onSend?: () => void } = {}) {
           disabled={voiceLocked}
             readOnly={isListening || isTranscribing}
             rows={1}
-            className="min-h-10 max-h-60 flex-1 resize-none overflow-y-auto bg-transparent px-1 py-2 text-sm leading-6 focus-visible:outline-none"
+            className="min-h-8 max-h-60 flex-1 resize-none overflow-y-auto bg-transparent px-1.5 py-1.5 text-sm leading-6 focus-visible:outline-none"
           />
-          <div className="flex items-center justify-end gap-0.5">
-          <ImageUploader onFilesSelected={(files) => void attachments.addFiles(files)} disabled={disabled} />
-          <SourcePicker disabled={disabled} />
+          <div className="flex items-center">
           {showVoiceButton && (
             <Button
               variant="ghost"
@@ -382,20 +406,27 @@ export function ChatInput({ onSend }: { onSend?: () => void } = {}) {
             </Button>
           )}
           <Button
-            variant={disabled ? 'secondary' : 'primary'}
+            variant={showStop ? 'secondary' : 'primary'}
             size="icon"
-            onClick={() => (disabled ? cancelPendingQuestion() : void submit())}
-            // Stop is always available the instant a question is pending --
-            // there is no real token stream to interrupt (see
-            // docs/frontend-ui-audit.md), but the single outstanding /ask
-            // request can genuinely be aborted (AbortController, chatStore
-            // .cancelPendingQuestion), so this is a real cancel, not a fake one.
-            disabled={!disabled && (voiceLocked || !value.trim() || attachments.isUploading)}
-            aria-label={disabled ? t('common.stop') : t('chat.send')}
-            title={disabled ? t('common.stop') : t('chat.send')}
+            onClick={() => (showStop ? cancelPendingQuestion() : void submit())}
+            // Stop stays a real cancel of the one outstanding streaming
+            // request (AbortController, chatStore.cancelPendingQuestion) --
+            // there is no token stream to interrupt (see
+            // docs/frontend-ui-audit.md), but the request itself genuinely
+            // aborts.
+            //
+            // It is now shown only while a question is pending AND the box
+            // is empty. With text typed, the button sends: that question
+            // goes to the asynchronous queue rather than replacing the
+            // one in flight, which is what lets several questions run at
+            // once. Keeping Stop as the only option whenever anything was
+            // pending is exactly what made the UI single-threaded.
+            disabled={!showStop && (voiceLocked || !value.trim() || attachments.isUploading)}
+            aria-label={showStop ? t('common.stop') : t('chat.send')}
+            title={showStop ? t('common.stop') : t('chat.send')}
             className="rounded-xl"
           >
-            {disabled ? <Square className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+            {showStop ? <Square className="h-4 w-4" /> : <Send className="h-4 w-4" />}
           </Button>
           </div>
         </div>

@@ -28,7 +28,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from agent.exceptions import SchemaRetrievalError  # noqa: E402
-from agent.sql_validator import enforce_row_limit, validate_sql  # noqa: E402
+from agent.sql_validator import (  # noqa: E402
+    enforce_row_limit,
+    qualify_table_schema,
+    validate_sql,
+)
 from config.settings import (  # noqa: E402
     ConfigurationError,
     DatabaseConnectionConfig,
@@ -36,6 +40,7 @@ from config.settings import (  # noqa: E402
     get_settings,
 )
 from db.connection import get_read_only_engine, get_sqlglot_dialect, test_connection  # noqa: E402
+from db.execution import execute_readonly_sql  # noqa: E402
 from db.schema_introspection import introspect_schema  # noqa: E402
 from embeddings.retriever import retrieve_relevant_schema, select_database  # noqa: E402
 from embeddings.schema_indexer import build_index  # noqa: E402
@@ -94,14 +99,28 @@ def _run_for_connection(settings: Settings, config: DatabaseConnectionConfig) ->
         return None
     assert validation.normalized_sql is not None
     safe_sql = enforce_row_limit(validation.normalized_sql, max_rows=5, dialect=dialect)
-
-    with engine.connect() as connection:
-        from sqlalchemy import text
-
-        cursor_result = connection.execute(text(safe_sql))
-        columns = list(cursor_result.keys())
-        rows = cursor_result.fetchmany(5)
-    print(f"OK: executed {safe_sql!r} -- {len(rows)} row(s), columns: {columns}")
+    # The governed execution path, in full:
+    #   validate_sql -> enforce_row_limit -> qualify_table_schema ->
+    #   execute_readonly_sql
+    # (CLAUDE.md's "reuse the governed path; never build a second one").
+    # This step used to stop after enforce_row_limit and run the SQL itself
+    # through a raw `connection.execute(text(...))`, skipping both of the
+    # last two stages. Skipping the qualifier is what made this check fail
+    # against any database whose tables do not live in the connecting
+    # user's default schema: introspection (step 2) lists `Employee`
+    # happily, then `SELECT * FROM Employee` comes back "Invalid object
+    # name" because the table is really `<DB_<NAME>_SCHEMA>.Employee` --
+    # exactly the case qualify_table_schema's docstring describes. Running
+    # the real path also means this script now exercises the same timeout
+    # and row-cap enforcement the app uses, instead of a lookalike.
+    execution_sql = qualify_table_schema(safe_sql, config.db_schema, dialect=dialect)
+    columns, rows = execute_readonly_sql(
+        execution_sql,
+        query_timeout_seconds=settings.query_timeout_seconds,
+        max_result_rows=5,
+        engine=engine,
+    )
+    print(f"OK: executed {execution_sql!r} -- {len(rows)} row(s), columns: {columns}")
 
     return tables[0].table_name
 

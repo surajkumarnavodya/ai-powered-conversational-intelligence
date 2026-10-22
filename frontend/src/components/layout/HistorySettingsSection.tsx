@@ -2,7 +2,7 @@ import { CheckCircle2, Download, RefreshCw, XCircle } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { AccentColorPicker } from '@/components/settings/AccentColorPicker'
 import { ConnectedAccountsSection } from '@/components/settings/ConnectedAccountsSection'
-import { FontPicker } from '@/components/settings/FontPicker'
+import { FontSettings } from '@/components/settings/FontSettings'
 import { LanguageSelector } from '@/components/settings/LanguageSelector'
 import { ModelSelector } from '@/components/settings/ModelSelector'
 import { ThemeToggle } from '@/components/settings/ThemeToggle'
@@ -65,10 +65,7 @@ export function HistorySettingsSection() {
             <span className="text-sm">{t('sidebar.accentColor')}</span>
             <AccentColorPicker />
           </div>
-          <div className="flex flex-col gap-1">
-            <span className="text-sm">{t('sidebar.font')}</span>
-            <FontPicker />
-          </div>
+          <FontSettings />
           <div className="flex flex-col gap-1">
             <span className="text-sm">{t('sidebar.language')}</span>
             <LanguageSelector />

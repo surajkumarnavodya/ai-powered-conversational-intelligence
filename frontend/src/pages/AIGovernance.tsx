@@ -226,20 +226,20 @@ export function AIGovernance() {
                   ))}
                 </Select>
                 <input
-                  className="h-9 rounded-md border border-[var(--border)] bg-[var(--input)] px-2.5 text-sm"
+                  className="h-9 rounded-md border border-[var(--border-control)] bg-[var(--input)] px-2.5 text-sm"
                   placeholder="asset key (e.g. llama3.1:8b)"
                   value={newAssetKey}
                   onChange={(e) => setNewAssetKey(e.target.value)}
                 />
                 <input
-                  className="h-9 flex-1 rounded-md border border-[var(--border)] bg-[var(--input)] px-2.5 text-sm"
+                  className="h-9 flex-1 rounded-md border border-[var(--border-control)] bg-[var(--input)] px-2.5 text-sm"
                   placeholder="display name"
                   value={newDisplayName}
                   onChange={(e) => setNewDisplayName(e.target.value)}
                 />
               </div>
               <textarea
-                className="h-20 rounded-md border border-[var(--border)] bg-[var(--input)] px-2.5 py-1.5 text-sm font-mono"
+                className="h-20 rounded-md border border-[var(--border-control)] bg-[var(--input)] px-2.5 py-1.5 text-sm font-mono"
                 placeholder="config JSON"
                 value={newConfigText}
                 onChange={(e) => setNewConfigText(e.target.value)}

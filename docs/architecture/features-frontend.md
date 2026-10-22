@@ -49,8 +49,11 @@ read-only view, with the avatar-width `pl-10` insets removed so a
 question, its answer and the composer line up on one pair of edges. The
 shell adapts at `sm`/`lg`/`xl`: the composer's controls drop below the
 textarea on a phone, the sidebar appears at `lg`, and
-`QuestionNavigator`'s right-edge rail appears only at `xl`, where the
-margin it overlays actually exists.
+`QuestionNavigator`'s flyout widens by breakpoint (its right-edge rail is
+present at every size, clamping the panel to the viewport on a phone).
+That flyout expands on hover and collapses when the pointer leaves, after
+a short grace period that keeps it from flickering shut mid-travel; touch
+users tap the rail icon to open it and tap outside to dismiss.
 
 **Invariant:** the same one as the redesign above — no backend logic, API
 contract, auth flow, SQL validation or chat-persistence behavior changed;

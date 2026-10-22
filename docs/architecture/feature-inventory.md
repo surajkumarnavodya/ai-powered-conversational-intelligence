@@ -51,7 +51,7 @@ says so.
 | AST SELECT-only validation | Live | `agent/sql_validator.py`; `tests/security/` | [`../../SECURITY.md`](../../SECURITY.md) | keep | — |
 | Live schema introspection → ChromaDB | Live | `db/`, `embeddings/`; `scripts/build_embeddings.py` | [`overview.md`](overview.md) | keep | — |
 | Business-context retrieval (8 chunk kinds) | Flag-gated | `retrieval/`; `ENABLE_BUSINESS_CONTEXT_RETRIEVAL=true` in `.env.example:276` | [`overview.md`](overview.md) | keep | — |
-| Multi-database auto-routing | Live | `embeddings/retriever.py::select_database` | [`overview.md`](overview.md) | keep | — |
+| Multi-database auto-routing | **Partial** (2026-10-17) | `embeddings/retriever.py::select_database`. Ranks connections by **schema-text similarity only** — it has no notion of whether a table holds rows, and there is no user or operator override (`AskRequest` has no `database` field; `SourcePicker` selects source *types*). Reproduced live routing to an empty database over a populated one — F-012 / [`../RISK_REGISTER.md`](../RISK_REGISTER.md) R-020. **Cannot occur with one configured database** (short-circuits) | [`overview.md`](overview.md) | decide: override, row-count awareness, or document the one-database constraint | **P1** |
 | Result governance gate | Live | `governance/`; gate runs in `agent.nodes.execute_sql_node` before `result_rows` is set | [`../DATA_PRIVACY_GOVERNANCE_ENGINE.md`](../DATA_PRIVACY_GOVERNANCE_ENGINE.md) | keep | — |
 | SQL structural description (joins, filter columns, aggregates, grain, ordering) | **Live** (2026-10-17) | `agent/sql_validator.py::describe_sql` reads the AST `validate_sql` already parsed; `api/schemas.py::SqlSummaryOut`; `tests/test_sql_validator.py`; rendered by `SqlIntelligencePanel.tsx` | [`../API.md`](../API.md), [`features-frontend.md`](features-frontend.md) | keep | — |
 | Answer translation into a UI locale | **Built, not wired** (2026-10-17) | `agent/translation.py` + `tests/test_translation.py`; **no route, node or setting calls it** — grep for importers returns none outside its own test | [`../../CHANGELOG.md`](../../CHANGELOG.md) (2026-10-17) | decide: wire or park | P2 |
@@ -184,7 +184,59 @@ claiming a finding is or is not yours" — applies to its own contents.
 
 ## 8. Test and lint baseline (actual commands)
 
-**Re-measured 2026-10-17 against commit `a446755`**, Python 3.14.4
+**Re-measured again 2026-10-17 (evening) against commit `08f385e`** —
+the commit that corrected the `scipy` pin. Every figure below held
+exactly, which is the point: the numerical-library downgrade changed
+nothing measurable.
+
+```
+$ .venv/Scripts/python.exe -m pytest -q
+7274 passed, 11 deselected, 1431 warnings in 385.98s (0:06:25)
+
+$ .venv/Scripts/python.exe -m ruff check .
+Found 1 error.                      # same I001, agent/multiagent/agents.py
+
+$ .venv/Scripts/python.exe -m black --check .
+All done! 1635 files would be left unchanged.
+
+$ .venv/Scripts/python.exe -m mypy .
+Found 631 errors in 115 files (checked 820 source files)
+                                    # of which exactly 7 outside tests/ -- CLAUDE.md 13's list, unchanged
+
+$ cd frontend && npx vitest run
+Test Files  89 passed (89)
+     Tests  1161 passed (1161)
+
+$ cd frontend && npx tsc --noEmit -p tsconfig.app.json
+                                    # clean, exit 0
+
+$ cd frontend && npm run lint
+                                    # exit 0 -- oxlint warnings only
+```
+
+Two additions this pass, neither a drift in the figures above:
+
+- **`bandit` reports 4 Low findings, not 3** — `agent/sql_validator.py:842`
+  (`B112`) joined the set via `933cfff`. 0 High, 0 Medium.
+- **`ruff`'s single `I001` makes a *blocking* CI gate fail.** The finding
+  itself is old and recorded as accepted; the consequence was not
+  recorded anywhere until now. Filed as F-011 in
+  [`../certification/2026-10-17_release_gate_v2.md`](../certification/2026-10-17_release_gate_v2.md)
+  §11.3. [`implementation-roadmap.md`](implementation-roadmap.md) Batch 0
+  still owns the decision.
+
+**Beyond the suites: the running application was driven end to end for
+the first time** on 2026-10-17 — 20 probes covering auth, RBAC on 14
+admin routes, the SQL validator against four write/catalog attempts, the
+row cap, restricted-column masking on live compensation data, and chat
+history persistence. Recorded in that same document, §11.5. It is
+*manual technical* verification, **not** UAT, and it is what finally
+puts a "verified" mark against the controls this document has only ever
+been able to evidence with mocked tests.
+
+---
+
+**Previous re-measurement, 2026-10-17 against commit `a446755`**, Python 3.14.4
 (`.venv`). The 2026-10-14 baseline at `b4d74d2` is kept below it for the
 delta, since the point of this section is attributability.
 

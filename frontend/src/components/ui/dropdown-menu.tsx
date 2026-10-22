@@ -25,7 +25,16 @@ export function DropdownMenuItem({ className, ...props }: DropdownMenuPrimitive.
     <DropdownMenuPrimitive.Item
       className={cn(
         'flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none transition-colors',
+        // Radix sets `data-highlighted` for both pointer hover and keyboard
+        // navigation, and this used to be a background swap alone -- which
+        // measured 1.10:1 in light and 1.06:1 in dark against the popover
+        // surface. As a hover affordance that is fine; as the *only* signal
+        // of where keyboard focus is, it is close to invisible. The inset
+        // ring is the part a keyboard user can actually see: --focus-ring
+        // is held to 3:1 on this surface (WCAG 1.4.11), where --muted is
+        // not and cannot be without becoming a heavy block of color.
         'data-[highlighted]:bg-[var(--muted)] data-[highlighted]:text-[var(--foreground)]',
+        'data-[highlighted]:ring-1 data-[highlighted]:ring-inset data-[highlighted]:ring-[var(--focus-ring)]',
         className,
       )}
       {...props}

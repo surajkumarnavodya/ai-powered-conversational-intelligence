@@ -39,7 +39,7 @@ export function ScrollToBottomButton({
       tabIndex={visible ? 0 : -1}
       style={{ bottom: bottomOffsetPx }}
       className={cn(
-        'absolute left-1/2 z-20 flex h-10 w-10 -translate-x-1/2 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--card)] text-[var(--muted-foreground)] shadow-md transition-[opacity,transform] duration-150 ease-out hover:bg-[var(--muted)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] motion-reduce:transition-none',
+        'absolute left-1/2 z-20 flex h-10 w-10 -translate-x-1/2 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--card)] text-[var(--muted-foreground)] shadow-md transition-[opacity,transform] duration-150 ease-out hover:bg-[var(--muted)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] motion-reduce:transition-none',
         visible ? 'translate-y-0 opacity-100' : 'pointer-events-none translate-y-1 opacity-0',
       )}
     >

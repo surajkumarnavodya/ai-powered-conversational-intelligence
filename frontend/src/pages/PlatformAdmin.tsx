@@ -311,7 +311,11 @@ function UserRow({ user }: { user: PlatformUserOut }) {
             value={newRole}
             onChange={(event) => setNewRole(event.target.value)}
             placeholder="role name"
-            className="w-28 rounded-md border border-[var(--border)] bg-[var(--background)] px-2 py-1 text-xs"
+            // See TenantAdmin's identical control: a placeholder is not an
+            // accessible name, and one visible label per table row would
+            // be noise.
+            aria-label={`Role name to grant ${user.email}`}
+            className="w-28 rounded-md border border-[var(--border-control)] bg-[var(--background)] px-2 py-1 text-xs"
           />
           <Button size="sm" variant="secondary" disabled={assignRole.isPending} onClick={handleAssign}>
             Add

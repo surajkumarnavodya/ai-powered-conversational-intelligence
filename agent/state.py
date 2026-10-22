@@ -308,6 +308,20 @@ class AgentState(TypedDict, total=False):
     schema_tables: list[TableSchema]
     schema_context_text: str
 
+    # Set by `enforce_display_names_node`. Key columns it rewrote into a
+    # joined display name, e.g. ["ProductKey"] -- recorded so a reader can
+    # see that the SQL shown is not byte-for-byte what the model wrote,
+    # and why. Empty when nothing needed repairing, which is the common
+    # case for a query that already selects names.
+    display_names_repaired: list[str]
+
+    # An honest disclosure when a result is still labelled by a key
+    # because the related dimension has no readable name column at all.
+    # Surfaced to the caller rather than silently returning the key --
+    # a fabricated label would be worse (CLAUDE.md 4.4). None when every
+    # label is readable.
+    display_name_notice: str | None
+
     # Set by retrieve_golden_examples_node, which runs immediately after
     # retrieve_schema (and before plan_query) -- the best-matching
     # human-approved (question, SQL) pairs for this database's golden

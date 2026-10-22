@@ -896,6 +896,58 @@ class AskResponse(BaseModel):
             "locally (see model_routing.models.TIER_COST_UNITS)."
         ),
     )
+    display_name_notice: str | None = Field(
+        default=None,
+        description=(
+            "Set when a result column is still labelled by an identifier because the "
+            "related table has no human-readable name column for it. An honest "
+            "disclosure rather than a fabricated label -- the key is shown as-is and "
+            "this explains why (see agent/display_name_guard.py). None when every "
+            "label is readable, which is the normal case."
+        ),
+    )
+    display_names_repaired: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Key columns the display-name guard rewrote into a joined readable name, "
+            'e.g. ["ProductKey"]. Recorded so a reader can see that the SQL shown is '
+            "not byte-for-byte what the model produced, and why. Empty when nothing "
+            "needed repairing. The rewritten SQL is still validated by "
+            "agent/sql_validator.py before execution, so a repair never widens what "
+            "the query may do."
+        ),
+    )
+    source_confidence: dict[str, float] = Field(
+        default_factory=dict,
+        description=(
+            "Per-source deterministic routing confidence, 0..1, from "
+            "agent.orchestrator.source_signals. One entry per source that was "
+            "*scored*, not only the ones routed to -- a low score is the answer "
+            "to 'why didn't this search the documents?', and omitting it would "
+            "leave that unanswerable. Empty when SOURCE_ROUTING_ENABLED is off, "
+            "or when only one source is configured and there was nothing to "
+            "choose between. **Evidence, not a calibrated probability**: it is "
+            "the bounded sum of the deterministic signals that matched, never "
+            "validated against ground truth, so it is always "
+            "DataTruthLevel.AI_INFERENCE and must never be rendered as a "
+            "likelihood that the answer is correct."
+        ),
+    )
+    grounding: dict[str, dict[str, Any]] = Field(
+        default_factory=dict,
+        description=(
+            "Per-retrieval-source grounding verdict (guardrails/grounding.py): "
+            "`grounded`, `reason`, `citations_checked`, `citations_valid`, "
+            "`evidence_overlap` and `truth_level`. Reason codes and counts only, "
+            "never the evidence text. Present only for retrieval sources that "
+            "were checked -- a SQL answer is absent here because its grounding "
+            "is established far more strongly by having come from the database "
+            "through a validated SELECT, which `DataTruthLevel.DATABASE_FACT` "
+            "already records. A `grounded=false` entry means the answer could "
+            "not be *verified*, which is a weaker and different claim from the "
+            "answer being false."
+        ),
+    )
     sql: str | None = None
     result_columns: list[str] | None = None
     result_rows: list[list[Any]] | None = None
@@ -1214,6 +1266,61 @@ class VisualizationSpecOut(BaseModel):
     engine_version: str
 
 
+class ColumnSemanticsOut(BaseModel):
+    """What one result column *means*, so a client can bind the right axis.
+
+    `column_types` next to this says a column is `numeric`; that is not
+    enough to choose a y-axis, because a surrogate key is numeric too.
+    Before this existed the chart engine took the first numeric column as
+    the measure, so `SELECT ProductKey, SUM(SalesAmount)` plotted
+    *ProductKey* as the value. See `db/column_semantics.py`.
+
+    Additive and parallel to `column_types`, which keeps its exact
+    meaning -- a client that ignores this field behaves as it did before.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str = Field(description="Column name exactly as the result returned it.")
+    label: str = Field(description='Human-readable label, e.g. "Total Sales".')
+    data_type: str = Field(description="'numeric' | 'date' | 'text'.")
+    semantic_type: str = Field(
+        description=(
+            "What the column means: 'dimension' | 'key' | 'measure' | 'date' | "
+            "'percentage' | 'currency' | 'count' | 'text'."
+        )
+    )
+    number_format: str = Field(
+        default="plain", description="'plain' | 'currency' | 'percent' | 'integer'."
+    )
+    suitable_for_x: bool = Field(
+        default=False, description="Whether this column may label a category axis."
+    )
+    suitable_for_y: bool = Field(
+        default=False,
+        description=(
+            "Whether this column may be plotted as a value. **False for every key**, "
+            "which is the point of this field."
+        ),
+    )
+    hidden_by_default: bool = Field(
+        default=False,
+        description=(
+            "Whether a results table should hide it unless asked for. Keys only -- "
+            "the data is still returned, never dropped."
+        ),
+    )
+    measure_priority: int = Field(
+        default=0,
+        description=(
+            "How primary this measure is; higher wins, 0 means 'never a measure'. "
+            "Ranks revenue over profit over quantity over counts; a measure the "
+            "query's own ORDER BY ranks by outranks all of them, because that is "
+            "what the question asked for."
+        ),
+    )
+
+
 class ExecuteResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -1227,6 +1334,16 @@ class ExecuteResponse(BaseModel):
     result_rows: list[list[Any]] | None = None
     row_count: int | None = None
     duration_ms: float | None = None
+    column_semantics: list[ColumnSemanticsOut] = Field(
+        default_factory=list,
+        description=(
+            "Per-column semantic classification, in result order (db/column_semantics.py). "
+            "Lets the chart engine bind a real measure to the y-axis and a readable "
+            "dimension to the x-axis instead of taking whichever numeric column came "
+            "first -- which is how a numeric ProductKey became a y-axis. Empty when "
+            "the result has no columns."
+        ),
+    )
     column_types: dict[str, str] = Field(
         default_factory=dict,
         description=(

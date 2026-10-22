@@ -381,7 +381,9 @@ runtime, and each feature's own `NN_*_CONTRACT.md` covers its design.
   header gear and the Sidebar's own footer, wrapping the same
   `HistorySettingsSection.tsx` content unmodified. `HistorySettingsSection.tsx`
   holds everything that isn't chat history itself: appearance
-  (theme/accent/font/language, `src/lib/theme.ts`), per-database connection
+  (theme/accent via `src/lib/theme.ts`; the application and code/SQL fonts
+  via `src/lib/fonts.ts`, which owns both allowlists and their lazy
+  self-hosted loading; language), per-database connection
   status, a manual re-test, a manual schema refresh, a schema browser
   grouped by database, and the "Generate AI insight" toggle.
   `src/components/chat/TurnCard.tsx` renders one

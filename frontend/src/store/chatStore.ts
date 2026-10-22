@@ -185,7 +185,14 @@ interface ChatState {
        * bubble -- see `SentAttachmentPreview`'s own docstring. */
       sentAttachments?: SentAttachmentPreview[]
     },
-  ) => Promise<QueryHistoryEntry>
+    /** `undefined` when this question was handed to the asynchronous
+     * queue instead of being answered inline -- which happens when
+     * another question is already in flight. There is no history entry
+     * to return in that case: the question is tracked by
+     * `questionQueueStore` and rendered by `QuestionQueuePanel` until it
+     * finishes. Callers that read the result must handle `undefined`;
+     * callers that only fire-and-forget are unaffected. */
+  ) => Promise<QueryHistoryEntry | undefined>
   confirmAndRun: (entryId: string) => Promise<void>
   confirmGeneration: (entryId: string) => Promise<void>
   rerunEntry: (entryId: string) => Promise<void>
@@ -278,6 +285,35 @@ function freshConversationState(): Pick<
     // one's removals over onto turns it does not even contain.
     excludedContextEntryIds: new Set(),
   }
+}
+
+/** What the SSE stream reported before giving up, if anything. */
+type StreamFailure = { status: number; detail: string } | null
+
+/** Turns a stream failure into something true and actionable.
+ *
+ * The server's own `detail` is preferred wherever it has one, because it
+ * is the specific thing that went wrong. The two statuses below are
+ * special-cased only because their raw detail is written for an API
+ * caller rather than a person mid-conversation: a 401 says the header was
+ * missing or invalid, which tells a user nothing about what to do, and a
+ * 429's wording varies by which limiter tripped.
+ *
+ * `null` means the stream failed without reporting anything at all --
+ * a genuinely unreachable server, which is the one case the old blanket
+ * "could not be reached" message was actually right about.
+ */
+function describeStreamFailure(failure: StreamFailure): string {
+  if (!failure) return 'The agent could not be reached.'
+  if (failure.status === 401) {
+    // Reached only when the silent refresh in `askQuestionStreaming` also
+    // failed, i.e. the session is genuinely gone rather than just stale.
+    return 'Your session has expired. Please sign in again.'
+  }
+  if (failure.status === 429) {
+    return failure.detail || 'The server is busy right now. Please try again in a moment.'
+  }
+  return failure.detail || `The request failed with status ${failure.status}.`
 }
 
 function emptyAskResponse(message: string): AskResponse {
@@ -457,6 +493,33 @@ export const useChatStore = create<ChatState>((set, get) => ({
       conversations,
       excludedContextEntryIds,
     } = get()
+
+    // Overflow to the asynchronous queue when a question is already in
+    // flight. This store holds exactly one `pendingQuestion` and one
+    // abort controller by design, so a second synchronous ask would
+    // overwrite the first one's pending state and orphan its stream --
+    // which is why the UI previously had to block the composer.
+    //
+    // Deliberately additive: the *first* question still takes the
+    // existing synchronous `/ask/stream` path unchanged, with its live
+    // per-node progress. Only the ones that would otherwise have been
+    // blocked go to the queue, where they are tracked by
+    // `questionQueueStore` and rendered by `QuestionQueuePanel`. A
+    // deployment whose auth mode cannot attribute a job to a user (or
+    // with the queue switched off) gets `null` back from `submit`, and
+    // then falls through to the pre-existing behaviour rather than
+    // silently dropping the question.
+    if (get().pendingQuestion !== null) {
+      const { useQuestionQueueStore } = await import('@/store/questionQueueStore')
+      const jobId = await useQuestionQueueStore.getState().submit({
+        question,
+        enable_insight: enableInsight,
+        conversation_id: activeConversationId,
+        attachment_ids: options?.attachmentIds ?? [],
+      })
+      if (jobId) return
+    }
+
     const startedAt = performance.now()
     set({ pendingQuestion: { question, startedAt, stage: null } })
 
@@ -488,6 +551,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     currentAbortController = controller
 
     let finalState: AskResponse
+    // Captured by the stream's `onError` below, since that path signals
+    // failure by resolving to null rather than throwing.
+    let streamFailure: StreamFailure = null
     try {
       finalState =
         cached ??
@@ -526,9 +592,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
               const pending = get().pendingQuestion
               if (pending) set({ pendingQuestion: { ...pending, stage: event.stage } })
             },
+            // The stream reports a failure by calling this and resolving
+            // to null, rather than rejecting. Without it, every such
+            // failure collapsed into the `??` fallback below and was shown
+            // as "The agent could not be reached" -- which for an expired
+            // session or a rate limit is simply untrue, and sends the user
+            // looking for a connectivity problem that does not exist.
+            onError: (status, detail) => {
+              streamFailure = { status, detail }
+            },
           },
           controller.signal,
-        )) ?? emptyAskResponse('The agent could not be reached.')
+        )) ?? emptyAskResponse(describeStreamFailure(streamFailure))
     } catch (error) {
       const message =
         error instanceof DOMException && error.name === 'AbortError'
@@ -642,6 +717,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
               response.truncated,
               durationMs,
               response.cache_status,
+              // What each column *means*, so the chart engine binds a
+              // real measure to the y-axis rather than whichever numeric
+              // column came first -- a surrogate key is numeric too.
+              response.column_semantics ?? null,
             )
           : withConfirmedError(entry, response.error ?? 'Execution failed.')
       set((state) => commitQueryHistory(state, replaceEntry(state.queryHistory, entryId, updated)))
@@ -849,7 +928,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  clearHistory: () =>
+  clearHistory: () => {
+    // Queued questions belong to the user who submitted them, so logging
+    // out (or switching user in the same tab) has to clear them here too
+    // -- otherwise the next session would see the previous user's
+    // questions and, once a poll returned, their answers. Imported lazily
+    // for the same reason `askQuestion` does: these two stores must not
+    // import each other at module load.
+    void import('@/store/questionQueueStore').then(({ useQuestionQueueStore }) =>
+      useQuestionQueueStore.getState().reset(),
+    )
     set({
       ...freshConversationState(),
       conversations: {},
@@ -859,5 +947,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       goldenFeedbackGiven: new Set(),
       pinnedEntryIds: new Set(),
       messageFeedbackGiven: new Map(),
-    }),
+    })
+  },
 }))

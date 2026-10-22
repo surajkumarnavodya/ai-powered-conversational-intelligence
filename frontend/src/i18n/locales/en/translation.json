@@ -1,4 +1,7 @@
 {
+  "a11y": {
+    "skipToContent": "Skip to main content"
+  },
   "app": {
     "homeLabel": "Start a new chat",
     "title": "AI-Powered Conversational Intelligence",
@@ -121,7 +124,15 @@
     "appearance": "Appearance",
     "theme": "Theme",
     "accentColor": "Accent color",
-    "font": "Font",
+    "appFont": "Application font",
+    "codeFont": "Code & SQL font",
+    "fontPreview": "Font preview",
+    "resetFonts": "Reset fonts to defaults",
+    "previewHeading": "Quarterly revenue by region",
+    "previewUser": "You asked: which region grew fastest?",
+    "previewAssistant": "North grew fastest at 12.4% quarter over quarter.",
+    "previewColRegion": "Region",
+    "previewColOrders": "Orders",
     "language": "Language",
     "installApp": "Install app",
     "updateAvailable": "A new version is available.",
@@ -152,8 +163,7 @@
   "questionNavigator": {
     "label": "Questions",
     "itemLabel": "Navigate to question: {{question}}",
-    "toggleLabel": "Toggle question list",
-    "closeLabel": "Close question list"
+    "toggleLabel": "Toggle question list"
   },
   "chat": {
     "placeholder": "Ask a question about your data...",
@@ -172,7 +182,8 @@
     "words": "words",
     "noRecordedAnswer": "This message has no recorded answer.",
     "disclaimer": "AI may make mistakes. Please verify results before relying on them.",
-    "scrollToLatest": "Scroll to latest message"
+    "scrollToLatest": "Scroll to latest message",
+    "spokenAnswerLabel": "Spoken answer"
   },
   "sql": {
     "title": "Generated SQL",
@@ -422,7 +433,9 @@
       "downloadResult": "Download",
       "errorNoRegions": "Select at least one region to remove.",
       "errorGeneric": "Couldn't edit this image. Please try again.",
-      "tooManyRegions": "You can remove up to {{max}} regions at once."
+      "tooManyRegions": "You can remove up to {{max}} regions at once.",
+      "regionToggleInclude": "Include this detected text in the removal: \"{{text}}\"",
+      "regionToggleExclude": "Exclude this detected text from the removal: \"{{text}}\""
     }
   },
   "common": {
@@ -803,5 +816,30 @@
     "openSettings": "Open settings",
     "focusComposer": "Jump to the question box",
     "showHelp": "Show this list"
+  },
+  "questionQueue": {
+    "title": "Your questions",
+    "capacity": "{{running}} of {{max}} running · {{queued}} waiting",
+    "atLimit": "You have {{max}} questions running, which is this deployment's limit. Anything else you ask will wait its turn and start automatically.",
+    "waiting": "waiting {{seconds}}s",
+    "ran": "took {{seconds}}s",
+    "attempts": "attempt {{count}}",
+    "cancel": "Cancel this question",
+    "dismiss": "Remove from this list",
+    "blockedExplanation": "This question was not answered because it did not pass this deployment's safety checks.",
+    "status": {
+      "queued": "Waiting",
+      "running": "Working",
+      "completed": "Answered",
+      "failed": "Failed",
+      "cancelled": "Cancelled",
+      "timeout": "Timed out",
+      "blockedByGuardrail": "Not permitted"
+    },
+    "confidence": {
+      "high": "{{source}}: strong match",
+      "medium": "{{source}}: partial match",
+      "low": "{{source}}: weak match"
+    }
   }
 }

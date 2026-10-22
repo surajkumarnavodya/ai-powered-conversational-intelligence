@@ -59,6 +59,32 @@ if it bothers you.
   `host.docker.internal` guidance.
 - **Model not found:** `ollama pull <model>` for whatever `OLLAMA_MODEL`
   names (default `llama3.1:8b`).
+- **A pull fills the wrong drive, even though `OLLAMA_MODELS` is set:** the
+  variable is read by the Ollama *server process at the moment it starts*,
+  and setting it does not retroactively change a server that is already
+  running. On Windows this bites in a specific way:
+  `[Environment]::SetEnvironmentVariable(..., "User")` writes the registry
+  but does **not** update the environment of the shell you typed it in — so
+  launching Ollama from that same shell hands it the *old* environment and
+  the pull lands in `%USERPROFILE%\.ollama\models` as before.
+
+  Fix: set it in the live session as well, then restart Ollama from there.
+
+  ```powershell
+  $env:OLLAMA_MODELS = [Environment]::GetEnvironmentVariable("OLLAMA_MODELS", "User")
+  Get-Process "ollama app", "ollama" -ErrorAction SilentlyContinue | Stop-Process -Force
+  Start-Process "$env:LOCALAPPDATA\Programs\Ollama\ollama app.exe"
+  ```
+
+  A new shell, or a sign-out/sign-in, picks the registry value up on its
+  own; it is only the already-running session that needs this. Confirm by
+  pulling and watching which directory actually grows — not by re-reading
+  the variable.
+
+  An interrupted pull leaves orphaned blobs with no manifest in the old
+  location. They are inert (`ollama list` will not show the model) but they
+  do occupy disk, so delete that directory once the models you care about
+  are verified in the new one.
 - **Very slow responses:** expected for a local model on modest hardware —
   the latest benchmark run measured `p95_latency_seconds` ≈ 80s (see
   `docs/EVALUATION.md`). Not a bug; see that document's "why" for what

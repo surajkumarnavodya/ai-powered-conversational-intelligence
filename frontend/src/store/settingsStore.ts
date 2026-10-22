@@ -1,11 +1,26 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
-import { applyAccent, applyFont, applyThemeMode, type ThemeMode } from '@/lib/theme'
+import { createJSONStorage, persist } from 'zustand/middleware'
+import {
+  applyMonoFont,
+  applyUiFont,
+  DEFAULT_MONO_FONT_ID,
+  DEFAULT_UI_FONT_ID,
+  resolveMonoFont,
+  resolveUiFont,
+} from '@/lib/fonts'
+import { applyAccent, applyThemeMode, type ThemeMode } from '@/lib/theme'
 
 interface SettingsState {
   themeMode: ThemeMode
   accent: string
+  /** UI font id from `UI_FONT_OPTIONS` (`--font-sans`). Still named `font`
+   * rather than `uiFont` so preferences persisted by earlier builds under
+   * this key keep working untouched. */
   font: string
+  /** Monospace font id from `MONO_FONT_OPTIONS` (`--font-mono`) -- SQL,
+   * code, JSON and logs. Independent of `font`: a user can keep a system
+   * UI face and still read SQL in JetBrains Mono. */
+  monoFont: string
   language: string
   /** Settings-section id -> collapsed. Missing id defaults to expanded. */
   collapsedSections: Record<string, boolean>
@@ -53,6 +68,9 @@ interface SettingsState {
   setThemeMode: (mode: ThemeMode) => void
   setAccent: (accentId: string) => void
   setFont: (fontId: string) => void
+  setMonoFont: (fontId: string) => void
+  /** Restores both font preferences to the shipped defaults. */
+  resetFonts: () => void
   setLanguage: (language: string) => void
   setVoiceModeEnabled: (enabled: boolean) => void
   setSelectedModel: (modelId: string | null) => void
@@ -62,13 +80,73 @@ interface SettingsState {
   toggleSidebarCollapsed: () => void
 }
 
+/** `localStorage` that degrades to "not saved" instead of throwing.
+ *
+ * Every accessor here can fail for reasons that have nothing to do with
+ * this app: Safari private browsing and a blocked-site-data policy make
+ * `setItem` throw `QuotaExceededError`, and reading can throw outright
+ * where storage is disabled. Unwrapped, that exception propagates out of
+ * `set()` through the `persist` middleware and out of whichever setter the
+ * user just invoked -- so clicking a font, theme or accent would break the
+ * control rather than quietly failing to persist.
+ *
+ * These are non-essential device preferences, so the right failure mode is
+ * to apply the choice for this session and lose it on refresh. */
+const safeLocalStorage: Storage = {
+  getItem(key) {
+    try {
+      return localStorage.getItem(key)
+    } catch {
+      return null
+    }
+  },
+  setItem(key, value) {
+    try {
+      localStorage.setItem(key, value)
+    } catch {
+      // Preference not persisted; it still applies for this session.
+    }
+  },
+  removeItem(key) {
+    try {
+      localStorage.removeItem(key)
+    } catch {
+      // Nothing to do -- the entry is already unreachable.
+    }
+  },
+  clear() {
+    try {
+      localStorage.clear()
+    } catch {
+      /* see above */
+    }
+  },
+  key(index) {
+    try {
+      return localStorage.key(index)
+    } catch {
+      return null
+    }
+  },
+  get length() {
+    try {
+      return localStorage.length
+    } catch {
+      return 0
+    }
+  },
+}
+
 /** Applies the persisted (or default) appearance to the DOM immediately --
  * called once at module load, before React even renders, so there's no
  * flash of the wrong theme/accent/font on refresh. */
-function applyAppearance(state: Pick<SettingsState, 'themeMode' | 'accent' | 'font'>): void {
+function applyAppearance(
+  state: Pick<SettingsState, 'themeMode' | 'accent' | 'font' | 'monoFont'>,
+): void {
   applyThemeMode(state.themeMode)
   applyAccent(state.accent)
-  applyFont(state.font)
+  applyUiFont(state.font)
+  applyMonoFont(state.monoFont)
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -76,7 +154,8 @@ export const useSettingsStore = create<SettingsState>()(
     (set, get) => ({
       themeMode: 'light',
       accent: 'indigo',
-      font: 'system',
+      font: DEFAULT_UI_FONT_ID,
+      monoFont: DEFAULT_MONO_FONT_ID,
       language: 'en',
       collapsedSections: {},
       voiceModeEnabled: true,
@@ -100,9 +179,23 @@ export const useSettingsStore = create<SettingsState>()(
         applyAccent(accentId)
         set({ accent: accentId })
       },
+      // Both setters normalize through the allowlist before storing, so an
+      // unknown id can never be persisted in the first place -- the picker
+      // and the DOM always agree on which option is selected.
       setFont: (fontId) => {
-        applyFont(fontId)
-        set({ font: fontId })
+        const id = resolveUiFont(fontId).id
+        applyUiFont(id)
+        set({ font: id })
+      },
+      setMonoFont: (fontId) => {
+        const id = resolveMonoFont(fontId).id
+        applyMonoFont(id)
+        set({ monoFont: id })
+      },
+      resetFonts: () => {
+        applyUiFont(DEFAULT_UI_FONT_ID)
+        applyMonoFont(DEFAULT_MONO_FONT_ID)
+        set({ font: DEFAULT_UI_FONT_ID, monoFont: DEFAULT_MONO_FONT_ID })
       },
       setLanguage: (language) => set({ language }),
       toggleSection: (sectionId) =>
@@ -116,8 +209,18 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'tsql-settings',
+      storage: createJSONStorage(() => safeLocalStorage),
       onRehydrateStorage: () => (state) => {
-        if (state) applyAppearance(state)
+        if (!state) return
+        // localStorage is user-writable and survives across deploys, so a
+        // persisted id may be hand-edited, corrupt, or simply a font an
+        // older build offered and this one does not (the combined list's
+        // UI-font 'jetbrains' is exactly that case). Coerce to the
+        // allowlist *here*, not just at paint time, so the <select> shows a
+        // real option rather than rendering blank against a stale value.
+        state.font = resolveUiFont(state.font).id
+        state.monoFont = resolveMonoFont(state.monoFont).id
+        applyAppearance(state)
       },
     },
   ),

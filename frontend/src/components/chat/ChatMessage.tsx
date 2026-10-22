@@ -115,8 +115,23 @@ export function ChatMessage({
           without it the bubble would push past the edge instead of
           wrapping. */}
       <div
-        className={`flex min-w-0 max-w-[85%] flex-col gap-1 sm:max-w-[75%] ${
-          isUser ? 'items-end' : 'items-start'
+        className={`flex min-w-0 flex-col gap-1 ${
+          isEditing
+            ? // Editing takes the whole turn column, not the 75% a *read*
+              // bubble is capped at. A question is read as a quote, so
+              // keeping it narrow and ragged-right is right at rest; it is
+              // edited as a text field, where a box sized to "Top selling
+              // products." gives a few characters of room to rewrite in and
+              // leaves most of the row empty beside it. ChatGPT and
+              // Perplexity both widen on edit for this reason. `flex-1`
+              // rather than `w-full` so it claims the space left over
+              // beside the avatar (which is `shrink-0`) instead of the
+              // whole row, and `items-stretch` so the bubble actually
+              // fills what the column claimed. Percentages are gone
+              // entirely here, so this is width-independent: the same rule
+              // holds on a phone and on a wide desktop.
+              'flex-1 items-stretch'
+            : `max-w-[85%] sm:max-w-[75%] ${isUser ? 'items-end' : 'items-start'}`
         }`}
       >
         <div

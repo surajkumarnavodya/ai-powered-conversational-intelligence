@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArtifactDetail } from './ArtifactDetail'
 import { ArtifactFreshnessBadge } from './ArtifactFreshnessBadge'
+import { ActionTooltip } from '@/components/ui/action-tooltip'
 import { Button } from '@/components/ui/button'
 import {
   useArtifact,
@@ -318,33 +319,41 @@ export function SaveArtifactButton({
     ? t('artifacts.unpin', { question: entry.question })
     : t('artifacts.pin', { question: entry.question })
 
+  // The hint and the accessible name deliberately differ and are not
+  // merged: `label` names *which* turn this pins (it interpolates the
+  // question, which a screen-reader user needs to tell one pin from the
+  // next), while the hint explains whether the pin is durable or
+  // session-only. A tooltip repeating the whole question would be a
+  // paragraph hanging off a 32px button.
+  const hint = durable
+    ? pinned
+      ? t('artifacts.unpinHint')
+      : t('artifacts.pinHint')
+    : t('artifacts.sessionOnlyHint')
+
   return (
-    <Button
-      variant="ghost"
-      aria-label={label}
-      aria-pressed={pinned}
-      disabled={save.isPending || remove.isPending}
-      onClick={() => {
-        if (!durable) {
-          togglePinned(entry.entryId)
-          return
-        }
-        if (existing) remove.mutate(existing.id)
-        else
-          save.mutate({
-            conversation_id: conversationId as string,
-            message_id: messageId as string,
-          })
-      }}
-      title={
-        durable
-          ? pinned
-            ? t('artifacts.unpinHint')
-            : t('artifacts.pinHint')
-          : t('artifacts.sessionOnlyHint')
-      }
-    >
-      <Pin className={pinned ? 'h-4 w-4 fill-current' : 'h-4 w-4'} />
-    </Button>
+    <ActionTooltip label={hint}>
+      <Button
+        variant="ghost"
+        size="icon"
+        aria-label={label}
+        aria-pressed={pinned}
+        disabled={save.isPending || remove.isPending}
+        onClick={() => {
+          if (!durable) {
+            togglePinned(entry.entryId)
+            return
+          }
+          if (existing) remove.mutate(existing.id)
+          else
+            save.mutate({
+              conversation_id: conversationId as string,
+              message_id: messageId as string,
+            })
+        }}
+      >
+        <Pin className={pinned ? 'h-4 w-4 fill-current' : 'h-4 w-4'} />
+      </Button>
+    </ActionTooltip>
   )
 }

@@ -1,5 +1,6 @@
 import { RotateCcw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { ActionTooltip } from '@/components/ui/action-tooltip'
 import { Button } from '@/components/ui/button'
 import { useChatStore } from '@/store/chatStore'
 
@@ -35,16 +36,22 @@ export function RegenerateAnswerButton({ entryId }: { entryId: string }) {
   const pendingQuestion = useChatStore((state) => state.pendingQuestion)
   const isBusy = pendingQuestion !== null
 
+  // Icon-only. `aria-label` carries the name the visible text used to --
+  // dropping it without that would have left a button whose accessible
+  // name was empty. The former `title` is gone rather than kept alongside
+  // the tooltip: two hints for one control, and `title` is the half that
+  // does not reliably show on keyboard focus.
   return (
-    <Button
-      size="sm"
-      variant="ghost"
-      disabled={isBusy}
-      onClick={() => void rerunEntry(entryId)}
-      title={t('chat.rerun')}
-    >
-      <RotateCcw className="h-3.5 w-3.5" />
-      {t('chat.rerun')}
-    </Button>
+    <ActionTooltip label={t('chat.rerun')}>
+      <Button
+        size="icon"
+        variant="ghost"
+        disabled={isBusy}
+        aria-label={t('chat.rerun')}
+        onClick={() => void rerunEntry(entryId)}
+      >
+        <RotateCcw className="h-4 w-4" />
+      </Button>
+    </ActionTooltip>
   )
 }

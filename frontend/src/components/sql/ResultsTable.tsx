@@ -286,7 +286,7 @@ export function ResultsTable({ columns, rows }: { columns: string[]; rows: unkno
             onChange={(event) => setGlobalFilter(event.target.value)}
             placeholder={t('common.search')}
             aria-label={t('common.search')}
-            className="h-8 w-full rounded-md border border-[var(--border)] bg-[var(--input)] pl-8 pr-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            className="h-8 w-full rounded-md border border-[var(--border-control)] bg-[var(--input)] pl-8 pr-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
           />
         </div>
         {/* Rendered only for the columns this result's data actually

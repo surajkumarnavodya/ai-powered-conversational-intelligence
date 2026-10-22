@@ -70,7 +70,7 @@ export function MediaSearch() {
               if (event.key === 'Enter') void runSearch()
             }}
             placeholder="e.g. the photo of the site inspection"
-            className="flex-1 rounded-md border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            className="flex-1 rounded-md border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
           />
           <select
             value={mediaType}

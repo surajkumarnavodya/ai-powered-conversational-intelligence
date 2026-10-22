@@ -131,6 +131,7 @@ def _clear_process_singleton_caches() -> None:
     from api.main import _get_ask_executor
     from db.query_store import clear_query_store_cache
     from embeddings.schema_indexer import _cached_chroma_client
+    from jobs.queue import reset_question_queue
     from model_routing.budget import reset_escalation_limiters
     from model_routing.evidence import reset_evidence_cache
     from model_routing.metrics import get_route_metrics
@@ -151,6 +152,16 @@ def _clear_process_singleton_caches() -> None:
     # because it only appears in a particular test order.
     reset_harness_breakers()
     clear_query_store_cache()
+    # The asynchronous question queue (`jobs/`) is a process-lifetime
+    # singleton that also owns live threads, which makes it the sharpest
+    # version of the `_get_ask_executor` hazard described above: a queue
+    # built from one test's `Settings` (its per-user cap, its timeouts)
+    # and its injected runner would otherwise be silently reused by every
+    # later test, and a test that exercises real shutdown would leave the
+    # pool permanently unusable. Resetting also joins the old queue's
+    # dispatcher and monitor threads, so threads do not accumulate across
+    # the suite.
+    reset_question_queue()
     # Prompt 47 (model routing): the per-route metrics rollup, the
     # per-model circuit breakers and the per-tenant escalation windows are
     # all process-wide by design (a model being down is a fact about the

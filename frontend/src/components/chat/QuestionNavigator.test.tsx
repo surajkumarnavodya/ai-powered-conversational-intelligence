@@ -28,7 +28,34 @@ function renderNavigator(entries: ReturnType<typeof makeEntry>[]) {
       <QuestionNavigator entries={entries} scrollContainerRef={containerRef} />
     </div>,
   )
-  return { ...result, containerRef }
+  // The hover target is the navigator's own wrapper -- the element that
+  // contains both the toggle and (once open) the panel, so travelling
+  // between them never leaves it. Resolved from the toggle rather than by
+  // a brittle container query.
+  const wrapper = result.container.querySelector('button')?.parentElement as HTMLElement
+  return { ...result, containerRef, wrapper }
+}
+
+/** The grace period `QuestionNavigator` waits before collapsing. Mirrors
+ * the component's own `CLOSE_DELAY_MS`; kept here as a literal so a change
+ * to the component's timing shows up as a failing test rather than a test
+ * that silently retunes itself. */
+const CLOSE_DELAY_MS = 180
+
+/** Drives React's synthetic pointer-enter/leave the way a real mouse does.
+ *
+ * `fireEvent.mouseEnter`/`mouseLeave` are deliberately NOT used: they
+ * dispatch a non-bubbling native event that React's enter/leave plugin
+ * never sees, so a test written with them passes whether the handler
+ * exists or not -- which is exactly how the previous "does not open on
+ * hover" test stayed green after the behaviour changed. `pointerType` is
+ * set explicitly because the component keys its touch guard on it. */
+function hoverIn(element: HTMLElement) {
+  fireEvent.pointerEnter(element, { pointerType: 'mouse' })
+}
+
+function hoverOut(element: HTMLElement) {
+  fireEvent.pointerLeave(element, { pointerType: 'mouse', relatedTarget: document.body })
 }
 
 /** The flyout is only ever mounted while open -- every test that needs to
@@ -133,24 +160,48 @@ describe('QuestionNavigator', () => {
     expect(within(nav).getAllByRole('listitem')).toHaveLength(3)
   })
 
-  it('caps the visible list at five rows and scrolls the rest, without dropping any', () => {
+  it('shows ten rows before scrolling, and still drops none', () => {
     // jsdom computes no layout, so the assertion is on the contract that
     // produces the behaviour: a bounded height plus vertical overflow on
     // the one scroll region, with every entry still in the DOM. A test
     // that only counted rendered rows would pass just as happily if the
-    // list were *truncated* to five, which is the opposite of what was
+    // list were *truncated* to ten, which is the opposite of what was
     // asked for.
-    const entries = Array.from({ length: 12 }, (_, i) => makeEntry(`Question ${i + 1}`))
+    const entries = Array.from({ length: 24 }, (_, i) => makeEntry(`Question ${i + 1}`))
     renderNavigator(entries)
     openNavigator()
 
     const list = screen.getByTestId('question-navigator-list')
 
     expect(list.className).toContain('overflow-y-auto')
-    // Five rows: 5 x (1rem line box + 0.375rem x 2 padding) = 8.75rem,
-    // plus the list's own 0.5rem `py-1` under `box-border` = 9.25rem.
-    expect(list.className).toContain('max-h-[min(50vh,9.25rem)]')
-    expect(within(list).getAllByRole('listitem')).toHaveLength(12)
+    // Ten rows: 10 x (1rem line box + 0.375rem x 2 padding) = 17.5rem,
+    // plus the list's own 0.5rem `py-1` under `box-border` = 18rem.
+    expect(list.className).toContain('max-h-[min(60vh,18rem)]')
+    expect(within(list).getAllByRole('listitem')).toHaveLength(24)
+  })
+
+  it('renders all ten rows, and the tenth, without scrolling to reach them', () => {
+    // The point of the taller panel: ten questions fit at once. Nothing
+    // here may be clipped away or virtualized out of the DOM.
+    const entries = Array.from({ length: 10 }, (_, i) => makeEntry(`Question ${i + 1}`))
+    renderNavigator(entries)
+    openNavigator()
+
+    const list = screen.getByTestId('question-navigator-list')
+    expect(within(list).getAllByRole('listitem')).toHaveLength(10)
+    expect(within(list).getByText('Question 10')).toBeInTheDocument()
+  })
+
+  it('adapts its height to a short viewport rather than overflowing off-screen', () => {
+    // Ten rows need 288px, which a landscape phone or a short laptop
+    // window does not have -- the `min()` is what makes the list take 60%
+    // of the viewport and scroll instead.
+    renderNavigator(Array.from({ length: 15 }, (_, i) => makeEntry(`Q${i + 1}`)))
+    openNavigator()
+
+    const list = screen.getByTestId('question-navigator-list')
+    expect(list.className).toMatch(/max-h-\[min\(60vh,/)
+    expect(list.className).toContain('overflow-y-auto')
   })
 
   it('keeps every question reachable by scrolling rather than hiding the overflow', () => {
@@ -186,30 +237,104 @@ describe('QuestionNavigator', () => {
     expect(screen.queryByRole('navigation', { name: 'Questions' })).not.toBeInTheDocument()
   })
 
-  it('does not open on hover -- the panel is opened by an explicit click only', () => {
-    const { container } = renderNavigator([makeEntry('First question'), makeEntry('Second question')])
-    const wrapper = container.querySelector('button')?.parentElement as HTMLElement
+  it('opens on hover, with no click needed', () => {
+    const { wrapper } = renderNavigator([makeEntry('First question'), makeEntry('Second question')])
 
-    fireEvent.mouseEnter(wrapper)
-    expect(screen.queryByRole('navigation', { name: 'Questions' })).not.toBeInTheDocument()
-  })
-
-  it('stays open when the pointer leaves -- it never auto-hides', () => {
-    // The regression this replaces: the panel sits to the *left* of the
-    // icon with an 8px gap between them, so a pointer travelling from the
-    // icon to the list crossed a region belonging to neither the wrapper
-    // nor any descendant. That fired mouseleave and closed the panel
-    // before it could be reached, which made it unusable in practice.
-    const { container } = renderNavigator([makeEntry('First question'), makeEntry('Second question')])
-    openNavigator()
-    const wrapper = container.querySelector('button')?.parentElement as HTMLElement
-
-    fireEvent.mouseLeave(wrapper)
+    hoverIn(wrapper)
 
     expect(screen.getByRole('navigation', { name: 'Questions' })).toBeInTheDocument()
   })
 
-  it('stays open when focus moves away -- blur never auto-hides it either', () => {
+  it('closes once the pointer has been away for the grace period', () => {
+    vi.useFakeTimers()
+    try {
+      const { wrapper } = renderNavigator([makeEntry('First question'), makeEntry('Second')])
+      hoverIn(wrapper)
+
+      hoverOut(wrapper)
+      // Still open immediately after leaving -- the close is deferred.
+      expect(screen.getByRole('navigation', { name: 'Questions' })).toBeInTheDocument()
+
+      act(() => void vi.advanceTimersByTime(CLOSE_DELAY_MS))
+
+      expect(screen.queryByRole('navigation', { name: 'Questions' })).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not flicker shut when the pointer re-enters during the grace period', () => {
+    // The regression that forced hover-to-open to be reverted once before:
+    // a pointer travelling from the icon to the list crossed a gap that
+    // belonged to neither, fired leave, and closed the panel before it
+    // could be reached. The grace period is what absorbs that -- any
+    // re-entry before it elapses cancels the pending close outright.
+    vi.useFakeTimers()
+    try {
+      const { wrapper } = renderNavigator([makeEntry('First question'), makeEntry('Second')])
+      hoverIn(wrapper)
+      const panelBefore = screen.getByTestId('question-navigator-panel')
+      hoverOut(wrapper)
+
+      act(() => void vi.advanceTimersByTime(CLOSE_DELAY_MS - 20))
+      hoverIn(wrapper)
+      // Well past the original deadline: the cancelled timer must not fire.
+      act(() => void vi.advanceTimersByTime(CLOSE_DELAY_MS * 4))
+
+      // Asserting on node *identity*, not merely "a panel is present":
+      // closing and reopening would also leave a panel on screen, but as a
+      // different element -- which is precisely the flicker being ruled
+      // out. The panel must never have unmounted.
+      expect(screen.getByTestId('question-navigator-panel')).toBe(panelBefore)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('ignores hover from a touch pointer, so a tap does not open-then-toggle shut', () => {
+    // A touch tap synthesizes mouseenter *before* its click. Honouring it
+    // would open the panel on enter and let the click immediately toggle
+    // it shut, so a tap would appear to do nothing at all.
+    const { wrapper } = renderNavigator([makeEntry('First question'), makeEntry('Second')])
+
+    fireEvent.pointerEnter(wrapper, { pointerType: 'touch' })
+
+    expect(screen.queryByRole('navigation', { name: 'Questions' })).not.toBeInTheDocument()
+  })
+
+  it('opens and closes on tap for a touch user', () => {
+    renderNavigator([makeEntry('First question'), makeEntry('Second question')])
+    const toggle = screen.getByRole('button', { name: 'Toggle question list' })
+
+    fireEvent.click(toggle)
+    expect(screen.getByRole('navigation', { name: 'Questions' })).toBeInTheDocument()
+
+    fireEvent.click(toggle)
+    expect(screen.queryByRole('navigation', { name: 'Questions' })).not.toBeInTheDocument()
+  })
+
+  it('dismisses on a tap outside, the touch counterpart to the pointer leaving', () => {
+    renderNavigator([makeEntry('First question'), makeEntry('Second question')])
+    openNavigator()
+
+    fireEvent.pointerDown(document.body)
+
+    expect(screen.queryByRole('navigation', { name: 'Questions' })).not.toBeInTheDocument()
+  })
+
+  it('stays open for a tap inside the panel, so selecting a question does not dismiss it', () => {
+    renderNavigator([makeEntry('First question'), makeEntry('Second question')])
+    openNavigator()
+
+    const firstItem = within(screen.getByRole('list')).getAllByRole('button')[0]
+    fireEvent.pointerDown(firstItem)
+
+    expect(screen.getByRole('navigation', { name: 'Questions' })).toBeInTheDocument()
+  })
+
+  it('stays open when focus moves away -- blur never auto-hides it', () => {
+    // Deliberately unchanged by the hover work: closing on blur would shut
+    // the panel the moment a keyboard user tabbed into the list.
     renderNavigator([makeEntry('First question'), makeEntry('Second question')])
     const toggle = openNavigator()
 
@@ -218,36 +343,100 @@ describe('QuestionNavigator', () => {
     expect(screen.getByRole('navigation', { name: 'Questions' })).toBeInTheDocument()
   })
 
-  it('closes on the panel\'s own close button', () => {
+  it('has no close button -- dismissal is automatic', () => {
     renderNavigator([makeEntry('First question'), makeEntry('Second question')])
     openNavigator()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Close question list' }))
-
-    expect(screen.queryByRole('navigation', { name: 'Questions' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /close/i })).not.toBeInTheDocument()
+    const panel = screen.getByTestId('question-navigator-panel')
+    // The only buttons inside the panel are the question rows themselves.
+    expect(within(panel).getAllByRole('button')).toHaveLength(2)
   })
 
-  it('puts the close button in the panel header, opposite the title', () => {
+  it('keeps the panel header to just the title now that nothing sits opposite it', () => {
     renderNavigator([makeEntry('First question'), makeEntry('Second question')])
     openNavigator()
 
-    const close = screen.getByRole('button', { name: 'Close question list' })
-    const header = close.parentElement as HTMLElement
+    const panel = screen.getByTestId('question-navigator-panel')
+    const header = panel.firstElementChild as HTMLElement
 
-    // Same row as the title, pushed to the opposite (right) edge of it.
-    expect(header.textContent).toContain('Questions')
-    expect(header.className).toMatch(/justify-between/)
-    // ...and it is the last child of that row, i.e. after the title.
-    expect(header.lastElementChild).toBe(close)
+    expect(header.textContent).toBe('Questions')
+    expect(header.querySelector('button')).toBeNull()
   })
 
-  it('returns focus to the toggle after closing, rather than stranding it', () => {
-    renderNavigator([makeEntry('First question'), makeEntry('Second question')])
+  it('returns focus to the toggle after Escape, rather than stranding it', () => {
+    const { wrapper } = renderNavigator([makeEntry('First question'), makeEntry('Second')])
     const toggle = openNavigator()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Close question list' }))
+    fireEvent.keyDown(wrapper, { key: 'Escape' })
 
     expect(document.activeElement).toBe(toggle)
+  })
+
+  it('anchors the panel to the right edge and reserves the icon its own lane', () => {
+    renderNavigator([makeEntry('First question'), makeEntry('Second question')])
+    openNavigator()
+
+    const panel = screen.getByTestId('question-navigator-panel')
+
+    // `right-0` -- flush to the wrapper's right edge (and so to the
+    // screen's right margin), not `right-full` beside the icon. This is
+    // both the requested full-width look and what removes the gap a
+    // pointer used to fall through.
+    expect(panel.className).toMatch(/(^|\s)right-0(\s|$)/)
+    expect(panel.className).not.toMatch(/right-full/)
+    // The icon now overlays the panel, so the panel keeps a 36px lane
+    // clear for it -- otherwise a question row would run underneath it.
+    expect(panel.className).toMatch(/(^|\s)pr-9(\s|$)/)
+  })
+
+  it('keeps the icon above the panel it now overlays', () => {
+    renderNavigator([makeEntry('First question'), makeEntry('Second question')])
+    const toggle = openNavigator()
+    const panel = screen.getByTestId('question-navigator-panel')
+
+    // Without this the panel would paint over its own trigger: the panel
+    // is absolutely positioned and comes later in the DOM.
+    expect(toggle.className).toMatch(/z-30/)
+    expect(panel.className).not.toMatch(/z-[34]\d/)
+  })
+
+  it('clamps the panel to the viewport on a phone and widens with the breakpoints', () => {
+    renderNavigator([makeEntry('First question'), makeEntry('Second question')])
+    openNavigator()
+
+    const panel = screen.getByTestId('question-navigator-panel')
+
+    // Phone: never wider than the viewport minus the 1rem gutter each side.
+    expect(panel.className).toContain('w-[calc(100vw-2rem)]')
+    expect(panel.className).toContain('max-w-[calc(100vw-2rem)]')
+    // ...stepping up to fixed widths once there is room for them.
+    expect(panel.className).toContain('sm:w-80')
+    expect(panel.className).toContain('lg:w-96')
+    expect(panel.className).toContain('xl:w-[26rem]')
+  })
+
+  it('is available on small viewports, not desktop-only', () => {
+    // It used to be `xl:flex`/`hidden`, because the old panel opened to
+    // the left of the icon and would land on the answer text. The panel
+    // now opens flush right and clamps to the viewport, so phones and
+    // tablets -- where scrolling a long conversation by hand is worst --
+    // get it too.
+    const { wrapper } = renderNavigator([makeEntry('First question'), makeEntry('Second')])
+
+    expect(wrapper.className).not.toMatch(/(^|\s)hidden(\s|$)/)
+    expect(wrapper.className).not.toMatch(/xl:flex/)
+    expect(wrapper.className).toMatch(/(^|\s)flex(\s|$)/)
+  })
+
+  it('animates in on mount, where a plain transition could not', () => {
+    renderNavigator([makeEntry('First question'), makeEntry('Second question')])
+    openNavigator()
+
+    // The panel is mounted only while open, so there is no previous frame
+    // to transition from -- a keyframe animation is the one thing that
+    // runs on mount. index.css caps its duration under reduced motion.
+    expect(screen.getByTestId('question-navigator-panel').className).toContain('animate-flyout-in')
   })
 
   it('keeps the decorative rail from swallowing clicks over the conversation', () => {

@@ -169,6 +169,58 @@ describe('ChatMessage', () => {
     expect(column).toHaveClass('flex-col')
   })
 
+  it('gives the editor the whole turn column, however short the question', async () => {
+    // Reported: clicking Edit on "Top selling products." left a box a few
+    // characters wide, pinned to the right with the rest of the row empty
+    // beside it. The read bubble's 75% cap is right for a quote and wrong
+    // for a text field, so editing drops the percentage entirely rather
+    // than widening it -- which is also what keeps this correct on a
+    // phone, where there is no width to give away.
+    //
+    // A short question is the case that was broken, so it is the case
+    // asserted: nothing here may depend on the text being long enough to
+    // fill the column on its own.
+    const { container } = render(
+      <ChatMessage
+        message={{ role: 'user', content: 'Top selling products.' }}
+        onSubmitEdit={vi.fn()}
+      />,
+    )
+    const root = container.firstElementChild
+
+    expect(root?.querySelector('.max-w-\\[85\\%\\]')).not.toBeNull()
+
+    await userEvent.click(screen.getByRole('button', { name: /edit/i }))
+
+    // Walk out of the editor to the bubble, then to the column that holds
+    // the bubble and its action row -- the element the width rule lives on.
+    const column = screen.getByRole('textbox').closest('.rounded-2xl')?.parentElement
+    expect(column).toHaveClass('flex-1')
+    expect(column).toHaveClass('items-stretch')
+    // The read-mode cap must be gone, not merely overridden -- two
+    // competing width rules on one element is how this regresses.
+    expect(column).not.toHaveClass('max-w-[85%]')
+    expect(column).not.toHaveClass('sm:max-w-[75%]')
+    // Right-aligning the column would undo the stretch it just claimed.
+    expect(column).not.toHaveClass('items-end')
+  })
+
+  it('keeps Cancel and the submit action aligned while editing', async () => {
+    const { container } = render(
+      <ChatMessage
+        message={{ role: 'user', content: 'Top selling products.' }}
+        onSubmitEdit={vi.fn()}
+      />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: /edit/i }))
+
+    // Both actions sit in one right-aligned row under the textarea, so a
+    // full-width editor does not strand them at opposite edges.
+    const actionRow = container.querySelector('.justify-end')
+    expect(actionRow).not.toBeNull()
+    expect(actionRow?.querySelectorAll('button')).toHaveLength(2)
+  })
+
   it('keeps the action row hidden until hover or focus', () => {
     const { container } = render(
       <ChatMessage

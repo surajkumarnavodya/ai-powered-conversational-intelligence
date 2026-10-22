@@ -203,6 +203,45 @@ _ORACLE_CATALOG_SUFFIXES: frozenset[str] = frozenset(
 _ORACLE_DYNAMIC_VIEW_PREFIXES: tuple[str, ...] = ("v$", "gv$")
 
 
+# SQL Server keeps a set of pre-2005 compatibility views that resolve
+# *unqualified* from inside any database (`SELECT * FROM sysobjects`, not
+# `sys.sysobjects`), so the `_SYSTEM_CATALOG_SCHEMAS` check above -- which
+# matches on the schema qualifier -- never sees them. That is the same
+# bare-name hole already closed for postgresql (`pg_`) and Oracle
+# (`DBA_*`/`ALL_*`/`USER_*`) below and above respectively; mssql was the
+# remaining dialect without it, which matters because these views expose
+# exactly the reconnaissance surface the qualified `sys` block exists to
+# deny -- object inventory, column inventory, logins, and, via
+# `syscomments`, the *source text* of views and stored procedures.
+#
+# A curated set, never a blind `name.startswith("sys")`: that would reject
+# ordinary application tables like `system_settings`, `sysadmin_audit` or
+# `system_user_roles`, which is precisely the false-positive trap the
+# Oracle comment above talks itself out of. Non-exhaustive by the same
+# honest standard as the Oracle list -- these are the ones worth having.
+_MSSQL_LEGACY_CATALOG_VIEWS: frozenset[str] = frozenset(
+    {
+        "sysobjects",
+        "syscolumns",
+        "syscomments",
+        "sysindexes",
+        "sysindexkeys",
+        "systypes",
+        "sysusers",
+        "sysconstraints",
+        "sysforeignkeys",
+        "sysdatabases",
+        "syslogins",
+        "sysservers",
+        "sysprocesses",
+        "sysfiles",
+        "sysaltfiles",
+        "syspermissions",
+        "sysmembers",
+    }
+)
+
+
 def _is_oracle_catalog_view_name(name: str) -> bool:
     if any(name.startswith(prefix) for prefix in _ORACLE_DYNAMIC_VIEW_PREFIXES):
         return True
@@ -223,6 +262,10 @@ def _find_system_catalog_reference(statement: exp.Expression) -> exp.Table | Non
             return table
         name = (table.name or "").lower()
         if _is_oracle_catalog_view_name(name):
+            return table
+        # mssql's pre-2005 compatibility views, which resolve unqualified
+        # from any database -- see _MSSQL_LEGACY_CATALOG_VIEWS.
+        if name in _MSSQL_LEGACY_CATALOG_VIEWS:
             return table
         # postgresql's pg_catalog schema is always on the default
         # search_path, so its views are conventionally queried unqualified

@@ -73,7 +73,7 @@ export function SignIn({ onSwitchToRegister }: { onSwitchToRegister: () => void 
               value={email}
               onChange={(event) => setEmail(event.target.value)}
               placeholder={t('auth.localEmailPlaceholder')}
-              className="h-9 rounded-md border border-[var(--border)] bg-[var(--background)] px-3 text-sm text-[var(--foreground)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              className="h-9 rounded-md border border-[var(--border)] bg-[var(--background)] px-3 text-sm text-[var(--foreground)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
             />
           </label>
           <label className="flex flex-col gap-1 text-xs font-medium text-[var(--foreground)]">
@@ -86,7 +86,7 @@ export function SignIn({ onSwitchToRegister }: { onSwitchToRegister: () => void 
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 placeholder={t('auth.localPasswordPlaceholder')}
-                className="h-9 w-full rounded-md border border-[var(--border)] bg-[var(--background)] px-3 pr-9 text-sm text-[var(--foreground)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                className="h-9 w-full rounded-md border border-[var(--border)] bg-[var(--background)] px-3 pr-9 text-sm text-[var(--foreground)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
               />
               <button
                 type="button"

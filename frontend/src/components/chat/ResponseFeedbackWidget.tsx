@@ -1,6 +1,7 @@
 import { ThumbsDown, ThumbsUp } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ActionTooltip } from '@/components/ui/action-tooltip'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useChatStore } from '@/store/chatStore'
@@ -42,29 +43,36 @@ export function ResponseFeedbackWidget({ entryId }: { entryId: string }) {
 
   return (
     <>
+      {/* Already icon-only; the tooltips are what the rest of the action
+          row gained when it dropped its text labels, so these two join it
+          rather than staying the only unlabelled pair on hover. */}
       <div className="flex items-center gap-1">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          aria-label={t('feedback.ratePositive')}
-          aria-pressed={currentRating === 'positive'}
-          onClick={() => openModal('positive')}
-          className={currentRating === 'positive' ? 'text-[var(--success)]' : undefined}
-        >
-          <ThumbsUp className="h-4 w-4" />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          aria-label={t('feedback.rateNegative')}
-          aria-pressed={currentRating === 'negative'}
-          onClick={() => openModal('negative')}
-          className={currentRating === 'negative' ? 'text-[var(--danger)]' : undefined}
-        >
-          <ThumbsDown className="h-4 w-4" />
-        </Button>
+        <ActionTooltip label={t('feedback.ratePositive')}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label={t('feedback.ratePositive')}
+            aria-pressed={currentRating === 'positive'}
+            onClick={() => openModal('positive')}
+            className={currentRating === 'positive' ? 'text-[var(--success)]' : undefined}
+          >
+            <ThumbsUp className="h-4 w-4" />
+          </Button>
+        </ActionTooltip>
+        <ActionTooltip label={t('feedback.rateNegative')}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label={t('feedback.rateNegative')}
+            aria-pressed={currentRating === 'negative'}
+            onClick={() => openModal('negative')}
+            className={currentRating === 'negative' ? 'text-[var(--danger)]' : undefined}
+          >
+            <ThumbsDown className="h-4 w-4" />
+          </Button>
+        </ActionTooltip>
         {toast && <span className="text-xs text-[var(--muted-foreground)]">{toast}</span>}
       </div>
 

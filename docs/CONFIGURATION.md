@@ -18,6 +18,59 @@ malformed values (not missing ones) fail fast at startup with a
 | `OLLAMA_MODEL_SELECTION_ENABLED` | `true` | Master switch for per-question model selection (see below). `false` collapses every request to `OLLAMA_MODEL`, matching this app's behavior before this feature existed. |
 | `OLLAMA_ALLOWED_MODELS` | *(unset → a small starter set)* | Comma-separated list of additional Ollama model names selectable for Text-to-SQL. `OLLAMA_MODEL` is always included even if you omit it here. |
 
+### Where Ollama stores model files
+
+**`OLLAMA_MODELS` is an Ollama setting, not one of this app's.** It is not a
+`Settings` field and nothing in this repository reads it — the app only ever
+talks to `OLLAMA_HOST` over HTTP. It is documented here because it decides
+which drive needs tens of gigabytes free, which is a setup question people
+hit immediately.
+
+Default is `%USERPROFILE%\.ollama\models` on Windows. To keep weights off a
+small system drive, point it elsewhere **before starting Ollama**:
+
+```powershell
+# One-time. User scope is correct when Ollama runs as the desktop app
+# (the usual Windows install): the tray app inherits the user environment.
+[Environment]::SetEnvironmentVariable("OLLAMA_MODELS", "D:\OllamaModels", "User")
+```
+
+Then restart Ollama so the new value is actually picked up — a running
+server keeps the path it started with:
+
+```powershell
+Get-Process "ollama app", "ollama" -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Process "$env:LOCALAPPDATA\Programs\Ollama\ollama app.exe"
+```
+
+**If Ollama runs as a Windows service instead**, a user-scope variable will
+not reach it — set the variable in the service's own environment (or at
+machine scope) and restart the service. Check with
+`Get-Service *ollama*`; on this project's reference machine there is no such
+service, only the desktop app.
+
+**Moving existing models.** Copy, do not move, and keep the originals until
+the new location is proven:
+
+```powershell
+robocopy "$env:USERPROFILE\.ollama\models" "D:\OllamaModels" /E /COPY:DAT
+# robocopy exit codes 0-7 are success (1 = "files were copied"); >=8 is a real failure.
+```
+
+After restarting, `ollama list` must still show every model you had. Only
+then delete the old directory to reclaim the space.
+
+**Verify the path is really in effect, rather than trusting the variable.**
+The variable being set does not prove the running process read it. Compare
+free space before and after a pull, or check where the bytes landed:
+
+```powershell
+(Get-ChildItem "D:\OllamaModels" -Recurse -File | Measure-Object Length -Sum).Sum / 1GB
+```
+
+A pull that grows `C:` instead means the running Ollama never saw the
+variable — restart it rather than re-pulling.
+
 ### Model selection
 
 Users (or any `POST /ask` caller) can choose which locally-installed Ollama
@@ -194,6 +247,160 @@ Real, in-process safeguards — not yet distributed across replicas (see
 | `LLM_CALL_RATE_LIMIT_PER_MINUTE` | `20` | Max LLM *generation* calls/minute, process-wide — stricter, since retries can multiply calls. |
 | `MAX_CONCURRENT_ASK_REQUESTS` | `50` | Max `POST /ask` executions running at once, process-wide — an *in-flight* concurrency cap (distinct from the per-minute limit above), also what sizes the bounded ask-worker thread pool. A caller past this gets an immediate 429, not a queued wait. |
 | `MAX_CONCURRENT_ASK_REQUESTS_PER_CALLER` | `2` | Max `POST /ask` executions one caller may have in flight at once (same caller key as `QUESTION_RATE_LIMIT_PER_MINUTE`) — a fairness bound, not a throughput control. |
+
+## Asynchronous question queue (`jobs/`)
+
+What lets **one authenticated user** run many questions at once. Distinct
+from `MAX_CONCURRENT_ASK_REQUESTS_PER_CALLER` above: that bounds the
+*synchronous* `POST /ask`, where a caller blocks on a response and an
+immediate 429 is right. Here submission returns a job id, so exceeding
+the cap **queues** rather than refusing.
+
+Queued questions run through the same governed pipeline `POST /ask` uses
+— same SQL validator, same twice-enforced row cap, same result
+governance. Full behaviour, security model and scaling guidance:
+[`docs/CONCURRENCY.md`](CONCURRENCY.md).
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ENABLE_QUESTION_QUEUE` | `true` | Master switch. `false` answers every `/questions` route with 503 instead of unrouting it, so a frontend shows a clear message rather than a 404. |
+| `MAX_CONCURRENT_QUESTIONS_PER_USER` | `100` | Questions one user may have RUNNING at once. **Hard-capped in code at 500** (`config.settings.MAX_SAFE_CONCURRENT_QUESTIONS_PER_USER`); a non-numeric, zero, negative or above-500 value is **rejected at startup**, never clamped. |
+| `MAX_CONCURRENT_QUESTIONS_GLOBAL` | `500` | Process-wide ceiling across every user. Must be `>=` the per-user cap or startup fails — a smaller global would make the per-user value unreachable. |
+| `QUESTION_TIMEOUT_SECONDS` | `120` | Wall-clock budget for one question, measured from when it starts RUNNING (queue wait does not consume it). Breaching it gives status `TIMEOUT`, distinct from `FAILED`. |
+| `QUESTION_QUEUE_WAIT_TIMEOUT_SECONDS` | `900` | How long a question may sit QUEUED before being marked `TIMEOUT`. Without it, a polling client cannot tell "still waiting" from "will never run". |
+| `QUESTION_QUEUE_MAX_DEPTH` | `1000` | Backpressure: beyond this many queued jobs, submission is refused with 429. An unbounded queue is a memory leak with a progress bar. |
+| `QUESTION_QUEUE_MAX_DEPTH_PER_USER` | `200` | One user's share of that depth, so a single user cannot starve everyone else. Must be `<=` `QUESTION_QUEUE_MAX_DEPTH`. |
+| `QUESTION_RESULT_TTL_SECONDS` | `3600` | How long a finished job and its result stay readable. A retention budget, not a trust window: a stored result is re-governed against the *current* reader's roles on every read. |
+| `QUESTION_IDEMPOTENCY_TTL_SECONDS` | `900` | How long a submission's idempotency key is remembered, so a retried submit returns the original job instead of starting a second run. |
+| `QUESTION_MAX_RETAINED_JOBS_PER_USER` | `500` | Hard cap on retained jobs per user, bounding memory against a burst arriving faster than the TTL expires it. |
+| `QUESTION_MAX_RETRIES` | `2` | Automatic retries of a job whose failure the harness classified as transient. Exponential backoff with jitter from `agent.harness.retry`. `0` disables job-level retry; the graph's own `MAX_RETRIES` self-correction loop is separate and unaffected. |
+| `QUESTION_SHUTDOWN_GRACE_SECONDS` | `30` | How long graceful shutdown waits for in-flight jobs. Queued jobs are cancelled at once; running ones are signalled to stop at their next node boundary. |
+
+`MAX_TOOL_CALLS` and `MAX_TOKENS_PER_REQUEST` are
+`HARNESS_MAX_TOOL_CALLS` and `HARNESS_MAX_TOKENS` (see **Agent limits**),
+which already own those budgets — one owner per fact.
+
+**Requires a real user account.** `none`/`static_token` auth modes provide
+no distinct per-caller subject, so ownership cannot be enforced;
+`POST /questions` returns **403** rather than putting every caller in one
+bucket where each could read the others' results. Enable
+`LOCAL_AUTH_ENABLED` or OIDC.
+
+**Process-local.** A multi-worker deployment has one queue — and one set
+of per-user counters — *per worker*.
+
+## Readable business names (`db/display_names.py`)
+
+Stops a result being labelled by a raw key: "total sales by product"
+returns a product **name**, not a `ProductKey`. Full behaviour, join
+rules and limitations: [`docs/DISPLAY_NAMES.md`](DISPLAY_NAMES.md).
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ENABLE_DISPLAY_NAME_ENFORCEMENT` | `true` | After generation and before validation, rewrites a query that labels rows by a surrogate key so it joins the dimension and selects the readable column. Repaired SQL still passes the SELECT-only validator, so this can never widen what a query may do. `false` makes the node a pass-through, leaving only the generation prompt's advisory rule. |
+
+**It never guesses a join.** Only foreign keys declared in the live
+schema are used. Where a relationship is not declared, the finding
+becomes retry feedback for the next generation attempt (sharing the one
+`MAX_RETRIES` budget). Where the dimension has no readable column at all,
+the key is kept and `AskResponse.display_name_notice` discloses why —
+rather than a label being invented.
+
+Which column holds each entity's name is derived from live introspection
+and needs no configuration. Override a specific table in
+`config/display_names.yaml` when inference would pick wrong; that file
+ships as an empty template and documents the format.
+
+## Per-task model pins (`model_routing/tasks.py`)
+
+Which model each *kind* of LLM work starts from. Blank (the default for
+all of them) means "use `OLLAMA_MODEL`", so a deployment setting none of
+these behaves exactly as it did before they existed.
+
+Baselines, not overrides: a caller's `AskRequest.model` still wins, and
+governed model routing may still escalate or de-escalate from the
+baseline when `ENABLE_MODEL_ROUTING=true`.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ROUTER_MODEL` | *(blank)* | Source/intent classification. Wants a small, fast model: the output is a few tokens and the call sits in the user's latency path. |
+| `SQL_MODEL` | *(blank)* | SQL generation — the one task where a SQL-specialised model (`sqlcoder`, `duckdb-nsql`) can beat a larger general model. |
+| `RAG_ANSWER_MODEL` | *(blank)* | Answer composition over retrieved chunks. Wants instruction-following and faithfulness to the excerpts. |
+| `FALLBACK_MODEL` | *(blank)* | The approved alternate for a task with no pin of its own. Distinct from governed routing's runtime fallback chain, which handles a model that is *down* rather than one that is unconfigured. |
+| `MODEL_ROUTING_STRATEGY` | `capability` | `capability \| cost \| latency \| quality`. Orders candidates routing has **already** found eligible — it can never reach a model outside `OLLAMA_ALLOWED_MODELS`, relax a risk level or widen a budget. `capability` is the pre-existing ordering, so this changes nothing until set. |
+
+`VISION_MODEL` is `MEDIA_VISION_MODEL` and `EMBEDDING_MODEL` is
+`EMBEDDING_MODEL_NAME` — those settings already own those choices.
+
+**Every non-blank chat-model pin is checked against
+`OLLAMA_ALLOWED_MODELS` at startup and the app refuses to boot on a pin
+outside it.** An unapproved pin is a model the operator never approved
+receiving this deployment's prompts and retrieved data.
+
+## Deterministic source routing (`agent/orchestrator/source_signals.py`)
+
+A deterministic signal pre-pass in front of the LLM source classifier.
+Additive: an *ambiguous* question still goes to the classifier exactly as
+before. What changes is the unambiguous case — "extract the text from
+this image" no longer costs a classification call and no longer depends
+on the configured model following a prompt.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SOURCE_ROUTING_ENABLED` | `true` | `false` restores the pre-existing path exactly: no scoring, no confidence reported, classification for every multi-source question. |
+| `SOURCE_CONFIDENCE_THRESHOLD` | `0.70` | Confidence at or above which the deterministic pick is trusted and the classification call is skipped. A question whose runner-up scores close to the leader is treated as ambiguous and goes to the classifier regardless. |
+| `MAX_RETRIEVAL_CHUNKS` | `10` | Hard ceiling on retrieved chunks carried into a RAG answer prompt, across every retrieval source — bounds context amplification independently of each store's own top-k. |
+
+**Which sources exist is not configured here.** It is derived from each
+source's own feature flag plus the config that source needs
+(`sources/descriptors.py` is the single owner): `ENABLE_DOCUMENT_RAG`,
+`ENABLE_POLICY_RAG`, `ENABLE_WEB_SEARCH`, `ENABLE_CHAT_ATTACHMENTS`,
+`ENABLE_MEDIA_SEARCH`, `ENABLE_MEDIA_GENERATION`. A flag alone with
+nothing configured behind it does not make a source available.
+
+## Guardrails (`guardrails/`)
+
+These tune the **advisory** safety layers: injection detection, abuse
+screening, PII redaction of free text, and grounding.
+
+**They cannot soften a fail-closed control.** With
+`GUARDRAILS_ENABLED=false` *and* `GUARDRAIL_ACTION=warn` both set, the
+SQL validator still rejects a non-`SELECT`, RBAC still denies an
+unauthorized source, `CREDENTIAL`/`PAYMENT` columns are still withheld
+from everyone including admins, tenant resolution still fails closed, and
+a sensitivity-categorised policy chunk is still never summarised.
+`guardrails.engine.resolve_action` enforces that split and
+`tests/test_guardrails.py` proves it for every fail-closed layer.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `GUARDRAILS_ENABLED` | `true` | Master switch for the advisory screening this package performs. |
+| `GUARDRAIL_ACTION` | `block` | `block \| warn \| redact`. What an *advisory* layer does when it fires. `warn` answers anyway with a notice attached, useful while tuning a detector. Never consulted for a fail-closed layer. |
+| `PROMPT_INJECTION_PROTECTION` | `true` | Injection/jailbreak detection, on the question and on retrieved content alike. **Detection, not the boundary** — the SQL validator and the RBAC gates bound the consequences, which is why turning it off creates no escalation path. |
+| `PII_REDACTION_ENABLED` | `true` | Redaction of secret-shaped and personal data in free text. Result *columns* are governed separately and unconditionally by `ENABLE_RESULT_GOVERNANCE`. |
+| `TOXICITY_CHECK_ENABLED` | `true` | Narrow abuse screening over question text. Deliberately not a content classifier — `moderation/gate.py` is the real content gate for ingested assets. Kept narrow because over-blocking ordinary analytics is its own failure mode. |
+| `BLOCK_UNSAFE_TOOL_CALLS` | `true` | Whether a model-proposed tool call that deterministic validation rejects is refused. **Not** the enforcement: the tool registry and the SQL validator refuse an invalid call regardless, so this cannot permit one. |
+
+## Hallucination and grounding controls (`guardrails/grounding.py`)
+
+Checks **necessary conditions** for presenting a retrieval-backed answer:
+evidence exists, cleared the confidence floor, is cited, the citations
+name genuinely retrieved sources, and the answer shares vocabulary with
+its evidence. Failing any makes the answer **unverifiable** — a weaker
+and different claim from "false", and the response says "could not
+verify", never "that is wrong".
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `HALLUCINATION_CHECK_ENABLED` | `true` | Whether grounding is assessed at all. With this on and `SOURCE_GROUNDING_REQUIRED` off, a weakly-grounded answer is returned but labelled rather than suppressed. |
+| `SOURCE_GROUNDING_REQUIRED` | `true` | Whether an answer failing the check is **replaced** with a cannot-verify response. Replaced, never rewritten: editing it would leave the citations attached to a claim they no longer support. |
+| `REQUIRE_CITATIONS` | `true` | Whether a retrieval-backed answer must carry at least one citation. |
+| `MIN_SOURCE_CONFIDENCE` | `0.70` | Retrieval confidence floor for treating a source's answer as grounded. |
+| `ALLOW_GENERAL_KNOWLEDGE` | `false` | Whether the model may answer from its own parametric knowledge when retrieval found nothing. `false` is conservative for a platform whose purpose is answering from *this* deployment's data. |
+
+SQL answers are not assessed here: their grounding is established far
+more strongly by having come from the database through a validated
+`SELECT`, which `DataTruthLevel.DATABASE_FACT` already records.
 
 ## Query cost estimation
 
@@ -501,6 +708,42 @@ for how the router/subgraphs work internally.
 | Variable | Default | Purpose |
 |---|---|---|
 | `ENABLE_MULTI_SOURCE_ROUTER` | `false` | Routes questions through `agent.orchestrator.graph.run_orchestrated` instead of calling `agent.graph.run_agent` directly. Off means the orchestrator graph is never even constructed — a pure pass-through. |
+| `ROUTE_TO_ALL_SOURCES` | `true` | With no source picked in the composer, search **every** configured retrieval source — the database, both document collections, and web — instead of letting the LLM choose. Requires `ENABLE_MULTI_SOURCE_ROUTER=true`. |
+
+#### Why `ROUTE_TO_ALL_SOURCES` defaults on
+
+Which sources a question reached used to depend on how well the configured
+local model followed the routing prompt, and that varies by model. Measured
+on *"provide me the sick leave policy"* with both document collections
+available, `llama3.1:8b` picked `documents` **and** `policy`, while
+`qwen2.5-coder:7b` picked `policy` alone — and missed the leave-policy PDF
+sitting in `documents`. An answer this deployment holds should not be
+reachable only on some models.
+
+It is a real trade, not a free win:
+
+- **Slower.** Every unselected question also runs the SQL pipeline (schema
+  retrieval, generation, validation — the slowest source by far) and a web
+  search, whether or not either could help.
+- **Costs web-search calls.** `web` hits a paid third-party API. The
+  session ceiling (`SESSION_EXPENSIVE_SOURCE_LIMIT`) still applies and will
+  drop `web` once a session has spent its budget, so this cannot bill
+  without bound.
+
+Set it to `false` to go back to LLM classification, which is faster and
+cheaper but only as good as the model.
+
+**What it does not do.** `generation` and `media_search` are never fanned
+in — generation *creates* a paid artifact rather than retrieving anything,
+so firing it on every question would attach an unasked-for image or
+approval prompt to ordinary questions. Both stay with the classifier, whose
+picks are unioned with the fan-out rather than replaced by it, so
+"generate an image of a cat" still reaches generation.
+
+It also does not override an explicit choice: picking a source in the
+composer is an instruction, so narrowing to Documents searches Documents
+alone. Attachment-only questions ("Read this image") keep their existing
+deterministic short-circuit and are never fanned out.
 
 ### Document/policy RAG store
 

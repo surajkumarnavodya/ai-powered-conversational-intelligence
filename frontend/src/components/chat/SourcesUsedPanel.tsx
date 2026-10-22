@@ -38,20 +38,39 @@ const SOURCE_CHIP_LABELS: Record<string, string> = {
  * would mean a real user-reported bug: ask to "generate an image of X",
  * the router also picks "web", and the image silently never appears
  * because only the combined text branch rendered. */
-export function SourcesUsedPanel({ state, entryId }: { state: AskResponse; entryId: string }) {
+/** The "Sources: [Database] [Web]" chip row on its own.
+ *
+ * Split out of `SourcesUsedPanel` so `TurnCard` can place it at the foot
+ * of the turn, under the answer actions, instead of above the answer --
+ * attribution reads better after the thing it attributes, and the old
+ * position put a row of chips between the question and the first line of
+ * the response. The labels stay in this file so `SOURCE_CHIP_LABELS` keeps
+ * one owner.
+ *
+ * Returns `null` on an empty `sources_used` exactly as the panel does, so
+ * a turn with no recorded source renders no stray "Sources:" label.
+ */
+export function SourcesUsedChips({ state }: { state: AskResponse }) {
   const { t } = useTranslation()
   if (state.sources_used.length === 0) return null
 
   return (
+    <div className="flex flex-wrap items-center gap-1.5 text-xs text-[var(--muted-foreground)]">
+      <span>{t('chat.sources')}:</span>
+      {state.sources_used.map((source) => (
+        <Badge key={source} tone="accent">
+          {SOURCE_CHIP_LABELS[source] ?? source}
+        </Badge>
+      ))}
+    </div>
+  )
+}
+
+export function SourcesUsedPanel({ state, entryId }: { state: AskResponse; entryId: string }) {
+  if (state.sources_used.length === 0) return null
+
+  return (
     <div className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-center gap-1.5 text-xs text-[var(--muted-foreground)]">
-        <span>{t('chat.sources')}:</span>
-        {state.sources_used.map((source) => (
-          <Badge key={source} tone="accent">
-            {SOURCE_CHIP_LABELS[source] ?? source}
-          </Badge>
-        ))}
-      </div>
       {state.synthesized_answer ? (
         <Markdown>{state.synthesized_answer}</Markdown>
       ) : (

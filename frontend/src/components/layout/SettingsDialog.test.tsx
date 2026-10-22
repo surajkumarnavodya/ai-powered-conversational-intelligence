@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useRef, useState } from 'react'
 import { describe, expect, it } from 'vitest'
+import { useSettingsStore } from '@/store/settingsStore'
 import { SettingsDialog } from './SettingsDialog'
 
 /** Regression coverage for the focus-restoration bug found during the
@@ -83,5 +84,37 @@ describe('SettingsDialog', () => {
 
     const dialog = screen.getByRole('dialog')
     expect(dialog.contains(document.activeElement)).toBe(true)
+  })
+
+  // Wiring check for the typography controls: `FontSettings.test.tsx`
+  // covers their behavior in isolation, but only this proves they are
+  // actually reachable in the Appearance section of the real dialog,
+  // alongside the theme/accent/language controls they sit with.
+  it('offers both font controls in the Appearance section, applied live', async () => {
+    renderHarness()
+    await userEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByText('Appearance')).toBeInTheDocument()
+
+    const appFont = within(dialog).getByLabelText('Application font')
+    const codeFont = within(dialog).getByLabelText('Code & SQL font')
+
+    await userEvent.selectOptions(appFont, 'geist')
+    expect(document.documentElement.style.getPropertyValue('--font-sans')).toContain(
+      'Geist Variable',
+    )
+
+    await userEvent.selectOptions(codeFont, 'geist-mono')
+    expect(document.documentElement.style.getPropertyValue('--font-mono')).toContain(
+      'Geist Mono Variable',
+    )
+
+    // The pre-existing appearance controls are untouched by the change.
+    expect(within(dialog).getByText('Theme')).toBeInTheDocument()
+    expect(within(dialog).getByText('Accent color')).toBeInTheDocument()
+    expect(within(dialog).getByText('Language')).toBeInTheDocument()
+
+    useSettingsStore.getState().resetFonts()
   })
 })

@@ -56,7 +56,9 @@ action).
 ## Content
 
 Renders the pre-existing `HistorySettingsSection` (Appearance/theme/
-accent/font/language, per-database connection status + test/refresh
+accent/application font/code-and-SQL font + live preview + reset/language
+— see `docs/ui-design-system.md`'s Typography section, per-database
+connection status + test/refresh
 actions, discovered-tables list, AI-insight and voice-mode toggles) inside
 the scrollable content region. No duplicate Theme/Logout/Profile controls
 exist here — those are owned exclusively by `UserMenu`.

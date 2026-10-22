@@ -179,13 +179,18 @@ a `None` tenant — every one denies, never allows.
 - **No third-party requests carry the share token**: the frontend never
   constructs an absolute URL server-side (avoiding any `Host`-header-trust
   issue); `robots: noindex, nofollow` is set app-wide in `index.html`.
-  **Known, disclosed limitation**: the shared-conversation page still loads
-  Google Fonts via the same static `index.html` every other page uses —
-  the token itself is not leaked via `Referer` (modern browsers only send
-  the origin cross-origin under `strict-origin-when-cross-origin`, and this
-  page additionally sets `no-referrer`), but a truly zero-third-party
-  bearer-link page would need a dedicated minimal HTML entry point, out of
-  scope for this pass.
+  ~~**Known, disclosed limitation**: the shared-conversation page still
+  loads Google Fonts via the same static `index.html` every other page
+  uses.~~ **Closed** when the font picker moved to self-hosted
+  `@fontsource-variable` assets (`frontend/src/lib/fonts.ts`): the
+  `<link>` to `fonts.googleapis.com` was removed from `index.html`, and
+  `api/main.py::_default_csp` no longer grants `fonts.googleapis.com` /
+  `fonts.gstatic.com` at all, so the page now makes **no** third-party
+  request of any kind. Pinned by
+  `tests/test_security_headers.py::test_csp_grants_no_third_party_font_origin`.
+  The `Referer` reasoning that made this low-severity in the first place
+  (`no-referrer` on this page, plus `strict-origin-when-cross-origin`
+  elsewhere) is unchanged and still applies.
 
 ## Source projection (`identity/repositories/shares.py::build_share_projection`)
 

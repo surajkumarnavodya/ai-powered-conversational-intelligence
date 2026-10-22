@@ -950,7 +950,7 @@ export function ImageEditor({
               placeholder={t('image.aiPromptPlaceholder')}
               aria-label={t('image.aiPromptLabel')}
               disabled={!aiEditingAvailable}
-              className="h-9 flex-1 rounded-md border border-[var(--border)] bg-[var(--input)] px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:opacity-50"
+              className="h-9 flex-1 rounded-md border border-[var(--border-control)] bg-[var(--input)] px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:opacity-50"
             />
             <Button
               variant="secondary"
