@@ -122,6 +122,16 @@
      This value clears 3:1 (WCAG 1.4.11) on --background, --card, --muted
      and --input in this theme, whatever accent the user picks. */
   --focus-ring: #4338ca;
+  /* The ring drawn immediately outside a circular profile picture.
+     Deliberately white in BOTH themes rather than following --border:
+     its whole job is to separate a photograph from the surface behind it,
+     and a photo's own edge pixels are arbitrary. On the dark header
+     (#100e1f) that reads as a crisp outline; on the light header
+     (#ffffff) it is invisible, which is harmless -- there the avatar
+     already sits on white and needs no separation. A token rather than
+     `ring-white` so the choice is stated in one place and themeable
+     (CLAUDE.md 6.2: Tailwind tokens, never raw colors at call sites). */
+  --avatar-ring: #ffffff;
 
   /* Message-role surfaces -- pulled out of ad hoc per-component classes so
      TurnCard/ChatMessage read intent ("this is the user's turn") from one
@@ -224,6 +234,10 @@
      here that is near-black. Clears 3:1 on --background, --popover-surface,
      --input and --muted (worst case 5.78:1). */
   --focus-ring: #818cf8;
+  /* Same white as the light theme -- see that declaration. Repeated
+     rather than inherited so a future change to either theme is a
+     deliberate, visible edit in that theme's own block. */
+  --avatar-ring: #ffffff;
   --muted: #1a1830;
   --muted-foreground: #a1a1c2;
   --scrollbar-thumb: rgb(161 161 194 / 0.3);
@@ -298,6 +312,7 @@
   --color-danger: var(--danger);
   --color-danger-strong: var(--danger-strong);
   --color-focus-ring: var(--focus-ring);
+  --color-avatar-ring: var(--avatar-ring);
   --color-user-message-bg: var(--user-message-bg);
   --color-user-message-foreground: var(--user-message-foreground);
   --color-assistant-message-bg: var(--assistant-message-bg);

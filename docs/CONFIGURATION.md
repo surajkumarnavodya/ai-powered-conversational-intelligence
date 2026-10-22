@@ -1032,7 +1032,7 @@ same limitation chat history and artifacts already carry.
 | `PROFILE_PICTURE_MAX_BYTES` | `5242880` (5MB) | Upload size cap, checked on the real byte length before any decode. Deliberately tighter than `MAX_ATTACHMENT_IMAGE_BYTES` — an avatar is stored on the account row forever and only ever displayed at 32px. |
 | `PROFILE_PICTURE_SIZE_PX` | `256` | Edge of the stored square. One number, not a width/height pair: the stored image is always square, so a circular avatar crops to a circle inscribed in it. |
 | `PROFILE_PICTURE_VISION_CHECK_ENABLED` | `true` | Whether an uploaded picture is checked by a vision model for being a clear, appropriately framed photo before it is stored. Needs `MEDIA_VISION_MODEL`; with none configured there is nothing to check with. |
-| `PROFILE_PICTURE_VISION_TIMEOUT_SECONDS` | `60.0` | Budget for that one vision call, far below `OLLAMA_REQUEST_TIMEOUT_SECONDS` because a person is waiting on an upload dialog. Sized from measurement: on the reference machine (T1200, 4GB) the configured `qwen3.8:27b` judged a 256×256 image in 33.4s and 37.5s across two runs, and judged it *correctly*. Lower it for a smaller vision model such as `llava`. |
+| `PROFILE_PICTURE_VISION_TIMEOUT_SECONDS` | `120.0` | Budget for that one vision call, far below `OLLAMA_REQUEST_TIMEOUT_SECONDS` because a person is waiting on an upload dialog. Sized from measurement, then corrected once a live upload proved the first value too tight — see below. Lower it for a smaller vision model such as `llava`. |
 
 **Accepted formats are not configurable**: JPG, PNG and WebP, by
 extension *and* magic bytes
@@ -1049,6 +1049,28 @@ response says so — `ProfilePictureResponse.vision_checked` is `false` and
 that rather than implying a review happened. Blocking somebody from
 setting an avatar because a local model is busy would be the worse
 outcome.
+
+**Cold starts are what the budget has to cover.** Measured on the
+reference machine (T1200, 4GB) with the configured `qwen3.8:27b`:
+
+| State | Real suitability call |
+|---|---|
+| Warm | **36.2s**, correct verdict (approved a genuine head-and-shoulders portrait) |
+| Cold | **over 60s** — hit by an actual upload |
+
+`ollama ps` explains the gap: that model is **18GB running 98% on CPU**
+(a 4GB GPU cannot hold it), and Ollama's default `OLLAMA_KEEP_ALIVE` is
+5 minutes — so the first upload after a few idle minutes pays a full
+18GB load from disk before any inference starts. A 60s budget therefore
+skipped the check on exactly the upload someone is most likely to make:
+the first one. Hence the 120s default, which is a ceiling rather than a
+cost — a warm check still returns in about 36s.
+
+**The real lever is a smaller vision model.** `MEDIA_VISION_MODEL` is
+shared with media captioning and attachment Q&A, but something like
+`llava` (4.7GB) fits the GPU and would turn this check from tens of
+seconds into a few; a deployment that does that should lower the timeout
+to match.
 
 **Moderation (`moderation/gate.py`) is deliberately not in this path.**
 An avatar contributes no chunk to any corpus and is never retrieved or

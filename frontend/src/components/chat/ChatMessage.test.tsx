@@ -2,7 +2,15 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useLocalAuthStore } from '@/store/localAuthStore'
+
+// See ProfilePictureSection.test.tsx: the avatar is fetched with a bearer
+// token and rendered from a blob URL, so that is what reaches `src`.
+vi.mock('@/hooks/useAvatarObjectUrl', () => ({
+  useAvatarObjectUrl: (url: string | null | undefined) =>
+    url ? `blob:mock/${encodeURIComponent(url)}` : null,
+}))
 import { ChatMessage } from './ChatMessage'
+
 
 /** Feature 010 (Edit and Resubmit Question).
  *
@@ -326,7 +334,9 @@ describe('ChatMessage', () => {
 
       const { container } = render(<ChatMessage message={{ role: 'user', content: 'Hi' }} />)
 
-      const img = container.querySelector('img[src="/auth/me/avatar?v=5"]')
+      const img = container.querySelector(
+        `img[src="blob:mock/${encodeURIComponent('/auth/me/avatar?v=5')}"]`,
+      )
       expect(img).toBeInTheDocument()
       // Cover, not contain: the stored image is already a square the
       // server centre-cropped, so it must fill the circle rather than be
@@ -339,7 +349,7 @@ describe('ChatMessage', () => {
 
       const { container } = render(<ChatMessage message={{ role: 'user', content: 'Hi' }} />)
 
-      expect(container.querySelector('img[src^="/auth/me/avatar"]')).not.toBeInTheDocument()
+      expect(container.querySelector('img[src^="blob:mock/"]')).not.toBeInTheDocument()
     })
 
     it('never puts the user picture on an assistant message', () => {
@@ -353,7 +363,7 @@ describe('ChatMessage', () => {
       )
 
       expect(container.querySelector('img[src="/favicon.png"]')).toBeInTheDocument()
-      expect(container.querySelector('img[src^="/auth/me/avatar"]')).not.toBeInTheDocument()
+      expect(container.querySelector('img[src^="blob:mock/"]')).not.toBeInTheDocument()
     })
 
     it('keeps the default icon for a viewer who is not signed in', () => {
@@ -363,7 +373,7 @@ describe('ChatMessage', () => {
 
       const { container } = render(<ChatMessage message={{ role: 'user', content: 'Hi' }} />)
 
-      expect(container.querySelector('img[src^="/auth/me/avatar"]')).not.toBeInTheDocument()
+      expect(container.querySelector('img[src^="blob:mock/"]')).not.toBeInTheDocument()
     })
   })
 })

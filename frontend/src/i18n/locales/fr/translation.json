@@ -543,6 +543,7 @@
     "checking": "Vérification de la photo...",
     "notChecked": "Enregistrée, mais la vérification automatique n'a pas eu lieu ({{reason}}).",
     "uploadFailed": "Cette image n'a pas pu être importée. Veuillez réessayer.",
-    "removeFailed": "Cette image n'a pas pu être supprimée. Veuillez réessayer."
+    "removeFailed": "Cette image n'a pas pu être supprimée. Veuillez réessayer.",
+    "removeConfirm": "Supprimer votre photo de profil ? Vous pourrez en importer une autre à tout moment."
   }
 }

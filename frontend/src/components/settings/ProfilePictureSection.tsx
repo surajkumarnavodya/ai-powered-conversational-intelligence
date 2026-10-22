@@ -2,6 +2,8 @@ import { Loader2, Trash2, Upload, User } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
+import { useAvatarObjectUrl } from '@/hooks/useAvatarObjectUrl'
+import { cn } from '@/lib/utils'
 import { ApiError } from '@/lib/api'
 import { removeProfilePicture, uploadProfilePicture } from '@/lib/identityApi'
 import { useLocalAuthStore } from '@/store/localAuthStore'
@@ -38,10 +40,21 @@ export function ProfilePictureSection() {
   // automated suitability check. Shown as information, not as a problem:
   // the upload succeeded (see identity/profile_picture.py's fail-open note).
   const [notice, setNotice] = useState<string | null>(null)
+  // Called before the `!user` early return: a hook cannot be skipped on
+  // some renders without breaking React's hook ordering.
+  const storedAvatarUrl = useLocalAuthStore((state) => state.user?.avatar_url ?? null)
+  // The authenticated fetch, for the same reason ChatMessage needs it:
+  // `GET /auth/me/avatar` requires a bearer token an `<img>` cannot send.
+  const avatarUrl = useAvatarObjectUrl(storedAvatarUrl)
+  // Whether a picture *exists* is the server's `avatar_url`; whether its
+  // bytes have arrived is the blob URL. The controls follow the first --
+  // gating them on the blob made Replace/Remove flip back to Upload for
+  // as long as the fetch was in flight, and permanently if it failed.
+  const hasPicture = storedAvatarUrl !== null
 
   if (!user) return null
 
-  const avatarUrl = user.avatar_url ?? null
+
 
   async function handleFile(file: File) {
     setBusy(true)
@@ -70,6 +83,17 @@ export function ProfilePictureSection() {
   }
 
   async function handleRemove() {
+    // `window.confirm` rather than a bespoke dialog: `Sidebar.tsx` already
+    // guards conversation deletion exactly this way
+    // (`history.deleteConfirm`), and a second confirmation mechanism for
+    // the same kind of action would be two answers to one question. The
+    // check sits before `setBusy` so declining leaves no spinner behind.
+    //
+    // Removal is not catastrophic -- the picture can be uploaded again --
+    // but it is destructive and one click away from "Replace", which is
+    // the mis-click this prevents.
+    if (!window.confirm(t('profilePicture.removeConfirm'))) return
+
     setBusy(true)
     setError(null)
     setNotice(null)
@@ -89,7 +113,14 @@ export function ProfilePictureSection() {
         {t('profilePicture.title')}
       </p>
       <div className="flex items-center gap-3">
-        <span className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--muted)] text-[var(--muted-foreground)]">
+        <span
+          className={cn(
+            'flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--muted)] text-[var(--muted-foreground)]',
+            // The preview is what somebody checks before keeping a photo,
+            // so it has to show the same ring the real avatars will have.
+            avatarUrl && 'ring-2 ring-[var(--avatar-ring)]',
+          )}
+        >
           {avatarUrl ? (
             <img
               src={avatarUrl}
@@ -113,9 +144,9 @@ export function ProfilePictureSection() {
               ) : (
                 <Upload className="h-3.5 w-3.5" aria-hidden="true" />
               )}
-              {avatarUrl ? t('profilePicture.replace') : t('profilePicture.upload')}
+              {hasPicture ? t('profilePicture.replace') : t('profilePicture.upload')}
             </Button>
-            {avatarUrl && (
+            {hasPicture && (
               <Button
                 variant="secondary"
                 size="sm"
