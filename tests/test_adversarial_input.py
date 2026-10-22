@@ -28,7 +28,7 @@ from pathlib import Path
 import pytest
 
 from agent.exceptions import OffTopicQuestionError
-from agent.input_guard import check_input, rejection_message
+from agent.input_guard import NO_RELEVANT_DATA_MESSAGE, check_input, rejection_message
 from agent.nodes import generate_sql_node, sanitize_input_node, validate_sql_node
 from agent.sql_validator import validate_sql
 from agent.state import AgentState
@@ -703,3 +703,37 @@ class TestOffTopicModelBackstop:
         assert result["status"] == "rejected"
         assert result["rejection_reason"] == "off_topic"
         assert result["rejection_message"] is not None
+
+    def test_the_backstop_does_not_claim_the_question_was_off_topic(self, monkeypatch):
+        """Reported 2026-10-22: "Top selling products." was answered "I can
+        only answer questions about this database."
+
+        The root cause was retrieval (see
+        `embeddings.retriever._select_by_relevance`'s measure guard), but
+        the message compounded it: the model reaches this backstop after
+        being shown a schema it could not map the question onto, which is
+        a coverage miss far more often than a genuinely off-topic
+        question. Telling the user their database question was not about
+        the database sends them off rephrasing something that was fine.
+
+        The pre-filter's own message is unchanged -- it matched a positive
+        off-topic signal and can say so. Both remain fixed module
+        constants, never built from the question (CLAUDE.md 5.5).
+        """
+
+        def _raise(**kwargs):
+            raise OffTopicQuestionError("model declined")
+
+        monkeypatch.setattr("agent.nodes.generate_sql_from_llm", _raise)
+
+        result = generate_sql_node(
+            {
+                "question": "Top selling products.",
+                "schema_context_text": "CREATE TABLE DimProductSubcategory (...);",
+                "error_history": [],
+                "retry_count": 0,
+            }
+        )
+
+        assert result["rejection_message"] == NO_RELEVANT_DATA_MESSAGE
+        assert "I can only answer questions about" not in result["rejection_message"]

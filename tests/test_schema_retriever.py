@@ -21,7 +21,13 @@ from unittest.mock import MagicMock
 import pytest
 
 from agent.exceptions import SchemaRetrievalError
-from embeddings.retriever import retrieve_relevant_schema
+from agent.state import TableSchema
+from embeddings.retriever import (
+    _MEASURE_INTENT_PATTERN,
+    _select_by_relevance,
+    _table_has_measure_column,
+    retrieve_relevant_schema,
+)
 
 
 class TestRetrieveRelevantSchema:
@@ -130,8 +136,17 @@ class TestAdaptiveSelection:
         mock_collection.count.return_value = 6
         mock_collection.query.return_value = {
             "documents": [
+                # The winner carries a real measure column, which is what
+                # makes trimming to it alone safe for a "total revenue"
+                # question -- see `_select_by_relevance`'s measure guard,
+                # and `test_a_measure_question_is_not_trimmed_to_a_table_`
+                # `without_a_measure` below for the opposite case.
                 [
-                    "CREATE TABLE FactInternetSales (...)",
+                    "CREATE TABLE FactInternetSales (\n"
+                    "    SalesOrderNumber NVARCHAR(20) PRIMARY KEY,\n"
+                    "    ProductKey INTEGER NOT NULL,\n"
+                    "    SalesAmount MONEY,\n"
+                    ");",
                     "CREATE TABLE DimPromotion (...)",
                     "CREATE TABLE DimCurrency (...)",
                     "CREATE TABLE DimSalesReason (...)",
@@ -240,6 +255,260 @@ class TestAdaptiveSelection:
         names = [t["table_name"] for t in tables]
         assert "DimSalesTerritory" in names
         assert "DimEmployee" in names
+
+    # --- The measure guard -----------------------------------------------
+    #
+    # Reported 2026-10-22: "Top selling products." answered "I can only
+    # answer questions about this database." Measured against the real
+    # AdventureWorks index, retrieval had trimmed to `DimProductSubcategory`
+    # alone -- a dimension with no sales measure in it -- so the model was
+    # handed a schema that genuinely could not answer the question and
+    # correctly returned the off-topic sentinel. Six phrasings of the same
+    # question behaved identically; "Top selling products" *without* the
+    # trailing period did not, because the period nudged the embedding
+    # enough to change the lexical-match count. A one-character difference
+    # flipping a question between answerable and refused is what these
+    # tests exist to prevent recurring.
+
+    _DIMENSION_DDL = (
+        "CREATE TABLE DimProductSubcategory (\n"
+        "    ProductSubcategoryKey INTEGER PRIMARY KEY IDENTITY,\n"
+        "    ProductSubcategoryAlternateKey INTEGER,\n"
+        "    EnglishProductSubcategoryName NVARCHAR(50) NOT NULL,\n"
+        "    ProductCategoryKey INTEGER,\n"
+        "    FOREIGN KEY (ProductCategoryKey) REFERENCES DimProductCategory (ProductCategoryKey)\n"
+        ");"
+    )
+    _FACT_DDL = (
+        "CREATE TABLE FactResellerSales (\n"
+        "    SalesOrderNumber NVARCHAR(20) PRIMARY KEY,\n"
+        "    ProductKey INTEGER NOT NULL,\n"
+        "    OrderQuantity SMALLINT,\n"
+        "    SalesAmount MONEY\n"
+        ");"
+    )
+
+    def _decisive_dimension_winner(self, monkeypatch, winner_ddl):
+        """A decisive single winner, with `winner_ddl` as its DDL.
+
+        The gap (0.62 vs 0.22 similarity) is well past
+        `_DOMINANT_GAP_THRESHOLD`, and only one candidate earns a lexical
+        match -- so every *other* reason to keep the full top_k is absent
+        and the measure guard is the only thing that can act. That is what
+        makes these assertions non-vacuous.
+        """
+        mock_collection = MagicMock()
+        mock_collection.count.return_value = 8
+        mock_collection.query.return_value = {
+            "documents": [
+                [
+                    winner_ddl,
+                    "CREATE TABLE DimReseller (...)",
+                    "CREATE TABLE DimPromotion (...)",
+                    self._FACT_DDL,
+                ]
+            ],
+            "metadatas": [
+                [
+                    {"table_name": "DimProductSubcategory", "fk_targets": ""},
+                    {"table_name": "DimReseller", "fk_targets": ""},
+                    {"table_name": "DimPromotion", "fk_targets": ""},
+                    {"table_name": "FactResellerSales", "fk_targets": ""},
+                ]
+            ],
+            "distances": [[0.38, 0.78, 0.80, 0.82]],
+        }
+        monkeypatch.setattr("embeddings.retriever.get_chroma_client", lambda settings: MagicMock())
+        monkeypatch.setattr(
+            "embeddings.retriever.get_collection",
+            lambda client, settings, db_name: mock_collection,
+        )
+        return mock_collection
+
+    @pytest.mark.parametrize(
+        "question",
+        [
+            "Top selling products.",
+            "Top selling products",
+            "What are the top selling products?",
+            "Show me the top 10 selling products",
+            "Best selling products",
+            "Which products sold the most?",
+            "Worst selling products",
+            "Most popular products",
+            "Most profitable products",
+            "Highest revenue products",
+        ],
+    )
+    def test_a_measure_question_is_not_trimmed_to_a_table_without_a_measure(
+        self, monkeypatch, question
+    ):
+        """Every phrasing of the reported failure keeps the fact table."""
+        self._decisive_dimension_winner(monkeypatch, self._DIMENSION_DDL)
+
+        tables = retrieve_relevant_schema(
+            question, db_name="testdb", settings=self._mock_settings()
+        )
+
+        names = [t["table_name"] for t in tables]
+        assert names[0] == "DimProductSubcategory", "the decisive winner still ranks first"
+        assert "FactResellerSales" in names, (
+            f"{question!r} asks for a measure that DimProductSubcategory cannot "
+            "supply, so the fact table must survive selection"
+        )
+
+    def test_a_measure_question_still_trims_when_the_winner_has_the_measure(self, monkeypatch):
+        """The guard is narrow: a decisive *fact* winner is still trusted.
+
+        Without this, the guard would widen every measure question back to
+        `top_k` and undo the precision the adaptive selection exists for.
+        """
+        self._decisive_dimension_winner(monkeypatch, self._FACT_DDL)
+
+        tables = retrieve_relevant_schema(
+            "Top selling products", db_name="testdb", settings=self._mock_settings()
+        )
+
+        assert len(tables) == 1
+
+    def _candidates(self, winner_ddl):
+        """Two candidates with a decisive gap, winner first."""
+        return [
+            TableSchema(table_name="DimProductSubcategory", ddl=winner_ddl, similarity_score=0.62),
+            TableSchema(table_name="FactResellerSales", ddl=self._FACT_DDL, similarity_score=0.22),
+        ]
+
+    def test_the_branch_trims_a_lookup_question_even_without_a_measure(self):
+        """No measure intent, so the guard never engages -- even though
+        this winner has no measure column at all.
+
+        Called directly rather than through `retrieve_relevant_schema`
+        because most natural lookup phrasings earn two lexical matches,
+        which the *pre-existing* guard already acts on; that would make
+        the assertion pass without the measure guard being involved at
+        all. Here `lexically_matched_count=1`, so the measure guard is
+        provably the only thing that can decide.
+        """
+        selected = _select_by_relevance(
+            self._candidates(self._DIMENSION_DDL), 4, 1, "List the product subcategories"
+        )
+
+        assert [t["table_name"] for t in selected] == ["DimProductSubcategory"]
+
+    def test_the_branch_keeps_top_k_for_a_measure_question(self):
+        """The same inputs, changing only the question, take the other path."""
+        selected = _select_by_relevance(
+            self._candidates(self._DIMENSION_DDL), 4, 1, "Top selling products."
+        )
+
+        assert [t["table_name"] for t in selected] == [
+            "DimProductSubcategory",
+            "FactResellerSales",
+        ]
+
+    def test_the_branch_is_unchanged_when_no_question_is_passed(self):
+        """`question` defaults to "", which keeps any caller that omits it
+        on exactly its previous behavior."""
+        selected = _select_by_relevance(self._candidates(self._DIMENSION_DDL), 4, 1)
+
+        assert [t["table_name"] for t in selected] == ["DimProductSubcategory"]
+
+
+class TestTableHasMeasureColumn:
+    """`_table_has_measure_column` decides whether a table could supply the
+    quantity a ranking/aggregate question asks for. A surrogate key is the
+    most common numeric column in a star schema's dimensions, so counting
+    one as a measure would make the check vacuous."""
+
+    def test_a_money_column_is_a_measure(self):
+        assert _table_has_measure_column(
+            "CREATE TABLE F (\n    ProductKey INTEGER NOT NULL,\n    SalesAmount MONEY\n);"
+        )
+
+    def test_a_quantity_column_is_a_measure(self):
+        assert _table_has_measure_column(
+            "CREATE TABLE F (\n    ProductKey INTEGER,\n    OrderQuantity SMALLINT\n);"
+        )
+
+    def test_a_table_of_keys_and_names_is_not(self):
+        assert not _table_has_measure_column(
+            "CREATE TABLE D (\n"
+            "    ProductSubcategoryKey INTEGER PRIMARY KEY IDENTITY,\n"
+            "    EnglishProductSubcategoryName NVARCHAR(50) NOT NULL,\n"
+            "    ProductCategoryKey INTEGER\n"
+            ");"
+        )
+
+    def test_a_numeric_primary_key_alone_is_not_a_measure(self):
+        assert not _table_has_measure_column(
+            "CREATE TABLE D (\n    CurrencyKey INTEGER PRIMARY KEY,\n    CurrencyName NVARCHAR(50)\n);"
+        )
+
+    def test_a_foreign_key_clause_is_not_read_as_a_column(self):
+        assert not _table_has_measure_column(
+            "CREATE TABLE D (\n"
+            "    CategoryKey INTEGER PRIMARY KEY,\n"
+            "    FOREIGN KEY (CategoryKey) REFERENCES DimProductCategory (CategoryKey)\n"
+            ");"
+        )
+
+    def test_an_unparseable_ddl_reports_no_measure(self):
+        """Fails toward recall, never toward a refusal.
+
+        An empty or stub DDL yields "no measure", which makes
+        `_select_by_relevance` keep the full top_k rather than trim. Per
+        CLAUDE.md 4.2 an accuracy aid fails open: the cost is a slightly
+        larger prompt, where the opposite default would reproduce exactly
+        the refusal this guard was added to fix.
+        """
+        assert not _table_has_measure_column("CREATE TABLE FactInternetSales (...)")
+        assert not _table_has_measure_column("")
+
+
+class TestMeasureIntentPattern:
+    """Which questions are treated as asking for a measure."""
+
+    @pytest.mark.parametrize(
+        "question",
+        [
+            "Top selling products.",
+            "Best selling products",
+            "Which products sold the most?",
+            "Worst selling products",
+            "Most popular products",
+            "Highest revenue products",
+            "Total sales by product",
+            "Average order value",
+            "Top 5 customers by revenue",
+            "Most profitable products",
+            "Sales ranking by territory",
+            "Lowest margin categories",
+            # Added after a 270-phrasing sweep across lead x subject x
+            # punctuation found "Biggest products" as the only remaining
+            # measure question retrieving no table with a measure in it.
+            "Biggest products",
+            "Greatest revenue by region",
+            "Leading products",
+            "Fewest orders by month",
+            "Maximum order value",
+            "Minimum unit price",
+        ],
+    )
+    def test_measure_questions_match(self, question):
+        assert _MEASURE_INTENT_PATTERN.search(question)
+
+    @pytest.mark.parametrize(
+        "question",
+        [
+            "List all product categories",
+            "Show me the product subcategories",
+            "What currencies are available?",
+            "Show employee names",
+            "Which cities are in the geography table?",
+        ],
+    )
+    def test_plain_lookups_do_not_match(self, question):
+        assert not _MEASURE_INTENT_PATTERN.search(question)
 
 
 class TestLexicalBonus:

@@ -761,6 +761,29 @@ contract lists its specific limitations; these are the cross-cutting ones.
   working tree and reproducing identically. Not yet attributed to a
   specific leaking test.
 
+- **The local 7B model still refuses some answerable terse questions.**
+  Measured 2026-10-22, after the retrieval fix in
+  `embeddings.retriever._select_by_relevance` (see
+  [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)'s `retrieve_schema_node`
+  entry): of six phrasings of "top selling products", four now answer
+  correctly, while **"Worst selling products" and "Most popular
+  products" still end in `rejection_reason=off_topic`**. This is no
+  longer a retrieval problem -- the generation prompt verifiably contains
+  `FactResellerSales` and `SalesAmount` (19,494 chars, one model call),
+  and `qwen2.5-coder:7b` returns the literal string `NOT_A_QUERY`
+  anyway. Deterministic across repeated runs. It is the model declining a
+  question it could answer, so the levers are `OLLAMA_MODEL` and the
+  generation system prompt -- and that prompt is benchmark-pinned (§12),
+  so changing it needs the benchmark re-run, which this machine's ~80s
+  per question makes a deliberate, separate exercise. **Do not "fix" this
+  by retrying the off-topic sentinel**: `agent.nodes.generate_sql_node`
+  deliberately never retries it (there is no error to feed back), and
+  turning a refusal path into a retry path would both cost a second full
+  generation cycle and weaken a control. Note also that SQL *quality* on
+  these terse questions is uneven even when they succeed -- one phrasing
+  returned a bare product list with no measure column, another a single
+  row -- which is the same model-capacity limitation, not a pipeline bug.
+
 - **Four CI steps are non-blocking** by deliberate, dated decision:
   `gitleaks`, `mypy` (§5.7), the Trivy container scan — report-only because
   the action only fails a step when its `exit-code` input is set, which it

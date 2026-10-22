@@ -152,6 +152,35 @@ is also the re-entry point on a `missing_reference` execution failure — see
 re-routed, since a retry must keep targeting the same database the failed
 attempt did.
 
+The retrieved count is adaptive, not a fixed `SCHEMA_TOP_K`: when one
+candidate decisively outscores the runner-up, the set is trimmed to that
+one table, which is what keeps a simple single-table question from being
+padded with filler. Three conditions withhold that trim, and the third is
+the one a star schema makes routine:
+
+1. fewer than two candidates independently earned a lexical match (two
+   literal name matches is itself evidence of a multi-table question);
+2. no decisive gap exists in the first place;
+3. **the question asks for a measure the lone winner cannot supply** --
+   a ranking, superlative or aggregate (`_MEASURE_INTENT_PATTERN`) landing
+   on a table with no non-key numeric column (`_table_has_measure_column`).
+
+Condition 3 was added 2026-10-22 after a reported failure. Measured
+against the real AdventureWorks index, "Top selling products.", "Best
+selling products", "Which products sold the most?", "Worst selling
+products", "Most popular products" and "Most profitable products" each
+trimmed to `DimProductSubcategory` alone -- a dimension holding only keys
+and name columns. A dimension's DDL is short and entirely on-topic, so it
+outscores every fact table on exactly the questions that need one.
+Nothing downstream could recover: keyword expansion matches table *names*
+("products" is not a substring of "DimProduct") and FK-bridge expansion
+only joins disconnected islands, of which a single table has none. The
+model was handed a schema that genuinely could not answer the question,
+correctly emitted its off-topic sentinel, and the user saw a refusal. The
+measure check keeps the fix narrow: "Top products by sales" already ranks
+`FactResellerSales` first, a table that *does* carry measures, so that
+decisive win is still trusted and still trimmed.
+
 **`retrieve_golden_examples_node`** — looks up human-approved (question,
 SQL) pairs a user previously saved via the UI's thumbs-up feedback (see
 "Golden-dataset feedback loop" below), from that database's own per-database

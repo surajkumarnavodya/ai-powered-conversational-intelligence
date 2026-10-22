@@ -1443,9 +1443,24 @@ def generate_sql_node(state: AgentState) -> dict[str, Any]:
         # pre-filter should catch the vast majority of these before a
         # generation cycle is ever spent. Reaching here means the model
         # itself judged the question unanswerable as SQL -- routed to the
-        # same "rejected" terminal state and standardized message as the
-        # pre-filter, so the UI has one rejection path regardless of which
-        # layer caught it. Never retried (there's no "fix" to feed back).
+        # same "rejected" terminal state as the pre-filter, so the UI has
+        # one rejection path regardless of which layer caught it. Never
+        # retried (there's no "fix" to feed back).
+        #
+        # The *message*, though, is deliberately not the pre-filter's. The
+        # two layers know different things. The pre-filter matched a
+        # positive off-topic signal in the question itself, so "I can only
+        # answer questions about <db>" is accurate there. Here the model
+        # was shown the retrieved schema and could not map the question
+        # onto it -- which, measured 2026-10-22, is overwhelmingly a
+        # retrieval-coverage miss rather than an off-topic question. Saying
+        # "I can only answer questions about this database" to someone who
+        # asked "Top selling products." is simply false, and it sends them
+        # off rephrasing a question that was fine. NO_RELEVANT_DATA_MESSAGE
+        # is this repo's existing constant for exactly that situation (it
+        # is what an empty schema retrieval already reports), so this
+        # reuses it rather than adding a third way to say it. Still a fixed
+        # module constant, never built from the question -- CLAUDE.md 5.5.
         logger.warning(
             "[generate_sql] attempt %d: model declined (off-topic): %s", attempt_number, exc
         )
@@ -1459,7 +1474,7 @@ def generate_sql_node(state: AgentState) -> dict[str, Any]:
         return {
             "status": "rejected",
             "rejection_reason": "off_topic",
-            "rejection_message": rejection_message("off_topic", db_name=settings.db_name),
+            "rejection_message": NO_RELEVANT_DATA_MESSAGE,
             "attempt_history": [record],
         }
     except (OllamaUnavailableError, MalformedLLMOutputError) as exc:
