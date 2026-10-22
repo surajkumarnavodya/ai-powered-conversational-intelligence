@@ -183,9 +183,7 @@ def ensure_schema(engine: Engine) -> None:
     """
     with engine.begin() as conn:
         conn.execute(text("IF SCHEMA_ID('rag') IS NULL EXEC('CREATE SCHEMA rag')"))
-        conn.execute(
-            text(
-                """
+        conn.execute(text("""
                 IF OBJECT_ID('rag.documents') IS NULL
                 CREATE TABLE rag.documents (
                     id UNIQUEIDENTIFIER NOT NULL CONSTRAINT DF_rag_documents_id DEFAULT NEWID(),
@@ -204,53 +202,37 @@ def ensure_schema(engine: Engine) -> None:
                     restricted_roles NVARCHAR(500) NULL,
                     CONSTRAINT PK_rag_documents PRIMARY KEY (id)
                 )
-                """
-            )
-        )
+                """))
         # Migration for a `rag.documents` table created before `pdf_bytes`
         # existed -- a fresh CREATE TABLE above already includes it, so this
         # is a no-op on a new install and only fires once per pre-existing
         # deployment (see `enable_pdf_download`'s docstring in
         # config/settings.py for what this column is for).
-        conn.execute(
-            text(
-                """
+        conn.execute(text("""
                 IF NOT EXISTS (
                     SELECT 1 FROM sys.columns
                     WHERE object_id = OBJECT_ID('rag.documents') AND name = 'pdf_bytes'
                 )
                 ALTER TABLE rag.documents ADD pdf_bytes VARBINARY(MAX) NULL
-                """
-            )
-        )
+                """))
         # 2026 Phase 3 security review: same idempotent-migration pattern
         # as pdf_bytes above, for the two new document-access-control
         # columns (see DocumentRecord's docstring for what each is for).
-        conn.execute(
-            text(
-                """
+        conn.execute(text("""
                 IF NOT EXISTS (
                     SELECT 1 FROM sys.columns
                     WHERE object_id = OBJECT_ID('rag.documents') AND name = 'uploaded_by'
                 )
                 ALTER TABLE rag.documents ADD uploaded_by NVARCHAR(200) NULL
-                """
-            )
-        )
-        conn.execute(
-            text(
-                """
+                """))
+        conn.execute(text("""
                 IF NOT EXISTS (
                     SELECT 1 FROM sys.columns
                     WHERE object_id = OBJECT_ID('rag.documents') AND name = 'restricted_roles'
                 )
                 ALTER TABLE rag.documents ADD restricted_roles NVARCHAR(500) NULL
-                """
-            )
-        )
-        conn.execute(
-            text(
-                f"""
+                """))
+        conn.execute(text(f"""
                 IF OBJECT_ID('rag.chunks') IS NULL
                 CREATE TABLE rag.chunks (
                     id UNIQUEIDENTIFIER NOT NULL CONSTRAINT DF_rag_chunks_id DEFAULT NEWID(),
@@ -264,9 +246,7 @@ def ensure_schema(engine: Engine) -> None:
                     CONSTRAINT FK_rag_chunks_document FOREIGN KEY (document_id)
                         REFERENCES rag.documents(id) ON DELETE CASCADE
                 )
-                """
-            )
-        )
+                """))
 
 
 def insert_document(
@@ -322,16 +302,14 @@ def insert_document(
         )
     with engine.begin() as conn:
         result = conn.execute(
-            text(
-                """
+            text("""
                 INSERT INTO rag.documents
                     (filename, collection, sensitivity_category, source_metadata, pdf_bytes,
                      uploaded_by, restricted_roles)
                 OUTPUT inserted.id
                 VALUES (:filename, :collection, :sensitivity_category, :source_metadata, :pdf_bytes,
                         :uploaded_by, :restricted_roles)
-                """
-            ),
+                """),
             {
                 "filename": filename,
                 "collection": collection,
@@ -355,15 +333,13 @@ def update_document_status(
     """Updates a document's status after ingestion succeeds or fails."""
     with engine.begin() as conn:
         conn.execute(
-            text(
-                """
+            text("""
                 UPDATE rag.documents
                 SET status = :status,
                     chunk_count = COALESCE(:chunk_count, chunk_count),
                     error_message = :error_message
                 WHERE id = :document_id
-                """
-            ),
+                """),
             {
                 "status": status,
                 "chunk_count": chunk_count,

@@ -3,6 +3,8 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { ExpandableText } from '@/components/ui/expandable-text'
+import { useAvatarObjectUrl } from '@/hooks/useAvatarObjectUrl'
+import { cn } from '@/lib/utils'
 import { useLocalAuthStore } from '@/store/localAuthStore'
 
 export interface ChatMessageData {
@@ -50,7 +52,13 @@ export function ChatMessage({
   // that renders a ChatMessage would otherwise have to thread the same
   // value through, and a replaced picture must update every already-
   // rendered turn at once, not only new ones.
-  const avatarUrl = useLocalAuthStore((state) => state.user?.avatar_url ?? null)
+  //
+  // The stored URL cannot go straight into an `<img src>`:
+  // `GET /auth/me/avatar` needs the `Authorization` header and a browser
+  // image request carries none, so it 401s and renders broken. The hook
+  // fetches it once for the whole app and hands back a blob URL.
+  const storedAvatarUrl = useLocalAuthStore((state) => state.user?.avatar_url ?? null)
+  const avatarUrl = useAvatarObjectUrl(storedAvatarUrl)
   const canEdit = isUser && onSubmitEdit !== undefined
   const showActions = canEdit || actions !== undefined
 
@@ -101,7 +109,13 @@ export function ChatMessage({
     // packs the avatar and bubble against the right edge, so nothing moves
     // except how far a question may grow before it wraps.
     <div className={`group flex w-full gap-2.5 ${isUser ? 'flex-row-reverse' : ''}`}>
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--muted)] text-[var(--muted-foreground)]">
+      <span
+        className={cn(
+          'flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--muted)] text-[var(--muted-foreground)]',
+          // Only around a real picture -- see UserMenu's own note.
+          isUser && avatarUrl && 'ring-2 ring-[var(--avatar-ring)]',
+        )}
+      >
         {isUser ? (
           // The signed-in user's own profile picture when they have set
           // one, otherwise the default icon unchanged. `object-cover`

@@ -1,5 +1,145 @@
 # CVE / Scanner Triage
 
+**2026-10-22 dependency-remediation pass (newest; supersedes the counts in
+every section below, which are kept for history).** Prompted by GitHub
+reporting 11 open Dependabot alerts on `master`. The alerts themselves
+could not be read directly -- no `gh` CLI and no API token in this
+environment -- so both ecosystems were re-scanned locally with the
+project's own tooling instead, which surfaces the same advisories.
+
+**Result: pip-audit went from 46 findings in 5 packages to 6 in 2, and
+`pip check` reports "No broken requirements found" for the first time.
+npm audit went from 5 (1 high, 4 moderate) to 2 (moderate).**
+
+| Package | Was | Now | Advisories cleared |
+|---|---|---|---|
+| `pillow` | 12.3.0 | **13.0.0** | **35** |
+| `pypdf` | 6.19.0 | **6.21.1** | 5 |
+| `langgraph` | 1.0.10rc1 | **1.0.10** | 1 (PYSEC-2026-83) |
+| `vite` (dev) | 8.3.0–8.3.2 | **8.3.5** | 1 **high** |
+| `vitest` / `@vitest/mocker` (dev) | 4.1.11 | **5.0.5** | 2 |
+
+Every suite was re-run after the bumps, not assumed: full pytest **5
+failed / 7829 passed** (the same five pre-existing cross-file-state
+failures in `tests/test_agent_nodes.py`, unchanged), frontend **98 files /
+1371 tests** green, `tsc --noEmit` and `npm run lint` clean, production
+build succeeds, and bandit run exactly as CI runs it reports **4 Low / 0
+Medium / 0 High** across 52,621 lines -- the existing baseline, so nothing
+new was introduced.
+
+Two of these deserve note. **Pillow 13 is a major bump** and is the single
+largest win here (35 advisories, all naming 13.0.0), squarely on the
+untrusted-input path these CVEs describe -- `attachments/image_ops.py`,
+`attachments/image_processing.py`, `identity/profile_picture.py` and
+`media/` all decode caller-supplied images. It needed no code changes:
+`tests/test_profile_picture.py` + `tests/test_attachments_image_ops.py`
+(67 tests) pass unchanged, and a real photograph re-encodes to a
+**byte-identical** 8,176-byte 256x256 WEBP before and after. **vitest 4 to
+5** likewise needed no migration despite being a major test-framework
+bump.
+
+**`langgraph` was pinned to a release candidate and the venv had something
+else entirely.** `requirements.txt` said `1.0.10rc1`; the installed
+package was `0.2.62`, three major versions behind. Moving to `1.0.10`
+final fixes PYSEC-2026-83 *and* closes the CLAUDE.md 13 item about
+shipping an RC in a production requirements file. It pulls
+`langchain-core` 0.3.86 to 1.6.13 transitively; both graphs still compile
+(21 nodes / 11 orchestrator nodes, asserted) and the suite is unchanged.
+
+**`streamlit==1.41.1` was removed from the venv.** It is in no
+requirements file -- a leftover from the Streamlit app this project
+deleted (CLAUDE.md 1) -- and it was the sole reason `pip check` reported a
+broken requirement, because it caps `pillow<12`. Nothing imports it
+(grepped: 0 matches).
+
+## The CI ignore list was rebuilt, and a format gate was quietly broken
+
+**`--ignore-vuln` went from 14 IDs to 6.** The bumps above cleared forty
+findings, which left ten of those IDs suppressing advisories pip-audit no
+longer reports at all. A stale ignore is worse than no ignore: it silently
+re-suppresses the finding if the package is ever downgraded back into
+range. The list is now exactly what this checkout reports, verified by
+running the command and getting **"No known vulnerabilities found, 7
+ignored"**. `PYSEC-2026-83` was removed specifically because it is now
+*fixed* rather than tolerated, following this file's own preference for a
+version bump over an ignore.
+
+One addition the old list never covered: **CVE-2026-114134 (black
+26.3.1)**, NOT REACHABLE and DEV ONLY. It affects `psf/black`'s bundled
+GitHub Action when `use_pyproject: true` lets
+`tool.black.required-version` point at a malicious repository -- the same
+shape as CVE-2026-31900 before it. This workflow runs `pip install -r
+requirements-dev.txt` then `black --check .`; grep finds 0 matches for
+`psf/black` or `use_pyproject` anywhere in `.github/`, and `pyproject.toml`
+sets no `required-version`.
+
+**`black --check .` was a failing blocking gate and nobody could see it.**
+`requirements-dev.txt` pins `black==26.3.1`, but the local venv still had
+`24.10.0` installed -- so the gate passed locally while CI, which installs
+that file, would have failed on three tracked files
+(`moderation/store.py`, `rag/store.py`, and an applied Alembic revision).
+The pin had been moved to the 26.x line at some point while its own comment
+still argued for staying on 24.x, which is how it went unnoticed.
+
+Fixed in two parts. The two ordinary source files were formatted. The
+migration was **not**: `pyproject.toml` now carries
+`force-exclude = 'identity/migrations/versions/.*\.py'`, because
+reformatting an applied revision is exactly the hand-edit CLAUDE.md 12
+forbids, and those files are additionally read as *text* by
+`tests/test_identity_schema_invariants.py`. `force-exclude` rather than
+`extend-exclude` so an explicit path argument cannot bypass it. After
+this, `black --check .` reports 1,635 files unchanged -- matching
+CLAUDE.md 13's long-standing figure -- and the only two it still wants are
+in `.claude/worktrees/`, which `.git/info/exclude` keeps out of every
+checkout CI makes.
+
+Note 26.10.1 is deliberately not taken: it reformats the same applied
+migration, so the exclude is the fix either way, and the CVE it closes is
+unreachable here.
+
+## What remains, and why
+
+**`langgraph-sdk` 0.3.15 -- PYSEC-2026-4240 -- UPSTREAM BLOCKED, NOT
+REACHABLE.** The advisory names 0.4.4 as the patch, but
+`langgraph==1.0.10` requires `langgraph-sdk<0.4.0,>=0.3.0`, and 0.3.15 is
+the highest 0.3.x ever published -- there is no backport. **Pinning 0.4.4
+anyway looks like it works and does not**: pip installs it into an
+existing venv without complaint, while a clean resolve fails with
+`ResolutionImpossible`, which is exactly what CI and the Docker build do.
+Found by making that mistake and re-running pip-audit. Not reachable
+regardless: the advisory concerns `@auth.on.threads/assistants/crons`
+decorators in LangGraph Platform deployments, and this codebase has **zero
+imports** of `langgraph_sdk`/`langgraph.sdk` and uses none of those
+decorators.
+
+**`chromadb` 1.5.9 -- PYSEC-2026-311, -3813, -3814, -3815 -- NO FIX
+PUBLISHED, NOT REACHABLE.** 1.5.9 is the latest release; every one of the
+four has a blank Fix Versions field. All four describe **ChromaDB's HTTP
+server**: pre-auth and authenticated code injection through
+`/api/v2/tenants/{tenant}/databases/{db}/collections` with
+`trust_remote_code=true` (311, 3814), and cross-tenant authorization holes
+in `SimpleRBACAuthorizationProvider` (3813, 3815). **This project never
+runs that server.** Chroma is embedded via `PersistentClient` --
+`embeddings/schema_indexer.py:222`, and `embeddings/golden_examples.py:11`
+says so in as many words ("no server, no extra connection"). Reachability
+greps run fresh this pass: `trust_remote_code` 0 matches,
+`SimpleRBACAuthorizationProvider`/`CHROMA_SERVER_AUTH` 0 matches, no
+tenant/auth configuration anywhere.
+
+**`@tailwindcss/typography` 0.5.20 + `postcss-selector-parser` 6.0.10 --
+GHSA-rj75-hqrm-r3gf -- UPSTREAM FIX REQUIRED, DEV ONLY.** 0.5.20 **is**
+the latest published version and it pins `postcss-selector-parser@6.0.10`,
+while the advisory requires >=7.1.6. The fix has to come from upstream
+typography. **`npm audit fix --force` must not be used here**: its
+proposed "fix" is to *downgrade* typography to 0.5.4, sixteen minor
+versions backwards, which it labels `isSemVerMajor: true`. That trades one
+moderate advisory for sixteen versions of unrelated fixes and is not an
+improvement. Both are devDependencies -- Tailwind's typography plugin is a
+build-time CSS transform and never ships in `frontend/dist`.
+
+---
+
+
 **2026 security remediation pass addendum (see
 [`SECURITY_REMEDIATION_REPORT.md`](../../SECURITY_REMEDIATION_REPORT.md),
 current source of truth for overall status):** this file's findings below

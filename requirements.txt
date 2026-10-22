@@ -1,5 +1,25 @@
 # Core agent / orchestration
-langgraph==1.0.10rc1
+# 1.0.10 final, not the 1.0.10rc1 this used to pin. Two reasons at once:
+# pip-audit reports PYSEC-2026-83 against the RC with `1.0.10` as the fix,
+# and CLAUDE.md 13 separately flagged shipping a release candidate in a
+# production requirements file as something needing a deliberate decision.
+# Same version line, so the graph API is unchanged.
+langgraph==1.0.10
+# langgraph-sdk is deliberately NOT pinned here, and that is a decision
+# rather than an oversight. pip-audit reports PYSEC-2026-4240 against the
+# 0.3.15 that langgraph resolves, with 0.4.4 as the fix -- but
+# `langgraph==1.0.10` requires `langgraph-sdk<0.4.0,>=0.3.0`, and 0.3.15 is
+# the highest 0.3.x ever published (no backport). So the "fix" is
+# unreachable without moving off this langgraph line entirely.
+#
+# Pinning 0.4.4 anyway *appears* to work -- pip installs it into an
+# existing venv without complaint -- but a clean resolve fails with
+# `ResolutionImpossible`, which is what CI and the Docker build do. Found
+# by running pip-audit after making exactly that mistake.
+#
+# Not reachable from this codebase in any case: zero imports of
+# `langgraph_sdk`/`langgraph.sdk` outside site-packages. Tracked in
+# docs/security/CVE_TRIAGE.md as upstream-blocked.
 ollama==0.4.4
 
 # SQL parsing / validation (allowlist-based, see agent/sql_validator.py)

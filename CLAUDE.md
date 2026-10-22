@@ -349,6 +349,28 @@ restriction as a boundary.** Full detail:
   owner decision, not a vulnerability — see §13 and
   [`docs/certification/2026-10-17_release_gate_v2.md`](docs/certification/2026-10-17_release_gate_v2.md)
   §11.6. Never "fix" one by weakening the gate.
+  **Re-measured 2026-10-22 after a dependency-remediation pass:**
+  `bandit` now **passes** (4 Low / 0 Medium / 0 High across 52,621 lines,
+  run exactly as CI runs it — the Low findings are below its default
+  threshold), and `pip-audit` went from 46 findings in 5 packages to **6
+  in 2**, both of which are now evidenced as unreachable rather than
+  merely benign (see
+  [`docs/security/CVE_TRIAGE.md`](docs/security/CVE_TRIAGE.md)'s
+  2026-10-22 section). `ruff`'s single `I001` in
+  `agent/multiagent/agents.py` is unchanged.
+  **`pip-audit` now passes too**: its CI ignore list was rebuilt from 14
+  IDs to the 6 this checkout actually reports — ten had gone stale once
+  the bumps cleared their advisories, and a stale ignore silently
+  re-suppresses a finding if a package is downgraded back into range. The
+  command then reports "No known vulnerabilities found, 7 ignored".
+  **A third gate was failing and was invisible locally**: `black --check .`
+  passed only because the venv had `black 24.10.0` while
+  `requirements-dev.txt` pins `26.3.1`. CI installs the pin and would have
+  failed on three tracked files. Fixed by formatting two of them and
+  `force-exclude`ing `identity/migrations/versions/`, since reformatting
+  an applied revision is the hand-edit §12 forbids. So as of 2026-10-22
+  `black`, `bandit`, `pytest` and `pip-audit` all pass; the lone `I001`
+  is the only blocking finding left.
 
 ### 5.8 Domain privacy and safety — consult the policy before changing behavior
 
@@ -663,12 +685,16 @@ contract lists its specific limitations; these are the cross-cutting ones.
   `conversation_history` the caller resends, capped at
   `MAX_FOLLOWUP_EXCHANGES`; no LangGraph checkpointer exists (none ships for
   SQL Server, so it would need a custom `BaseCheckpointSaver`).
-  *Corrected 2026-10-17: this entry cited `langgraph==0.2.62`.*
-  **The real pin is `langgraph==1.0.10rc1`** (`requirements.txt:2`) — three
-  major versions on, and a release candidate in a production requirements
-  file, which is itself worth a deliberate decision. The conclusion is
-  unchanged and re-verified: zero `BaseCheckpointSaver`/`checkpointer=`
-  usage anywhere in this repo.
+  *Corrected twice. 2026-10-17: this entry cited `langgraph==0.2.62`,
+  while the pin read `1.0.10rc1`.* **2026-10-22: both were true at once —
+  `requirements.txt` pinned `1.0.10rc1` and the venv actually had
+  `0.2.62` installed, three major versions behind its own pin.** The RC is
+  now resolved: the pin is **`langgraph==1.0.10`** final, which also fixes
+  PYSEC-2026-83 and closes the "a release candidate in a production
+  requirements file" concern this entry used to raise. It pulls
+  `langchain-core` 0.3.86 → 1.6.13 transitively; both graphs still compile
+  and the suite is unchanged. The conclusion is unchanged and re-verified:
+  zero `BaseCheckpointSaver`/`checkpointer=` usage anywhere in this repo.
 - **Chat history and artifacts cover locally-authenticated users only.** An
   OIDC or unauthenticated caller is answered normally but nothing is
   persisted — there is no `identity.users` row to attach a conversation to.

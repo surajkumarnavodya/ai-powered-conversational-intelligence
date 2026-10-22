@@ -543,6 +543,7 @@
     "checking": "Comprobando la foto...",
     "notChecked": "Guardada, pero la comprobación automática no se ejecutó ({{reason}}).",
     "uploadFailed": "No se pudo subir esa imagen. Inténtalo de nuevo.",
-    "removeFailed": "No se pudo quitar esa imagen. Inténtalo de nuevo."
+    "removeFailed": "No se pudo quitar esa imagen. Inténtalo de nuevo.",
+    "removeConfirm": "¿Quitar tu foto de perfil? Puedes subir otra cuando quieras."
   }
 }

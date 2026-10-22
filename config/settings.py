@@ -3346,15 +3346,29 @@ class Settings(BaseSettings):
     # wait and then get out of the way -- the same trade
     # `router_timeout_seconds` makes in front of a question.
     #
-    # 60 is sized from measurement, not guessed. On the reference machine
-    # (T1200, 4 GB) the configured `qwen3.8:27b` answered a one-word
-    # question about a 256x256 image in 33.4s and 37.5s across two runs --
-    # and answered *correctly*, distinguishing a circle from a square, so
-    # the check is genuinely useful here rather than noise. A 20s budget
-    # would have skipped it on every upload; 60s lets it run with headroom,
-    # at the cost of a ~40s wait on this hardware. A deployment with a
-    # smaller vision model (e.g. `llava`) should lower this.
-    profile_picture_vision_timeout_seconds: float = Field(default=60.0, gt=0, le=300.0)
+    # Sized from measurement, and corrected once after a live upload proved
+    # the first number too tight. On the reference machine (T1200, 4 GB)
+    # with the configured `qwen3.8:27b`:
+    #
+    #   * **warm: 36.2s** for the real suitability prompt -- and a correct
+    #     verdict, approving a genuine head-and-shoulders portrait.
+    #   * **cold: over 60s**, which a real upload hit. `ollama ps` shows
+    #     why: the model is 18 GB running 98% on CPU (a 4 GB GPU cannot
+    #     hold it) with Ollama's default 5-minute keep-alive, so the first
+    #     upload after a few idle minutes pays a full 18 GB load from disk
+    #     before any inference starts.
+    #
+    # 60 therefore skipped the check on exactly the upload a person is most
+    # likely to make -- the first one. 120 covers warm with ample headroom
+    # and usually covers a cold load too. It is a ceiling, not a cost: a
+    # warm check still returns in ~36s.
+    #
+    # **The real lever is a smaller vision model.** `MEDIA_VISION_MODEL` is
+    # shared with media captioning and attachment Q&A, but something like
+    # `llava` (4.7 GB) fits the GPU and would make this check a few seconds
+    # rather than a few tens of them; a deployment that does that should
+    # lower this back down.
+    profile_picture_vision_timeout_seconds: float = Field(default=120.0, gt=0, le=300.0)
     attachment_ocr_timeout_seconds: float = Field(default=20.0, gt=0)
     max_text_removal_regions: int = Field(default=20, gt=0)
     # Zip-container (DOCX/XLSX/PPTX) decompression-bomb guard -- checked

@@ -428,6 +428,36 @@ export async function fetchLibraryMediaBlobUrl(mediaId: string): Promise<string>
   return URL.createObjectURL(blob)
 }
 
+/** Fetches the signed-in user's own profile picture and returns a blob
+ * object URL for an `<img src>`.
+ *
+ * Same reason `fetchMediaBlobUrl` above exists, and the same mistake was
+ * made again before this was written: `GET /auth/me/avatar` requires the
+ * `Authorization` header, and this app's access token lives in JS state
+ * (`getBearerToken`), not in a cookie -- so a plain
+ * `<img src="/auth/me/avatar?v=...">` issues a header-less request, gets
+ * 401, and renders as a broken image with its alt text showing. Reported
+ * from live use; the `TestClient` API tests could not catch it because
+ * they set the header explicitly.
+ *
+ * `avatarUrl` is passed through verbatim (it is `UserOut.avatar_url`,
+ * which already carries the `v=` cache-buster) rather than rebuilt here,
+ * so the version the server reported is the version fetched.
+ *
+ * Callers must `URL.revokeObjectURL` the result -- `useAvatarObjectUrl`
+ * owns that lifecycle for every consumer in this app. */
+export async function fetchAvatarBlobUrl(avatarUrl: string): Promise<string> {
+  const headers = new Headers()
+  const token = getBearerToken()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  const response = await fetch(avatarUrl, { headers })
+  if (!response.ok) {
+    throw new ApiError('Could not load the profile picture.', response.status)
+  }
+  const blob = await response.blob()
+  return URL.createObjectURL(blob)
+}
+
 /** Direct media-library search, independent of the conversational `/ask`
  * flow (`POST /search/media`, `api/media_search.py`). */
 export function searchMedia(

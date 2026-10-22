@@ -10,7 +10,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { useAvatarObjectUrl } from '@/hooks/useAvatarObjectUrl'
 import { isOidcConfigured } from '@/lib/auth'
+import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import { useLocalAuthStore } from '@/store/localAuthStore'
 
@@ -63,6 +65,12 @@ export function UserMenu({
   const handleSignOut = () => (isLocalAuthenticated ? void localSignOut() : void signOut())
 
   const displayName = localUser?.display_name ?? null
+  // Fetched rather than used as a bare `<img src>`: `GET /auth/me/avatar`
+  // needs the `Authorization` header a browser image request cannot send
+  // (see `useAvatarObjectUrl`). Shared with the chat avatar and the
+  // settings section -- the hook fetches each version once for all three,
+  // so putting the picture here adds no extra request.
+  const avatarUrl = useAvatarObjectUrl(localUser?.avatar_url)
 
   return (
     <DropdownMenu>
@@ -72,9 +80,33 @@ export function UserMenu({
           type="button"
           aria-label={t('userMenu.trigger')}
           title={displayName ?? t('userMenu.trigger')}
-          className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--accent-soft)] text-xs font-semibold text-[var(--accent)] transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+          // The white ring is applied only when a *picture* is shown: it
+          // exists to separate a photograph from the surface behind it,
+          // and around initials or the generic icon it would be a stray
+          // outline on a control that already reads clearly. `ring-inset`
+          // is deliberately NOT used -- the ring belongs outside the
+          // image, adjacent to it, not overlapping the face.
+          className={cn(
+            'flex h-8 w-8 items-center justify-center overflow-hidden rounded-full bg-[var(--accent-soft)] text-xs font-semibold text-[var(--accent)] transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]',
+            avatarUrl && 'ring-2 ring-[var(--avatar-ring)]',
+          )}
         >
-          {displayName ? initialsFor(displayName) : <UserCircle className="h-4.5 w-4.5" />}
+          {/* Three states, most specific first: the user's own picture,
+              then their initials, then the generic icon. `alt=""` because
+              the button already carries `aria-label`/`title` -- labelling
+              the image too would make a screen reader announce the account
+              twice for one control.
+
+              `overflow-hidden` on the button is what clips the square to
+              the circle; without it a 256x256 image would spill out of a
+              32px round button. */}
+          {avatarUrl ? (
+            <img src={avatarUrl} alt="" className="h-full w-full object-cover" />
+          ) : displayName ? (
+            initialsFor(displayName)
+          ) : (
+            <UserCircle className="h-4.5 w-4.5" />
+          )}
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-64">

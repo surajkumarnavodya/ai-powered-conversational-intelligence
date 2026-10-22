@@ -853,6 +853,7 @@
     "checking": "Checking the photo...",
     "notChecked": "Saved, but the automated photo check didn't run ({{reason}}).",
     "uploadFailed": "That picture couldn't be uploaded. Please try again.",
-    "removeFailed": "That picture couldn't be removed. Please try again."
+    "removeFailed": "That picture couldn't be removed. Please try again.",
+    "removeConfirm": "Remove your profile picture? You can upload a new one at any time."
   }
 }

@@ -160,7 +160,56 @@ jobs:
 
       - name: Dependency vulnerability scan (pip-audit)
         # Blocking, with a specific, individually-justified --ignore-vuln
-        # per advisory rather than a blanket continue-on-error. Re-verified
+        # per advisory rather than a blanket continue-on-error.
+        #
+        # **Rebuilt 2026-10-22 (14 ignored IDs -> 6).** A dependency-
+        # remediation pass bumped pillow/pypdf/langgraph and cleared 40 of
+        # 46 findings outright, which left ten of the IDs below ignoring
+        # advisories pip-audit no longer reports at all. A stale ignore is
+        # worse than no ignore: it silently suppresses a finding if the
+        # package is ever downgraded back into range. So the list is now
+        # exactly the advisories this checkout actually reports, verified
+        # by running the command below and getting "No known
+        # vulnerabilities found, 7 ignored".
+        #
+        # PYSEC-2026-83 in particular was REMOVED because it is genuinely
+        # fixed now (langgraph 1.0.10rc1 -> 1.0.10), following this repo's
+        # own stated preference for a version bump over an ignore.
+        #
+        # The six that remain, each re-verified against this checkout:
+        #   * PYSEC-2026-311/-3813/-3814/-3815 (chromadb 1.5.9) -- NOT
+        #     REACHABLE. All four are about ChromaDB's *HTTP server*:
+        #     code injection via /api/v2/tenants/.../collections with
+        #     trust_remote_code=true, and cross-tenant holes in
+        #     SimpleRBACAuthorizationProvider. This app embeds Chroma via
+        #     PersistentClient only (embeddings/schema_indexer.py:222) and
+        #     never runs that server. 1.5.9 is the latest release and every
+        #     one has a blank Fix Versions field, so there is nothing to
+        #     bump to. Greps: trust_remote_code 0 matches, Chroma auth
+        #     config 0 matches.
+        #   * PYSEC-2026-4240 (langgraph-sdk 0.3.15) -- UPSTREAM BLOCKED and
+        #     NOT REACHABLE. The patch is 0.4.4, but langgraph==1.0.10
+        #     requires langgraph-sdk<0.4.0 and 0.3.15 is the highest 0.3.x
+        #     ever published, so a clean resolve of 0.4.4 fails with
+        #     ResolutionImpossible. The advisory concerns
+        #     @auth.on.threads/assistants/crons in LangGraph Platform; this
+        #     repo has zero imports of langgraph_sdk.
+        #   * CVE-2026-114134 (black 26.3.1) -- NOT REACHABLE, DEV ONLY.
+        #     It affects *psf/black's bundled GitHub Action* when
+        #     use_pyproject: true lets an attacker point
+        #     tool.black.required-version at a malicious repo. This
+        #     workflow does not use that Action (it runs `pip install -r
+        #     requirements-dev.txt` then `black --check .`, grep: 0 matches
+        #     for psf/black or use_pyproject) and pyproject.toml sets no
+        #     required-version. The patched 26.10.1 exists, but taking it
+        #     is not free here -- see requirements-dev.txt's own note.
+        #
+        # A genuinely new, reachable advisory in any *other* package still
+        # fails this step: this is an allowlist of specific IDs, not a
+        # severity threshold.
+        #
+        # Historical note from the 2026 security remediation pass, kept
+        # because it explains the list's origin. Re-verified
         # fresh in the 2026 security remediation pass (not just carried
         # forward from docs/security/CVE_TRIAGE.md's 2026-09-18 analysis --
         # independently re-confirmed by re-grepping this exact checkout for
@@ -194,13 +243,9 @@ jobs:
         run: |
           pip install pip-audit
           pip-audit -r requirements-dev.txt --desc \
-            --ignore-vuln PYSEC-2026-83 --ignore-vuln PYSEC-2026-2194 \
-            --ignore-vuln PYSEC-2026-311 --ignore-vuln PYSEC-2026-3814 \
-            --ignore-vuln PYSEC-2026-3815 --ignore-vuln PYSEC-2026-3813 \
-            --ignore-vuln PYSEC-2026-2121 --ignore-vuln PYSEC-2026-2120 \
-            --ignore-vuln PYSEC-2026-2193 --ignore-vuln PYSEC-2026-2562 \
-            --ignore-vuln PYSEC-2026-1527 --ignore-vuln PYSEC-2026-2574 \
-            --ignore-vuln PYSEC-2026-2573 --ignore-vuln PYSEC-2026-2575
+            --ignore-vuln PYSEC-2026-311 --ignore-vuln PYSEC-2026-3813 \
+            --ignore-vuln PYSEC-2026-3814 --ignore-vuln PYSEC-2026-3815 \
+            --ignore-vuln PYSEC-2026-4240 --ignore-vuln CVE-2026-114134
 
       - name: Type check (mypy)
         # Moved to run last and made report-only (2026 security remediation
