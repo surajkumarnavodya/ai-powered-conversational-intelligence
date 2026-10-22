@@ -478,6 +478,7 @@ connectivity and reverse-proxy placement.
 | Find every `.env` variable | [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) |
 | Understand why results show business names instead of database keys | [`docs/DISPLAY_NAMES.md`](docs/DISPLAY_NAMES.md) |
 | Understand how chart axes are chosen (why Total Sales, not ProductKey) | [`docs/CHART_AXIS_BINDING.md`](docs/CHART_AXIS_BINDING.md) |
+| Find out why a question is slow, and what actually helps | [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) |
 | Run many questions at once per user, or tune source/model routing, guardrails and grounding | [`docs/CONCURRENCY.md`](docs/CONCURRENCY.md) |
 | Deploy with Docker / an external DB or Ollama | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) |
 | See the latest measured benchmark accuracy | [`docs/EVALUATION.md`](docs/EVALUATION.md) |

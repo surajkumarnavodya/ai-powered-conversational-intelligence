@@ -339,6 +339,12 @@ class TestGovernedModelRoutingThroughTheRealGraph:
                 # tests/test_model_routing.py; this test is about the
                 # wiring, so it routes on catalog metadata alone.
                 "model_routing_require_evaluation_evidence": False,
+                # This class pins *which model* each routed task gets, not
+                # *whether* a task runs. The latency skip would drop the
+                # analytical_intent call entirely for the simple question
+                # below, so it is turned off here; the skip itself is pinned
+                # in tests/test_latency_optimizations.py.
+                "skip_intent_classification_for_simple_questions": False,
                 **overrides,
             }
         )

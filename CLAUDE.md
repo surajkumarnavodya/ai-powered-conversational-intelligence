@@ -504,6 +504,7 @@ authoritative, and explains how to resolve a conflict.
 | Configuration reference | [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) |
 | Entity display names: metadata, SQL repair, join and chart-label rules | [`docs/DISPLAY_NAMES.md`](docs/DISPLAY_NAMES.md) |
 | Result-column semantics and chart axis binding (measure vs key) | [`docs/CHART_AXIS_BINDING.md`](docs/CHART_AXIS_BINDING.md) |
+| Measured latency, what causes it, and the hardware ceiling | [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) |
 | Per-user concurrency, the question queue, deterministic source routing, per-task model pins, guardrails, grounding | [`docs/CONCURRENCY.md`](docs/CONCURRENCY.md) |
 | Production readiness verdict | [`docs/PRODUCTION_READINESS_RELEASE_GATE.md`](docs/PRODUCTION_READINESS_RELEASE_GATE.md) |
 | One feature's full design, tests and limitations | `NN_*_CONTRACT.md` at the repo root — one per numbered prompt; indexed in the context map |
@@ -745,6 +746,21 @@ contract lists its specific limitations; these are the cross-cutting ones.
   Still 0 High and 0 Medium, and all four are deliberate and already
   annotated for `ruff` but not for `bandit` — which is why that blocking
   gate fails (§5.7).
+- **Three tests fail only in file order, and the cause is cross-file
+  state, not the tests.** Measured 2026-10-22: a full `pytest` run
+  reports 6 failures, three of which are
+  `tests/test_agent_nodes.py::TestGenerateRecommendationsNodeQueryStore::{test_non_mssql_database_never_calls_query_store,test_feature_flag_off_never_calls_query_store,test_query_store_failure_fails_open}`.
+  All three pass when that file runs alone and fail when
+  `tests/security/` runs first (`pytest tests/security
+  tests/test_agent_nodes.py::TestGenerateRecommendationsNodeQueryStore`
+  reproduces it in ~1 min) — `tests/security/` sorts before every root
+  `test_*.py`, so a default full run always hits it. Each asserts
+  `recommendations == []`, so something in `tests/security/` leaves a
+  recommendation-producing state behind that `tests/conftest.py`'s three
+  cache clears do not cover. **Verified pre-existing**, by stashing the
+  working tree and reproducing identically. Not yet attributed to a
+  specific leaking test.
+
 - **Four CI steps are non-blocking** by deliberate, dated decision:
   `gitleaks`, `mypy` (§5.7), the Trivy container scan — report-only because
   the action only fails a step when its `exit-code` input is set, which it

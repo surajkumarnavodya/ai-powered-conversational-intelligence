@@ -422,15 +422,45 @@ class TestClassifyAnalyticalIntentNode:
         assert result["analytical_intent"] is None
         assert result["status"] == "generating"
 
-    def test_runs_even_without_any_complexity_signal(self, monkeypatch):
-        """Unlike `plan_query_node`, this node runs on *every* question --
-        it is not gated by `agent.complexity`'s signals."""
+    def test_a_simple_question_skips_the_call_for_latency(self, monkeypatch):
+        """Behaviour change (2026-10-22, docs/PERFORMANCE.md).
+
+        This node used to run on *every* question, deliberately ungated
+        by `agent.complexity`'s signals. Measurement showed it costing
+        12-25s per question on the reference machine -- and for a
+        question with no complexity signal its result provably changes
+        nothing, because this node's own docstring states that a `None`
+        intent makes `plan_query_node`'s gate "reduce to exactly
+        `agent.complexity`'s signals alone".
+
+        So the call is now skipped exactly where it cannot matter. The
+        resulting state (`analytical_intent=None`) is the same state the
+        gate would have reached anyway -- at zero model cost.
+        """
+        called: list[str] = []
+        monkeypatch.setattr(
+            "agent.nodes.generate_analytical_intent_from_llm",
+            lambda *a, **k: called.append("x"),
+        )
+
+        state: AgentState = {"question": "How many customers are there?"}
+        result = classify_analytical_intent_node(state)
+
+        assert called == []
+        assert result["analytical_intent"] is None
+        assert result["status"] == "generating"
+
+    def test_a_complex_question_still_classifies(self, monkeypatch):
+        """The skip is scoped to questions where the answer cannot change."""
         classification = {"intent": "lookup", "confidence": 0.95}
         monkeypatch.setattr(
             "agent.nodes.generate_analytical_intent_from_llm", lambda *a, **k: classification
         )
 
-        state: AgentState = {"question": "How many customers are there?"}
+        state: AgentState = {
+            "question": "Show top 5 products per region",
+            "complexity_signals": ["top_n_per_group"],
+        }
         result = classify_analytical_intent_node(state)
 
         assert result["analytical_intent"] == classification

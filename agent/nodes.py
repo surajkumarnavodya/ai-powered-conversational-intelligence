@@ -44,6 +44,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from agent.analytical_plan import AnalyticalPlan, render_plan_as_steps
 from agent.authz import Permission, has_role_permission
+from agent.complexity import detect_complexity_signals
 from agent.display_name_guard import (
     NO_DISPLAY_NAME_NOTICE,
     enforce_display_names,
@@ -806,6 +807,31 @@ def retrieve_schema_node(state: AgentState) -> dict[str, Any]:
     if not tables:
         logger.warning("[retrieve_schema] no relevant tables found for question")
 
+    # Prompt-size ceiling (latency). Schema measured 2,968 of the 6,632
+    # tokens in the generation prompt -- 7 tables at ~1,700 chars each,
+    # because relationship expansion adds tables beyond SCHEMA_TOP_K. At
+    # the ~185 tok/s this machine processes prompts at, each surplus
+    # table costs roughly 2 seconds (docs/PERFORMANCE.md).
+    #
+    # Applied AFTER retrieval, never before: retrieval ranks by
+    # relevance, so truncating its output keeps the best-matching tables
+    # and drops the weakest. Doing it earlier would discard the
+    # relationship expansion that makes a join reachable at all.
+    #
+    # Off by default (0 = no ceiling), because dropping a table the
+    # question genuinely needs turns a slow correct answer into a fast
+    # wrong one -- an operator opts in once they know their own schema
+    # fits.
+    max_tables = settings.max_schema_tables_in_prompt
+    if max_tables and len(tables) > max_tables:
+        logger.info(
+            "[retrieve_schema] trimming %d retrieved table(s) to the configured "
+            "MAX_SCHEMA_TABLES_IN_PROMPT=%d (lowest-scoring dropped)",
+            len(tables),
+            max_tables,
+        )
+        tables = tables[:max_tables]
+
     descriptions = load_table_descriptions()
     tables = [
         TableSchema(
@@ -1040,6 +1066,34 @@ def classify_analytical_intent_node(state: AgentState) -> dict[str, Any]:
         return {"analytical_intent": None, "status": "generating"}
 
     question = state["question"]
+
+    # Latency: this call measured 12-25s on the reference machine (see
+    # docs/PERFORMANCE.md) for a question like "total sales by product",
+    # where it changes nothing.
+    #
+    # Safe by this node's own contract. The classification's only
+    # consumer is `plan_query_node`'s gate, and this docstring already
+    # states that when `analytical_intent` is None "that gate reduces to
+    # exactly `agent.complexity`'s signals alone, byte-identical to this
+    # node's pre-Prompt-11 behavior". So for a question with no
+    # complexity signal, skipping the call and returning None lands in
+    # precisely the state the gate would have reached anyway -- at zero
+    # model cost instead of one full call.
+    #
+    # A question carrying ANY complexity signal still classifies, which
+    # is where the classification actually earns its cost. Setting
+    # SKIP_INTENT_CLASSIFICATION_FOR_SIMPLE_QUESTIONS=false restores the
+    # always-classify behaviour.
+    if settings.skip_intent_classification_for_simple_questions:
+        signals = state.get("complexity_signals")
+        if signals is None:
+            signals = detect_complexity_signals(question)
+        if not signals:
+            logger.info(
+                "[classify_analytical_intent] skipped -- no complexity signal, so the "
+                "classification could not change plan_query's gate (saves one model call)"
+            )
+            return {"analytical_intent": None, "status": "generating"}
     try:
         classification = _routed_llm_call(
             state,

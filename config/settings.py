@@ -2105,6 +2105,36 @@ class Settings(BaseSettings):
     # False restores the pre-existing behaviour exactly: the node becomes
     # a pass-through and the prompt's advisory rule is all that applies.
     enable_display_name_enforcement: bool = True
+    # --- Latency budgets (measured 2026-10-22; see docs/PERFORMANCE.md) ---
+    # Context for every value here: on the reference machine this app is
+    # developed against, `qwen2.5-coder:7b` loads only 41% into a 4GB
+    # T1200 GPU and runs the rest on CPU, giving ~185 tok/s prompt
+    # processing and ~9.6 tok/s generation. Latency is therefore almost
+    # entirely `prompt_tokens / 185 + generated_tokens / 9.6`, and the
+    # levers that matter are *how many model calls* a question makes and
+    # *how big each prompt is* -- not the database, which measured 0.05s.
+    #
+    # The target a first useful response lands within. Advisory: it is
+    # what `docs/PERFORMANCE.md` reports against and what the progress
+    # stream is tuned for, not a deadline that cancels work -- cutting a
+    # correct answer off at N seconds would trade accuracy for a number.
+    target_first_response_seconds: float = Field(default=5.0, gt=0.0, le=120.0)
+    # Skip the analytical-intent LLM call for a question showing no
+    # complexity signal. Measured 12-25s per question on the reference
+    # machine, for a classification whose only consumer is
+    # `plan_query_node`'s gate -- and that gate, per
+    # `classify_analytical_intent_node`'s own docstring, "reduces to
+    # exactly `agent.complexity`'s signals alone" when the intent is
+    # None. So a simple question pays a full model call for a result that
+    # changes nothing. False restores the previous always-classify
+    # behaviour.
+    skip_intent_classification_for_simple_questions: bool = True
+    # Hard ceiling on tables rendered into the generation prompt. Schema
+    # measured 2,968 of the 6,632 prompt tokens (7 tables at ~1,700 chars
+    # each) because relationship expansion adds tables beyond
+    # SCHEMA_TOP_K. 0 disables the ceiling, restoring the previous
+    # behaviour exactly.
+    max_schema_tables_in_prompt: int = Field(default=0, ge=0, le=50)
     enable_request_governance: bool = True
     enable_result_governance: bool = True
 
