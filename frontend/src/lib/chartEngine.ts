@@ -20,9 +20,101 @@
 
 export type ColumnRole = 'numeric' | 'date' | 'text'
 
+/** What a column *means*, from `db/column_semantics.py`. Parallel to
+ * `role`, which is only its storage type -- and type alone cannot choose
+ * an axis, because a surrogate key is numeric just like a measure is. */
+export type SemanticType =
+  | 'dimension'
+  | 'key'
+  | 'measure'
+  | 'date'
+  | 'percentage'
+  | 'currency'
+  | 'count'
+  | 'text'
+
 export interface ColumnInfo {
   name: string
   role: ColumnRole
+  /** Human-readable label for axis titles, tooltips and the measure
+   * picker -- "Total Sales" rather than `TotalSales`. Falls back to the
+   * raw name when the server sent no semantics. */
+  label?: string
+  semanticType?: SemanticType
+  /** Whether this column may be plotted as a value. **False for every
+   * key.** This is the field that fixes the reported bug: before it,
+   * `defaultSeriesForType` took the first numeric column, so a numeric
+   * `ProductKey` became the y-axis. */
+  suitableForY?: boolean
+  /** Whether this column may label a category axis. */
+  suitableForX?: boolean
+  /** Higher is a more primary measure; 0 means "never a measure". Ranks
+   * revenue over profit over quantity over counts, and puts whatever the
+   * query's own ORDER BY ranks by above all of them. */
+  measurePriority?: number
+  /** The server's format for this column. Wider than `NumberFormat`:
+   * the server also classifies counts and quantities as `'integer'`,
+   * which the chart's own option set has no equivalent for and which
+   * therefore renders as `'plain'`. */
+  numberFormat?: ServerNumberFormat
+}
+
+/** One column's semantics as the server sends them
+ * (`api.schemas.ColumnSemanticsOut`). Optional throughout: a result that
+ * predates the field, or any path that does not carry it, falls back to
+ * the name-pattern heuristic below. */
+/** Number formats the server emits (`db/column_semantics.py`). Wider
+ * than the chart's own `NumberFormat`, which has no integer option --
+ * `'integer'` is carried for the results table and renders as `'plain'`
+ * on an axis. Typed accurately rather than narrowed to the chart's set,
+ * so the wire shape is not misrepresented. */
+export type ServerNumberFormat = 'plain' | 'currency' | 'percent' | 'integer'
+
+export interface ServerColumnSemantics {
+  name: string
+  label: string
+  data_type: string
+  semantic_type: SemanticType
+  number_format: ServerNumberFormat
+  suitable_for_x: boolean
+  suitable_for_y: boolean
+  hidden_by_default: boolean
+  measure_priority: number
+}
+
+/** Last-token suffixes that mark a surrogate key, mirroring
+ * `config/column_labels.py`'s `SURROGATE_KEY_SUFFIXES` and
+ * `columnFormatting.ts`'s own port.
+ *
+ * This is the *fallback* for when the server sent no semantics. Matching
+ * the last token rather than a bare `endsWith` is deliberate and is the
+ * reason `Valid` is not treated as an id: it is one token and is not
+ * literally "id". Likewise `PostalCode`/`AccountNumber` end in
+ * Code/Number, not Id/Key. */
+const SURROGATE_KEY_SUFFIXES = ['key', 'id']
+
+/** Numeric columns that are categories rather than values. A year is
+ * numeric and makes a perfectly good x-axis, but plotting "sales by
+ * year" with the year on the y-axis is the same class of error as
+ * plotting a key there. Mirrors `db/column_semantics.py`. */
+const NUMERIC_CATEGORY_RE = /^(\w*year|yr|\w*(month|quarter|week|day|period)(name|number|num|no)?)$/i
+
+function lastToken(name: string): string {
+  const tokens = name
+    .replace(/[_\-\s]+/g, ' ')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .trim()
+    .split(/\s+/)
+  return (tokens[tokens.length - 1] ?? '').toLowerCase()
+}
+
+/** Whether a column looks like a surrogate key, by name alone.
+ *
+ * Only consulted when the server sent no semantics for it -- the server
+ * knows the real primary/foreign keys from live schema introspection,
+ * which this cannot. */
+export function looksLikeKeyColumn(name: string): boolean {
+  return SURROGATE_KEY_SUFFIXES.includes(lastToken(name))
 }
 
 export type ChartTypeId =
@@ -189,22 +281,92 @@ export function inferColumnRoles(
   columns: string[],
   rows: unknown[][],
   serverColumnTypes?: Record<string, string>,
+  serverSemantics?: ServerColumnSemantics[] | null,
 ): ColumnInfo[] {
+  const semanticsByName = new Map((serverSemantics ?? []).map((s) => [s.name, s]))
+
   return columns.map((name, index) => {
     const serverType = serverColumnTypes?.[name]
     const values = rows.map((row) => row[index])
+
+    let role: ColumnRole
     if (serverType === 'numeric' || serverType === 'date') {
-      return { name, role: serverType }
-    }
-    if (serverType === 'text') {
+      role = serverType
+    } else if (serverType === 'text') {
       const nonNull = values.filter((v) => v !== null && v !== undefined)
-      if (nonNull.length > 0 && nonNull.every(parsesAsNumber)) {
-        return { name, role: 'numeric' }
-      }
-      return { name, role: 'text' }
+      role = nonNull.length > 0 && nonNull.every(parsesAsNumber) ? 'numeric' : 'text'
+    } else {
+      role = inferRoleFromValues(name, values)
     }
-    return { name, role: inferRoleFromValues(name, values) }
+
+    // The server knows the real primary/foreign keys from live schema
+    // introspection, so its verdict wins outright where it exists.
+    const semantics = semanticsByName.get(name)
+    if (semantics) {
+      return {
+        name,
+        role,
+        label: semantics.label,
+        semanticType: semantics.semantic_type,
+        suitableForX: semantics.suitable_for_x,
+        suitableForY: semantics.suitable_for_y,
+        measurePriority: semantics.measure_priority,
+        numberFormat: semantics.number_format,
+      }
+    }
+
+    // Fallback for any path that carries no semantics: name patterns
+    // only. Weaker than the server's schema knowledge, but it still
+    // catches `ProductKey`/`CustomerID`, which are the shapes that
+    // actually produce the wrong y-axis.
+    const isKey = looksLikeKeyColumn(name)
+    const isNumericCategory = role === 'numeric' && NUMERIC_CATEGORY_RE.test(name)
+    return {
+      name,
+      role,
+      semanticType: isKey ? 'key' : undefined,
+      // A key is neither axis: as a value it is meaningless, and as a
+      // category it is unreadable.
+      suitableForY: !isKey && role === 'numeric' && !isNumericCategory,
+      suitableForX: !isKey && (role !== 'numeric' || isNumericCategory),
+      measurePriority: isKey || isNumericCategory ? 0 : undefined,
+    }
   })
+}
+
+/** Columns that may be plotted as a value, most primary first.
+ *
+ * **The fix for the reported bug.** Every call site that previously took
+ * `columnsByRole(columns, 'numeric')[0]` as the y-axis now takes
+ * `measureColumns(columns)[0]`, which can never return a key.
+ *
+ * Ordering: explicit `measurePriority` first (the server's ladder --
+ * revenue over profit over quantity over counts, and whatever the query
+ * ranks by above all), then original result order, which is the order
+ * the SQL named them. `sort` is stable in every engine this targets, so
+ * equal priorities keep result order. */
+export function measureColumns(columns: ColumnInfo[]): ColumnInfo[] {
+  const candidates = columns.filter((c) =>
+    c.suitableForY === undefined ? c.role === 'numeric' : c.suitableForY,
+  )
+  return [...candidates].sort((a, b) => (b.measurePriority ?? 0) - (a.measurePriority ?? 0))
+}
+
+/** Columns that may label a category axis, best first: a real date, then
+ * a numeric category such as a year, then a text dimension. */
+export function categoryColumns(columns: ColumnInfo[]): ColumnInfo[] {
+  const eligible = columns.filter((c) =>
+    c.suitableForX === undefined ? c.role !== 'numeric' : c.suitableForX,
+  )
+  const rank = (c: ColumnInfo) => (c.role === 'date' ? 0 : c.role === 'numeric' ? 1 : 2)
+  return [...eligible].sort((a, b) => rank(a) - rank(b))
+}
+
+/** A column's display label -- the server's friendly one when present,
+ * otherwise the raw name. Used for axis titles, tooltips and the measure
+ * picker, so none of them ever shows a raw key-ish column name. */
+export function columnLabel(column: ColumnInfo | undefined): string {
+  return column?.label ?? column?.name ?? ''
 }
 
 // ---------------------------------------------------------------------------
@@ -264,9 +426,17 @@ export function getChartTypeOptions(
   rows: unknown[][],
 ): ChartTypeOption[] {
   const columnNames = columns.map((c) => c.name)
-  const numericCols = columnsByRole(columns, 'numeric')
+  // `measureColumns`, not every numeric column. A chart type that needs
+  // "a numeric measure" needs an actual measure: a surrogate key is
+  // numeric, and counting it here is what let a key-only result still
+  // report scatter as a valid chart -- so the key came back as an axis
+  // through `createDefaultChartOptions`'s fallback even after
+  // `recommendChart` had correctly declined.
+  const numericCols = measureColumns(columns)
   const dateCols = columnsByRole(columns, 'date')
-  const textCols = columnsByRole(columns, 'text')
+  // Likewise for the category axis: a key is unreadable as a label, and
+  // a numeric year is a perfectly good one.
+  const textCols = categoryColumns(columns)
   const categoryCols = [...dateCols, ...textCols]
   const rowCount = rows.length
 
@@ -462,27 +632,36 @@ export function getChartTypeOptions(
  * choice rather than trying to awkwardly carry over an incompatible one,
  * e.g. a scatter's numeric x-axis surviving a switch to bar). */
 export function defaultSeriesForType(type: ChartTypeId, columns: ColumnInfo[]): SeriesConfig {
-  const numeric = columnsByRole(columns, 'numeric')
-  const dateFirst = columnsByRole(columns, 'date')[0]
-  const categoryOrDate = columns.filter((c) => c.role !== 'numeric')
-  const axisColumn = (dateFirst ?? categoryOrDate[0])?.name ?? null
+  // `measureColumns` rather than every numeric column: a surrogate key is
+  // numeric too, and taking the first numeric column is exactly how
+  // `SELECT ProductKey, SUM(SalesAmount)` ended up plotting ProductKey as
+  // the y-axis. Measures come back most-primary-first, so `[0]` is the
+  // measure the question actually asked about.
+  const measures = measureColumns(columns)
+  const axisColumn = categoryColumns(columns)[0]?.name ?? null
 
   if (type === 'kpi' || type === 'histogram') {
     // histogram, like kpi, has no x-axis column -- binning computes its
     // own x-axis from the single numeric column's own values.
-    return { xColumn: null, yColumns: numeric.slice(0, 1).map((c) => c.name), groupColumn: null }
+    return { xColumn: null, yColumns: measures.slice(0, 1).map((c) => c.name), groupColumn: null }
   }
   if (type === 'scatter') {
+    // Scatter is the one type whose x-axis is itself a measure: it plots
+    // one measure against another. A key is still excluded from both.
     return {
-      xColumn: numeric[0]?.name ?? null,
-      yColumns: numeric.slice(1, 2).map((c) => c.name),
+      xColumn: measures[0]?.name ?? null,
+      yColumns: measures.slice(1, 2).map((c) => c.name),
       groupColumn: null,
     }
   }
   if (type === 'bar-stacked' || type === 'mixed') {
-    return { xColumn: axisColumn, yColumns: numeric.slice(0, 2).map((c) => c.name), groupColumn: null }
+    return {
+      xColumn: axisColumn,
+      yColumns: measures.slice(0, 2).map((c) => c.name),
+      groupColumn: null,
+    }
   }
-  return { xColumn: axisColumn, yColumns: numeric.slice(0, 1).map((c) => c.name), groupColumn: null }
+  return { xColumn: axisColumn, yColumns: measures.slice(0, 1).map((c) => c.name), groupColumn: null }
 }
 
 /** Builds a complete, ready-to-preview `ChartOptions` -- the recommendation
@@ -499,13 +678,27 @@ export function createDefaultChartOptions(
   const chartType = recommendation?.type ?? getChartTypeOptions(columns, rows).find((o) => o.enabled && o.type !== 'table')?.type
   if (!chartType) return null
 
+  const series = recommendation?.series ?? defaultSeriesForType(chartType, columns)
+
+  // Default the number format from the measure actually being plotted,
+  // rather than always 'plain'. The server classified `TotalSales` as
+  // currency and `OrderQuantity` as an integer, so axis ticks and
+  // tooltips can render correctly without the user configuring anything.
+  // Falls back to 'plain' whenever no semantics reached us, which is the
+  // previous behaviour exactly.
+  const plotted = columns.find((c) => c.name === series.yColumns[0])
+  const numberFormat: NumberFormat =
+    plotted?.numberFormat === 'currency' || plotted?.numberFormat === 'percent'
+      ? plotted.numberFormat
+      : 'plain'
+
   return {
     chartType,
-    series: recommendation?.series ?? defaultSeriesForType(chartType, columns),
+    series,
     sortOrder: 'none',
     topN: rows.length > 20 ? 20 : null,
     dateGrouping: 'none',
-    numberFormat: 'plain',
+    numberFormat,
     title: '',
     showLegend: true,
     stacked: false,
@@ -524,9 +717,11 @@ export function recommendChart(
 ): { type: ChartTypeId; reason: string; series: SeriesConfig } | null {
   const options = getChartTypeOptions(columns, rows)
   const enabledByType = new Map(options.map((o) => [o.type, o]))
-  const numericCols = columnsByRole(columns, 'numeric')
+  // `numericCols`/`textCols` are deliberately gone: axis choice now runs
+  // through `measureColumns`/`categoryColumns`, which exclude keys.
+  // `dateCols` remains because the line-chart branch still needs a real
+  // date for its x-axis, which is a stronger condition than "a category".
   const dateCols = columnsByRole(columns, 'date')
-  const textCols = columnsByRole(columns, 'text')
 
   const tryType = (type: ChartTypeId): ChartTypeOption | null => {
     const option = enabledByType.get(type)
@@ -549,33 +744,45 @@ export function recommendChart(
     }
   }
 
+  // Every y-axis below comes from `measureColumns`, never from the first
+  // numeric column -- a key is numeric, and picking it was the bug.
+  // `measures[0]` is the most primary measure, so a result carrying both
+  // Total Sales and Total Orders charts whichever the query ranked by.
+  const measures = measureColumns(columns)
+  const categories = categoryColumns(columns)
+
+  // Nothing chartable as a value. Returning null here is deliberate: the
+  // caller shows the table and says so, rather than being handed a chart
+  // of identifiers.
+  if (measures.length === 0) return null
+
   const kpi = tryType('kpi')
-  if (kpi) return { type: 'kpi', reason: kpi.reason, series: { xColumn: null, yColumns: [numericCols[0]?.name].filter(Boolean), groupColumn: null } }
+  if (kpi) return { type: 'kpi', reason: kpi.reason, series: { xColumn: null, yColumns: [measures[0].name], groupColumn: null } }
 
   const line = tryType('line')
   if (line && dateCols.length > 0) {
     return {
       type: 'line',
       reason: line.reason,
-      series: { xColumn: dateCols[0].name, yColumns: [numericCols[0].name], groupColumn: null },
+      series: { xColumn: dateCols[0].name, yColumns: [measures[0].name], groupColumn: null },
     }
   }
 
   const bar = tryType('bar')
-  if (bar && textCols.length > 0) {
+  if (bar && categories.length > 0) {
     return {
       type: 'bar',
       reason: bar.reason,
-      series: { xColumn: textCols[0].name, yColumns: [numericCols[0].name], groupColumn: null },
+      series: { xColumn: categories[0].name, yColumns: [measures[0].name], groupColumn: null },
     }
   }
 
   const scatter = tryType('scatter')
-  if (scatter) {
+  if (scatter && measures.length >= 2) {
     return {
       type: 'scatter',
       reason: scatter.reason,
-      series: { xColumn: numericCols[0].name, yColumns: [numericCols[1].name], groupColumn: null },
+      series: { xColumn: measures[0].name, yColumns: [measures[1].name], groupColumn: null },
     }
   }
 
@@ -584,7 +791,7 @@ export function recommendChart(
     return {
       type: 'histogram',
       reason: histogram.reason,
-      series: { xColumn: null, yColumns: [numericCols[0].name], groupColumn: null },
+      series: { xColumn: null, yColumns: [measures[0].name], groupColumn: null },
     }
   }
 
@@ -682,6 +889,13 @@ export function prepareChart(
   const notices: string[] = []
   const { series } = options
 
+  // Axis titles, legend entries and CSV headers all read through this,
+  // so none of them shows a raw column name. The server's friendly label
+  // ("Total Sales") when it sent one, otherwise the column name itself --
+  // which keeps every pre-semantics path rendering exactly as before.
+  const labelOf = (name: string | null | undefined): string =>
+    name ? (columns.find((c) => c.name === name)?.label ?? name) : ''
+
   if (options.chartType === 'table' || options.chartType === 'kpi') return null
 
   if (series.yColumns.length === 0) return null
@@ -697,9 +911,11 @@ export function prepareChart(
     return {
       chartJsType: 'scatter',
       labels: [],
-      datasets: [{ label: `${series.yColumns[0]} vs ${series.xColumn}`, data: points, color: colors[0] }],
-      xTitle: series.xColumn ?? '',
-      yTitle: series.yColumns[0],
+      datasets: [
+        { label: `${labelOf(series.yColumns[0])} vs ${labelOf(series.xColumn)}`, data: points, color: colors[0] },
+      ],
+      xTitle: labelOf(series.xColumn),
+      yTitle: labelOf(series.yColumns[0]),
       notices,
     }
   }
@@ -716,8 +932,8 @@ export function prepareChart(
     return {
       chartJsType: 'bar',
       labels: bins.map((b) => b.label),
-      datasets: [{ label: series.yColumns[0], data: bins.map((b) => b.count), color: colors[0] }],
-      xTitle: series.yColumns[0],
+      datasets: [{ label: labelOf(series.yColumns[0]), data: bins.map((b) => b.count), color: colors[0] }],
+      xTitle: labelOf(series.yColumns[0]),
       yTitle: 'Count',
       notices,
     }
@@ -763,7 +979,7 @@ export function prepareChart(
   const buildSeries = (yColumn: string, colorIndex: number, datasetType?: 'bar' | 'line') => {
     const yIndex = columnNames.indexOf(yColumn)
     return {
-      label: yColumn,
+      label: labelOf(yColumn),
       data: working.map((w) => Number(w.row[yIndex]) || 0),
       color: colors[colorIndex % colors.length],
       ...(datasetType ? { datasetType } : {}),
@@ -796,7 +1012,7 @@ export function prepareChart(
       chartJsType = options.chartType
       datasets = [
         {
-          label: series.yColumns[0],
+          label: labelOf(series.yColumns[0]),
           data: working.map((w) => Number(w.row[columnNames.indexOf(series.yColumns[0])]) || 0),
           color: colors[0],
         },
@@ -814,8 +1030,8 @@ export function prepareChart(
     chartJsType,
     labels,
     datasets,
-    xTitle: xColumn,
-    yTitle: series.yColumns.join(', '),
+    xTitle: labelOf(xColumn),
+    yTitle: series.yColumns.map(labelOf).join(', '),
     notices,
   }
 }

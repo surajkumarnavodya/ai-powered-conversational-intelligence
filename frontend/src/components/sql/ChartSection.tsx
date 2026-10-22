@@ -12,6 +12,7 @@ import {
   type ChartOptions,
   type ChartRecommendationHint,
   type ChartTypeId,
+  type ServerColumnSemantics,
 } from '@/lib/chartEngine'
 import { ChartCustomizePanel } from './ChartCustomizePanel'
 import { ChartPicker } from './ChartPicker'
@@ -33,6 +34,7 @@ export function ChartSection({
   columns,
   rows,
   columnTypes,
+  columnSemantics,
   chartRecommendation,
   truncated,
   chartOptions,
@@ -41,6 +43,12 @@ export function ChartSection({
   columns: string[]
   rows: unknown[][]
   columnTypes: Record<string, string>
+  /** Per-column semantics from the server (`column_semantics`). Lets the
+   * chart engine bind a real measure to the y-axis instead of whichever
+   * numeric column came first -- a surrogate key is numeric too. Optional
+   * so a caller that has none still works, falling back to name
+   * patterns. */
+  columnSemantics?: ServerColumnSemantics[] | null
   chartRecommendation: ChartRecommendationHint | null
   truncated: boolean
   chartOptions: ChartOptions | null
@@ -50,7 +58,10 @@ export function ChartSection({
   const [draft, setDraft] = useState<ChartOptions | null>(null)
   const [expanded, setExpanded] = useState(false)
 
-  const columnInfos = useMemo(() => inferColumnRoles(columns, rows, columnTypes), [columns, rows, columnTypes])
+  const columnInfos = useMemo(
+    () => inferColumnRoles(columns, rows, columnTypes, columnSemantics),
+    [columns, rows, columnTypes, columnSemantics],
+  )
   const chartTypeOptions = useMemo(() => getChartTypeOptions(columnInfos, rows), [columnInfos, rows])
   const hasAnyChartableType = chartTypeOptions.some((o) => o.enabled && o.type !== 'table')
 

@@ -1,3 +1,4 @@
+import type { ServerColumnSemantics } from '@/lib/chartEngine'
 import type {
   AgentStatus,
   AskResponse,
@@ -75,6 +76,13 @@ export interface QueryHistoryEntry {
    * ExecuteResponse.column_types -- feeds frontend/src/lib/chartEngine.ts's
    * chart-type validity checks without re-guessing types client-side. */
   confirmedColumnTypes: Record<string, string> | null
+  /** Per-column semantics from ExecuteResponse.column_semantics -- what
+   * each column *means* (dimension / key / measure / date / ...), not
+   * just its storage type. This is what lets the chart engine put a real
+   * measure on the y-axis instead of whichever numeric column came
+   * first; a surrogate key is numeric too. Null for an entry that
+   * predates the field, which falls back to name patterns. */
+  confirmedColumnSemantics: ServerColumnSemantics[] | null
   /** A starting-point suggestion only -- see ChartRecommendation's own
    * docstring for why chartEngine.ts never trusts this outright. */
   confirmedChartRecommendation: ChartRecommendation | null
@@ -317,6 +325,7 @@ export function serverMessagesToQueryHistory(rows: ServerMessage[]): QueryHistor
       confirmedError: null,
       confirmedSql: resultSnapshot ? (resultSnapshot.normalized_sql ?? sql) : null,
       confirmedColumnTypes: resultSnapshot?.column_types ?? null,
+      confirmedColumnSemantics: null,
       confirmedChartRecommendation: resultSnapshot?.chart_recommendation ?? null,
       confirmedTruncated: resultSnapshot?.truncated ?? false,
       confirmedDurationMs: resultSnapshot?.duration_ms ?? null,
@@ -412,6 +421,7 @@ export function newHistoryEntry(
     confirmedError: null,
     confirmedSql: null,
     confirmedColumnTypes: null,
+    confirmedColumnSemantics: null,
     confirmedChartRecommendation: null,
     confirmedTruncated: false,
     confirmedDurationMs: null,
@@ -438,6 +448,7 @@ export function withConfirmedResult(
   truncated: boolean,
   durationMs: number,
   cacheStatus: 'hit' | 'miss' | null = null,
+  columnSemantics: ServerColumnSemantics[] | null = null,
 ): QueryHistoryEntry {
   return {
     ...entry,
@@ -445,6 +456,7 @@ export function withConfirmedResult(
     confirmedRows: rows,
     confirmedSql,
     confirmedColumnTypes: columnTypes,
+    confirmedColumnSemantics: columnSemantics,
     confirmedChartRecommendation: chartRecommendation,
     confirmedTruncated: truncated,
     confirmedCacheStatus: cacheStatus,
@@ -492,6 +504,7 @@ export function withConfirmedError(entry: QueryHistoryEntry, error: string): Que
     confirmedRows: null,
     confirmedSql: null,
     confirmedColumnTypes: null,
+    confirmedColumnSemantics: null,
     confirmedChartRecommendation: null,
     confirmedTruncated: false,
     confirmedDurationMs: null,

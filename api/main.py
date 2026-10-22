@@ -128,6 +128,7 @@ from api.schemas import (
     ChartSortOut,
     CitationOut,
     ColumnOut,
+    ColumnSemanticsOut,
     ComponentHealth,
     ConversationExchangeOut,
     DatabaseHealth,
@@ -170,6 +171,7 @@ from api.voice import router as voice_router
 from api.workflow import router as workflow_router
 from config.settings import ConfigurationError, Settings, configure_logging, get_settings
 from db.column_formatting import get_key_column_names
+from db.column_semantics import classify_result_columns
 from db.connection import (
     check_write_privileges,
     get_connection,
@@ -1899,6 +1901,26 @@ def execute(
         logger.debug("[execute] could not resolve key columns for chart selection", exc_info=True)
     recommendation = recommend_chart(result_df, column_types, chart_key_columns)
 
+    # Per-column semantics for the client's chart engine. Built from the
+    # same key set the recommendation above uses, so the two cannot
+    # disagree about what is a key. `ORDER BY` is threaded in because a
+    # measure the query ranks by is the one the question asked about --
+    # see `db.column_semantics._ORDER_BY_BOOST`.
+    column_semantics_out: list[ColumnSemanticsOut] = []
+    try:
+        shape = describe_sql(safe_sql, dialect)
+        column_semantics_out = [
+            ColumnSemanticsOut.model_validate(semantics.as_dict())
+            for semantics in classify_result_columns(
+                list(columns),
+                column_types,
+                chart_key_columns,
+                order_by=list(shape.order_by) if shape else None,
+            )
+        ]
+    except Exception:  # noqa: BLE001 - an accuracy aid, never a blocker
+        logger.debug("[execute] could not classify column semantics", exc_info=True)
+
     # Prompt 15: a fuller, deterministic visualization spec -- additive and
     # parallel to chart_recommendation/column_types above, which remain the
     # frontend's actual chart-picker seed (see analytics.visualization's own
@@ -1954,6 +1976,7 @@ def execute(
         row_count=len(rows),
         duration_ms=duration_ms,
         column_types=column_types,
+        column_semantics=column_semantics_out,
         chart_recommendation=(
             ChartRecommendationOut(**recommendation) if recommendation is not None else None
         ),

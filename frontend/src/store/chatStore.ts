@@ -717,6 +717,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
               response.truncated,
               durationMs,
               response.cache_status,
+              // What each column *means*, so the chart engine binds a
+              // real measure to the y-axis rather than whichever numeric
+              // column came first -- a surrogate key is numeric too.
+              response.column_semantics ?? null,
             )
           : withConfirmedError(entry, response.error ?? 'Execution failed.')
       set((state) => commitQueryHistory(state, replaceEntry(state.queryHistory, entryId, updated)))

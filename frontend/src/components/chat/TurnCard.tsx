@@ -351,6 +351,7 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
                     columns={entry.confirmedColumns}
                     rows={entry.confirmedRows}
                     columnTypes={entry.confirmedColumnTypes ?? {}}
+                    columnSemantics={entry.confirmedColumnSemantics}
                     chartRecommendation={entry.confirmedChartRecommendation}
                     truncated={entry.confirmedTruncated}
                     chartOptions={entry.chartOptions}

@@ -1,3 +1,4 @@
+import type { ServerColumnSemantics } from '@/lib/chartEngine'
 /**
  * Mirrors api/schemas.py -- one interface per Pydantic model. Kept in sync
  * by hand (no codegen); if a backend field is added/renamed, update here.
@@ -740,6 +741,12 @@ export interface ExecuteResponse {
   row_count: number | null
   duration_ms: number | null
   column_types: Record<string, string>
+  /** Per-column semantics (api.schemas.ColumnSemanticsOut): what each
+   * column *means*, not just its storage type. Lets the chart engine
+   * put a real measure on the y-axis -- a surrogate key is numeric
+   * too, and taking the first numeric column is how ProductKey ended
+   * up plotted as a value. Empty for a result with no columns. */
+  column_semantics?: ServerColumnSemantics[]
   chart_recommendation: ChartRecommendation | null
   truncated: boolean
   /** Prompt 30 -- the JSON mirror of the X-Cache header. 'hit' means this

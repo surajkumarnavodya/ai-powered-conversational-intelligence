@@ -16,17 +16,17 @@ function roles(columns: string[], rows: unknown[][]): ColumnInfo[] {
 describe('inferColumnRoles', () => {
   it('infers numeric from all-numeric values', () => {
     const result = roles(['revenue'], [[100], [200]])
-    expect(result).toEqual([{ name: 'revenue', role: 'numeric' }])
+    expect(result).toMatchObject([{ name: 'revenue', role: 'numeric' }])
   })
 
   it('infers text from category-like strings', () => {
     const result = roles(['region'], [['East'], ['West']])
-    expect(result).toEqual([{ name: 'region', role: 'text' }])
+    expect(result).toMatchObject([{ name: 'region', role: 'text' }])
   })
 
   it('infers date from a date-shaped column name plus parseable values', () => {
     const result = roles(['order_date'], [['2024-01-01'], ['2024-02-01']])
-    expect(result).toEqual([{ name: 'order_date', role: 'date' }])
+    expect(result).toMatchObject([{ name: 'order_date', role: 'date' }])
   })
 
   it('infers date from parseable values even without a date-shaped name', () => {
