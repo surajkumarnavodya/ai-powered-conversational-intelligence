@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
 from identity.display_name import validate_display_name
 from identity.email import send_password_reset_email, send_verification_email
 from identity.exceptions import (
@@ -40,6 +40,7 @@ from identity.exceptions import (
 )
 from identity.models import User
 from identity.password_policy import validate_password_strength
+from identity.profile_picture import STORED_MEDIA_TYPE, prepare_profile_picture
 from identity.repositories.external_identities import (
     find_or_create_user_for_google_identity,
     link_external_identity,
@@ -64,12 +65,14 @@ from identity.repositories.tokens import (
 from identity.repositories.users import (
     change_password,
     check_not_locked,
+    clear_profile_picture,
     create_user,
     get_user_by_email,
     get_user_by_id,
     get_user_roles,
     record_login_failure,
     record_login_success,
+    set_profile_picture,
     update_display_name,
 )
 from identity.schemas import (
@@ -81,6 +84,7 @@ from identity.schemas import (
     LinkedIdentityOut,
     LoginRequest,
     MessageResponse,
+    ProfilePictureResponse,
     RegisterRequest,
     ResendVerificationRequest,
     ResetPasswordRequest,
@@ -96,6 +100,7 @@ from sqlalchemy.orm import Session
 
 from agent.rate_limit import BoundedLimiterCache
 from api.identity_authz import get_identity_db, require_local_auth_enabled, require_local_user
+from api.rate_limit import enforce_api_action_rate_limit
 from config.settings import Settings, get_settings
 from security.audit_log import log_security_event
 from security.client_ip import resolve_client_ip
@@ -198,6 +203,21 @@ def _resolve_login_tenant(session: Session, user: User) -> str:
     return context.tenant_id
 
 
+def _avatar_url(user: User) -> str | None:
+    """The caller's own avatar URL, or None when no picture is stored.
+
+    Derived from the image actually being present, never from
+    `avatar_updated_at` alone -- a row with a timestamp but no bytes would
+    otherwise advertise a URL that serves 404. The `v=` query is that
+    timestamp, which makes the URL change whenever the picture does, so a
+    browser cannot serve the previous picture from cache after a replace.
+    """
+    if user.avatar_image is None:
+        return None
+    stamp = int(user.avatar_updated_at.timestamp()) if user.avatar_updated_at else 0
+    return f"/auth/me/avatar?v={stamp}"
+
+
 def _user_out(user: User, roles: tuple[str, ...]) -> UserOut:
     return UserOut(
         id=user.id,
@@ -210,6 +230,7 @@ def _user_out(user: User, roles: tuple[str, ...]) -> UserOut:
         roles=list(roles),
         created_at=user.created_at,
         last_login_at=user.last_login_at,
+        avatar_url=_avatar_url(user),
     )
 
 
@@ -1208,3 +1229,133 @@ def revoke_one_session(
 
     revoke_session(session, target, reason="user_revoked")
     return MessageResponse(message="Session revoked.")
+
+
+@router.post("/auth/me/avatar", response_model=ProfilePictureResponse)
+def upload_avatar(
+    request: Request,
+    file: UploadFile = File(...),
+    user_and_session: tuple[User, Session] = Depends(require_local_user),
+) -> ProfilePictureResponse:
+    """Sets the caller's own profile picture from an uploaded image.
+
+    Every decision about what may become an avatar belongs to
+    `identity.profile_picture.prepare_profile_picture` -- this route reads
+    the bytes, rate-limits, and stores whatever that returns. A refusal
+    comes back as 400 with the module's own short, fixed reason, which is
+    what the settings dialog shows before asking for another picture.
+
+    Rate-limited under its own action budget, like every other upload route
+    (`api/attachments.py`). That matters more here than for most: an
+    accepted upload can trigger a vision-model call, so an unlimited
+    endpoint would be a free way to occupy the local GPU.
+
+    The caller can only ever set *their own* picture -- the account comes
+    from `require_local_user`, never from a path or body parameter, so
+    there is no object to authorize and nothing to enumerate.
+    """
+    settings = get_settings()
+    user, session = user_and_session
+    enforce_api_action_rate_limit(request, "profile_picture_upload", settings)
+
+    # Bounded by `profile_picture_max_bytes` + 1 so an oversized upload is
+    # rejected on its real length without ever buffering the whole thing:
+    # reading `file.read()` unbounded would let a caller spend the server's
+    # memory before the size check it is going to fail.
+    cap = settings.profile_picture_max_bytes
+    file_bytes = file.file.read(cap + 1)
+
+    result = prepare_profile_picture(file.filename or "", file.content_type, file_bytes, settings)
+    if not result.accepted or result.image_bytes is None or result.media_type is None:
+        # `log_security_event` rather than a bare log: a rejected upload is
+        # the signal an operator wants when somebody probes this endpoint.
+        # The reason is a fixed constant or a sanitized model sentence --
+        # never the filename, which is caller-controlled.
+        log_security_event(
+            "profile_picture_rejected",
+            "info",
+            "An uploaded profile picture was refused before being stored.",
+            user_id=str(user.id),
+            byte_count=len(file_bytes),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result.reason or "That image could not be used as a profile picture.",
+        )
+
+    updated = set_profile_picture(
+        session, user, image_bytes=result.image_bytes, media_type=result.media_type
+    )
+    roles = get_user_roles(session, updated.id) or ("user",)
+    log_security_event(
+        "profile_picture_updated",
+        "info",
+        "A user set or replaced their own profile picture.",
+        user_id=str(updated.id),
+        vision_checked=result.vision_checked,
+    )
+    return ProfilePictureResponse(
+        user=_user_out(updated, roles),
+        vision_checked=result.vision_checked,
+        vision_skipped_reason=result.vision_skipped_reason,
+    )
+
+
+@router.delete("/auth/me/avatar", response_model=UserOut)
+def delete_avatar(
+    user_and_session: tuple[User, Session] = Depends(require_local_user),
+) -> UserOut:
+    """Removes the caller's own profile picture, restoring the default icon.
+
+    Idempotent on purpose: deleting a picture that is not there is a
+    success, not a 404. The caller's intent ("I should have no picture") is
+    already satisfied, and a 404 here would only tell them about a race
+    they cannot act on.
+    """
+    user, session = user_and_session
+    updated = clear_profile_picture(session, user)
+    roles = get_user_roles(session, updated.id) or ("user",)
+    log_security_event(
+        "profile_picture_removed",
+        "info",
+        "A user removed their own profile picture.",
+        user_id=str(updated.id),
+    )
+    return _user_out(updated, roles)
+
+
+@router.get("/auth/me/avatar")
+def get_avatar(
+    user_and_session: tuple[User, Session] = Depends(require_local_user),
+) -> Response:
+    """Serves the caller's own profile picture bytes.
+
+    Authenticated like every other `/auth/me` route, and scoped to the
+    caller's own account -- there is deliberately no
+    `GET /users/{id}/avatar`, because this dashboard never shows one
+    person's avatar to another, so publishing other accounts' pictures
+    would be surface with no feature behind it.
+
+    `Cache-Control: private` lets the browser reuse the image across the
+    many places the avatar renders, while keeping it out of any shared
+    cache. It is safe to cache for a long time precisely because the URL
+    carries `avatar_updated_at` (see `_avatar_url`), so a replacement is a
+    different URL rather than a stale hit.
+
+    The `Content-Type` is the stored one, which
+    `identity.profile_picture` set; it is never the upload's declared type.
+    """
+    user, _session = user_and_session
+    if user.avatar_image is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No profile picture set.")
+    return Response(
+        content=user.avatar_image,
+        media_type=user.avatar_media_type or STORED_MEDIA_TYPE,
+        headers={
+            "Cache-Control": "private, max-age=86400",
+            # The bytes are an image this server re-encoded itself, but a
+            # sniffing browser deciding otherwise is exactly the kind of
+            # thing this header exists to stop.
+            "X-Content-Type-Options": "nosniff",
+        },
+    )

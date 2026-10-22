@@ -147,7 +147,8 @@
     "modelNotInstalled": "Not installed",
     "modelDefault": "Default",
     "modelSelectionUnavailable": "Model list unavailable -- using the server default.",
-    "modelPullHint": "Run \"ollama pull {{model}}\" to install this model."
+    "modelPullHint": "Run \"ollama pull {{model}}\" to install this model.",
+    "account": "Account"
   },
   "userMenu": {
     "trigger": "Account menu",
@@ -841,5 +842,17 @@
       "medium": "{{source}}: partial match",
       "low": "{{source}}: weak match"
     }
+  },
+  "profilePicture": {
+    "title": "Profile picture",
+    "alt": "Your profile picture",
+    "upload": "Upload",
+    "replace": "Replace",
+    "remove": "Remove",
+    "hint": "JPG, PNG or WebP, up to 5 MB. Cropped to a square.",
+    "checking": "Checking the photo...",
+    "notChecked": "Saved, but the automated photo check didn't run ({{reason}}).",
+    "uploadFailed": "That picture couldn't be uploaded. Please try again.",
+    "removeFailed": "That picture couldn't be removed. Please try again."
   }
 }

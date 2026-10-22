@@ -7,6 +7,7 @@ import type {
   LocalUser,
   MessageListResponse,
   MessageResponse,
+  ProfilePictureResponse,
   SearchResponse,
   ServerConversation,
   TokenResponse,
@@ -161,6 +162,29 @@ export function updateProfile(displayName: string): Promise<LocalUser> {
     method: 'PATCH',
     body: JSON.stringify({ display_name: displayName }),
   })
+}
+
+/** Uploads a new profile picture -- `POST /auth/me/avatar`.
+ *
+ * `FormData` deliberately carries no explicit `Content-Type`: the browser
+ * has to set the multipart boundary itself, and `lib/api.ts`'s `request()`
+ * already skips its JSON default for a `FormData` body.
+ *
+ * A refusal arrives as an `ApiError` whose message is the server's own
+ * short reason (`identity/profile_picture.py`'s fixed constants, or one
+ * sanitized sentence from the vision model) -- the caller shows it and
+ * asks for another picture. */
+export function uploadProfilePicture(file: File): Promise<ProfilePictureResponse> {
+  const body = new FormData()
+  body.append('file', file)
+  return request<ProfilePictureResponse>('/auth/me/avatar', { method: 'POST', body })
+}
+
+/** Removes the caller's own profile picture -- `DELETE /auth/me/avatar`.
+ * Idempotent server-side, so this is safe to call without first checking
+ * whether a picture is set. */
+export function removeProfilePicture(): Promise<LocalUser> {
+  return request<LocalUser>('/auth/me/avatar', { method: 'DELETE' })
 }
 
 // --- Server-side chat history (api/chat_history.py) -- see

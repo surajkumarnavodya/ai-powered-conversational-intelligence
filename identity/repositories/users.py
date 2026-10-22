@@ -333,3 +333,53 @@ def update_display_name(session: Session, user: User, display_name: str) -> User
     session.commit()
     session.refresh(user)
     return user
+
+
+def set_profile_picture(
+    session: Session, user: User, *, image_bytes: bytes, media_type: str
+) -> User:
+    """Stores an already-validated, already-squared profile picture.
+
+    The bytes are trusted as-is here for the same reason
+    `update_display_name` trusts its argument: validation belongs to one
+    owner and has already run. For a picture that owner is
+    `identity.profile_picture.prepare_profile_picture`, which decides the
+    type, scans the raw upload, re-encodes to a square and returns only
+    what may be stored -- the uploaded file itself never reaches this
+    function.
+
+    `avatar_updated_at` doubles as the cache-buster the serving URL carries
+    (see `identity/models.py::User`), so it is always refreshed here, even
+    when somebody re-uploads a byte-identical picture -- a stale browser
+    cache would otherwise make a successful replace look like it did
+    nothing.
+    """
+    user.avatar_image = image_bytes
+    user.avatar_media_type = media_type
+    user.avatar_updated_at = datetime.now(UTC)
+    session.commit()
+    session.refresh(user)
+    return user
+
+
+def clear_profile_picture(session: Session, user: User) -> User:
+    """Removes the stored picture, returning the account to the default icon.
+
+    All three columns are cleared together, `avatar_updated_at` included:
+    leaving a timestamp behind would describe a picture that is no longer
+    there, and `UserOut.avatar_url` derives its presence from the image
+    itself, so a half-cleared row would advertise a URL that serves 404.
+    """
+    # `type: ignore[assignment]` on all three, and the reason is the column
+    # declaration rather than this assignment: the three `avatar_*` columns
+    # are `nullable=True` but cannot be annotated `Mapped[X | None]`,
+    # because SQLAlchemy's union de-stringification raises at import time on
+    # Python 3.14 (see `identity/models.py::User`'s own comment for the
+    # exact failure). Clearing a nullable column to NULL is correct; it is
+    # the annotation that cannot express it here.
+    user.avatar_image = None  # type: ignore[assignment]
+    user.avatar_media_type = None  # type: ignore[assignment]
+    user.avatar_updated_at = None  # type: ignore[assignment]
+    session.commit()
+    session.refresh(user)
+    return user

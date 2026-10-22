@@ -61,6 +61,19 @@ invariants that must not regress.
   `Segmentation fault`/`Windows fatal exception: access violation` right
   after a query with a date/datetime column succeeds, not a normal Python
   exception.
+- **SQLAlchemy cannot express a nullable column as `Mapped[X | None]`**
+  on this Python. Declaring one raises at *import* time, before any query
+  runs: `sqlalchemy.util.typing.make_union_type` calls
+  `Union.__getitem__(types)` with a tuple, and 3.14 rejects that
+  (`TypeError: descriptor '__getitem__' requires a 'typing.Union' object
+  but received a 'tuple'`). This is why every nullable column in
+  `identity/models.py` is declared non-Optional (`username`,
+  `display_name`, `password_hash`, the `avatar_*` trio) — a convention
+  that looks like sloppiness and is actually load-bearing. The cost is
+  that assigning `None` to one trips mypy, which
+  `identity/repositories/users.py::clear_profile_picture` annotates at
+  the call site rather than mistyping the column. Measured 2026-10-22 by
+  trying it; three test files failed at collection with that TypeError.
 - **SQL Server non-default-schema execution**: an engine resolves an
   unqualified table name against the *connecting user's own default
   schema*, not `DB_<NAME>_SCHEMA` — a database whose tables all live under
