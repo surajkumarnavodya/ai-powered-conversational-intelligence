@@ -67,7 +67,13 @@ export function SourcesUsedChips({ state }: { state: AskResponse }) {
 }
 
 export function SourcesUsedPanel({ state, entryId }: { state: AskResponse; entryId: string }) {
-  if (state.sources_used.length === 0) return null
+  // A no-retrieval route ("general_knowledge"/"conversation") answers
+  // without running any source, so `sources_used` is legitimately empty
+  // while `synthesized_answer` holds the whole answer -- gating on the
+  // source list alone rendered nothing at all for those turns. The chip
+  // row above still returns null here, because there is genuinely no
+  // attribution to show.
+  if (state.sources_used.length === 0 && !state.synthesized_answer) return null
 
   return (
     <div className="flex flex-col gap-2">

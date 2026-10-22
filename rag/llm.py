@@ -1,9 +1,10 @@
 """Shared Ollama call helper for the RAG subgraph's three LLM steps (grade,
 rewrite, generate) -- factored out of `agent/llm_client.py` rather than
 importing that module's SQL-specific functions, but built on the exact same
-client construction, decoding policy and error handling (see
-`OllamaUnavailableError`'s use here, and `decoding_options`' below, both
-matching `agent.llm_client`'s own).
+client construction, decoding policy and error handling -- `decoding_options`
+and `ollama_unavailable_error` are both imported from `agent.llm_client`
+rather than reimplemented, so neither the sampling parameters nor the
+operator-facing failure message can drift from the SQL path's.
 
 Despite the name this is no longer RAG-only: `agent/orchestrator/nodes.py`'s
 router, web-search and media-search answer steps and `agent/analyst/
@@ -18,8 +19,7 @@ import logging
 import httpx
 import ollama
 
-from agent.exceptions import OllamaUnavailableError
-from agent.llm_client import decoding_options
+from agent.llm_client import decoding_options, ollama_unavailable_error
 from config.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -59,8 +59,11 @@ def call_ollama(
     `num_ctx` forces a reload of the served model.
 
     Raises:
-        OllamaUnavailableError: if the Ollama server can't be reached --
-            same failure shape `agent.llm_client`'s own functions raise, so
+        OllamaUnavailableError: if the call fails for any reason -- an
+            unreachable server, a model that is not installed, or one that
+            did not answer inside the per-call timeout. The message names
+            which (`agent.llm_client.ollama_unavailable_error`). Same
+            failure shape `agent.llm_client`'s own functions raise, so
             callers (the RAG subgraph nodes) handle it identically to the
             SQL pipeline's own LLM-call failures.
     """
@@ -81,10 +84,7 @@ def call_ollama(
             options={**decoding_options(settings, max_tokens), "temperature": temperature},
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
-        raise OllamaUnavailableError(
-            f"Could not reach Ollama at {settings.ollama_host} with model "
-            f"'{settings.ollama_model}': {exc}."
-        ) from exc
+        raise ollama_unavailable_error(settings, model or settings.ollama_model, exc) from exc
 
     return (
         response.get("message", {}).get("content", "")

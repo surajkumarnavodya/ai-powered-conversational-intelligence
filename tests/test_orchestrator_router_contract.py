@@ -256,3 +256,68 @@ class TestFallbackProperties:
         to ask a question would be a guess wearing a question mark."""
         for question in ("Sick leave policy", "Show me the report", "Hi"):
             assert keyword_fallback(question, CATALOG).needs_clarification is False
+
+
+class TestRankingQuestionsReachTheDatabase:
+    """A ranking question is a database question with or without a number.
+
+    Regression for a reported failure: "Top selling products" answered
+    "Agent could not produce a working query: The request could not be
+    completed." 5.1s in. The `sql_database` rule required a literal
+    digit after "top", so
+    the question matched no rule at all, fell through to
+    `general_knowledge`, and reached `route_after_router` with an empty
+    source list -- which had no destination wired for it.
+
+    Both halves of that failure are pinned: the routing here, and the
+    empty-route destination in
+    `tests/test_orchestrator.py::TestRouteAfterRouter`.
+    """
+
+    @pytest.mark.parametrize(
+        "question",
+        [
+            "Top selling products",
+            "Top 10 selling products",
+            "Worst selling products",
+            "Most popular products",
+            "Best performing product",
+            "Highest sales by region",
+            "Lowest order count",
+        ],
+    )
+    def test_a_superlative_about_something_we_hold_is_a_database_question(
+        self, question: str
+    ) -> None:
+        decision = keyword_fallback(question, CATALOG)
+
+        assert decision.primary == "sql_database"
+        assert decision.internal_sources() == ["sql"]
+        # Answer style matters here: a ranking question wants a table, and
+        # `synthesis_node` leads with it.
+        assert decision.answer_style == "data_table"
+
+    def test_a_superlative_naming_nothing_we_hold_is_not(self) -> None:
+        """Rule 4 is what keeps the widened words from over-matching.
+
+        Without it, "best" alone would turn an opinion question into a
+        database query. Proven non-vacuous: the same sentence *with* a
+        catalog word does route to the database, below.
+        """
+        assert keyword_fallback("What is the best way to write a SELECT?", CATALOG).primary == (
+            "general_knowledge"
+        )
+        assert keyword_fallback("Best way to grow our sales", CATALOG).primary == "sql_database"
+
+    def test_ordering_still_gives_a_news_question_to_the_web(self) -> None:
+        """`_FALLBACK_RULES` is ordered and `web_search` is tested first,
+        which is the only reason "top ... today" is not swallowed by the
+        widened `top`. Pinned so a future reorder cannot break it quietly.
+        """
+        for question in ("Top news of India today", "Top international news stories today"):
+            assert keyword_fallback(question, CATALOG).primary == "web_search"
+
+    def test_a_greeting_is_still_a_greeting(self) -> None:
+        """`_CONVERSATION_RE` is checked before every rule; "Hi" must not
+        become a database question because of a wider vocabulary."""
+        assert keyword_fallback("Hi", CATALOG).primary == "conversation"

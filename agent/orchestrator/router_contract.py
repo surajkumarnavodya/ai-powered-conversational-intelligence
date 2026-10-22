@@ -238,8 +238,29 @@ _FALLBACK_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
     (
         "sql_database",
+        # The superlatives are deliberately bare words rather than the
+        # `top \d+` this used to require. A ranking question is a database
+        # question whether or not the user happened to type a number, and
+        # requiring one broke the most natural phrasings there are:
+        # measured 2026-10-22, "Top 10 selling products" routed to
+        # `sql_database` while "Top selling products", "Worst selling
+        # products", "Most popular products" and "Best customers by
+        # revenue" all fell through to `general_knowledge` -- i.e. to no
+        # source at all, for four plain questions this deployment's
+        # database answers.
+        #
+        # Two existing mechanisms are what keep the wider words from
+        # over-matching, so neither needs adding here:
+        #   - rule 4 below ("does the question name anything we actually
+        #     hold?") still requires a catalog token, so "the best way to
+        #     write a SELECT" matches nothing in the catalog and does not
+        #     become a database question.
+        #   - `_FALLBACK_RULES` is ordered, and `web_search` is tested
+        #     first, so "the top international news stories today" is
+        #     still web -- verified, not assumed.
         re.compile(
-            r"\b(how many|total|count|sum of|list all|top \d+|average|"
+            r"\b(how many|total|count|sum of|list all|average|"
+            r"top|best|worst|highest|lowest|most|least|largest|smallest|"
             r"by (month|region|department|year|quarter|territory)|trend|"
             r"breakdown)\b",
             re.IGNORECASE,

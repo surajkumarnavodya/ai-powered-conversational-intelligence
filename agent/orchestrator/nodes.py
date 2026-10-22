@@ -1171,6 +1171,18 @@ def router_node(state: OrchestratorState) -> dict[str, Any]:
             if router_decision and router_decision.fallback
             else None
         ),
+        # Which no-retrieval outcome this was, when it was one. Carried
+        # separately because `primary_source` above maps both of them to
+        # None by design (ROUTED_SOURCE_NAMES' own comment), so it cannot
+        # distinguish "answered without retrieving anything" from
+        # "short-circuited before a primary was chosen" -- and
+        # `synthesis_node` has to, to answer a greeting differently from a
+        # question that matched no source.
+        "no_retrieval_route": (
+            router_decision.primary
+            if router_decision and router_decision.is_no_retrieval() and not sources
+            else None
+        ),
     }
     logger.info(
         "[router] available=%s sources=%s short_circuited=%s requires_database=%s reasoning=%s",
@@ -1225,17 +1237,42 @@ def route_after_router(state: OrchestratorState) -> list[Hashable]:
     another. Return type is `list[Hashable]` (not `list[str]`) only to match
     LangGraph's own conditional-edge signature -- every value returned here
     is always a plain node-name string.
+
+    An empty source list is a real routing outcome, not an error: it is
+    what `general_knowledge` and `conversation` produce (see
+    `router_contract.NO_RETRIEVAL_SOURCES`), and it goes straight to
+    `synthesis`, which answers it without running any subgraph.
     """
     route_decision = state.get("route_decision")
     sources = route_decision["sources"] if route_decision else []
     destinations: list[Hashable] = [
         _DESTINATION_NODE_NAMES[s] for s in sources if s in _DESTINATION_NODE_NAMES
     ]
-    if not destinations:
-        raise NotImplementedError(
-            f"route_after_router: no destination wired for sources={sources!r}."
-        )
-    return destinations
+    if destinations:
+        return destinations
+    if not sources:
+        # The edge `router_node`'s own `is_no_retrieval()` branch already
+        # promises in writing -- "the graph can skip straight to synthesis
+        # instead of running a subgraph with nothing to look up" -- and
+        # which was nonetheless never wired, because until 2026-10-22 it
+        # could not be reached:
+        # `route_to_all_sources` defaulted on, so `_ALWAYS_ROUTED_SOURCES`
+        # re-added sql/documents/policy/web to every empty route before it
+        # got here. Defaulting that fan-out off (3cb74e4) made the empty
+        # list reachable for the first time, and this function raised
+        # `NotImplementedError` on it -- reported to the user as "Agent
+        # could not produce a working query: The request could not be
+        # completed." 5.1s into a plain "Top selling products".
+        #
+        # Routing to nothing at all is not an option here: it would drop
+        # the question silently, which `classify_sources` documents as the
+        # worse failure, so the question goes somewhere that answers it.
+        return ["synthesis"]
+    # A non-empty list that maps to no node is a wiring bug -- a source
+    # name `router_node` can produce with nothing registered behind it --
+    # not a routing outcome. That still fails loudly rather than quietly
+    # answering with nothing.
+    raise NotImplementedError(f"route_after_router: no destination wired for sources={sources!r}.")
 
 
 def sql_subgraph_node(state: OrchestratorState) -> dict[str, Any]:
@@ -2046,6 +2083,71 @@ _SOURCE_RESULT_KEYS: dict[str, str] = {
 # consulted; update both together if this wording changes.
 _NO_INFORMATION_FOUND_MESSAGE = "I couldn't find any relevant information to answer that question."
 
+# The two replies for a route that ran no source at all. Fixed module
+# constants, never composed from the question (CLAUDE.md 5.5): a message
+# assembled from the input is an oracle for what the router did or did not
+# match on.
+#
+# Neither answers from the model's own knowledge, and that is the
+# platform's own stated policy rather than a shortcut here --
+# `Settings.allow_general_knowledge` is False by default precisely because
+# "an unsourced answer that looks like a sourced one is the failure mode
+# that destroys trust in every other answer", and `guardrails/grounding.py`
+# refuses an answer with no evidence behind it. Honouring that is the whole
+# point: a no-retrieval route has no evidence by construction.
+_NO_RETRIEVAL_UNMATCHED_MESSAGE = (
+    "I couldn't match that question to any of the connected data sources, so there was "
+    "nothing to look it up in. Try naming what you're asking about -- a table, a "
+    "metric, or a document you've uploaded -- and I'll query it directly."
+)
+_NO_RETRIEVAL_CONVERSATION_MESSAGE = (
+    "I answer questions from this deployment's own data -- your connected databases, "
+    "and any documents or policies that have been uploaded. Ask me something about "
+    "that data and I'll query it."
+)
+
+
+def _no_retrieval_answer(state: OrchestratorState) -> dict[str, Any]:
+    """The answer for a route that deliberately ran no source at all.
+
+    Reached through `route_after_router`'s `["synthesis"]` edge, i.e. when
+    the router chose `general_knowledge` or `conversation` and
+    `route_decision["sources"]` is therefore empty. `no_retrieval_route`
+    carries which of the two it was, because `primary_source` maps both to
+    None by design -- see `RouteDecision`'s own docstring.
+
+    Returns `{}` unchanged for any *other* way of reaching `synthesis_node`
+    with no `sources_used`. That case is a source node that ran but failed
+    to tag itself, which is a bug worth leaving visible rather than
+    papering over with a friendly message -- and before this function
+    existed it was the only case the bare `return {}` could describe.
+
+    `status` is "succeeded" for the same reason a zero-row SELECT is:
+    routing ran correctly and reached a correct conclusion. The conclusion
+    itself is carried by the answer text, not by a red failure banner --
+    `synthesis_node`'s own "a search that runs cleanly and returns zero
+    chunks is the same thing" comment is this identical rule one branch
+    down. Leaving the status at `run_orchestrated`'s initial "pending"
+    instead would strand the turn: the frontend's
+    `buildConversationHistory` only carries a "succeeded" turn forward as
+    follow-up context.
+    """
+    route_decision = state.get("route_decision")
+    if route_decision is None or route_decision.get("sources"):
+        return {}
+    no_retrieval_route = route_decision.get("no_retrieval_route")
+    if not no_retrieval_route:
+        return {}
+    answer = (
+        _NO_RETRIEVAL_CONVERSATION_MESSAGE
+        if no_retrieval_route == "conversation"
+        else _NO_RETRIEVAL_UNMATCHED_MESSAGE
+    )
+    logger.info(
+        "[synthesis] no-retrieval route=%s -- answered without running a source", no_retrieval_route
+    )
+    return {"status": "succeeded", "synthesized_answer": answer}
+
 
 def synthesis_node(state: OrchestratorState) -> dict[str, Any]:
     """Composes a final answer when more than one source contributed.
@@ -2106,7 +2208,10 @@ def synthesis_node(state: OrchestratorState) -> dict[str, Any]:
     """
     sources_used = list(dict.fromkeys(state.get("sources_used", [])))
     if not sources_used:
-        return {}
+        # Either a no-retrieval route (answered here, see
+        # `_no_retrieval_answer`) or a source that ran without tagging
+        # itself (returned unchanged, as before).
+        return _no_retrieval_answer(state)
 
     if "sql" in sources_used:
         # SQL normally stays authoritative, because its own state (the
