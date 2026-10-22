@@ -18,13 +18,23 @@
             |    Settings.enable_media_search; local CLIP embeddings
             |    over an untagged image/video library, see media/)
             +-> attachments   -+
-                (attachments.graph.run_attachment_qa -- files the caller
-                 attached directly to this question, e.g. an uploaded
-                 image/PDF/DOCX/XLSX/PPTX/TXT/CSV/JSON, see attachments/.
-                 Unlike every other source above, availability depends on
-                 the request, not standing config, and router_node forces
-                 it into the route unconditionally once available -- see
-                 that node's own docstring)
+            |   (attachments.graph.run_attachment_qa -- files the caller
+            |    attached directly to this question, e.g. an uploaded
+            |    image/PDF/DOCX/XLSX/PPTX/TXT/CSV/JSON, see attachments/.
+            |    Unlike every other source above, availability depends on
+            |    the request, not standing config, and router_node forces
+            |    it into the route unconditionally once available -- see
+            |    that node's own docstring)
+            +---------------->+
+                (no source at all -- the `general_knowledge` and
+                 `conversation` routing outcomes, which
+                 `router_contract.ROUTED_SOURCE_NAMES` maps to no source
+                 on purpose. `synthesis` answers them directly; there is
+                 nothing to look up. This edge was missing until
+                 2026-10-22 and `route_after_router` raised
+                 `NotImplementedError` on the empty list instead -- see
+                 that function's own docstring for why it only became
+                 reachable then)
 
 `route_after_router` returns a *list* of destination node names -- LangGraph
 runs every one of them as a parallel branch before the graph proceeds to
@@ -127,6 +137,12 @@ def build_orchestrator_graph():
             "generation": "generation",
             "media_search": "media_search",
             "attachments": "attachments",
+            # The no-retrieval route. `synthesis` is both a conditional
+            # destination here and the unconditional successor of every
+            # source node below -- LangGraph is fine with that, and the
+            # alternative (a dedicated pass-through node that only forwards
+            # to synthesis) would add a node to the graph for nothing.
+            "synthesis": "synthesis",
         },
     )
     for destination in (

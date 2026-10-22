@@ -72,6 +72,16 @@ class RouteDecision(TypedDict):
             database," independent of parsing `sources` yourself. Always
             `False` for a question the deterministic attachment-only
             pre-check routed, since that path never includes "sql".
+        no_retrieval_route: The router's own primary name
+            ("general_knowledge" or "conversation", see
+            `router_contract.NO_RETRIEVAL_SOURCES`) when the route
+            deliberately ran no source at all, otherwise None. Needed
+            because `primary_source` cannot carry it: both map to None in
+            `ROUTED_SOURCE_NAMES` by design, so "answered without
+            retrieving anything" and "short-circuited before a primary was
+            chosen" are indistinguishable there. `synthesis_node` reads
+            this to tell a greeting apart from an unmatched question --
+            two outcomes that deserve different replies.
     """
 
     sources: list[str]
@@ -84,6 +94,7 @@ class RouteDecision(TypedDict):
     needs_clarification: NotRequired[bool]
     clarifying_question: NotRequired[str | None]
     fallback_source: NotRequired[str | None]
+    no_retrieval_route: NotRequired[str | None]
 
 
 class SourceAnswer(TypedDict):

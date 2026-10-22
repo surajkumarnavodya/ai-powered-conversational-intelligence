@@ -126,6 +126,74 @@ untouched: narrowing to Documents by hand is an instruction, not a guess.
 
 ---
 
+## The no-retrieval route
+
+`general_knowledge` and `conversation` map to **no source** (above), so
+`route_decision["sources"]` is legitimately empty. That route goes
+straight from `router` to `synthesis`, which answers it from one of two
+fixed module constants in `agent/orchestrator/nodes.py` — never from the
+question text (CLAUDE.md §5.5), and never from the model's own knowledge:
+
+| Outcome | Reply |
+|---|---|
+| `general_knowledge` | "I couldn't match that question to any of the connected data sources…" |
+| `conversation` | A short statement of what this deployment can answer from. |
+
+**Neither answers from parametric knowledge, by policy, not by
+omission.** `ALLOW_GENERAL_KNOWLEDGE` is `false` by default and
+`guardrails/grounding.py` refuses an answer with no evidence behind it; a
+no-retrieval route has no evidence by construction. The run is reported
+`succeeded` for the same reason a zero-row `SELECT` is — routing ran
+correctly and reached a correct conclusion, and the conclusion is carried
+by the answer text rather than by a failure banner.
+
+**Known limitation:** setting `ALLOW_GENERAL_KNOWLEDGE=true` does **not**
+make this route compose a parametric answer. It still returns the fixed
+message. That switch is read by the grounding gate, which this route
+never reaches, because no source ran and so no answer was ever generated
+to be checked.
+
+### The failure this closed
+
+Until 2026-10-22 this edge did not exist and `route_after_router` raised
+`NotImplementedError` on the empty list. It had been unreachable:
+`ROUTE_TO_ALL_SOURCES` defaulted on, so `_ALWAYS_ROUTED_SOURCES` re-added
+`sql`/`documents`/`policy`/`web` to every empty route before it got
+there. Defaulting that fan-out off made it reachable, and a plain **"Top
+selling products"** failed 5.1s in with *"Agent could not produce a
+working query: The request could not be completed."*
+
+A non-empty source list that maps to no node still raises — that is a
+wiring bug, not a routing outcome.
+
+---
+
+## Ranking questions in the fallback
+
+The `sql_database` fallback rule used to require `top \d+` — a literal
+digit. Measured 2026-10-22 against the live catalog, that meant:
+
+| Question | Routed to |
+|---|---|
+| "Top 10 selling products" | `sql_database` |
+| "Top selling products" | `general_knowledge` ⟶ **no source at all** |
+| "Worst selling products" | `general_knowledge` |
+| "Most popular products" | `general_knowledge` |
+| "Best customers by revenue" | `general_knowledge` |
+
+A ranking question is a database question whether or not the user typed a
+number, so the rule now matches bare `top|best|worst|highest|lowest|
+most|least|largest|smallest`. Two existing mechanisms keep the wider
+vocabulary from over-matching, and both are pinned by tests:
+
+- **Rule 4** still requires the question to name a catalog token, so "the
+  best way to write a `SELECT`" matches nothing this deployment holds and
+  does not become a database query.
+- **`_FALLBACK_RULES` is ordered** and `web_search` is tested first, so
+  "the top international news stories today" is still web.
+
+---
+
 ## Configuration
 
 | Variable | Default | Effect |

@@ -363,6 +363,70 @@ class TestRouterNode:
         assert decision["sources"] == ["sql", "policy"]
         assert decision["short_circuited"] is False
 
+    def test_a_no_retrieval_decision_is_recorded_as_one(self, monkeypatch):
+        """`no_retrieval_route` is what `synthesis_node` reads to answer a
+        route that ran nothing, and `primary_source` cannot carry it --
+        `ROUTED_SOURCE_NAMES` maps both no-retrieval outcomes to None on
+        purpose, so it is None here for the same reason a deterministic
+        short-circuit leaves it None.
+
+        Without this field the turn reaches `synthesis` (the edge is
+        wired) and is answered with nothing, leaving `status` at "pending"
+        and the user looking at an empty turn.
+        """
+        from agent.orchestrator.router_contract import RouterDecision
+
+        monkeypatch.setattr(
+            orchestrator_nodes,
+            "get_settings",
+            lambda: _settings(
+                enable_policy_rag=True,
+                rag_store_connection_string=SecretStr("x"),
+                enable_multi_source_router=True,
+                route_to_all_sources=False,
+                source_routing_enabled=False,
+            ),
+        )
+        monkeypatch.setattr(
+            orchestrator_nodes,
+            "classify_sources_structured",
+            lambda *a, **k: RouterDecision(primary="general_knowledge", confidence=0.3),
+        )
+
+        decision = router_node({"question": "What is a foreign key?", "caller_roles": ("admin",)})[
+            "route_decision"
+        ]
+
+        assert decision["sources"] == []
+        assert decision["no_retrieval_route"] == "general_knowledge"
+        assert decision["primary_source"] is None
+        assert decision["requires_database"] is False
+
+    def test_a_retrieval_decision_records_no_no_retrieval_route(self, monkeypatch):
+        """Non-vacuity: the field must distinguish, not just be present."""
+        monkeypatch.setattr(
+            orchestrator_nodes,
+            "get_settings",
+            lambda: _settings(
+                enable_policy_rag=True,
+                rag_store_connection_string=SecretStr("x"),
+                enable_multi_source_router=True,
+                route_to_all_sources=False,
+                source_routing_enabled=False,
+            ),
+        )
+        monkeypatch.setattr(
+            orchestrator_nodes,
+            "classify_sources_structured",
+            _structured_stub(["policy"], "relevant"),
+        )
+
+        decision = router_node({"question": "sick leave policy", "caller_roles": ("admin",)})[
+            "route_decision"
+        ]
+
+        assert decision["no_retrieval_route"] is None
+
     def _all_sources_settings(self, **overrides):
         base = {
             "enable_document_rag": True,
@@ -1027,6 +1091,144 @@ class TestRouteAfterRouter:
         }
         with pytest.raises(NotImplementedError):
             route_after_router(state)
+
+    def test_an_empty_route_goes_to_synthesis(self):
+        """The no-retrieval outcome -- `general_knowledge`/`conversation`,
+        which `ROUTED_SOURCE_NAMES` maps to no source on purpose.
+
+        Regression for a reported failure: "Top selling products" was
+        routed to `general_knowledge` by the keyword fallback, reached
+        here with an empty source list, and raised `NotImplementedError`
+        -- shown to the user as "Agent could not produce a working query:
+        The request could not be completed." The empty list is a routing
+        outcome, not a wiring bug, and `synthesis` answers it.
+        """
+        state = {
+            "route_decision": {
+                "sources": [],
+                "reasoning": "routed to general_knowledge (no retrieval needed)",
+                "short_circuited": False,
+                "no_retrieval_route": "general_knowledge",
+            }
+        }
+        assert route_after_router(state) == ["synthesis"]
+
+    def test_a_missing_route_decision_goes_to_synthesis_too(self):
+        """Rather than raising. Nothing produces this today, but the
+        empty-list branch must not depend on the key being present."""
+        assert route_after_router({}) == ["synthesis"]
+
+    def test_synthesis_is_a_wired_destination_of_the_conditional_edge(self):
+        """Non-vacuity guard for the edge itself.
+
+        `route_after_router` returning "synthesis" only works if the
+        conditional-edge map in `build_orchestrator_graph` lists it;
+        LangGraph raises at invoke time, not at compile time, if it does
+        not. Asserting the return value alone would pass with the edge
+        still missing -- which is exactly the state this bug was found in.
+        """
+        from agent.orchestrator import graph as orchestrator_graph
+
+        compiled = orchestrator_graph.build_orchestrator_graph()
+        nodes = compiled.get_graph().nodes
+
+        assert "synthesis" in nodes
+        edges_from_router = {
+            edge.target for edge in compiled.get_graph().edges if edge.source == "router"
+        }
+        assert "synthesis" in edges_from_router
+
+
+class TestNoRetrievalAnswer:
+    """`synthesis_node` answering a route that ran no source at all."""
+
+    def test_an_unmatched_question_is_told_so(self):
+        state = {
+            "sources_used": [],
+            "route_decision": {
+                "sources": [],
+                "reasoning": "x",
+                "short_circuited": False,
+                "no_retrieval_route": "general_knowledge",
+            },
+        }
+
+        result = synthesis_node(state)
+
+        assert result["status"] == "succeeded"
+        assert "couldn't match that question" in result["synthesized_answer"]
+
+    def test_a_greeting_gets_the_capability_reply_instead(self):
+        """Two different outcomes, two different replies -- telling someone
+        who said "Hi" that their question matched no data source is not an
+        answer to what they said."""
+        state = {
+            "sources_used": [],
+            "route_decision": {
+                "sources": [],
+                "reasoning": "x",
+                "short_circuited": False,
+                "no_retrieval_route": "conversation",
+            },
+        }
+
+        result = synthesis_node(state)
+
+        assert result["status"] == "succeeded"
+        assert "I answer questions from this deployment's own data" in (
+            result["synthesized_answer"]
+        )
+
+    def test_neither_message_repeats_the_question(self):
+        """Fixed module constants, never composed from the input
+        (CLAUDE.md 5.5) -- a message built from the question is an oracle
+        for what the router matched on."""
+        question = "zxcvbnmqwerty"
+        for route in ("general_knowledge", "conversation"):
+            result = synthesis_node(
+                {
+                    "question": question,
+                    "sources_used": [],
+                    "route_decision": {
+                        "sources": [],
+                        "reasoning": "x",
+                        "short_circuited": False,
+                        "no_retrieval_route": route,
+                    },
+                }
+            )
+            assert question not in result["synthesized_answer"]
+
+    def test_a_source_that_ran_without_tagging_itself_is_left_alone(self):
+        """The case the bare `return {}` used to be the whole of. A source
+        ran (the route named one) but set no `sources_used`, which is a
+        bug worth leaving visible rather than answering over."""
+        state = {
+            "sources_used": [],
+            "route_decision": {
+                "sources": ["sql"],
+                "reasoning": "x",
+                "short_circuited": True,
+            },
+        }
+
+        assert synthesis_node(state) == {}
+
+    def test_an_empty_route_with_no_recorded_outcome_is_left_alone(self):
+        """Proves the `no_retrieval_route` check is load-bearing rather
+        than decorative: without it this would answer, and a turn whose
+        router never recorded a no-retrieval decision would be given a
+        reply it never earned."""
+        state = {
+            "sources_used": [],
+            "route_decision": {
+                "sources": [],
+                "reasoning": "x",
+                "short_circuited": False,
+            },
+        }
+
+        assert synthesis_node(state) == {}
 
 
 class TestSqlSubgraphNode:
