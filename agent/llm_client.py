@@ -169,6 +169,93 @@ def decoding_options(settings: Settings, num_predict: int) -> dict[str, object]:
     }
 
 
+def ollama_unavailable_error(
+    settings: Settings, model: str, exc: Exception
+) -> OllamaUnavailableError:
+    """The `OllamaUnavailableError` for one failed model call, by cause.
+
+    One function rather than an f-string per `except` block, for the same
+    reason `decoding_options` is one function: there were **eight** copies
+    of this message (seven here, one in `rag/llm.py`) and they had already
+    drifted -- only the SQL-generation one carried the "`ollama serve`
+    / `ollama pull`" advice, and `rag/llm.py` named
+    `settings.ollama_model` rather than the model the call actually used.
+
+    **The advice has to depend on the cause, because the wrong advice
+    costs real debugging time.** Every one of those copies opened with
+    "Could not reach Ollama", and the same `except` tuple catches a
+    *read timeout* -- a server that was reached, with the model pulled,
+    that simply took longer than the per-call limit. Reported, that read:
+
+        Could not reach Ollama at http://localhost:11434 with model
+        'qwen3.8:27b': timed out. Is `ollama serve` running and has the
+        model been pulled (`ollama pull qwen3.8:27b`)?
+
+    for a 17 GB model on a 4 GB GPU, with `ollama serve` running and the
+    model pulled -- so it sent the reader to check the two things that
+    were already true, and said nothing about the one lever that works.
+
+    Ordering in the branches below is load-bearing, and the Python
+    hierarchy is the reason (verified, not assumed):
+
+    * `httpx.ConnectTimeout` IS an `httpx.TimeoutException` but is **not**
+      an `httpx.ConnectError`, so it has to be matched before the generic
+      timeout branch -- failing to connect within the timeout is an
+      unreachable server, not a slow model.
+    * the builtin `TimeoutError` and `ConnectionError` are both
+      subclasses of `OSError`, so both have to precede it.
+
+    Args:
+        settings: Live settings -- read for the host and the per-call
+            timeout, never for the model (see `model`).
+        model: The model this call actually used, which for a per-request
+            `AskRequest.model` is not `settings.ollama_model`.
+        exc: The exception the `ollama`/`httpx` call raised.
+
+    Returns:
+        The error to raise. Returned rather than raised so the call site
+        keeps its own `raise ... from exc`, preserving the cause chain.
+    """
+    host = settings.ollama_host
+    prefix = f"Ollama call to model '{model}' at {host} failed"
+
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(exc, ollama.ResponseError) and (
+        status_code == 404 or "not found" in str(exc).lower()
+    ):
+        return OllamaUnavailableError(
+            f"{prefix}: the model is not installed on that server. "
+            f"Pull it with `ollama pull {model}`, or pick a model that is "
+            f"already installed (`ollama list`)."
+        )
+
+    if isinstance(exc, httpx.ConnectTimeout | httpx.ConnectError | ConnectionError):
+        return OllamaUnavailableError(
+            f"{prefix}: the server could not be reached ({exc}). "
+            f"Is `ollama serve` running and listening on {host}?"
+        )
+
+    if isinstance(exc, httpx.TimeoutException | TimeoutError):
+        # Reached, pulled, and simply slow. Naming the configured ceiling
+        # rather than the elapsed time: the harness envelope may clamp an
+        # individual call *below* this (`_harness_client`), so this is the
+        # upper bound on what the call was allowed, which is the number an
+        # operator would change.
+        return OllamaUnavailableError(
+            f"{prefix}: the server was reached and the model is installed, but it did "
+            f"not answer within the per-call limit of "
+            f"{settings.ollama_request_timeout_seconds}s "
+            f"(OLLAMA_REQUEST_TIMEOUT_SECONDS; one request may get less if its own "
+            f"deadline is shorter). This usually means the model is too large for the "
+            f"available hardware. Either choose a smaller model or raise that limit."
+        )
+
+    # Anything else -- an HTTP error, an OSError, a ResponseError that is
+    # not a missing model. No cause is asserted, because guessing one is
+    # what this function exists to stop.
+    return OllamaUnavailableError(f"{prefix}: {exc}")
+
+
 # DB_TYPE -> a human-readable name for the prompt, so the model writes SQL in
 # the right flavor (e.g. TOP/OFFSET-FETCH for SQL Server vs LIMIT for
 # Postgres/MySQL) instead of assuming one specific engine.
@@ -779,7 +866,7 @@ def generate_insight_from_llm(
         Ollama, it does not grade the response.
 
     Raises:
-        OllamaUnavailableError: if the Ollama server can't be reached.
+        OllamaUnavailableError: if the model call fails.
     """
     effective_model = model or settings.ollama_model
     user_prompt = _build_insight_prompt(question, sql, summary)
@@ -806,10 +893,7 @@ def generate_insight_from_llm(
         # not a bug) raises httpx's own exception type. Without this,
         # a real Ollama round-trip that's merely slow crashes the whole
         # graph run instead of degrading to the intended "failed" status.
-        raise OllamaUnavailableError(
-            f"Could not reach Ollama at {settings.ollama_host} with model "
-            f"'{effective_model}': {exc}."
-        ) from exc
+        raise ollama_unavailable_error(settings, effective_model, exc) from exc
 
     _log_ollama_timing(response)
 
@@ -934,8 +1018,10 @@ def generate_sql_from_llm(
         `agent.sql_validator.validate_sql`).
 
     Raises:
-        OllamaUnavailableError: if the Ollama server can't be reached or
-            returns an error (e.g. the model hasn't been pulled).
+        OllamaUnavailableError: if the model call fails -- an unreachable
+            server, a model that is not installed, or one that did not
+            answer inside the per-call timeout. Which of the three is named
+            in the message by `ollama_unavailable_error`.
         MalformedLLMOutputError: if the response contains no usable text.
         OffTopicQuestionError: if the model itself judged the question
             unanswerable as SQL (responded with `OFF_TOPIC_SENTINEL`) --
@@ -985,11 +1071,7 @@ def generate_sql_from_llm(
         # (covers httpx.ReadTimeout/ConnectTimeout/...) is not a subclass of
         # the built-in TimeoutError/ConnectionError, so a merely-slow (not
         # broken) Ollama response would otherwise crash the whole graph run.
-        raise OllamaUnavailableError(
-            f"Could not reach Ollama at {settings.ollama_host} with model "
-            f"'{effective_model}': {exc}. Is `ollama serve` running and "
-            f"has the model been pulled (`ollama pull {effective_model}`)?"
-        ) from exc
+        raise ollama_unavailable_error(settings, effective_model, exc) from exc
 
     _log_ollama_timing(response)
 
@@ -1331,7 +1413,7 @@ def generate_query_plan_from_llm(
         logs them distinctly -- see `_parse_plan_response`.
 
     Raises:
-        OllamaUnavailableError: if the Ollama server can't be reached. The
+        OllamaUnavailableError: if the model call fails. The
             caller fails open on this (proceeds with no plan) -- planning
             is an accuracy aid, never a reason a question can't be answered.
     """
@@ -1355,10 +1437,7 @@ def generate_query_plan_from_llm(
         # Provider health signal -- advances the circuit breaker so a
         # sustained outage stops costing every request a full timeout.
         record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
-        raise OllamaUnavailableError(
-            f"Could not reach Ollama at {settings.ollama_host} with model "
-            f"'{effective_model}': {exc}."
-        ) from exc
+        raise ollama_unavailable_error(settings, effective_model, exc) from exc
 
     _log_ollama_timing(response)
 
@@ -1456,7 +1535,7 @@ def review_sql_against_plan_from_llm(
         `(passed, feedback)` -- see `_parse_review_response`.
 
     Raises:
-        OllamaUnavailableError: if the Ollama server can't be reached. The
+        OllamaUnavailableError: if the model call fails. The
             caller fails open on this (treats it as a pass) -- the review
             step is an extra accuracy check, never a reason a validated,
             executable query can't run.
@@ -1479,10 +1558,7 @@ def review_sql_against_plan_from_llm(
         # Provider health signal -- advances the circuit breaker so a
         # sustained outage stops costing every request a full timeout.
         record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
-        raise OllamaUnavailableError(
-            f"Could not reach Ollama at {settings.ollama_host} with model "
-            f"'{effective_model}': {exc}."
-        ) from exc
+        raise ollama_unavailable_error(settings, effective_model, exc) from exc
 
     _log_ollama_timing(response)
 
@@ -1567,7 +1643,7 @@ def review_sql_against_metrics_from_llm(
         `(passed, feedback)` -- see `_parse_review_response`.
 
     Raises:
-        OllamaUnavailableError: if the Ollama server can't be reached. The
+        OllamaUnavailableError: if the model call fails. The
             caller fails open on this (treats it as a pass) -- this check
             is an extra accuracy aid, never a reason a validated,
             executable query can't run.
@@ -1592,10 +1668,7 @@ def review_sql_against_metrics_from_llm(
         # Provider health signal -- advances the circuit breaker so a
         # sustained outage stops costing every request a full timeout.
         record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
-        raise OllamaUnavailableError(
-            f"Could not reach Ollama at {settings.ollama_host} with model "
-            f"'{effective_model}': {exc}."
-        ) from exc
+        raise ollama_unavailable_error(settings, effective_model, exc) from exc
 
     _log_ollama_timing(response)
 
@@ -1768,7 +1841,7 @@ def generate_analytical_intent_from_llm(
         `_parse_intent_response`.
 
     Raises:
-        OllamaUnavailableError: if the Ollama server can't be reached.
+        OllamaUnavailableError: if the model call fails.
             The caller fails open on this (proceeds with no
             classification) -- exactly like `generate_query_plan_from_llm`,
             this is an accuracy aid, never a reason a question can't be
@@ -1794,10 +1867,7 @@ def generate_analytical_intent_from_llm(
         # Provider health signal -- advances the circuit breaker so a
         # sustained outage stops costing every request a full timeout.
         record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
-        raise OllamaUnavailableError(
-            f"Could not reach Ollama at {settings.ollama_host} with model "
-            f"'{effective_model}': {exc}."
-        ) from exc
+        raise ollama_unavailable_error(settings, effective_model, exc) from exc
 
     _log_ollama_timing(response)
 
@@ -1990,7 +2060,7 @@ def generate_analytical_plan_from_llm(
         parsed -- see `_parse_analytical_plan_response`.
 
     Raises:
-        OllamaUnavailableError: if the Ollama server can't be reached. The
+        OllamaUnavailableError: if the model call fails. The
             caller fails open on this (proceeds with no structured plan) --
             exactly like `generate_query_plan_from_llm`, this is an
             accuracy aid, never a reason a question can't be answered.
@@ -2017,10 +2087,7 @@ def generate_analytical_plan_from_llm(
         # Provider health signal -- advances the circuit breaker so a
         # sustained outage stops costing every request a full timeout.
         record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
-        raise OllamaUnavailableError(
-            f"Could not reach Ollama at {settings.ollama_host} with model "
-            f"'{effective_model}': {exc}."
-        ) from exc
+        raise ollama_unavailable_error(settings, effective_model, exc) from exc
 
     _log_ollama_timing(response)
 

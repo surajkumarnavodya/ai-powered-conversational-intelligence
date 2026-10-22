@@ -59,6 +59,41 @@ if it bothers you.
   `host.docker.internal` guidance.
 - **Model not found:** `ollama pull <model>` for whatever `OLLAMA_MODEL`
   names (default `llama3.1:8b`).
+- **"the server was reached and the model is installed, but it did not
+  answer within the per-call limit":** the model is too slow for this
+  hardware on this prompt — not a connectivity or install problem, and
+  `ollama serve`/`ollama pull` will not help. One model call exceeded
+  `OLLAMA_REQUEST_TIMEOUT_SECONDS` (default 300).
+
+  **The usual cause is a model far larger than the available VRAM**, which
+  pushes inference onto the CPU. Measured 2026-10-22 on the reference
+  machine (NVIDIA T1200, 4 GB): `qwen3.8:27b` (17 GB on disk) was selected
+  per-request for a plain "Top selling products." and the run failed at
+  309.1s, having spent the whole 300s budget inside one generation call.
+
+  Check the size against your GPU first:
+
+  ```powershell
+  ollama list          # SIZE column
+  nvidia-smi           # total VRAM
+  ```
+
+  Then either pick a model that fits — `OLLAMA_MODEL`, or the model picker
+  in the dashboard, constrained by `OLLAMA_ALLOWED_MODELS` — or raise
+  `OLLAMA_REQUEST_TIMEOUT_SECONDS` and accept the latency. Raising it is
+  rarely the better trade: see [`PERFORMANCE.md`](PERFORMANCE.md) for what
+  each model actually costs here.
+
+  Note the per-call limit is a **ceiling, not a guarantee**: when the agent
+  harness is active, a call gets at most the time the request's own
+  deadline has left (`agent/llm_client.py::_harness_client`), so an
+  individual call may time out sooner than the configured value.
+
+  **Before 2026-10-22 this case was reported as a connectivity failure** —
+  "Could not reach Ollama ... Is `ollama serve` running and has the model
+  been pulled?" — for a running server with the model pulled. If you are
+  on an older build and see that text alongside a long elapsed time,
+  suspect this, not the server.
 - **A pull fills the wrong drive, even though `OLLAMA_MODELS` is set:** the
   variable is read by the Ollama *server process at the moment it starts*,
   and setting it does not retroactively change a server that is already
