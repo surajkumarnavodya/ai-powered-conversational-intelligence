@@ -25,20 +25,34 @@
 # against 9.1.1 with zero failures and zero collection errors before this
 # pin was changed.
 pytest==9.1.1
-# NOT bumped (2026 security remediation pass reconfirmed this): has two open
-# CVEs (CVE-2026-32274/PYSEC-2026-2121, an unsanitized `--python-cell-magics`
-# CLI value causing a cache-path traversal; CVE-2026-31900/PYSEC-2026-2120,
-# a supply-chain issue in Black's own GitHub Action, which this repo doesn't
-# use). Neither is reachable: this repo's CI invokes plain `black --check .`
-# with no `--python-cell-magics` flag, ever, and no workflow here references
-# `psf/black`'s own Action. No patched release exists in the 24.x line
-# (verified against PyPI: 24.10.0 is still the newest 24.x; the next is
-# 25.1.0). The fixed 26.x line reformats 11 files' worth of this codebase's
-# current, intentional style on a clean `black --check .` run (verified
-# directly) -- a large, unrelated-to-security diff this pass declined to
-# force through. UPSTREAM FIX REQUIRED for a 24.x-line patch; re-evaluate
-# the 26.x reformat as its own reviewed change, not bundled with a security
-# pass.
+# Three open CVEs, none reachable, all of the same shape: they affect either
+# a CLI flag this repo never passes or `psf/black`'s bundled GitHub Action,
+# which no workflow here uses (grep: 0 matches for `psf/black` and
+# `use_pyproject`, and pyproject.toml sets no `tool.black.required-version`).
+#   * CVE-2026-32274 / PYSEC-2026-2121 -- unsanitized `--python-cell-magics`
+#     value causing a cache-path traversal. CI runs plain `black --check .`.
+#   * CVE-2026-31900 / PYSEC-2026-2120 -- supply-chain issue in the Action.
+#   * CVE-2026-114134 -- the same Action again, via `use_pyproject: true`
+#     letting `tool.black.required-version` point at a malicious repo.
+#     Patched in 26.10.1. Ignored in CI with that reasoning rather than
+#     taken, because taking it is not free: see below.
+#
+# **The comment that used to live here was wrong, and the venv hid it.** It
+# argued for staying on the 24.x line ("no patched release exists in the
+# 24.x line", "UPSTREAM FIX REQUIRED for a 24.x-line patch") while this pin
+# already read 26.3.1 -- the pin was moved and the note was not. Meanwhile
+# the local venv still had 24.10.0 installed, so `black --check .` passed
+# locally while CI, which installs this file, would have failed on three
+# tracked files. Found and fixed 2026-10-22: two of the three
+# (`moderation/store.py`, `rag/store.py`) were simply formatted, and
+# `identity/migrations/versions/` is now `force-exclude`d in pyproject.toml
+# because reformatting an applied Alembic revision is precisely the
+# hand-edit CLAUDE.md 12 forbids.
+#
+# 26.10.1 is deliberately NOT taken: it reformats the same applied
+# migration plus the two files above, so the exclude is the fix either way,
+# and the CVE it closes is unreachable here. Revisit if this repo ever
+# adopts `psf/black`'s Action.
 black==26.3.1
 ruff==0.8.4
 mypy==1.13.0

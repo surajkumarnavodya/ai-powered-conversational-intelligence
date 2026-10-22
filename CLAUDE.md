@@ -356,9 +356,21 @@ restriction as a boundary.** Full detail:
   in 2**, both of which are now evidenced as unreachable rather than
   merely benign (see
   [`docs/security/CVE_TRIAGE.md`](docs/security/CVE_TRIAGE.md)'s
-  2026-10-22 section). `pip-audit` still exits non-zero on those 6, so it
-  still fails as a gate. `ruff`'s single `I001` in
+  2026-10-22 section). `ruff`'s single `I001` in
   `agent/multiagent/agents.py` is unchanged.
+  **`pip-audit` now passes too**: its CI ignore list was rebuilt from 14
+  IDs to the 6 this checkout actually reports — ten had gone stale once
+  the bumps cleared their advisories, and a stale ignore silently
+  re-suppresses a finding if a package is downgraded back into range. The
+  command then reports "No known vulnerabilities found, 7 ignored".
+  **A third gate was failing and was invisible locally**: `black --check .`
+  passed only because the venv had `black 24.10.0` while
+  `requirements-dev.txt` pins `26.3.1`. CI installs the pin and would have
+  failed on three tracked files. Fixed by formatting two of them and
+  `force-exclude`ing `identity/migrations/versions/`, since reformatting
+  an applied revision is the hand-edit §12 forbids. So as of 2026-10-22
+  `black`, `bandit`, `pytest` and `pip-audit` all pass; the lone `I001`
+  is the only blocking finding left.
 
 ### 5.8 Domain privacy and safety — consult the policy before changing behavior
 

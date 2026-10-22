@@ -116,9 +116,7 @@ def ensure_schema(engine: Engine) -> None:
     """
     with engine.begin() as conn:
         conn.execute(text("IF SCHEMA_ID('moderation') IS NULL EXEC('CREATE SCHEMA moderation')"))
-        conn.execute(
-            text(
-                """
+        conn.execute(text("""
                 IF OBJECT_ID('moderation.media_assets') IS NULL
                 CREATE TABLE moderation.media_assets (
                     asset_id UNIQUEIDENTIFIER NOT NULL
@@ -134,12 +132,8 @@ def ensure_schema(engine: Engine) -> None:
                     vector_ids NVARCHAR(MAX) NULL,
                     CONSTRAINT PK_moderation_media_assets PRIMARY KEY (asset_id)
                 )
-                """
-            )
-        )
-        conn.execute(
-            text(
-                """
+                """))
+        conn.execute(text("""
                 IF NOT EXISTS (
                     SELECT 1 FROM sys.indexes
                     WHERE object_id = OBJECT_ID('moderation.media_assets')
@@ -147,9 +141,7 @@ def ensure_schema(engine: Engine) -> None:
                 )
                 CREATE UNIQUE INDEX UQ_moderation_media_assets_file_hash
                     ON moderation.media_assets (file_hash)
-                """
-            )
-        )
+                """))
 
 
 def get_asset_by_hash(engine: Engine, file_hash: str) -> MediaAssetRecord | None:
@@ -159,14 +151,12 @@ def get_asset_by_hash(engine: Engine, file_hash: str) -> MediaAssetRecord | None
     "passed" or "rejected"."""
     with engine.connect() as conn:
         row = conn.execute(
-            text(
-                """
+            text("""
                 SELECT asset_id, file_hash, media_type, moderation_status,
                        moderation_checks, chunk_count, vector_ids
                 FROM moderation.media_assets
                 WHERE file_hash = :file_hash
-                """
-            ),
+                """),
             {"file_hash": file_hash},
         ).fetchone()
     if row is None:
@@ -217,16 +207,14 @@ def record_asset(
             {"file_hash": file_hash},
         )
         result = conn.execute(
-            text(
-                """
+            text("""
                 INSERT INTO moderation.media_assets
                     (file_hash, media_type, source_path, moderation_status,
                      moderation_checks, chunk_count, vector_ids)
                 OUTPUT inserted.asset_id
                 VALUES (:file_hash, :media_type, :source_path, :moderation_status,
                         :moderation_checks, :chunk_count, :vector_ids)
-                """
-            ),
+                """),
             {
                 "file_hash": file_hash,
                 "media_type": media_type,

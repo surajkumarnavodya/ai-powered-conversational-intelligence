@@ -52,6 +52,51 @@ deleted (CLAUDE.md 1) -- and it was the sole reason `pip check` reported a
 broken requirement, because it caps `pillow<12`. Nothing imports it
 (grepped: 0 matches).
 
+## The CI ignore list was rebuilt, and a format gate was quietly broken
+
+**`--ignore-vuln` went from 14 IDs to 6.** The bumps above cleared forty
+findings, which left ten of those IDs suppressing advisories pip-audit no
+longer reports at all. A stale ignore is worse than no ignore: it silently
+re-suppresses the finding if the package is ever downgraded back into
+range. The list is now exactly what this checkout reports, verified by
+running the command and getting **"No known vulnerabilities found, 7
+ignored"**. `PYSEC-2026-83` was removed specifically because it is now
+*fixed* rather than tolerated, following this file's own preference for a
+version bump over an ignore.
+
+One addition the old list never covered: **CVE-2026-114134 (black
+26.3.1)**, NOT REACHABLE and DEV ONLY. It affects `psf/black`'s bundled
+GitHub Action when `use_pyproject: true` lets
+`tool.black.required-version` point at a malicious repository -- the same
+shape as CVE-2026-31900 before it. This workflow runs `pip install -r
+requirements-dev.txt` then `black --check .`; grep finds 0 matches for
+`psf/black` or `use_pyproject` anywhere in `.github/`, and `pyproject.toml`
+sets no `required-version`.
+
+**`black --check .` was a failing blocking gate and nobody could see it.**
+`requirements-dev.txt` pins `black==26.3.1`, but the local venv still had
+`24.10.0` installed -- so the gate passed locally while CI, which installs
+that file, would have failed on three tracked files
+(`moderation/store.py`, `rag/store.py`, and an applied Alembic revision).
+The pin had been moved to the 26.x line at some point while its own comment
+still argued for staying on 24.x, which is how it went unnoticed.
+
+Fixed in two parts. The two ordinary source files were formatted. The
+migration was **not**: `pyproject.toml` now carries
+`force-exclude = 'identity/migrations/versions/.*\.py'`, because
+reformatting an applied revision is exactly the hand-edit CLAUDE.md 12
+forbids, and those files are additionally read as *text* by
+`tests/test_identity_schema_invariants.py`. `force-exclude` rather than
+`extend-exclude` so an explicit path argument cannot bypass it. After
+this, `black --check .` reports 1,635 files unchanged -- matching
+CLAUDE.md 13's long-standing figure -- and the only two it still wants are
+in `.claude/worktrees/`, which `.git/info/exclude` keeps out of every
+checkout CI makes.
+
+Note 26.10.1 is deliberately not taken: it reformats the same applied
+migration, so the exclude is the fix either way, and the CVE it closes is
+unreachable here.
+
 ## What remains, and why
 
 **`langgraph-sdk` 0.3.15 -- PYSEC-2026-4240 -- UPSTREAM BLOCKED, NOT
