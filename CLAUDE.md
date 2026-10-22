@@ -771,11 +771,17 @@ contract lists its specific limitations; these are the cross-cutting ones.
   longer a retrieval problem -- the generation prompt verifiably contains
   `FactResellerSales` and `SalesAmount` (19,494 chars, one model call),
   and `qwen2.5-coder:7b` returns the literal string `NOT_A_QUERY`
-  anyway. Deterministic across repeated runs. It is the model declining a
-  question it could answer, so the levers are `OLLAMA_MODEL` and the
-  generation system prompt -- and that prompt is benchmark-pinned (§12),
-  so changing it needs the benchmark re-run, which this machine's ~80s
-  per question makes a deliberate, separate exercise. **Do not "fix" this
+  anyway. Deterministic across repeated runs. **Confirmed to be model
+  capacity, not the pipeline: re-running the same two questions with
+  `model="llama3.1:8b"` answered both** -- "Worst selling products" in
+  316.1s (10 rows) and "Most popular products" in 110.7s (10 rows),
+  through the identical graph, schema and prompt. So `OLLAMA_MODEL` is a
+  real lever an operator already has; note the latency it costs on this
+  hardware (see [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)), which is
+  why it is not simply changed here. The other lever is the generation
+  system prompt, and that is benchmark-pinned (§12), so changing it needs
+  the benchmark re-run -- a deliberate, separate exercise at ~80s per
+  question. **Do not "fix" this
   by retrying the off-topic sentinel**: `agent.nodes.generate_sql_node`
   deliberately never retries it (there is no error to feed back), and
   turning a refusal path into a retry path would both cost a second full
