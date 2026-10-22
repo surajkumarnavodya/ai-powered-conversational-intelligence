@@ -4,6 +4,98 @@ Newest first. The README's "News and Updates" section shows only the three most
 recent entries. This file keeps the full record. Each entry names the contract
 document that holds the design, the API, the configuration and the limitations.
 
+## 2026-10-22: readable answers, measured latency, a retrieval fix, and status moved to UAT (pre-production)
+
+Seven commits (`60f6e23`..`628565d`). Four result-quality fixes, one
+measurement pass, and a status move.
+
+**Project status is now `UAT (pre-production)`**, set at `628565d`. This
+is the phase the 2026-10-17 release gate pointed at — its verdict
+(**NO-GO for production, READY FOR UAT with conditions**) is unchanged,
+and entering UAT is not passing it. Nothing has been signed off: the
+15-journey, 6-role script in
+[`docs/certification/UAT_SCRIPTS_AND_SIGNOFF.md`](docs/certification/UAT_SCRIPTS_AND_SIGNOFF.md)
+still has every result cell blank.
+
+### Result quality
+
+- **Business display names** (`5a77042`, `60f6e23`). A question about
+  products returns `EnglishProductName`, not `ProductKey`. The generated
+  SQL is repaired by AST surgery to join the dimension table holding the
+  name — never by renaming a column, which would have produced a label
+  that does not match the value under it. A *date* key is explicitly
+  excluded: "sales by order date" was being silently rewritten into
+  "sales by month name", found only by running against the real
+  AdventureWorks schema. See [`docs/DISPLAY_NAMES.md`](docs/DISPLAY_NAMES.md).
+- **Chart axis binding** (`13b8896`). The y-axis binds to a numeric
+  *measure* chosen by a priority ladder (revenue > profit > quantity >
+  count > average > percentage, with an `ORDER BY` boost) rather than
+  the first numeric column, which in a star schema is usually a key. The
+  backend classification was only a hint until the frontend stopped
+  re-deriving axes independently. See
+  [`docs/CHART_AXIS_BINDING.md`](docs/CHART_AXIS_BINDING.md).
+- **Schema retrieval no longer strands a measure question** (`1b68ff9`).
+  "Top selling products." was answering *"I can only answer questions
+  about this database"*. Retrieval was trimming to the single
+  highest-scoring table — `DimProductSubcategory`, a dimension with no
+  sales measure — so the model received a schema that genuinely could
+  not answer the question and correctly emitted its off-topic sentinel.
+  A dimension's DDL is short and entirely on-topic, so it outscores
+  every fact table on exactly the questions that need one; the same
+  question *without the trailing period* retrieved five tables including
+  the fact table. The dominant-gap trim is now withheld when the
+  question asks for a measure the lone winner has no column to supply. A
+  270-phrasing sweep leaves **zero** measure questions retrieving no
+  measure table, with no lookup or aggregate question widened. The
+  backstop's refusal message also stopped claiming "off-topic" for what
+  is really a coverage miss.
+- **Full-width question editor** (`f3947b1`). Clicking Edit gave a field
+  a few characters wide; the cap was on the turn column, not the bubble.
+  Editing now takes the whole column with no percentage at all, so it is
+  width-independent across phone, tablet and desktop.
+- **Web-search answer shaping** (`628565d`). The answer is sized to the
+  question (a quick fact gets 1-3 sentences; a briefing is grouped by
+  theme), quotes are capped at 15 words, and the model is explicitly
+  forbidden from stating or estimating a publication date — results
+  carry only a retrieval time, so a freshness rule without that guard
+  invites a fabricated date.
+
+### Latency, measured rather than assumed
+
+`docs/PERFORMANCE.md` (new) records the diagnosis. A baseline question
+took **123.77s**, of which `execute_sql` was **0.05s — 0.04%**.
+Essentially all of it is model inference: `qwen2.5-coder:7b` needs
+5.84 GB and only 2.37 GB fits the 4 GB GPU, so it runs **41% on GPU** at
+~185 tok/s prompt and ~9.6 tok/s generation. Latency is therefore
+`prompt_tokens/185 + generated/9.6`, making *call count* and *prompt
+size* the only levers. Skipping the analytical-intent call for a
+question with no complexity signal — whose result provably cannot change
+any downstream decision — took it to **80.08s**, 3 model calls to 2
+(`df8ffdb`, `6f93ef1`).
+
+**The 3-5s target is not met for a SQL answer**: ~80s today, ~30s in the
+best configuration this hardware allows. What does meet it is progress —
+the first `/ask/stream` event lands at **0.025s** and every
+pre-generation stage completes by 2.57s.
+
+### Verification
+
+**7,673** backend passed with **5 known failures** — a pre-existing cross-file-state interaction (`tests/security` running before `test_agent_nodes.py`), unrelated to any 2026-10-22 change and recorded in [`CLAUDE.md`](CLAUDE.md) §13; 11 `tests/live/` deselected · **1,334** frontend tests across 95 files · `tsc` clean ·
+`npm run lint` exit 0 · `black` clean over **1,661** files. `ruff` exits
+non-zero on one pre-existing import-order finding and `bandit` on 4 Low
+(0 Medium, 0 High), both deliberate and both pre-existing. **`pip-audit`
+could not be re-measured** — it requires PyPI and this environment has
+no egress.
+
+### Known and unfixed
+
+Two phrasings ("Worst selling products", "Most popular products") are
+still refused by `qwen2.5-coder:7b` even with the fact table and
+`SalesAmount` verifiably in the prompt. `llama3.1:8b` answers both
+(316.1s and 110.7s), so this is model capacity rather than the pipeline;
+`OLLAMA_MODEL` is the lever, at a latency cost. Recorded in
+[`CLAUDE.md`](CLAUDE.md) §13.
+
 ## 2026-10-17 (later): release-blocker verified closed, project status moved to advanced beta
 
 A certification/status pass, not a feature change. **No application code

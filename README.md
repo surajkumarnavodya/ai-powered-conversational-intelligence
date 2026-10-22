@@ -8,21 +8,28 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-available-blue.svg)](USER_GUIDE.md)
-[![Status](https://img.shields.io/badge/status-advanced%20beta%20--%20pre--production%20hardening-orange.svg)](#-project-status)
+[![Status](https://img.shields.io/badge/status-UAT%20(pre--production)-yellow.svg)](#-project-status)
 
 </div>
 
-> **Advanced beta — pre-production hardening.** The platform builds,
-> deploys and runs: the production container image was verified on
-> 2026-10-17 to build and import every module on its target Python 3.11,
-> and the core workflows, authorization and data-protection controls were
-> driven end to end against live databases and a live local model.
-> **It is not production-ready and UAT has not been run** — three
-> blocking CI gates are red on verified-benign findings awaiting a
-> decision, capacity and container-CVE testing are unblocked but unrun,
-> recovery has never been drilled, and no business user has executed or
-> signed off a single acceptance journey. See
-> [Project status](#-project-status).
+> **UAT (pre-production).** The platform builds, deploys and runs: the
+> production container image was verified on 2026-10-17 to build and
+> import every module on its target Python 3.11, and the core workflows,
+> authorization and data-protection controls were driven end to end
+> against live databases and a live local model. As of **2026-10-22** the
+> project has **entered user-acceptance testing**, which is the phase the
+> 2026-10-17 release gate held it at ("NO-GO for production, READY FOR
+> UAT with conditions").
+>
+> **Entering UAT is not passing it, and this is still not
+> production-ready.** No business user has yet executed or signed off a
+> single acceptance journey; the 15-journey, 6-role script exists with
+> every result cell blank. Two blocking CI gates (`ruff`, `bandit`) were
+> re-measured red today on verified-benign findings awaiting a decision
+> and a third (`pip-audit`) could not be re-measured here at all;
+> capacity and container-CVE testing are unblocked but unrun, recovery
+> has never been drilled, and the measured answer-latency target is not
+> met. See [Project status](#-project-status).
 
 <a id="news-and-updates"></a>
 
@@ -30,11 +37,11 @@
 
 <!-- Newest first, sourced from real commit history. Keep no more than the three most recent entries. -->
 
+- **2026-10-22** — Answers now read like business answers, the slow part of the pipeline is measured rather than guessed at, and a retrieval bug that refused perfectly answerable questions is fixed. **The project status moves to UAT (pre-production).** Three result-quality fixes landed first: a question about products returns `EnglishProductName`, not `ProductKey` — the generated SQL is repaired by AST surgery to join the dimension table that holds the name, never by renaming a column — while a date key is now left alone rather than silently relabelled with a month name, and the chart y-axis binds to a numeric *measure* chosen by a priority ladder (revenue > profit > quantity > count > average > percentage) instead of whatever numeric column happened to come first, which was often a key. **The latency work refused to assume a bottleneck and measured one instead**, against the live SQL Server and Ollama: a baseline question took **123.77s**, of which `execute_sql` was **0.05s — 0.04%**. Essentially all of it is model inference, because `qwen2.5-coder:7b` needs 5.84 GB and only 2.37 GB fits the 4 GB GPU, so it runs **41% on GPU** at ~185 tok/s prompt and ~9.6 tok/s generation. Latency is therefore `prompt_tokens/185 + generated/9.6`, so the only levers are *how many model calls* and *how big each prompt is* — the database, router and vector store are noise. Dropping the analytical-intent call for a question with no complexity signal (its result provably cannot change any downstream decision) took it to **80.08s**, 3 model calls to 2. **The 3–5s target is not met for a SQL answer and `docs/PERFORMANCE.md` says so** — ~80s today, ~30s in the best configuration this hardware allows; what does meet it is progress, with the first `/ask/stream` event at **0.025s** and every pre-generation stage done by 2.57s. Separately, "Top selling products." had been answering *"I can only answer questions about this database"*: retrieval was trimming to the single highest-scoring table, `DimProductSubcategory`, a dimension with no sales measure in it, so the model was handed a schema that genuinely could not answer the question. The giveaway was that the same question **without the trailing period** retrieved five tables including the fact table — one character decided whether it was answerable. The trim is now withheld when a question asks for a measure the lone winner has no column to supply; a 270-phrasing sweep leaves **zero** measure questions retrieving no measure table, and no lookup or aggregate question was widened. The off-topic refusal also stopped claiming the question was off-topic when it was really a coverage miss. Rounding out the day: the question editor expands to the full turn column like ChatGPT and Perplexity rather than a few characters, and the web-search prompt now sizes its answer to the question (briefings grouped by theme) while being explicitly forbidden from inventing a publication date, since results carry only a retrieval time. **Known and unfixed:** two phrasings ("Worst selling products", "Most popular products") are still refused by the 7B model even with the right schema in the prompt — `llama3.1:8b` answers both, so it is model capacity, not the pipeline. See [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md), [`docs/DISPLAY_NAMES.md`](docs/DISPLAY_NAMES.md) and [`docs/CHART_AXIS_BINDING.md`](docs/CHART_AXIS_BINDING.md).
+
 - **2026-10-21** — A code-specialised model now drafts the SQL, its weights live off the system drive, and a hole in the SQL validator that only SQL Server could fall through is closed. `qwen2.5-coder:7b` is pulled and selectable, and Ollama's model store moved to `D:\OllamaModels` — which mattered more than tidiness, since `C:` was down to **12.4 GB free** and the existing `qwen3.8:27b` and `llama3.1:8b` (21.1 GB together) were sitting on it. They were **copied, verified file-by-file and left in place**, not moved, so a failed migration could not cost anything. The instructive part is the failure *mode*: setting `OLLAMA_MODELS` at user scope and restarting Ollama was **not enough**, and the pull still filled `C:`. Two reasons, both invisible unless you look — `[Environment]::SetEnvironmentVariable(..., "User")` writes the registry but does not update the shell you typed it in, and the tray app does not inherit the launching shell's environment either, so the server kept starting with the old path. Its own log said so plainly (`OLLAMA_MODELS:C:\Users\...\.ollama\models`) while the variable read back as `D:` the whole time; the only honest check is **which directory actually grows during a pull**. Separately, probing the validator with destructive SQL turned up a real gap: it rejected `sys.databases` but not SQL Server's pre-2005 compatibility views, which resolve *unqualified* from any database — `sysobjects`, `syscolumns`, and `syscomments`, which exposes the **source text** of views and procedures. The bare-name hole was already covered for PostgreSQL (`pg_*`) and Oracle (`DBA_*`/`ALL_*`); mssql was the one dialect missing it, and this deployment runs mssql. It is matched as a **curated set of exact names, never a blind `sys*` prefix**, so `system_settings` and `sysadmin_audit` still work — removing the check fails six tests. **Measured, not assumed:** the 7B model does *not* fit the 4 GB VRAM on this machine and runs **59% CPU / 41% GPU** at **8.8 tok/s**, which is marginally *faster* per token than the previous default; a warm two-question pipeline run took **75.6s** against `llama3.1:8b`'s 83s, while the same run cold took 783s — load overhead, not model speed. It also declined one of the two questions rather than answer it, which on inspection is the better behaviour: auto-routing had sent "top 5 companies" to a database with no company table, and the previous model answered anyway by joining an unrelated one and returning zero rows. **Not done, and worth knowing before you trust a number:** no accuracy benchmark was re-run, so `docs/EVALUATION_CURRENT.md`'s figures still describe `llama3.1:8b` and no longer describe the default — one `.env` line switches back. See [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md#where-ollama-stores-model-files) and [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md).
 
 - **2026-10-17 (later)** — The one thing standing between this project and a deployable artefact is fixed, and the project status moves to **advanced beta / pre-production hardening**. A certification pass that morning had returned **NO-GO** on a single release-blocking defect: `requirements.txt` pinned `scipy==1.18.1`, which declares `Requires-Python: >=3.12`, while the Dockerfile's base is `python:3.11-slim` and every CI job pins 3.11 — so `pip` resolved no candidate and the production image could not be built at all. The instructive part is the failure *mode*: an unsatisfiable pin fails at the dependency-install step, so the test suite never runs and "a bad pin would show up in tests" simply does not apply — there are no test results to read. It is now `scipy==1.17.1`, which publishes cp311 *and* cp314 wheels and so satisfies both the 3.11 target and this machine's 3.14 dev venv with one pin rather than a marker that would let the two drift apart again. **Verified rather than argued:** the image runs `python 3.11.16` with `scipy 1.17.1`, all five scipy-dependent production modules (`analytics/causal.py`, `forecasting.py`, `models.py`, `predictive.py`, `optimization/engine.py`) import inside it, and the full backend suite re-ran clean at **7,274 passed / 0 failed**. The same pass drove the running application end to end for the first time on record — the SQL validator refusing a hand-edited `UPDATE`, a `DROP`, a stacked statement and a `sys.tables` reference; the row cap injected into the SQL text as `SELECT TOP 1000`; compensation columns returned as `[restricted]` against a bare `SELECT *`; and 14 of 14 admin routes refused server-side for a `user` role. It also found a new defect worth knowing about before you demo this: with several databases configured, auto-routing picks on *schema similarity alone* and chose a schema-rich but **data-empty** database over the one holding the answer — returning zero rows, correctly refusing to invent any, with no way for a user to redirect the question. **Still not production-ready:** three blocking CI gates (`ruff`, `bandit`, `pip-audit`) are red on verified-benign findings, container-CVE and load testing are now unblocked but unrun, and **UAT remains NOT COMPLETED**. See [`docs/certification/2026-10-17_release_gate_v2.md`](docs/certification/2026-10-17_release_gate_v2.md) §11.
-
-- **2026-10-17** — The generated-SQL panel now says what the SQL *does*, the admin panels say what the models consumed, and the component suite checks accessibility at runtime. `agent.sql_validator.describe_sql` reads the AST `validate_sql` has **already parsed** and reports the joins (the parser's own `INNER`/`LEFT`/`RIGHT`/`FULL`/`CROSS` side, never guessed from the text), the columns filtered on, the aggregates, the `GROUP BY` grain, the statement-level `ORDER BY` and whether `DISTINCT` applies — no second parser, no model call, because an explanation that hallucinated a join would render beside a real validator verdict and read as authoritative. It deliberately reports **no row limit** (the `TOP n` you see is this platform's governance cap, not the query's intent), no business meaning, and no filter *values* — column names only. Separately, the Ollama token counts `agent/llm_client.py` had been reading and discarding for months are now rolled up per model and shown on the two existing metrics routes and admin panels, **with no monetary figure anywhere**: the model runs locally, so there is no per-token price, and inventing one would present a guess as an observed fact (three tests pin its absence). And oxlint turned out to ship a `jsx-a11y` plugin that was simply never enabled — enabling it cost zero dependencies and found 28 issues, while an `axe-core` helper now checks the *rendered* tree, which is what proved three of those static rules were false positives. Colour contrast is still unchecked and cannot be checked under jsdom — stated rather than glossed. Also added: `agent/translation.py`, which preserves every number, date, citation and `[restricted]` mask byte-for-byte or discards the translation entirely — **built, not wired**, with no live caller. See [`CHANGELOG.md`](CHANGELOG.md) and [`docs/ai-capability-implementation-log.md`](docs/ai-capability-implementation-log.md).
 
 <a id="example-usage"></a>
 
@@ -587,13 +594,15 @@ be verified here; the reason is named.
 
 | Capability | Status | Verification | Docs |
 |---|---|---|---|
-| Text-to-SQL (18-node LangGraph pipeline) | `IMPLEMENTED_AND_TESTED` | mocked; accuracy measured in a dated benchmark (see Known limitations) | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
+| Text-to-SQL (19-node LangGraph pipeline) | `IMPLEMENTED_AND_TESTED` | mocked; accuracy measured in a dated benchmark (see Known limitations) | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
 | AST SELECT-only SQL validation | `IMPLEMENTED_AND_TESTED` | mocked + `tests/security/` | [`SECURITY.md`](SECURITY.md) |
 | Live schema introspection → ChromaDB | `IMPLEMENTED_AND_TESTED` | mocked | [`docs/architecture/overview.md`](docs/architecture/overview.md) |
 | Multi-database auto-routing | `IMPLEMENTED_AND_TESTED` | mocked | [`docs/architecture/overview.md`](docs/architecture/overview.md) |
 | Result governance / restricted columns | `IMPLEMENTED_AND_TESTED` | mocked | [`docs/DATA_PRIVACY_GOVERNANCE_ENGINE.md`](docs/DATA_PRIVACY_GOVERNANCE_ENGINE.md) |
 | Follow-up questions | `IMPLEMENTED_AND_TESTED` | mocked; per-request, not checkpointed | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
 | Generated-SQL structural description (joins, filters, aggregates, grain) | `IMPLEMENTED_AND_TESTED` | mocked; read from the parsed AST, no LLM call | [`docs/API.md`](docs/API.md) |
+| Business display names (joins the dimension, never renames a column) | `IMPLEMENTED_AND_TESTED` | mocked + live against AdventureWorks | [`docs/DISPLAY_NAMES.md`](docs/DISPLAY_NAMES.md) |
+| Chart axis binding (y-axis is a measure, never a key) | `IMPLEMENTED_AND_TESTED` | mocked, backend + frontend | [`docs/CHART_AXIS_BINDING.md`](docs/CHART_AXIS_BINDING.md) |
 
 ### Sources
 
@@ -632,21 +641,29 @@ Opt-in live verification for the credential-blocked rows above:
 
 ## 🧪 Project status
 
-This project is **advanced beta — pre-production hardening**
-(status set 2026-10-17 at commit `08f385e`, on measured evidence).
+This project is in **UAT (pre-production)** — status set 2026-10-22 at
+commit `628565d`, on re-measured evidence. It was *advanced beta —
+pre-production hardening* from 2026-10-17, and the move reflects entering
+the phase that gate pointed at, not clearing it.
 
-**What that means, precisely, because the distinction matters:**
+**Entering UAT is not passing UAT.** The release gate's verdict —
+**NO-GO for production, READY FOR UAT with conditions** — is unchanged,
+and every condition below that is still open is still open.
+
+**What that means, precisely, because the distinction matters.** Every
+row was re-measured on 2026-10-22 unless it says otherwise:
 
 | Question | Answer | Evidence |
 |---|---|---|
-| Does it build and deploy? | **Yes** | Production image verified running `python 3.11.16` with every module importing, incl. all five scipy-dependent ones |
-| Do the automated tests pass? | **Yes** | **7,274** backend (0 failed, 11 `tests/live/` deselected) · **1,161** frontend across 89 files · `tsc` clean · `black` clean over 1,635 files |
-| Do the core workflows run for real? | **Yes** | 20 live end-to-end probes against 4 live SQL Server databases and local Ollama — auth, RBAC, chat history, SQL validation, row cap, restricted-column masking |
-| Is CI green? | **No** | `ruff`, `bandit` and `pip-audit` each exit non-zero on **verified-benign** findings (0 High, 0 Medium) awaiting an owner decision |
-| Is capacity known? | **No** | Load testing was blocked by the build defect; now unblocked, **not yet run**. No capacity claim is made anywhere |
-| Is answer accuracy known? | **No** | The only full-corpus benchmark is self-disclaimed as stale — see [Known limitations](#known-limitations) |
+| Does it build and deploy? | **Yes** | Production image verified 2026-10-17 running `python 3.11.16` with every module importing, incl. all five scipy-dependent ones. *Not re-measured since.* |
+| Do the automated tests pass? | **Yes, bar 5 known failures** | **7,673** backend passed with **5 known failures** — a pre-existing cross-file-state interaction (`tests/security` running before `test_agent_nodes.py`), unrelated to any 2026-10-22 change and recorded in [`CLAUDE.md`](CLAUDE.md) §13; 11 `tests/live/` deselected · **1,334** frontend across 95 files · `tsc` clean · `npm run lint` exit 0 · `black` clean over **1,661** files |
+| Do the core workflows run for real? | **Yes** | 20 live end-to-end probes (2026-10-17) against 4 live SQL Server databases and local Ollama — auth, RBAC, chat history, SQL validation, row cap, restricted-column masking. Re-driven 2026-10-22 for the display-name, chart-axis and retrieval fixes |
+| Is CI green? | **No** | `ruff` exits non-zero on **one** import-order finding (`agent/multiagent/agents.py`); `bandit` on **4 Low, 0 Medium, 0 High**, all deliberate and annotated for `ruff` but not for `bandit`. **`pip-audit` could not be re-measured here** — it needs PyPI and this environment has no egress, so its 2026-10-17 red state stands as last known |
+| Is capacity known? | **No** | Load testing is unblocked but **still not run**. No capacity claim is made anywhere |
+| Is answer latency acceptable? | **No** | Measured 2026-10-22: a SQL answer takes **~80s** on this hardware against a 3–5s target, because the 7B model fits only 41% into a 4 GB GPU. Progress *does* meet it — first stream event at **0.025s**. See [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) |
+| Is answer accuracy known? | **No** | The only full-corpus benchmark is self-disclaimed as stale, and now also predates a model change — see [Known limitations](#known-limitations) |
 | Has recovery been drilled? | **No** | RPO/RTO *proposed*, awaiting sign-off; no restore drill |
-| **Has UAT been completed?** | **NO — NOT COMPLETED** | A 15-journey, 6-role script exists with every result cell deliberately blank. **No business user has executed or signed off anything.** Automated tests are not UAT |
+| **Has UAT been completed?** | **NO — IN PROGRESS, NOTHING SIGNED OFF** | The project entered UAT on 2026-10-22. The 15-journey, 6-role script still has every result cell blank: **no business user has executed or signed off anything.** Automated tests are not UAT |
 
 **Read these two documents before forming a view**, in this order:
 [`docs/certification/2026-10-17_release_gate_v2.md`](docs/certification/2026-10-17_release_gate_v2.md)
