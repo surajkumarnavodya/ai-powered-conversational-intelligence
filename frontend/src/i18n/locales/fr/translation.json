@@ -136,7 +136,8 @@
     "modelNotInstalled": "Non installé",
     "modelDefault": "Par défaut",
     "modelSelectionUnavailable": "Liste des modèles indisponible ; utilisation du modèle par défaut du serveur.",
-    "modelPullHint": "Exécutez « ollama pull {{model}} » pour installer ce modèle."
+    "modelPullHint": "Exécutez « ollama pull {{model}} » pour installer ce modèle.",
+    "account": "Compte"
   },
   "theme": {
     "light": "Clair",
@@ -531,5 +532,17 @@
       "medium": "{{source}} : correspondance partielle",
       "low": "{{source}} : correspondance faible"
     }
+  },
+  "profilePicture": {
+    "title": "Photo de profil",
+    "alt": "Votre photo de profil",
+    "upload": "Importer",
+    "replace": "Remplacer",
+    "remove": "Supprimer",
+    "hint": "JPG, PNG ou WebP, jusqu'à 5 Mo. Recadrée en carré.",
+    "checking": "Vérification de la photo...",
+    "notChecked": "Enregistrée, mais la vérification automatique n'a pas eu lieu ({{reason}}).",
+    "uploadFailed": "Cette image n'a pas pu être importée. Veuillez réessayer.",
+    "removeFailed": "Cette image n'a pas pu être supprimée. Veuillez réessayer."
   }
 }

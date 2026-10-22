@@ -3322,6 +3322,39 @@ class Settings(BaseSettings):
     max_attachment_spreadsheet_rows: int = Field(default=500, gt=0)
     max_attachment_image_dimension_px: int = Field(default=1568, gt=0)
     max_attachment_resize_dimension_px: int = Field(default=4096, gt=0)
+    # --- Profile pictures (identity/profile_picture.py) ------------------
+    # Deliberately its own size ceiling rather than reusing
+    # `max_attachment_image_bytes` (10 MB): an avatar is stored forever on
+    # an account row and is only ever displayed at 32px, so a tighter bound
+    # than a one-off chat attachment's is the right trade. 5 MB is the
+    # product requirement.
+    profile_picture_max_bytes: int = Field(default=5 * 1024 * 1024, gt=0)
+    # The stored square's edge, in pixels. One number, not a width/height
+    # pair, because the stored image is always square -- a circular avatar
+    # crops to a circle inscribed in a square, and anything else would be
+    # cropped again by CSS at display time.
+    profile_picture_size_px: int = Field(default=256, gt=0, le=1024)
+    # Whether an uploaded picture is checked by a vision model for being a
+    # clear, appropriately framed photo before it is stored. Requires
+    # `media_vision_model` to be set; with no vision model configured there
+    # is nothing to check with and the check is skipped (reported, never
+    # silent -- see `identity.profile_picture`).
+    profile_picture_vision_check_enabled: bool = True
+    # How long that one vision call may take. Deliberately far below
+    # `ollama_request_timeout_seconds` (300): this runs while a person
+    # waits on an upload dialog, so a slow vision model must cost a bounded
+    # wait and then get out of the way -- the same trade
+    # `router_timeout_seconds` makes in front of a question.
+    #
+    # 60 is sized from measurement, not guessed. On the reference machine
+    # (T1200, 4 GB) the configured `qwen3.8:27b` answered a one-word
+    # question about a 256x256 image in 33.4s and 37.5s across two runs --
+    # and answered *correctly*, distinguishing a circle from a square, so
+    # the check is genuinely useful here rather than noise. A 20s budget
+    # would have skipped it on every upload; 60s lets it run with headroom,
+    # at the cost of a ~40s wait on this hardware. A deployment with a
+    # smaller vision model (e.g. `llava`) should lower this.
+    profile_picture_vision_timeout_seconds: float = Field(default=60.0, gt=0, le=300.0)
     attachment_ocr_timeout_seconds: float = Field(default=20.0, gt=0)
     max_text_removal_regions: int = Field(default=20, gt=0)
     # Zip-container (DOCX/XLSX/PPTX) decompression-bomb guard -- checked

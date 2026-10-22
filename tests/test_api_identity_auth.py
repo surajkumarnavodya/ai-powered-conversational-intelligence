@@ -587,3 +587,168 @@ class TestEmailVerificationFlow:
         client.post("/auth/resend-verification", json={"email": "alice@example.com"})
         response = client.post("/auth/verify-email", json={"token": captured["raw_token"]})
         assert response.status_code == 200
+
+
+def _png(size: tuple[int, int] = (600, 400)) -> bytes:
+    """A real, decodable PNG -- the signature check in
+    `identity/profile_picture.py` rejects anything that merely claims to be
+    one, so these tests cannot use a placeholder byte string."""
+    import io as _io
+
+    from PIL import Image
+
+    buf = _io.BytesIO()
+    Image.new("RGB", size, (70, 110, 190)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+class TestProfilePictureRoutes:
+    """`POST`/`GET`/`DELETE /auth/me/avatar`.
+
+    The vision check is neutralized here (the test `Settings` configure no
+    `media_vision_model`), so these exercise the HTTP contract -- auth,
+    status codes, caching, ownership -- while
+    `tests/test_profile_picture.py` owns the decision logic. Two files, two
+    concerns, no overlap.
+    """
+
+    def _headers(self, client) -> dict[str, str]:
+        tokens = _register(client)
+        return {"Authorization": f"Bearer {tokens['access_token']}"}
+
+    def test_a_signed_in_user_can_set_their_own_picture(self, client):
+        headers = self._headers(client)
+
+        response = client.post(
+            "/auth/me/avatar",
+            headers=headers,
+            files={"file": ("me.png", _png(), "image/png")},
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["user"]["avatar_url"] is not None
+        # No vision model is configured in these tests, so the suitability
+        # check cannot have run -- and the response must say so rather than
+        # implying a review happened (CLAUDE.md 4.2's disclosure half).
+        assert body["vision_checked"] is False
+        assert body["vision_skipped_reason"]
+
+    def test_the_stored_picture_is_served_back_as_a_square_webp(self, client):
+        headers = self._headers(client)
+        client.post(
+            "/auth/me/avatar", headers=headers, files={"file": ("me.png", _png(), "image/png")}
+        )
+
+        response = client.get("/auth/me/avatar", headers=headers)
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "image/webp"
+        assert response.headers["x-content-type-options"] == "nosniff"
+        assert "private" in response.headers["cache-control"]
+
+        import io as _io
+
+        from PIL import Image
+
+        with Image.open(_io.BytesIO(response.content)) as stored:
+            assert stored.size == (_SETTINGS.profile_picture_size_px,) * 2
+
+    def test_the_url_changes_when_the_picture_is_replaced(self, client):
+        """The `v=` cache-buster is the whole point: without it a browser
+        would keep serving the previous picture from cache and a successful
+        replace would look like it did nothing."""
+        headers = self._headers(client)
+        first = client.post(
+            "/auth/me/avatar", headers=headers, files={"file": ("me.png", _png(), "image/png")}
+        ).json()["user"]["avatar_url"]
+
+        second = client.post(
+            "/auth/me/avatar",
+            headers=headers,
+            files={"file": ("me.png", _png((500, 500)), "image/png")},
+        ).json()["user"]["avatar_url"]
+
+        assert first is not None and second is not None
+        assert "v=" in second
+
+    def test_a_refused_picture_is_400_with_a_short_reason(self, client):
+        """ "Show a short reason and ask for another" -- the reason has to
+        reach the client, not just the log."""
+        headers = self._headers(client)
+
+        response = client.post(
+            "/auth/me/avatar",
+            headers=headers,
+            files={"file": ("me.png", b"MZ\x90\x00 not an image", "image/png")},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"]
+
+    def test_an_unsupported_type_is_refused(self, client):
+        headers = self._headers(client)
+
+        response = client.post(
+            "/auth/me/avatar",
+            headers=headers,
+            files={"file": ("me.gif", _png(), "image/gif")},
+        )
+
+        assert response.status_code == 400
+
+    def test_a_picture_can_be_removed(self, client):
+        headers = self._headers(client)
+        client.post(
+            "/auth/me/avatar", headers=headers, files={"file": ("me.png", _png(), "image/png")}
+        )
+
+        removed = client.delete("/auth/me/avatar", headers=headers)
+
+        assert removed.status_code == 200
+        assert removed.json()["avatar_url"] is None
+        assert client.get("/auth/me/avatar", headers=headers).status_code == 404
+
+    def test_removing_a_picture_that_is_not_there_succeeds(self, client):
+        """Idempotent: the caller's intent is already satisfied, and a 404
+        would only report a race they cannot act on."""
+        headers = self._headers(client)
+
+        response = client.delete("/auth/me/avatar", headers=headers)
+
+        assert response.status_code == 200
+        assert response.json()["avatar_url"] is None
+
+    def test_me_reports_the_avatar_url_once_set(self, client):
+        headers = self._headers(client)
+        assert client.get("/auth/me", headers=headers).json()["avatar_url"] is None
+
+        client.post(
+            "/auth/me/avatar", headers=headers, files={"file": ("me.png", _png(), "image/png")}
+        )
+
+        assert client.get("/auth/me", headers=headers).json()["avatar_url"] is not None
+
+    @pytest.mark.parametrize("method", ["post", "get", "delete"])
+    def test_every_route_requires_authentication(self, client, method):
+        """There is no anonymous read of anybody's avatar -- the account
+        comes from the bearer token, never from a parameter, so there is
+        nothing to enumerate."""
+        kwargs = {"files": {"file": ("me.png", _png(), "image/png")}} if method == "post" else {}
+
+        response = getattr(client, method)("/auth/me/avatar", **kwargs)
+
+        assert response.status_code == 401
+
+    def test_one_users_picture_is_not_visible_to_another(self, client):
+        """`GET /auth/me/avatar` is scoped to the bearer token's own
+        account, so Bob gets his own 404 rather than Alice's picture."""
+        alice = self._headers(client)
+        client.post(
+            "/auth/me/avatar", headers=alice, files={"file": ("me.png", _png(), "image/png")}
+        )
+        bob_tokens = _register(client, email="bob@example.com", display_name="Bob")
+        bob = {"Authorization": f"Bearer {bob_tokens['access_token']}"}
+
+        assert client.get("/auth/me/avatar", headers=bob).status_code == 404
+        assert client.get("/auth/me", headers=bob).json()["avatar_url"] is None

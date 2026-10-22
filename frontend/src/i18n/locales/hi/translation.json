@@ -136,7 +136,8 @@
     "modelNotInstalled": "इंस्टॉल नहीं है",
     "modelDefault": "डिफ़ॉल्ट",
     "modelSelectionUnavailable": "मॉडल सूची अनुपलब्ध है -- सर्वर डिफ़ॉल्ट का उपयोग किया जा रहा है।",
-    "modelPullHint": "इस मॉडल को इंस्टॉल करने के लिए \"ollama pull {{model}}\" चलाएँ।"
+    "modelPullHint": "इस मॉडल को इंस्टॉल करने के लिए \"ollama pull {{model}}\" चलाएँ।",
+    "account": "खाता"
   },
   "theme": {
     "light": "हल्का",
@@ -531,5 +532,17 @@
       "medium": "{{source}}: आंशिक मेल",
       "low": "{{source}}: कमजोर मेल"
     }
+  },
+  "profilePicture": {
+    "title": "प्रोफ़ाइल चित्र",
+    "alt": "आपका प्रोफ़ाइल चित्र",
+    "upload": "अपलोड करें",
+    "replace": "बदलें",
+    "remove": "हटाएँ",
+    "hint": "JPG, PNG या WebP, 5 MB तक. वर्गाकार में काटा जाएगा.",
+    "checking": "फ़ोटो की जाँच हो रही है...",
+    "notChecked": "सहेज दिया गया, पर स्वचालित फ़ोटो जाँच नहीं चली ({{reason}}).",
+    "uploadFailed": "यह चित्र अपलोड नहीं हो सका. कृपया फिर प्रयास करें.",
+    "removeFailed": "यह चित्र हटाया नहीं जा सका. कृपया फिर प्रयास करें."
   }
 }

@@ -51,12 +51,25 @@ def _get_ollama_client(host: str, timeout: int) -> ollama.Client:
     return ollama.Client(host=host, timeout=timeout)
 
 
-def get_ollama_client(settings: Settings) -> ollama.Client:
+def get_ollama_client(settings: Settings, timeout: int | None = None) -> ollama.Client:
     """Public wrapper around `_get_ollama_client` for callers outside this
     module (e.g. `api/main.py`'s startup warm-up) that only have a
     `Settings` object, not the raw `(host, timeout)` pair every generation
-    call site here already has in scope."""
-    return _get_ollama_client(settings.ollama_host, settings.ollama_request_timeout_seconds)
+    call site here already has in scope.
+
+    `timeout` overrides `Settings.ollama_request_timeout_seconds` for one
+    caller whose own budget is deliberately tighter -- added for
+    `identity.profile_picture`, where a vision call happens while a person
+    waits on an upload dialog and so cannot be allowed the full 300s.
+    Optional with a `None` default, so every existing call site is
+    unchanged. It still goes through the same cache, and a caller passing a
+    *fixed setting* value adds one entry rather than the near-unique
+    per-call values `_TIMEOUT_BUCKET_SECONDS` exists to bucket.
+    """
+    return _get_ollama_client(
+        settings.ollama_host,
+        settings.ollama_request_timeout_seconds if timeout is None else timeout,
+    )
 
 
 #: Deadline-derived timeouts are rounded down to this many seconds before

@@ -5,6 +5,7 @@ import { ConnectedAccountsSection } from '@/components/settings/ConnectedAccount
 import { FontSettings } from '@/components/settings/FontSettings'
 import { LanguageSelector } from '@/components/settings/LanguageSelector'
 import { ModelSelector } from '@/components/settings/ModelSelector'
+import { ProfilePictureSection } from '@/components/settings/ProfilePictureSection'
 import { ThemeToggle } from '@/components/settings/ThemeToggle'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
@@ -53,6 +54,17 @@ export function HistorySettingsSection() {
           {t('sidebar.installApp')}
         </Button>
       )}
+
+      {/* Account first: a profile picture is about who the user *is*,
+          which reads oddly underneath theme and font controls. Renders
+          nothing at all without a signed-in local account, so this adds no
+          empty section for an OIDC or unauthenticated caller. */}
+      <section>
+        <SectionHeader id="account" title={t('sidebar.account')} />
+        <SectionBody id="account">
+          <ProfilePictureSection />
+        </SectionBody>
+      </section>
 
       <section>
         <SectionHeader id="appearance" title={t('sidebar.appearance')} />

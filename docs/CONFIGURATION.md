@@ -1019,6 +1019,44 @@ failure — never a false claim that the image was analyzed.
 | `MAX_ATTACHMENT_ZIP_ENTRIES` | `2000` | Companion entry-count cap for the same ZIP-container guard. |
 | `ATTACHMENT_PROCESSING_TIMEOUT_SECONDS` | `30.0` | Hard wall-clock bound on one attachment's processor call — a pathological file can't hang a request thread past this. |
 
+### Profile pictures
+
+`identity/profile_picture.py`, surfaced by `POST`/`GET`/`DELETE
+/auth/me/avatar` and the Account section of the settings dialog. Requires
+a signed-in local account (`LOCAL_AUTH_ENABLED`) — an avatar hangs off an
+`identity.users` row, so OIDC and unauthenticated callers have none, the
+same limitation chat history and artifacts already carry.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `PROFILE_PICTURE_MAX_BYTES` | `5242880` (5MB) | Upload size cap, checked on the real byte length before any decode. Deliberately tighter than `MAX_ATTACHMENT_IMAGE_BYTES` — an avatar is stored on the account row forever and only ever displayed at 32px. |
+| `PROFILE_PICTURE_SIZE_PX` | `256` | Edge of the stored square. One number, not a width/height pair: the stored image is always square, so a circular avatar crops to a circle inscribed in it. |
+| `PROFILE_PICTURE_VISION_CHECK_ENABLED` | `true` | Whether an uploaded picture is checked by a vision model for being a clear, appropriately framed photo before it is stored. Needs `MEDIA_VISION_MODEL`; with none configured there is nothing to check with. |
+| `PROFILE_PICTURE_VISION_TIMEOUT_SECONDS` | `60.0` | Budget for that one vision call, far below `OLLAMA_REQUEST_TIMEOUT_SECONDS` because a person is waiting on an upload dialog. Sized from measurement: on the reference machine (T1200, 4GB) the configured `qwen3.8:27b` judged a 256×256 image in 33.4s and 37.5s across two runs, and judged it *correctly*. Lower it for a smaller vision model such as `llava`. |
+
+**Accepted formats are not configurable**: JPG, PNG and WebP, by
+extension *and* magic bytes
+(`identity.profile_picture.ALLOWED_EXTENSIONS`). The stored output is
+always WebP, regardless of input.
+
+**The suitability check fails open; everything else fails closed.** The
+size cap, the type allowlist, the signature match and the malware scan
+all refuse (CLAUDE.md §4.2's safety-control half). Whether a photo is
+well framed is a model's quality judgement, so when the model is absent,
+unreachable or slower than its budget the picture is stored and the
+response says so — `ProfilePictureResponse.vision_checked` is `false` and
+`vision_skipped_reason` explains which, and the settings dialog shows
+that rather than implying a review happened. Blocking somebody from
+setting an avatar because a local model is busy would be the worse
+outcome.
+
+**Moderation (`moderation/gate.py`) is deliberately not in this path.**
+An avatar contributes no chunk to any corpus and is never retrieved or
+summarised into an answer, so it is not one of the ingestion paths that
+gate is mandatory for; requiring it would also block every avatar upload
+on a deployment that has not configured a moderation provider. Content
+appropriateness is part of the vision verdict instead.
+
 **Explicit image actions** — `POST /attachments/{id}/extract-text` (real
 Tesseract OCR, distinct from vision-model description), `POST
 /attachments/{id}/resize` (deterministic Pillow work, no model call),

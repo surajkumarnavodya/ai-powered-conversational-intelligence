@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { useLocalAuthStore } from '@/store/localAuthStore'
 import { ChatMessage } from './ChatMessage'
 
 /** Feature 010 (Edit and Resubmit Question).
@@ -295,5 +296,74 @@ describe('ChatMessage', () => {
     // it measures to decide whether a "Show more" toggle is needed.
     expect(screen.getAllByText('Top regions?').length).toBeGreaterThan(0)
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+  })
+
+  describe('the user avatar', () => {
+    afterEach(() => {
+      useLocalAuthStore.setState({ user: null })
+    })
+
+    function signedInWith(avatarUrl: string | null) {
+      useLocalAuthStore.setState({
+        user: {
+          id: 'u1',
+          email: 'alice@example.com',
+          username: null,
+          display_name: 'Alice',
+          needs_profile_completion: false,
+          status: 'active',
+          is_email_verified: true,
+          roles: ['user'],
+          created_at: '2026-01-01T00:00:00Z',
+          last_login_at: null,
+          avatar_url: avatarUrl,
+        },
+      })
+    }
+
+    it("shows the user's profile picture on their own message", () => {
+      signedInWith('/auth/me/avatar?v=5')
+
+      const { container } = render(<ChatMessage message={{ role: 'user', content: 'Hi' }} />)
+
+      const img = container.querySelector('img[src="/auth/me/avatar?v=5"]')
+      expect(img).toBeInTheDocument()
+      // Cover, not contain: the stored image is already a square the
+      // server centre-cropped, so it must fill the circle rather than be
+      // letterboxed inside it.
+      expect(img).toHaveClass('object-cover')
+    })
+
+    it('keeps the default icon when no picture is set', () => {
+      signedInWith(null)
+
+      const { container } = render(<ChatMessage message={{ role: 'user', content: 'Hi' }} />)
+
+      expect(container.querySelector('img[src^="/auth/me/avatar"]')).not.toBeInTheDocument()
+    })
+
+    it('never puts the user picture on an assistant message', () => {
+      // A share viewer and the assistant bubble must both keep the app
+      // mark -- attributing the assistant's answer to the reader's own
+      // face would be plainly wrong.
+      signedInWith('/auth/me/avatar?v=5')
+
+      const { container } = render(
+        <ChatMessage message={{ role: 'assistant', content: 'North leads.' }} />,
+      )
+
+      expect(container.querySelector('img[src="/favicon.png"]')).toBeInTheDocument()
+      expect(container.querySelector('img[src^="/auth/me/avatar"]')).not.toBeInTheDocument()
+    })
+
+    it('keeps the default icon for a viewer who is not signed in', () => {
+      // `SharedConversation` renders this component for someone holding no
+      // account at all.
+      useLocalAuthStore.setState({ user: null })
+
+      const { container } = render(<ChatMessage message={{ role: 'user', content: 'Hi' }} />)
+
+      expect(container.querySelector('img[src^="/auth/me/avatar"]')).not.toBeInTheDocument()
+    })
   })
 })

@@ -150,6 +150,41 @@ class UserOut(BaseModel):
     roles: list[str]
     created_at: datetime
     last_login_at: datetime | None
+    # Where to fetch this account's profile picture, or None when none is
+    # set (the frontend then keeps its default icon). Optional with a
+    # default so this stays a backward-compatible addition to a frozen,
+    # widely-consumed response model (CLAUDE.md 6.3).
+    #
+    # A URL rather than the bytes: an avatar is ~15 KB of WEBP, and
+    # inlining it as base64 would put it on every `/auth/me`, every login
+    # and every token refresh, for an image the browser caches anyway. The
+    # `v=` query carries `users.avatar_updated_at`, so replacing a picture
+    # changes the URL and no stale copy can be served from cache.
+    avatar_url: str | None = None
+
+
+class ProfilePictureResponse(BaseModel):
+    """Returned by `POST /auth/me/avatar`.
+
+    Wraps `UserOut` rather than extending it, because the two disclosure
+    fields describe *this upload*, not the account. Putting them on
+    `UserOut` would attach a per-upload fact to a model returned by login,
+    refresh and `GET /auth/me`, where it would always be stale or
+    meaningless -- one owner per fact (CLAUDE.md 4.8).
+
+    `vision_checked` is False when the automated suitability check could
+    not run (no vision model configured, unreachable, or slower than
+    `Settings.profile_picture_vision_timeout_seconds`). The picture was
+    still stored -- that check is a quality aid and fails open (CLAUDE.md
+    4.2) -- and `vision_skipped_reason` says why, so the UI can tell the
+    user plainly instead of implying a review happened that did not.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    user: UserOut
+    vision_checked: bool
+    vision_skipped_reason: str | None = None
 
 
 class TokenResponse(BaseModel):

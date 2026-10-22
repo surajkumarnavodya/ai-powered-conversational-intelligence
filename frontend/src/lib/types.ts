@@ -924,6 +924,24 @@ export interface LocalUser {
   roles: string[]
   created_at: string
   last_login_at: string | null
+  // Where to GET this account's profile picture, or null when none is set
+  // (the default icon is kept). Carries a `v=` cache-buster derived from
+  // `users.avatar_updated_at`, so replacing a picture yields a new URL and
+  // the browser cannot show the previous one. Optional for backward
+  // compatibility with a persisted session from before this field existed.
+  avatar_url?: string | null
+}
+
+/** `POST /auth/me/avatar`. The two disclosure fields describe the upload,
+ * not the account -- `vision_checked` is false when the automated
+ * suitability check could not run (no vision model, unreachable, or
+ * slower than its timeout). The picture is still stored in that case, and
+ * `vision_skipped_reason` is shown so the UI never implies a review
+ * happened that did not. */
+export interface ProfilePictureResponse {
+  user: LocalUser
+  vision_checked: boolean
+  vision_skipped_reason: string | null
 }
 
 export interface TokenResponse {

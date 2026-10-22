@@ -89,6 +89,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -182,6 +183,43 @@ class User(Base):
     locked_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     last_login_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     password_changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    # --- Profile picture -------------------------------------------------
+    # Stored on the account row rather than on disk, and that is a
+    # deliberate trade for this specific asset. It is small and bounded by
+    # construction (`Settings.profile_picture_size_px`, a 256x256 WEBP, tens
+    # of KB -- not the uploaded file, which is normalized and discarded), it
+    # is read exactly as often as the account is, and keeping it here means
+    # it is backed up, tenant-scoped and deleted with the account for free.
+    # A filesystem path would add a traversal surface and a second lifecycle
+    # to keep in sync for no benefit at this size. `media_library/` is the
+    # right home for genuinely large media; an avatar is not that.
+    # Declared non-Optional despite `nullable=True`, matching `username`,
+    # `display_name` and `password_hash` above -- and that convention is
+    # **required here, not stylistic**. `Mapped[bytes | None]` raises at
+    # import time on this machine's Python 3.14:
+    # `sqlalchemy.util.typing.make_union_type` calls
+    # `Union.__getitem__(types)` with a tuple, which 3.14 rejects
+    # ("descriptor '__getitem__' requires a 'typing.Union' object but
+    # received a 'tuple'"). Verified by trying it -- see
+    # `docs/architecture/overview.md`'s other real 3.14 breakages. The
+    # consequence is that assigning None to one of these trips mypy, which
+    # `identity/repositories/users.py::clear_profile_picture` annotates at
+    # the three call sites rather than mistyping the column.
+    avatar_image: Mapped[bytes] = mapped_column(LargeBinary, nullable=True)
+    # The media type of `avatar_image` as actually stored -- always what
+    # `identity.profile_picture` normalized to, never the upload's declared
+    # `Content-Type`, which is untrusted input.
+    avatar_media_type: Mapped[str] = mapped_column(String(32), nullable=True)
+    # Doubles as the cache-buster for `GET /auth/me/avatar`: the URL the
+    # frontend builds carries this timestamp, so replacing a picture changes
+    # the URL and the browser cannot serve the previous one from cache.
+    # Deliberately NOT one of the `_ORM_FILLED_TIMESTAMPS`
+    # (`created_at`/`updated_at`) that `tests/test_identity_schema_invariants
+    # .py` requires a `server_default` for: this one is set by the
+    # application at the moment a picture is stored and is NULL until then,
+    # so a database default would be wrong, not missing.
+    avatar_updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()
     deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)

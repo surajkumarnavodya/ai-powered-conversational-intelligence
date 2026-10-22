@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { ExpandableText } from '@/components/ui/expandable-text'
+import { useLocalAuthStore } from '@/store/localAuthStore'
 
 export interface ChatMessageData {
   role: 'user' | 'assistant'
@@ -45,6 +46,11 @@ export function ChatMessage({
 }) {
   const { t } = useTranslation()
   const isUser = message.role === 'user'
+  // Read from the live auth store rather than passed down: every caller
+  // that renders a ChatMessage would otherwise have to thread the same
+  // value through, and a replaced picture must update every already-
+  // rendered turn at once, not only new ones.
+  const avatarUrl = useLocalAuthStore((state) => state.user?.avatar_url ?? null)
   const canEdit = isUser && onSubmitEdit !== undefined
   const showActions = canEdit || actions !== undefined
 
@@ -96,7 +102,25 @@ export function ChatMessage({
     // except how far a question may grow before it wraps.
     <div className={`group flex w-full gap-2.5 ${isUser ? 'flex-row-reverse' : ''}`}>
       <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--muted)] text-[var(--muted-foreground)]">
-        {isUser ? <User className="h-4 w-4" /> : <img src="/favicon.png" alt="" className="h-full w-full object-contain" />}
+        {isUser ? (
+          // The signed-in user's own profile picture when they have set
+          // one, otherwise the default icon unchanged. `object-cover`
+          // rather than `object-contain` because the stored image is
+          // already a square the server centre-cropped -- cover fills the
+          // circle, contain would letterbox it inside one.
+          //
+          // `alt=""` on purpose: the avatar is decorative here. Which turn
+          // is the user's is already carried by the bubble's own side and
+          // styling, so announcing "your profile picture" on every message
+          // would be noise to a screen reader, not information.
+          avatarUrl ? (
+            <img src={avatarUrl} alt="" className="h-full w-full object-cover" />
+          ) : (
+            <User className="h-4 w-4" />
+          )
+        ) : (
+          <img src="/favicon.png" alt="" className="h-full w-full object-contain" />
+        )}
       </span>
       {/* The bubble and its action row share one column, so the actions
           sit under the bubble and align to its edge -- the arrangement
