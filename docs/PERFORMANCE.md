@@ -171,7 +171,7 @@ Honest per-source status against "a useful first response in 3–5s":
 
 | Source | Status | Evidence |
 |---|---|---|
-| **Progress stream** | **MET — 0.025s measured** | Measured directly against a live `/ask/stream` run of "Total sales by product": first event `stage=sanitize_input` at **0.025s**, 19 events over the run, with the pre-generation stages all landing by **2.57s** (`retrieve_schema` 1.91s, `retrieve_golden_examples` 2.22s, `retrieve_business_context` 2.57s, `classify_analytical_intent`/`build_analytical_plan`/`plan_query` 2.57s). `generate_sql` then returned at 103.18s on that run. |
+| **Progress stream** | **MET — 0.025s measured** | Measured on a live run of "Total sales by product" (real Ollama, real SQL Server) through `agent.progress`'s sink -- the same events `/ask/stream` serializes, captured in-process rather than over the HTTP hop, which adds only SSE framing. First event `stage=sanitize_input` at **0.025s**, 19 events over the run, with the pre-generation stages all landing by **2.57s** (`retrieve_schema` 1.91s, `retrieve_golden_examples` 2.22s, `retrieve_business_context` 2.57s, `classify_analytical_intent`/`build_analytical_plan`/`plan_query` 2.57s). `generate_sql` then returned at 103.18s on that run. |
 | **Routing decision** | **MET** | Deterministic router resolves without a model call for an unambiguous question |
 | **Database execution** | **MET** | 0.05s measured |
 | **SQL answer (first useful result)** | **NOT MET — ~80s** | §2.2's formula; 6,369-token prompt at 185 tok/s |
