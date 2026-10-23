@@ -183,6 +183,14 @@ class ProjectedTurnOut(BaseModel):
     media_search_result: dict | None = None
     attachment_refs: list[dict] = Field(default_factory=list)
     result_snapshot: dict | None = None
+    #: Set when this turn's narrative text (`content`, `insight`,
+    #: `synthesized_answer`) was withheld because it was derived from
+    #: columns this viewer may not see -- see
+    #: `governance.result_policy.narrative_withhold_reason`. Names the
+    #: columns that forced the decision, never a value. Optional with a
+    #: default, so an existing consumer of this frozen model is
+    #: unaffected (CLAUDE.md 6.3).
+    narrative_withheld_reason: str | None = None
 
 
 class SharedConversationOut(BaseModel):

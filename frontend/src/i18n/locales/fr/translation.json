@@ -305,6 +305,7 @@
     "unavailable": "Cette conversation partagée n'est pas disponible. Elle a peut-être été supprimée, expirée ou révoquée.",
     "turnFailed": "Cette réponse n'a pas pu être terminée.",
     "resultTruncated": "Affichage d'un résultat partiel.",
+    "narrativeWithheld": "Une partie de cette réponse est masquée. Elle a été rédigée à partir de colonnes que cette vue partagée protège ; le tableau de résultats ci-dessous montre ce que vous pouvez voir.",
     "attachmentUnavailable": "indisponible"
   },
   "acceptInvitation": {

@@ -305,6 +305,7 @@
     "unavailable": "Esta conversación compartida no está disponible. Puede haber sido eliminada, caducada o revocada.",
     "turnFailed": "Esta respuesta no se pudo completar.",
     "resultTruncated": "Mostrando un resultado parcial.",
+    "narrativeWithheld": "Parte de esta respuesta está oculta. Se redactó a partir de columnas que esta vista compartida protege; la tabla de resultados siguiente muestra lo que puedes ver.",
     "attachmentUnavailable": "no disponible"
   },
   "acceptInvitation": {

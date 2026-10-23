@@ -336,6 +336,86 @@ def govern_result_for_domain(
     )
 
 
+def narrative_withhold_reason(
+    columns: Sequence[str],
+    caller_roles: Sequence[str],
+    domain: BusinessDomain = BusinessDomain.GENERAL,
+) -> str | None:
+    """Whether free text *derived from* a governed result may be shown.
+
+    Masking a column protects the table. It does not protect a sentence
+    built from the same cells: `agent.nodes.generate_insight_node` reads
+    `state["result_rows"]` **after** the result gate has governed them
+    for the *runner's* roles, so an authorized caller's insight
+    legitimately contains real values (`agent.insight.summarize_result`
+    puts a real cell value in `top_label` and real measures in
+    `maximum`/`total`). That text is then persisted verbatim by
+    `api.chat_persistence._metadata_for_ask`.
+
+    Every surface that re-governs a stored result for a *different*
+    viewer therefore has to decide about the prose as well as the rows.
+    Otherwise the table says `[restricted]` while the paragraph above it
+    states the figure -- which is precisely the failure
+    `tests/security/test_shared_results_are_regoverned.py` was written
+    to catch, on the two surfaces that serve a persisted snapshot
+    (`api.shares`, `api.artifacts`).
+
+    Deliberately derives its answer from the *same*
+    `policy_for(domain)` / `_classification_masks` chain
+    `govern_result_for_domain` uses, so "what gets masked in the table"
+    and "what makes the prose undisclosable" cannot drift apart -- the
+    same reason one `ProhibitedAction` list drives both the request gate
+    and the recommendation filter.
+
+    Withheld, never rewritten. Editing the sentence to remove a figure
+    would leave the surrounding claim attached to evidence it no longer
+    supports, and a partially-scrubbed paragraph invites exactly the
+    "did it get them all?" question a refusal does not.
+
+    Args:
+        columns: The result's column names -- the same evidence the row
+            gate classifies. An empty list means no evidence either way
+            and returns `None`: this control needs a column set to judge,
+            and a turn with no stored result (a document, policy or web
+            answer) is bounded by its own gates, not this one.
+        caller_roles: The viewer's roles, now. Never the runner's.
+        domain: The detected business domain, deciding which categories
+            are restricted -- `GENERAL` is the strictest fallback.
+
+    Returns:
+        A short reason naming the columns that forced the decision (no
+        values, so it is safe to log and to return in a response), or
+        `None` when the text is disclosable to this caller.
+    """
+    if not columns:
+        return None
+
+    policy = policy_for(domain)
+    can_view = has_role_permission(caller_roles, policy.required_permission)
+    restricted_category_values = {
+        category.value for category in policy.effective_restricted_categories
+    }
+    masked, withheld = _classification_masks(columns, can_view, restricted_category_values)
+
+    # Layer 1's own configured-restricted list, which `_classification_masks`
+    # does not read -- an operator's explicit entry in
+    # `config/sensitive_columns.yaml` has to count here exactly as it
+    # counts for the rows (see `govern_result`).
+    configured: set[str] = set()
+    if not can_view:
+        restricted_names = {
+            column.lower()
+            for (_table, column), tier in load_sensitive_columns().items()
+            if tier == "restricted"
+        }
+        configured = {name for name in columns if name.lower() in restricted_names}
+
+    blocking = sorted(set(masked.values()) | set(withheld.values()) | configured)
+    if not blocking:
+        return None
+    return "derived_from_protected_columns:" + ",".join(blocking)
+
+
 def govern_rows_for_caller_result(
     columns: Sequence[str],
     rows: Sequence[Sequence[Any]],

@@ -1084,6 +1084,12 @@ export interface ServerMessageMetadata {
   attachment_result?: AttachmentResult | null
   attachment_refs?: PersistedAttachmentRef[]
   result_snapshot?: PersistedResultSnapshot | null
+  /** Set by the server when this turn's prose was withheld on reload
+   * because it was written from columns the caller's *current* roles no
+   * longer cover (api/chat_history.py::_governed_metadata). When set,
+   * `insight` and `synthesized_answer` are null and the message `content`
+   * carries a placeholder. Names the columns, never a value. */
+  narrative_withheld_reason?: string | null
 }
 
 export interface ServerMessage {
@@ -1227,6 +1233,12 @@ export interface ProjectedTurn {
   media_search_result: Record<string, unknown> | null
   attachment_refs: { attachment_id: string; filename: string; media_type: string }[]
   result_snapshot: Record<string, unknown> | null
+  /** Set when this turn's prose was withheld because it was written from
+   * columns this viewer may not see (governance.result_policy
+   * .narrative_withhold_reason). Names the columns, never a value, so it
+   * is safe to hold client-side -- but it is not display copy: render
+   * `sharedView.narrativeWithheld` instead. */
+  narrative_withheld_reason: string | null
 }
 
 export interface SharedConversation {

@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from governance.result_policy import RESTRICTED_MASK, govern_result, govern_rows_for_caller
+from governance.domains import BusinessDomain
+from governance.result_policy import (
+    RESTRICTED_MASK,
+    govern_result,
+    govern_rows_for_caller,
+    narrative_withhold_reason,
+)
 
 COLUMNS = ["department", "employee_name", "salary"]
 ROWS = [
@@ -106,3 +112,66 @@ def test_live_entry_point_leaves_unclassified_columns_alone_with_shipped_config(
 
 def test_live_entry_point_returns_empty_rows_unchanged():
     assert govern_rows_for_caller(["a"], [], ["viewer"]) == []
+
+
+# --- narrative_withhold_reason -------------------------------------------------
+# Free text derived from a governed result (an insight, a synthesized
+# answer) must not outlive the decision that masked the rows it was
+# written from. See the function's own docstring.
+
+
+def test_narrative_is_withheld_from_a_caller_who_may_not_see_the_column():
+    reason = narrative_withhold_reason(["employee_name", "annual_salary"], ["viewer"])
+    assert reason is not None
+    assert "annual_salary" in reason
+
+
+def test_narrative_is_disclosable_to_a_caller_who_may_see_the_column():
+    assert narrative_withhold_reason(["employee_name", "annual_salary"], ["analyst"]) is None
+
+
+def test_narrative_is_disclosable_when_no_column_is_protected():
+    """Over-blocking is its own failure mode: ordinary analytics must
+    keep its prose."""
+    assert narrative_withhold_reason(["region", "units_sold"], ["viewer"]) is None
+
+
+def test_no_column_evidence_returns_no_decision():
+    """A turn with no stored result carries nothing to classify. Those
+    paths are bounded by their own gates, not by this one."""
+    assert narrative_withhold_reason([], ["viewer"]) is None
+
+
+def test_the_reason_names_columns_only_and_never_a_value():
+    """The reason is returned to the caller it withheld from -- including
+    an anonymous share visitor -- so it must not echo what it protected."""
+    reason = narrative_withhold_reason(["patient_name", "diagnosis_code"], ["viewer"])
+    assert reason is not None
+    assert reason.startswith("derived_from_protected_columns:")
+    # Every token after the prefix is one of the column names it was
+    # given -- nothing else can have reached the string.
+    named = reason.split(":", 1)[1].split(",")
+    assert set(named) <= {"patient_name", "diagnosis_code"}
+
+
+def test_the_general_fallback_is_strict_not_permissive():
+    """An unknown domain applies the strictest policy in the registry,
+    so an undetected domain can never loosen this."""
+    assert (
+        narrative_withhold_reason(["annual_salary"], ["viewer"], BusinessDomain.GENERAL) is not None
+    )
+
+
+def test_an_operators_explicit_restricted_entry_is_honoured(monkeypatch):
+    """`_classification_masks` does not read
+    `config/sensitive_columns.yaml`; layer 1 does, and an explicit human
+    classification has to count here exactly as it counts for the rows."""
+    monkeypatch.setattr(
+        "governance.result_policy.load_sensitive_columns",
+        lambda: {("projects", "codename"): "restricted"},
+    )
+    reason = narrative_withhold_reason(["codename"], ["viewer"])
+    assert reason is not None
+    assert "codename" in reason
+    # And still disclosable to a caller who holds the permission.
+    assert narrative_withhold_reason(["codename"], ["analyst"]) is None

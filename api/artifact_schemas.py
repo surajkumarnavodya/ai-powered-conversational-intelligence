@@ -145,6 +145,13 @@ class ArtifactDetailOut(ArtifactOut):
     answer: str | None = None
     insight: str | None = None
     insight_numbers_checked: int | None = None
+    #: Set when `answer`/`insight` were withheld because they were
+    #: written from columns this caller may not see -- the narrative
+    #: counterpart to `sql_withheld_reason`, and the same decision
+    #: `api.shares` applies to a shared turn. See
+    #: `governance.result_policy.narrative_withhold_reason`. Optional
+    #: with a default, so an existing consumer is unaffected.
+    narrative_withheld_reason: str | None = None
     tables_referenced: list[str] = Field(default_factory=list)
     governed_metrics: list[str] = Field(default_factory=list)
     truth_level: str = "ai_inference"

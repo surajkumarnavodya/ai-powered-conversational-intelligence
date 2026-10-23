@@ -178,6 +178,11 @@ function SharedTurn({ turn, shareRef }: { turn: ProjectedTurn; shareRef: string 
     )
   }
 
+  // The backend nulls `insight`/`synthesized_answer` and replaces `content`
+  // when the prose was derived from columns this viewer may not see, so the
+  // fallback chain below would otherwise render its English placeholder.
+  // Show the localized notice instead; the result table still renders, masked.
+  const narrativeWithheld = turn.narrative_withheld_reason != null
   const answer = turn.insight ?? turn.synthesized_answer ?? turn.content
   const columns = Array.isArray(turn.result_snapshot?.columns) ? (turn.result_snapshot?.columns as string[]) : []
   const rows = Array.isArray(turn.result_snapshot?.rows) ? (turn.result_snapshot?.rows as unknown[][]) : []
@@ -189,7 +194,13 @@ function SharedTurn({ turn, shareRef }: { turn: ProjectedTurn; shareRef: string 
         <img src="/favicon.png" alt="" aria-hidden="true" className="h-full w-full object-contain" />
       </span>
       <div className="flex min-w-0 flex-1 flex-col gap-3 rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4">
-        <Markdown>{answer}</Markdown>
+        {narrativeWithheld ? (
+          <p className="rounded-md bg-[var(--muted)] p-3 text-sm text-[var(--muted-foreground)]">
+            {t('sharedView.narrativeWithheld')}
+          </p>
+        ) : (
+          <Markdown>{answer}</Markdown>
+        )}
 
         {turn.sources_used.length > 0 && (
           <div className="flex flex-wrap gap-1.5">

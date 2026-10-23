@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -105,7 +106,8 @@ from config.settings import Settings, get_settings
 from db.connection import get_read_only_engine, get_sqlglot_dialect
 from db.execution import execute_readonly_sql
 from embeddings.schema_indexer import get_last_schema_fingerprint
-from governance.result_policy import govern_rows_for_caller
+from governance.domain_detection import detect_domain
+from governance.result_policy import govern_rows_for_caller, narrative_withhold_reason
 from security.audit_log import log_security_event
 from security.redaction import redact_secrets
 from security.tenancy import resolve_actor_tenant_id
@@ -328,6 +330,45 @@ def _sql_for_caller(
     return sql, None
 
 
+def _narrative_for_caller(
+    snapshots: Sequence[dict[str, Any] | None],
+    actor_roles: list[str],
+    settings: Settings,
+) -> str | None:
+    """`None` when this caller may be shown the artifact's prose, or the
+    reason it is withheld -- the narrative counterpart to
+    `_sql_for_caller`, and the same decision `api.shares
+    ._narrative_withheld_reason` applies to a shared turn.
+
+    `_result_out` re-governs the rows for the caller asking now, but the
+    recorded `answer`/`insight` were written by
+    `agent.nodes.generate_insight_node` from those rows *before*
+    governing, under the runner's permissions. So an artifact whose
+    table correctly reads `[restricted]` could still state the figure in
+    its own summary sentence. Checked against the current roles for the
+    same reason the rows and the SQL are: roles change.
+
+    Judged over every snapshot this detail view serves (origin and
+    refreshed), since one withheld column anywhere in it is enough to
+    make the single shared narrative undisclosable.
+    """
+    if not settings.enable_result_governance:
+        return None
+    for snapshot in snapshots:
+        if not isinstance(snapshot, dict):
+            continue
+        columns = snapshot.get("columns")
+        if not isinstance(columns, list) or not columns:
+            continue
+        column_names = [str(column) for column in columns]
+        stored_sql = snapshot.get("normalized_sql") or ""
+        domain = detect_domain(str(stored_sql), column_names).domain
+        reason = narrative_withhold_reason(column_names, actor_roles, domain)
+        if reason is not None:
+            return reason
+    return None
+
+
 def _dialect_for(snapshot: ArtifactSnapshot, settings: Settings) -> str | None:
     """The sqlglot dialect of the artifact's own database.
 
@@ -436,12 +477,24 @@ def _detail_out(
         else None
     )
 
+    narrative_withheld_reason = _narrative_for_caller(
+        [_snapshot_from_turn(ai_output) if source_available else None, refreshed_raw],
+        actor_roles,
+        settings,
+    )
+    if narrative_withheld_reason is not None:
+        logger.info(
+            "[artifacts] narrative text withheld from an artifact detail (%s)",
+            narrative_withheld_reason,
+        )
+
     base = _out(artifact, session=session, settings=settings)
     return ArtifactDetailOut(
         **base.model_dump(),
         question=prompt.final_content if prompt is not None else None,
-        answer=_answer_from_turn(ai_output),
-        insight=snapshot.lineage.insight,
+        answer=(None if narrative_withheld_reason else _answer_from_turn(ai_output)),
+        insight=(None if narrative_withheld_reason else snapshot.lineage.insight),
+        narrative_withheld_reason=narrative_withheld_reason,
         insight_numbers_checked=snapshot.lineage.insight_numbers_checked,
         tables_referenced=list(snapshot.lineage.tables_referenced),
         governed_metrics=list(snapshot.lineage.governed_metrics),

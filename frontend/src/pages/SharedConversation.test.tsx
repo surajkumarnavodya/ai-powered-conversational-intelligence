@@ -71,6 +71,7 @@ function makeConversation(overrides: Partial<SharedConversationData> = {}): Shar
         media_search_result: null,
         attachment_refs: [],
         result_snapshot: null,
+        narrative_withheld_reason: null,
       },
       {
         sequence_number: 2,
@@ -91,6 +92,7 @@ function makeConversation(overrides: Partial<SharedConversationData> = {}): Shar
         media_search_result: null,
         attachment_refs: [],
         result_snapshot: null,
+        narrative_withheld_reason: null,
       },
     ],
     ...overrides,
@@ -108,6 +110,27 @@ describe('SharedConversation', () => {
 
     await waitFor(() => expect(screen.getAllByText('How many orders were there?').length).toBeGreaterThan(0))
     expect(screen.getByText('There were 42 orders.')).toBeInTheDocument()
+    expect(screen.getByText('SELECT COUNT(*) FROM orders')).toBeInTheDocument()
+  })
+
+  it('shows the localized notice, not the backend placeholder, when the prose was withheld', async () => {
+    // The backend nulls `insight`/`synthesized_answer` and replaces
+    // `content` when the narrative was derived from columns this viewer
+    // may not see. The reason names columns and is not display copy, so
+    // neither it nor the English placeholder may reach the page.
+    const conversation = makeConversation()
+    conversation.turns[1] = {
+      ...conversation.turns[1],
+      content: "This answer's wording is not available to you: it was written from columns this view protects.",
+      narrative_withheld_reason: 'derived_from_protected_columns:annual_salary',
+    }
+    vi.mocked(shareApi.getSharedConversation).mockResolvedValue(conversation)
+    renderAt('share-1')
+
+    await waitFor(() => expect(screen.getByText(/part of this answer is hidden/i)).toBeInTheDocument())
+    expect(screen.queryByText(/annual_salary/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/not available to you/i)).not.toBeInTheDocument()
+    // The result table is unaffected: this withholds the prose, not the analysis.
     expect(screen.getByText('SELECT COUNT(*) FROM orders')).toBeInTheDocument()
   })
 
