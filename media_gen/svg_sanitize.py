@@ -203,8 +203,12 @@ def _clean_attributes(element: ElementTree.Element) -> None:
             # A reference that is not a bare same-document fragment can
             # fetch bytes from elsewhere. `fill`/`stroke` are in this set
             # because `fill="url(http://...)"` is a real pattern.
-            if value.startswith("url(") or "://" in value or value.startswith("//") or name in ("href", "{http://www.w3.org/1999/xlink}href") and not (
-                _SAFE_LOCAL_REFERENCE.match(value)
+            if (
+                value.startswith("url(")
+                or "://" in value
+                or value.startswith("//")
+                or name in ("href", "{http://www.w3.org/1999/xlink}href")
+                and not (_SAFE_LOCAL_REFERENCE.match(value))
             ):
                 del element.attrib[name]
 
