@@ -184,6 +184,8 @@
     "noRecordedAnswer": "This message has no recorded answer.",
     "disclaimer": "AI may make mistakes. Please verify results before relying on them.",
     "scrollToLatest": "Scroll to latest message",
+    "processing": "Processing…",
+    "processingStage": "Processing — {{stage}}",
     "spokenAnswerLabel": "Spoken answer"
   },
   "sql": {

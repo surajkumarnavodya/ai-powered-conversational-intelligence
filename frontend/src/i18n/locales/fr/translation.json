@@ -163,6 +163,8 @@
     "words": "mots",
     "noRecordedAnswer": "Ce message n'a pas de réponse enregistrée.",
     "scrollToLatest": "Faire défiler jusqu'au dernier message",
+    "processing": "Traitement…",
+    "processingStage": "Traitement — {{stage}}",
     "spokenAnswerLabel": "Réponse vocale"
   },
   "sql": {

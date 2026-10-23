@@ -163,6 +163,8 @@
     "words": "palabras",
     "noRecordedAnswer": "Este mensaje no tiene una respuesta registrada.",
     "scrollToLatest": "Desplazarse al último mensaje",
+    "processing": "Procesando…",
+    "processingStage": "Procesando — {{stage}}",
     "spokenAnswerLabel": "Respuesta hablada"
   },
   "sql": {

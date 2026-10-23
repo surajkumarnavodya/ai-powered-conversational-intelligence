@@ -106,6 +106,39 @@ at every viewport width.
   animation over a full response) but doesn't match the "streaming
   response state / stop-generation button" the request describes — that
   would require backend changes (see §9), not just a frontend rewrite.
+
+  *Updated:* a second in-flight affordance now sits alongside that
+  counter. `ScrollToBottomButton.tsx` draws a dotted progress ring
+  (`.dotted-ring` in `index.css`) while a question in the active
+  conversation is in flight, and names the running stage in its tooltip
+  and accessible description. It is an *additional visual state only*:
+  the button still just scrolls, during processing as much as before.
+
+  It stays deliberately **indeterminate**, for the same reason the
+  counter is honest today — the server reports *which graph node is
+  running*, never a fraction, so there is no percentage to show and a
+  determinate arc would be invented.
+
+  Note the two surfaces word the stage differently and this is not yet
+  reconciled: `TimingBadge` prints the raw node name de-underscored
+  ("retrieve schema", pre-existing behaviour), while the ring maps it to
+  the user-facing lifecycle label ("Schema"). The mapped form is the
+  better one; aligning the badge to it was left out of scope here rather
+  than changed as a side effect.
+
+  Both read `chatStore.pendingQuestion` — set after a question passes
+  validation, held across routing/retrieval/SQL/execution, cleared in the
+  store's own `finally` so completion, failure, timeout and abort all end
+  the animation. The stage name is mapped through `QueryLifecycle.tsx`'s
+  exported `nodeToStage`, which stays the single owner of "which node
+  means which stage"; an unmapped or absent node falls back to a plain
+  "Processing…" rather than naming a stage nobody reported.
+
+  **Not covered:** questions sent to the asynchronous queue
+  (`questionQueueStore`). Neither `QuestionJob` nor the server's
+  `QuestionJobOut` carries a conversation id, so attributing a queued job
+  to the open conversation would be a guess; those have their own
+  per-job status in the queue panel.
 - **Design tokens cover color/radius/font but not spacing or type scale**
   (see §7) — component-level spacing is ad hoc Tailwind utility values
   rather than drawn from a shared scale.

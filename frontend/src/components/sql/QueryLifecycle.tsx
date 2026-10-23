@@ -223,7 +223,15 @@ const REJECTION_REASONS: Record<string, string> = {
   empty: 'lifecycle.reason.invalidInput',
 }
 
-function nodeToStage(node: string): LifecycleStageId | null {
+/** The lifecycle stage one graph node belongs to, or `null` for a node
+ * this rail does not classify (see `POST_RESULT_NODES`).
+ *
+ * Exported so the in-flight indicators can name the running stage using
+ * this same map rather than a second copy of it -- `STAGE_NODES` stays
+ * the single owner of "which node means which stage", so a node added to
+ * `agent/graph.py` is classified in exactly one place. Used by
+ * `ScrollToBottomButton` (via `Chat.tsx`) to label its progress ring. */
+export function nodeToStage(node: string): LifecycleStageId | null {
   for (const id of STAGE_ORDER) {
     if (STAGE_NODES[id].includes(node)) return id
   }

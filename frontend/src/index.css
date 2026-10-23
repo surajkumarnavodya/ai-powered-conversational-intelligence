@@ -417,6 +417,87 @@ body {
   animation: flyout-in var(--duration-base) ease-out;
 }
 
+/* Indeterminate dotted progress ring, drawn *around* an existing round
+   button without changing its box (see ScrollToBottomButton.tsx).
+
+   `position: absolute` with a negative inset on a pseudo-element, so the
+   ring cannot contribute to layout: the button keeps its own h-10/w-10
+   footprint and nothing reflows when the ring appears or goes away.
+
+   The dots are a `repeating-conic-gradient` (short lit wedge, long gap)
+   masked down to a thin annulus by a `radial-gradient` mask -- one
+   painted element rather than a dozen positioned dot divs. The mask
+   keeps the button's own face clear, so the arrow underneath stays
+   fully legible.
+
+   Twelve dots cycling through `--chart-cat-1..6`, each colour appearing
+   twice (the gradient's period is 180deg, so it repeats once). That is
+   the app's own categorical palette, reused rather than a new set of
+   hand-picked hues: it is already chosen for mutual distinguishability
+   and already redefined per theme further up this file, so the ring
+   stays legible in dark mode with no extra rule here. A single-hue ring
+   is the fallback those tokens would give if they ever went missing --
+   nothing here depends on all six resolving.
+
+   Indeterminate on purpose: `/ask` reports which graph node is running,
+   never a percentage, so there is no fraction to show. A determinate arc
+   here would be invented (see docs/frontend-ui-audit.md).
+
+   Only `rotate` animates. The global prefers-reduced-motion block below
+   caps animation-duration/iteration-count for everything, which freezes
+   this into a *static* dotted ring automatically -- the dots are painted
+   by the gradient, not by the animation, so reduced motion keeps the ring
+   visible instead of removing the indicator. That is why the dots are not
+   themselves animated (a sequential fade would vanish under that cap). */
+@keyframes dotted-ring-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.dotted-ring::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 9999px;
+  pointer-events: none;
+  background: repeating-conic-gradient(
+    from 0deg,
+    var(--chart-cat-1) 0deg 6deg,
+    transparent 6deg 30deg,
+    var(--chart-cat-2) 30deg 36deg,
+    transparent 36deg 60deg,
+    var(--chart-cat-3) 60deg 66deg,
+    transparent 66deg 90deg,
+    var(--chart-cat-4) 90deg 96deg,
+    transparent 96deg 120deg,
+    var(--chart-cat-5) 120deg 126deg,
+    transparent 126deg 150deg,
+    var(--chart-cat-6) 150deg 156deg,
+    transparent 156deg 180deg
+  );
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 0);
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 0);
+  animation: dotted-ring-spin 2.4s linear infinite;
+}
+
+/* Keeps the shrunken button a comfortable touch target without making it
+   look bigger: a transparent, non-painting pseudo-element that extends
+   the clickable box to ~44px around the 32px circle. Without it, dropping
+   the button from 40px to 32px would quietly regress tap accuracy on a
+   phone -- WCAG 2.2's 24px floor would still be met, but the comfortable
+   44px it recommends would not.
+
+   `::before` rather than `::after` because the ring already owns
+   `::after`; pointer events on a pseudo-element are dispatched to its
+   originating button, so this needs no handler of its own. */
+.hit-area-44::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 9999px;
+}
+
 /* Respects the OS-level "reduce motion" preference across every animated
    surface in the app (drawer slide, gear rotation, workspace padding
    shift, skeletons) -- a single global override rather than remembering

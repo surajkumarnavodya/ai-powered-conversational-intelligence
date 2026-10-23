@@ -7,12 +7,15 @@ import { QuestionQueuePanel } from '@/components/sql/QuestionQueuePanel'
 import { QuestionNavigator } from '@/components/chat/QuestionNavigator'
 import { ScrollToBottomButton } from '@/components/chat/ScrollToBottomButton'
 import { TurnCard } from '@/components/chat/TurnCard'
+import { nodeToStage } from '@/components/sql/QueryLifecycle'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useHealth } from '@/hooks/queries'
 import { useScrollToBottom } from '@/hooks/useScrollToBottom'
 import { useChatStore } from '@/store/chatStore'
 
 export function Chat() {
+  const { t } = useTranslation()
   const health = useHealth()
 
   const queryHistory = useChatStore((state) => state.queryHistory)
@@ -21,6 +24,38 @@ export function Chat() {
 
   const isMultiDb = (health.data?.databases.length ?? 0) > 1
   const isEmptyConversation = queryHistory.length === 0 && pendingQuestion === null
+
+  // --- in-flight state for the floating button's progress ring ---------
+  //
+  // `pendingQuestion` is the one real signal, and it is already exactly
+  // the lifecycle this needs: `chatStore.askQuestion` sets it only after the
+  // question passes validation (empty/whitespace never reaches it), keeps
+  // it set across routing, retrieval, SQL generation/validation and
+  // execution, and clears it in a `finally` so a completion, failure,
+  // timeout or `cancelPendingQuestion()` abort can never leave the ring
+  // spinning. The store also drops a response whose `conversation_id` is
+  // no longer the active one, so a slow answer from a conversation the
+  // user has navigated away from cannot re-light this.
+  //
+  // Scoped to this conversation because the store holds the active
+  // conversation's single in-flight `/ask` by design. Questions sent to
+  // the *asynchronous queue* (`questionQueueStore`) are deliberately NOT
+  // folded in: neither `QuestionJob` nor the server's own
+  // `QuestionJobOut` carries a conversation id, so attributing a queued
+  // job to this conversation would be a guess. `QuestionQueuePanel` is where
+  // those are surfaced, with their own per-job status.
+  const isProcessing = pendingQuestion !== null
+  // The running graph node, mapped through `QueryLifecycle`'s own
+  // `STAGE_NODES` table so there is one owner of "which node means which
+  // stage". `null` whenever the server has not sent a progress event
+  // (older server, buffering proxy, or simply not yet) -- the button then
+  // says "Processing…" rather than naming a stage nobody reported.
+  const stageLabel = (() => {
+    const node = pendingQuestion?.stage
+    if (!node) return null
+    const stage = nodeToStage(node)
+    return stage ? t(`lifecycle.stage.${stage}`) : null
+  })()
 
   const scrollRef = useRef<HTMLDivElement>(null)
   // Single scroll-state source of truth, shared by the auto-follow effect
@@ -90,7 +125,14 @@ export function Chat() {
       />
       <QuestionNavigator entries={queryHistory} scrollContainerRef={scrollRef} />
       <ScrollToBottomButton
-        visible={!isAtBottom}
+        // Shown when the user has scrolled away from the latest message
+        // (its original rule) *or* while a question is in flight, so the
+        // progress ring is actually visible in the common case of asking
+        // a question from the bottom of the conversation. Clicking it
+        // still only ever scrolls.
+        visible={!isAtBottom || isProcessing}
+        processing={isProcessing}
+        stageLabel={stageLabel}
         onClick={() => scrollToBottom()}
         bottomOffsetPx={composerHeight + 16}
       />
