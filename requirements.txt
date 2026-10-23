@@ -54,11 +54,6 @@ chromadb==1.5.9
 # stream, and embedded-file parsing -- CVE-2026-102995 through -102999 and
 # CVE-2026-103000, all fixed by 6.18.1/6.19.0; bumped straight to 6.19.0,
 # 2026 security remediation pass).
-# 6.21.1 clears all five open pypdf advisories (CVE-2026-113786/113792/
-# 113793/113794/113795 -- fixes landed in 6.20.0, 6.20.1 and 6.21.1
-# respectively, so the highest one covers the set). These are reachable:
-# `rag/ingestion.py` and `attachments/processors/` both parse
-# caller-supplied PDFs.
 pypdf==6.21.1
 
 # XXE/billion-laughs-hardened XML parsing for db/query_cost.py's MSSQL
@@ -300,12 +295,6 @@ pytesseract==0.3.13
 # JPEG/PNG/GIF/BMP/WEBP magic-byte-verified bytes to Image.open(), and none of
 # the vulnerable formats are in that allowlist -- but the bump is a same-API,
 # low-risk hygiene fix (full test suite reran clean after it).
-# 13.0.0, a major bump, and the single largest security win available
-# here: pip-audit reports 35 open advisories against 12.3.0 and all of them
-# name 13.0.0 as the fix. Squarely reachable -- Pillow decodes every
-# caller-supplied image in `attachments/image_ops.py`,
-# `attachments/image_processing.py`, `identity/profile_picture.py` and
-# `media/`, which is exactly the untrusted-input path these CVEs describe.
 pillow==13.0.0
 
 # --- Chat attachment document processing (attachments/processors/) -- see
