@@ -190,7 +190,10 @@ export function AppShell({ children }: { children?: ReactNode } = {}) {
         <aside
           id={SIDEBAR_ID}
           className={cn(
-            'hidden shrink-0 border-r border-[var(--border)] bg-[var(--sidebar)] text-[var(--sidebar-foreground)] transition-[width] duration-[var(--duration-base)] ease-out lg:flex lg:flex-col',
+            // `--chat-history-bg` sits one step below the page, so the
+            // rail reads as a distinct region without the border having to
+            // carry it. The border stays as the non-colour cue.
+            'hidden shrink-0 border-r border-[var(--chat-surface-border)] bg-[var(--chat-history-bg)] text-[var(--chat-text-primary)] transition-[width] duration-[var(--duration-base)] ease-out lg:flex lg:flex-col',
             sidebarCollapsed ? 'lg:w-14' : 'lg:w-72',
           )}
         >

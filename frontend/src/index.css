@@ -48,6 +48,34 @@
   --input: #ffffff;
   --header: #ffffff;
 
+  /* --- Chat surfaces -------------------------------------------------
+     Three deliberately distinct elevations, so the history rail, the
+     answer surface and the empty space around them read apart without a
+     heavy border or shadow doing the work:
+
+       history  #f2f4f7   one step *below* the page
+       page     #f8fafc   unchanged
+       response #ffffff   one step *above* the page
+
+     Every text/surface pair below was computed, not eyeballed, and clears
+     WCAG AA (4.5:1); the tightest is --chat-text-secondary on
+     --chat-selected-bg at 4.68:1. The surface-to-page ratios are ~1.05:1
+     and deliberately so -- they group content, they are not a UI
+     indicator carrying meaning on their own, so the 3:1 non-text rule
+     does not apply to them. --chat-surface-border is what makes the
+     grouping legible to anyone who cannot see the tint. */
+  --chat-history-bg: #f2f4f7;
+  --chat-response-bg: #ffffff;
+  --chat-user-message-bg: #eceff3;
+  --chat-surface-border: #e6e9ee;
+  --chat-text-primary: #0f172a;
+  --chat-text-secondary: #5a6878;
+  --chat-hover-bg: #e8ebef;
+  --chat-selected-bg: #e6e9ee;
+  --chat-action-icon: #5a6878;
+  --chat-action-hover-bg: #e8ebef;
+  --chat-action-focus-ring: var(--focus-ring);
+
   /* Accent -- --accent/--accent-foreground are overridden at runtime by
      the accent-color picker (src/lib/theme.ts); these are just the
      default swatch ("Indigo") so the app looks correct before the
@@ -246,6 +274,23 @@
   --sidebar-foreground: #e5e5f5;
   --input: #17152a;
   --header: #100e1f;
+
+  /* Chat surfaces, dark. Same three elevations as light, inverted:
+     neutral charcoal rather than a tinted one, so the answer surface
+     reads as paper rather than as a coloured panel. Verified the same
+     way -- tightest pair is --chat-text-secondary on --chat-selected-bg
+     at 5.76:1, comfortably over AA. */
+  --chat-history-bg: #100e1f;
+  --chat-response-bg: #16142a;
+  --chat-user-message-bg: #1d1b35;
+  --chat-surface-border: #2a2745;
+  --chat-text-primary: #e5e5f5;
+  --chat-text-secondary: #a1a1c2;
+  --chat-hover-bg: #231f3e;
+  --chat-selected-bg: #2a2548;
+  --chat-action-icon: #a1a1c2;
+  --chat-action-hover-bg: #231f3e;
+  --chat-action-focus-ring: var(--focus-ring);
 
   /* A little more opaque than the light scrim. The page behind is already
      dark here, so an identical alpha reads as a faint tint rather than as

@@ -248,6 +248,8 @@
     "downloadPdf": "Descargar como PDF",
     "copyAnswer": "Copiar respuesta",
     "copied": "¡Copiado!",
+    "copyFailed": "No se pudo copiar",
+    "copyFailedHint": "Tu navegador bloqueó el acceso al portapapeles. Selecciona el texto de la respuesta y cópialo manualmente.",
     "exportCsv": "Exportar CSV",
     "search": "Buscar...",
     "rowsPerPage": "Filas por página",

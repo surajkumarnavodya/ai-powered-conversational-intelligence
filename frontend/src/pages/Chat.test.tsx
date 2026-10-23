@@ -443,14 +443,28 @@ describe('Chat page', () => {
       expect(button).not.toHaveAttribute('aria-busy')
     })
 
-    it('adds no second live region -- ChatLiveRegion stays the only announcer', () => {
+    it('adds no second announcer for the processing lifecycle', () => {
       useChatStore.setState({
         queryHistory: [makeEntry('First')],
         pendingQuestion: pending('generate_sql'),
       } as never)
       const { container } = renderChat()
-      // Exactly one polite live region on the whole page: ChatLiveRegion's.
-      expect(container.querySelectorAll('[aria-live="polite"]')).toHaveLength(1)
+
+      // The guard is about *this* event: the ring must not re-announce
+      // what ChatLiveRegion already says once per question.
+      //
+      // Asserted directly rather than by counting every `aria-live` on the
+      // page. That count was always a proxy, and it stopped meaning what
+      // it said once `CopyAnswerButton` started owning one region per
+      // answer for a different event (empty at rest, so it adds nothing to
+      // lifecycle traffic). Counting them would now fail for a reason that
+      // has nothing to do with the regression this test exists for.
+      const button = getScrollToBottomButton(container)
+      expect(button.querySelector('[aria-live]')).toBeNull()
+      expect(button.querySelector('[role="status"]')).toBeNull()
+
+      // ChatLiveRegion is still mounted and still the lifecycle announcer.
+      expect(container.querySelector('[role="status"][aria-live="polite"]')).toBeInTheDocument()
     })
   })
 })

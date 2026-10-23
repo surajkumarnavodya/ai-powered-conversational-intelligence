@@ -180,8 +180,14 @@ export function ChatMessage({
             isEditing ? 'w-full' : 'max-w-full'
           } ${
             isUser
-              ? 'bg-[var(--accent)] text-[var(--accent-foreground)]'
-              : 'border border-[var(--border)] bg-[var(--card)]'
+              ? // Neutral, not accent-filled. A large saturated block for
+                // every question competed with the answer beside it and
+                // left the accent meaning two different things. The two
+                // roles stay distinguishable by side, avatar and a slightly
+                // different neutral surface -- not by hue, which also means
+                // the distinction survives for anyone who cannot see it.
+                'bg-[var(--chat-user-message-bg)] text-[var(--chat-text-primary)]'
+              : 'border border-[var(--chat-surface-border)] bg-[var(--chat-response-bg)] text-[var(--chat-text-primary)]'
           }`}
         >
           {isEditing ? (
@@ -233,7 +239,11 @@ export function ChatMessage({
             <ExpandableText
               text={message.content}
               maxLines={5}
-              fadeToColor={isUser ? 'var(--accent)' : 'var(--card)'}
+              // Must track the bubble's own background or the collapse
+              // fade blends into the wrong colour.
+              fadeToColor={
+                isUser ? 'var(--chat-user-message-bg)' : 'var(--chat-response-bg)'
+              }
             />
           )}
         </div>

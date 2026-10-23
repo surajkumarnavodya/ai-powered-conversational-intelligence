@@ -48,8 +48,17 @@ export function ConversationListItem({
   return (
     <div
       className={cn(
-        'group flex items-center gap-1 rounded px-2 py-1 text-left text-[13px] leading-5 transition-colors',
-        isActive ? 'bg-[var(--accent-soft)] text-[var(--accent)]' : 'hover:bg-[var(--muted)]',
+        'group flex items-center gap-1 rounded-md px-2 py-1 text-left text-[13px] leading-5 transition-colors',
+        // Neutral selection rather than an accent-tinted fill. A saturated
+        // block behind a whole row reads as a highlight on the *text*,
+        // which it is not -- it marks which conversation is open. The
+        // accent is kept for links, focus and small interactive marks,
+        // where it means "you can act on this". `aria-current` below is
+        // what actually conveys selection to assistive tech, so losing the
+        // hue costs nothing there.
+        isActive
+          ? 'bg-[var(--chat-selected-bg)] font-medium text-[var(--chat-text-primary)]'
+          : 'text-[var(--chat-text-primary)] hover:bg-[var(--chat-hover-bg)]',
       )}
     >
       {isRenaming ? (

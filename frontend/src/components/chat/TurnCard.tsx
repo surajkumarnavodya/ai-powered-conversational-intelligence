@@ -133,15 +133,35 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
           on the *right* of the question bubble -- so it just stepped the
           answer 40px in from the composer and the question's own right
           edge. Everything in a turn now shares one pair of edges. */}
-      <div className="flex flex-col gap-3">
+      {/* The answer's own surface. Everything the assistant produced --
+          metadata, prose, SQL, results table, chart, citations, actions --
+          sits inside this one rounded rectangle, so a long answer reads as
+          a single object rather than a stack of loose blocks.
+
+          One step *above* the page (`--chat-response-bg` is lighter than
+          `--background` in light, and a neutral charcoal in dark), with a
+          fine border rather than a shadow: the elevation is what groups
+          it, the border is what keeps the grouping legible to anyone who
+          cannot see the tint. The page background around it is untouched
+          -- this is a card on the page, not an overlay over it. */}
+      <div className="flex flex-col gap-3 rounded-xl border border-[var(--chat-surface-border)] bg-[var(--chat-response-bg)] px-4 py-3.5 text-[var(--chat-text-primary)]">
         {/* Top row: metadata, plus the three controls that act on the
             *turn* rather than on the answer's text -- re-run it, pin it,
             hear it. They belong next to the timing and timestamp for the
             same reason: all five describe or operate on the exchange as a
             whole, and none of them needs you to have read the answer
-            first. The controls that consume the finished text -- copy,
-            download, rate it -- sit at the foot instead, where the eye
-            lands after reading. */}
+            first. The controls that consume the finished text -- download,
+            rate it -- sit at the foot instead, where the eye lands after
+            reading.
+
+            Copy is the exception and sits top-right. It is the most-reached-
+            for action on an answer, and putting it at a fixed corner means
+            it is in the same place for a two-line answer and a two-screen
+            one, instead of wherever the foot happens to land. `ml-auto`
+            rather than absolute positioning: the button then *reserves* its
+            corner in the flex row, so it can never overlap the timing badge
+            or a long timestamp, and it moves with the card rather than with
+            the viewport. */}
         <div className="flex flex-wrap items-center gap-2">
           <TimingBadge mode="done" durationMs={entry.answerDurationMs} />
           <time dateTime={entry.timestamp} className="text-xs text-[var(--muted-foreground)]">
@@ -178,6 +198,19 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
               aria-label={t('chat.spokenAnswerLabel')}
               className="h-8 max-w-[200px]"
             />
+          )}
+
+          {/* Pushed to the card's top-right corner. Rendered whenever the
+              turn has an answer at all, which is the same condition the
+              foot actions use -- a turn still showing a loading
+              placeholder has no `answerMarkdown` and so offers no copy
+              control, rather than offering one that would paste a
+              half-written answer. (`PendingTurn` renders a different
+              component entirely and never reaches here.) */}
+          {answerMarkdown && (
+            <div className="ml-auto flex items-center">
+              <CopyAnswerButton answer={answerMarkdown} />
+            </div>
           )}
         </div>
 
@@ -299,7 +332,11 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
                   </p>
                 )}
                 {state.insight && entry.editableSql === state.sql && (
-                  <div className="rounded-lg border-l-4 border-[var(--accent)] bg-[var(--accent-soft)] p-3">
+                  // Neutral fill, accent kept to the 4px bar. Inside the
+                  // answer's own surface a second tinted block reads as a
+                  // competing card; the bar alone still marks this as the
+                  // insight without colouring a paragraph-sized area.
+                  <div className="rounded-lg border-l-4 border-[var(--accent)] bg-[var(--muted)] p-3">
                     {/* The insight is marked `estimate`, not `computed`,
                         and that is the deliberate conservative call. Every
                         number in it did pass `agent.insight
@@ -373,7 +410,10 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
             the parent cannot quietly re-centre the row. */}
         {answerMarkdown && (
           <div className="flex flex-wrap items-center justify-start gap-0.5 pt-1">
-            <CopyAnswerButton answer={answerMarkdown} />
+            {/* Copy moved to the card's top-right corner. Deliberately
+                *moved*, not duplicated -- two identical copy buttons on
+                one answer is a second control for the same action, and
+                the person then has to work out whether they differ. */}
             <DownloadAnswerButton question={entry.question} answer={answerMarkdown} />
             <ResponseFeedbackWidget entryId={entry.entryId} />
           </div>

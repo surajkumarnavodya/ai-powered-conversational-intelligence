@@ -456,6 +456,8 @@
     "downloadPdf": "Download as PDF",
     "copyAnswer": "Copy answer",
     "copied": "Copied!",
+    "copyFailed": "Couldn't copy",
+    "copyFailedHint": "Your browser blocked clipboard access. Select the answer text and copy it manually.",
     "exportCsv": "Export CSV",
     "search": "Search...",
     "rowsPerPage": "Rows per page",

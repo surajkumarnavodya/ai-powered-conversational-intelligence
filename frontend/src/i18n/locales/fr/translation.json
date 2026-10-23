@@ -248,6 +248,8 @@
     "downloadPdf": "Télécharger en PDF",
     "copyAnswer": "Copier la réponse",
     "copied": "Copié !",
+    "copyFailed": "Copie impossible",
+    "copyFailedHint": "Votre navigateur a bloqué l'accès au presse-papiers. Sélectionnez le texte de la réponse et copiez-le manuellement.",
     "exportCsv": "Exporter en CSV",
     "search": "Rechercher...",
     "rowsPerPage": "Lignes par page",
