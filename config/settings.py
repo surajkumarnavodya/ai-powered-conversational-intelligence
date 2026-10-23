@@ -3268,6 +3268,24 @@ class Settings(BaseSettings):
     # well -- both must be on, so turning the feature off kills every
     # provider at once without having to clear each flag.
     enable_svg_generation: bool = True
+    # Hosted free-tier raster generation. The only route to a photographic
+    # image on hardware that cannot run a local diffusion model -- but see
+    # `media_gen/providers/huggingface.py`'s docstring: Hugging Face routes
+    # to third-party providers that bill per request, and a free account's
+    # included credit is small enough that HTTP 402 is the normal steady
+    # state. Enabled by default *as a provider*, but inert without a token.
+    enable_hf_generation: bool = True
+    # A `SecretStr` for the same reason every other credential here is:
+    # call sites must use `.get_secret_value()`, and a stray `str(secret)`
+    # sends the literal "**********" rather than leaking (CLAUDE.md 5.6).
+    hf_token: SecretStr | None = None
+    # Apache-2.0, so usable commercially -- the licence check this project
+    # requires before recommending any model. Swappable for any text-to-
+    # image model the account's enabled providers serve.
+    hf_image_model: str = "black-forest-labs/FLUX.1-schnell"
+    # Hosted generation is seconds, not minutes; a long timeout here would
+    # just hold a request open against a provider that already failed.
+    hf_request_timeout_seconds: float = Field(default=120.0, gt=0, le=600.0)
     # AI-guided image editing (2026-09-27) -- a real, generative edit of a
     # user's *own uploaded image* (remove an object, replace a background,
     # region-transform), distinct from media_gen's own "generate a brand
