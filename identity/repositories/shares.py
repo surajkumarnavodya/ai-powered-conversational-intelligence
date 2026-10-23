@@ -510,6 +510,13 @@ _PROJECTED_METADATA_FIELDS: tuple[str, ...] = (
     "media_search_result",
     "attachment_refs",
     "result_snapshot",
+    # Column names only -- the evidence `api.shares._narrative_withheld_reason`
+    # needs to judge this turn's prose when no `result_snapshot` was stored
+    # (an `/ask` the user never confirmed). Without it on this allowlist the
+    # share surface -- the one with the weakest viewer -- would be the only
+    # read-back unable to make that judgement. No new exposure: `sql` above
+    # already names these same columns, and no value is carried.
+    "insight_source_columns",
 )
 
 

@@ -53,6 +53,7 @@ from identity.schemas import (
 from sqlalchemy.orm import Session
 
 from api.identity_authz import require_local_user
+from api.shares import _no_evidence_reason
 from config.settings import Settings, get_settings
 from governance.domain_detection import detect_domain
 from governance.result_policy import govern_result_for_domain, narrative_withhold_reason
@@ -233,12 +234,23 @@ def _governed_metadata(
         return metadata, None
 
     snapshot = metadata.get("result_snapshot")
-    if not isinstance(snapshot, dict):
-        return metadata, None
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
     columns = snapshot.get("columns")
     rows = snapshot.get("rows")
     if not isinstance(columns, list) or not columns:
-        return metadata, None
+        # No confirmed result, but the turn may still carry the evidence
+        # recorded at capture. See `api.shares._no_evidence_reason`.
+        columns = extra_columns = metadata.get("insight_source_columns")
+        rows = None if extra_columns else rows
+    if not isinstance(columns, list) or not columns:
+        reason = _no_evidence_reason(metadata, viewer_roles, settings)
+        if reason is None:
+            return metadata, None
+        protected = dict(metadata)
+        protected["narrative_withheld_reason"] = reason
+        protected["insight"] = None
+        protected["synthesized_answer"] = None
+        return protected, reason
 
     column_names = [str(column) for column in columns]
     stored_sql = snapshot.get("normalized_sql") or metadata.get("sql") or ""

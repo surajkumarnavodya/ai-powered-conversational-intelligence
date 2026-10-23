@@ -493,3 +493,93 @@ class TestDerivedNarrativeIsGovernedToo:
 
         assert turn["narrative_withheld_reason"] is None
         assert _REAL_SALARY in turn["insight"]
+
+
+class TestUnconfirmedTurnsCarryTheirOwnEvidence:
+    """F-01's residual edge, on the surface with the weakest viewer.
+
+    An `/ask` the user never confirmed with "Confirm and Run" stores no
+    `result_snapshot`, so the narrative gate had no column set to judge and
+    served the prose to anyone with the link. Capture now records
+    `insight_source_columns`, and `identity.repositories.shares
+    ._PROJECTED_METADATA_FIELDS` lets it through to this surface.
+    """
+
+    def _unconfirmed(self, email: str) -> str:
+        session = identity_db_mod.get_identity_session(_SETTINGS)
+        try:
+            user = session.query(User).filter_by(email=email.strip().lower()).one()
+            conversation = create_conversation(session, user_id=user.id, feature_type="text_to_sql")
+            insight = f"Ada Lovelace has the highest annual salary at {_REAL_SALARY}."
+            append_turn(
+                session,
+                conversation=conversation,
+                user_id=user.id,
+                question="What does each employee earn?",
+                answer_text=insight,
+                output_metadata={
+                    "schema_version": 2,
+                    "sources_used": ["sql"],
+                    "sql": "SELECT employee_name, annual_salary FROM hr_employees",
+                    "insight": insight,
+                    "synthesized_answer": insight,
+                    # Never confirmed -- so no rows were ever stored.
+                    "result_snapshot": None,
+                    "insight_source_columns": ["employee_name", "annual_salary"],
+                },
+            )
+            return str(conversation.id)
+        finally:
+            session.close()
+
+    def test_an_unconfirmed_turns_prose_is_withheld_from_an_anonymous_visitor(
+        self, client: TestClient
+    ):
+        tokens = _register(client, "owner@example.com")
+        conversation_id = self._unconfirmed("owner@example.com")
+        token = _public_link_token(client, tokens, conversation_id)
+
+        view = client.get(f"/share-view/{token}")
+
+        assert view.status_code == 200, view.text
+        turn = view.json()["turns"][-1]
+        assert turn["narrative_withheld_reason"] is not None
+        assert "annual_salary" in turn["narrative_withheld_reason"]
+        assert _REAL_SALARY not in view.text, (
+            "an unconfirmed turn's prose reached an anonymous viewer because no "
+            "result_snapshot was stored to judge it by"
+        )
+
+    def test_an_ordinary_unconfirmed_turn_is_still_shown(self, client: TestClient):
+        """The evidence must discriminate, not blanket-withhold every
+        unconfirmed turn."""
+        tokens = _register(client, "owner@example.com")
+        session = identity_db_mod.get_identity_session(_SETTINGS)
+        try:
+            user = session.query(User).filter_by(email="owner@example.com").one()
+            conversation = create_conversation(session, user_id=user.id, feature_type="text_to_sql")
+            insight = "The West region leads with 4812 units sold."
+            append_turn(
+                session,
+                conversation=conversation,
+                user_id=user.id,
+                question="Which region sold the most?",
+                answer_text=insight,
+                output_metadata={
+                    "schema_version": 2,
+                    "sources_used": ["sql"],
+                    "sql": "SELECT region, units_sold FROM sales",
+                    "insight": insight,
+                    "result_snapshot": None,
+                    "insight_source_columns": ["region", "units_sold"],
+                },
+            )
+            conversation_id = str(conversation.id)
+        finally:
+            session.close()
+        token = _public_link_token(client, tokens, conversation_id)
+
+        turn = client.get(f"/share-view/{token}").json()["turns"][-1]
+
+        assert turn["narrative_withheld_reason"] is None
+        assert turn["insight"] == insight

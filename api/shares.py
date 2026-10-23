@@ -89,6 +89,7 @@ from identity.share_schemas import (
 )
 from sqlalchemy.orm import Session
 
+from agent.authz import Permission, has_role_permission
 from agent.rate_limit import get_share_invite_limiter, get_share_link_access_limiter
 from api.identity_authz import get_identity_db, require_identity_permission, require_local_user
 from config.settings import Settings, get_settings
@@ -296,6 +297,39 @@ _NARRATIVE_WITHHELD_TEXT = (
 )
 
 
+#: Reported when a turn carries narrative text but nothing to judge it by.
+#: Names no column, because there is no column set to name.
+NO_EVIDENCE_REASON = "derived_from_unrecorded_columns"
+
+
+def _no_evidence_reason(
+    extra: dict,
+    viewer_roles: Sequence[str],
+    settings: Settings,
+) -> str | None:
+    """What to do with narrative text that carries no column evidence.
+
+    A turn stored before `insight_source_columns` existed, and an `/ask`
+    the user never confirmed, both reach here. The gate genuinely cannot
+    tell whether the prose summarises salaries or regional sales.
+
+    Governed by `GOVERN_NARRATIVE_WITHOUT_EVIDENCE` (default off) rather
+    than failing closed unconditionally: withholding on no evidence is the
+    safer answer, but applied to the backlog it silently strips the answer
+    from every conversation already shared. Off, this preserves today's
+    behaviour; on, a caller without `VIEW_RESTRICTED_COLUMNS` is refused
+    the prose. Either way a caller who holds that permission reads it, so
+    the flag never hides anything from someone entitled to see it.
+    """
+    if not settings.govern_narrative_without_evidence:
+        return None
+    if not (extra.get("insight") or extra.get("synthesized_answer")):
+        return None
+    if has_role_permission(viewer_roles, Permission.VIEW_RESTRICTED_COLUMNS):
+        return None
+    return NO_EVIDENCE_REASON
+
+
 def _narrative_withheld_reason(
     extra: dict,
     viewer_roles: Sequence[str],
@@ -322,11 +356,14 @@ def _narrative_withheld_reason(
     if not settings.enable_result_governance:
         return None
     snapshot = extra.get("result_snapshot")
-    if not isinstance(snapshot, dict):
-        return None
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
     columns = snapshot.get("columns")
     if not isinstance(columns, list) or not columns:
-        return None
+        # No confirmed result, but the turn may still carry the evidence
+        # recorded at capture (`api.chat_persistence._insight_source_columns`).
+        columns = extra.get("insight_source_columns")
+    if not isinstance(columns, list) or not columns:
+        return _no_evidence_reason(extra, viewer_roles, settings)
     column_names = [str(column) for column in columns]
     stored_sql = snapshot.get("normalized_sql") or extra.get("sql") or ""
     domain = detect_domain(str(stored_sql), column_names).domain

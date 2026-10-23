@@ -185,6 +185,54 @@ def _restricted_turn(user_id: uuid.UUID) -> str:
         session.close()
 
 
+def _unconfirmed_turn(user_id: uuid.UUID) -> str:
+    """An `/ask` the user never confirmed: an insight written from real
+    rows, no `result_snapshot`, but the column evidence capture records."""
+    return _seed(
+        user_id,
+        {
+            "insight_source_columns": ["name", "salary"],
+            "result_snapshot": None,
+        },
+    )
+
+
+def _legacy_turn_without_evidence(user_id: uuid.UUID) -> str:
+    """A turn stored before `insight_source_columns` existed -- narrative,
+    and nothing at all to judge it by."""
+    return _seed(user_id, {"result_snapshot": None})
+
+
+def _seed(user_id: uuid.UUID, extra: dict) -> str:
+    session = identity_db_mod.get_identity_session(_SETTINGS)
+    try:
+        conversation = create_conversation(
+            session, user_id=user_id, feature_type="text_to_sql", tenant_id="tenant-a"
+        )
+        insight = f"Ada has the highest salary at {_REAL_SALARY}."
+        metadata = {
+            "schema_version": 2,
+            "status": "succeeded",
+            "sources_used": ["sql"],
+            "database": "default",
+            "sql": "SELECT name, salary FROM employees",
+            "insight": insight,
+        }
+        metadata.update(extra)
+        append_turn(
+            session,
+            conversation=conversation,
+            user_id=user_id,
+            question="What does each employee earn?",
+            answer_text=insight,
+            output_type="sql_query",
+            output_metadata=metadata,
+        )
+        return str(conversation.id)
+    finally:
+        session.close()
+
+
 def _reassign_role(user_id: uuid.UUID, *, from_role: str, to_role: str) -> None:
     from identity.repositories.users import assign_role, remove_role
 
@@ -255,6 +303,89 @@ class TestReloadingOwnConversationIsRegoverned:
         assert assistant["metadata"]["insight"] is None
         assert assistant["metadata"]["narrative_withheld_reason"] is not None
         assert str(_REAL_SALARY) not in assistant["content"]
+
+    def test_an_unconfirmed_ask_carries_its_own_column_evidence(self, client):
+        """F-01's residual edge. An `/ask` the user never confirmed stores
+        no `result_snapshot`, so the narrative gate had nothing to judge
+        and served the prose. Capture now records
+        `insight_source_columns`, which is evidence enough."""
+        headers, user_id = _account(client, "analyst@example.com", "analyst")
+        conversation_id = _unconfirmed_turn(user_id)
+        _reassign_role(user_id, from_role="analyst", to_role="user")
+        demoted = _login(client, "analyst@example.com")
+
+        response = client.get(f"/conversations/{conversation_id}/messages", headers=demoted)
+
+        assert response.status_code == 200, response.text
+        assistant = _assistant_turn(response)
+        assert assistant["metadata"]["insight"] is None
+        assert assistant["metadata"]["narrative_withheld_reason"] is not None
+        assert "salary" in assistant["metadata"]["narrative_withheld_reason"]
+        assert str(_REAL_SALARY) not in response.text
+
+    def test_an_entitled_analyst_still_reads_an_unconfirmed_turn(self, client):
+        headers, user_id = _account(client, "analyst@example.com", "analyst")
+        conversation_id = _unconfirmed_turn(user_id)
+
+        response = client.get(f"/conversations/{conversation_id}/messages", headers=headers)
+
+        assistant = _assistant_turn(response)
+        assert assistant["metadata"].get("narrative_withheld_reason") is None
+        assert str(_REAL_SALARY) in assistant["metadata"]["insight"]
+
+    def test_a_legacy_turn_with_no_evidence_is_served_by_default(self, client):
+        """Backward compatibility: a turn stored before this evidence
+        existed keeps working, because withholding the whole backlog would
+        silently strip the answer from conversations already shared."""
+        headers, user_id = _account(client, "analyst@example.com", "analyst")
+        conversation_id = _legacy_turn_without_evidence(user_id)
+        _reassign_role(user_id, from_role="analyst", to_role="user")
+        demoted = _login(client, "analyst@example.com")
+
+        response = client.get(f"/conversations/{conversation_id}/messages", headers=demoted)
+
+        assert _assistant_turn(response)["metadata"].get("narrative_withheld_reason") is None
+        assert str(_REAL_SALARY) in response.text
+
+    def test_the_strict_flag_withholds_a_legacy_turn_from_a_lower_priv_reader(
+        self, client, monkeypatch
+    ):
+        """`GOVERN_NARRATIVE_WITHOUT_EVIDENCE=true` is the opt-in
+        fail-closed answer for the backlog."""
+        import api.shares as shares_mod
+
+        strict = _SETTINGS.model_copy(update={"govern_narrative_without_evidence": True})
+        monkeypatch.setattr(chat_history_mod, "get_settings", lambda: strict)
+        monkeypatch.setattr(shares_mod, "get_settings", lambda: strict)
+
+        headers, user_id = _account(client, "analyst@example.com", "analyst")
+        conversation_id = _legacy_turn_without_evidence(user_id)
+        _reassign_role(user_id, from_role="analyst", to_role="user")
+        demoted = _login(client, "analyst@example.com")
+
+        response = client.get(f"/conversations/{conversation_id}/messages", headers=demoted)
+
+        assistant = _assistant_turn(response)
+        assert (
+            assistant["metadata"]["narrative_withheld_reason"] == "derived_from_unrecorded_columns"
+        )
+        assert assistant["metadata"]["insight"] is None
+        assert str(_REAL_SALARY) not in response.text
+
+    def test_the_strict_flag_never_hides_prose_from_an_entitled_caller(self, client, monkeypatch):
+        import api.shares as shares_mod
+
+        strict = _SETTINGS.model_copy(update={"govern_narrative_without_evidence": True})
+        monkeypatch.setattr(chat_history_mod, "get_settings", lambda: strict)
+        monkeypatch.setattr(shares_mod, "get_settings", lambda: strict)
+
+        headers, user_id = _account(client, "analyst@example.com", "analyst")
+        conversation_id = _legacy_turn_without_evidence(user_id)
+
+        response = client.get(f"/conversations/{conversation_id}/messages", headers=headers)
+
+        assert _assistant_turn(response)["metadata"].get("narrative_withheld_reason") is None
+        assert str(_REAL_SALARY) in response.text
 
     def test_governance_can_be_rolled_back_by_its_own_switch(self, client, monkeypatch):
         """One switch for result governance, not a second one to find."""
