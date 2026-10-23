@@ -3254,6 +3254,20 @@ class Settings(BaseSettings):
     media_gen_rate_window_seconds: float = Field(default=60.0, gt=0)
     media_gen_video_duration_seconds: int | None = Field(default=None, gt=0, le=60)
     require_generation_approval: bool = True
+    # --- Free generation (media_gen/providers/) -------------------------
+    # Deliberately a separate switch from `enable_media_generation` rather
+    # than piggybacking on it, so the paid and free paths toggle
+    # independently: a deployment can run free-only (no IMA account at
+    # all), paid-only (today's behaviour, unchanged), both, or neither.
+    # Off by default -- every new capability in this codebase is.
+    enable_free_generation: bool = False
+    # Per-provider switch. SVG mode is the one free provider that needs no
+    # GPU, no token and no third party: it asks the Ollama model this app
+    # already runs for an `<svg>` and sanitizes the result
+    # (`media_gen/svg_sanitize.py`). Gated by `enable_free_generation` as
+    # well -- both must be on, so turning the feature off kills every
+    # provider at once without having to clear each flag.
+    enable_svg_generation: bool = True
     # AI-guided image editing (2026-09-27) -- a real, generative edit of a
     # user's *own uploaded image* (remove an object, replace a background,
     # region-transform), distinct from media_gen's own "generate a brand
