@@ -93,7 +93,7 @@ from agent.rate_limit import get_share_invite_limiter, get_share_link_access_lim
 from api.identity_authz import get_identity_db, require_identity_permission, require_local_user
 from config.settings import Settings, get_settings
 from governance.domain_detection import detect_domain
-from governance.result_policy import govern_result_for_domain
+from governance.result_policy import govern_result_for_domain, narrative_withhold_reason
 from security.client_ip import resolve_client_ip
 from security.tenancy import resolve_actor_tenant_id
 
@@ -287,24 +287,87 @@ def _governed_result_snapshot(
     return protected
 
 
+#: What a withheld narrative is replaced with. A fixed module constant,
+#: never built from the turn or the question, so it cannot be used as an
+#: oracle for what matched (CLAUDE.md 5.5).
+_NARRATIVE_WITHHELD_TEXT = (
+    "This answer's wording is not available to you: it was written from "
+    "columns this view protects. The result table below shows what you may see."
+)
+
+
+def _narrative_withheld_reason(
+    extra: dict,
+    viewer_roles: Sequence[str],
+    settings: Settings,
+) -> str | None:
+    """Whether this turn's prose was derived from columns this viewer
+    may not see -- the narrative counterpart to
+    `_governed_result_snapshot`, delegating the decision to
+    `governance.result_policy.narrative_withhold_reason` so the row gate
+    and this one read the same classification.
+
+    Uses the snapshot's own column names as evidence, and the same
+    `detect_domain` call `_governed_result_snapshot` makes, for the same
+    reason: a worse guess falls back to `GENERAL`, the strictest policy
+    in the registry, so the degradation direction is toward more
+    protection.
+
+    Returns `None` when there is no stored result to judge against. A
+    turn with no snapshot carries no column evidence, and a document,
+    policy or web answer is bounded by its own gates (a policy chunk's
+    `sensitivity_category`, `DocumentRecord.restricted_roles`) rather
+    than by result-column classification.
+    """
+    if not settings.enable_result_governance:
+        return None
+    snapshot = extra.get("result_snapshot")
+    if not isinstance(snapshot, dict):
+        return None
+    columns = snapshot.get("columns")
+    if not isinstance(columns, list) or not columns:
+        return None
+    column_names = [str(column) for column in columns]
+    stored_sql = snapshot.get("normalized_sql") or extra.get("sql") or ""
+    domain = detect_domain(str(stored_sql), column_names).domain
+    return narrative_withhold_reason(column_names, viewer_roles, domain)
+
+
 def _projected_turn_out(
     turn: ProjectedTurn,
     viewer_roles: Sequence[str],
     settings: Settings,
 ) -> ProjectedTurnOut:
     extra = turn.extra
+    # Masking the table is not enough on its own: the insight, the
+    # synthesized answer and the stored `content` are all written from
+    # the same cells, by a pipeline step that ran with the *runner's*
+    # permissions. See `_narrative_withheld_reason`.
+    withheld_reason = _narrative_withheld_reason(extra, viewer_roles, settings)
+    if withheld_reason is not None:
+        logger.info(
+            "[shares] narrative text withheld from a shared turn (%s)",
+            withheld_reason,
+        )
     return ProjectedTurnOut(
         sequence_number=turn.sequence_number,
         role=turn.role,  # type: ignore[arg-type]
-        content=turn.content,
+        content=(
+            _NARRATIVE_WITHHELD_TEXT
+            if withheld_reason is not None and turn.role == "assistant"
+            else turn.content
+        ),
+        narrative_withheld_reason=withheld_reason,
         created_at=turn.created_at,
         sources_used=list(extra.get("sources_used") or []),
         database=extra.get("database"),
         model=extra.get("model"),
         sql=extra.get("sql"),
         row_count=extra.get("row_count"),
-        insight=extra.get("insight"),
-        synthesized_answer=extra.get("synthesized_answer"),
+        insight=None if withheld_reason is not None else extra.get("insight"),
+        synthesized_answer=(
+            None if withheld_reason is not None else extra.get("synthesized_answer")
+        ),
         document_result=extra.get("document_result"),
         policy_result=extra.get("policy_result"),
         web_result=extra.get("web_result"),

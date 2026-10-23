@@ -184,6 +184,8 @@
     "noRecordedAnswer": "This message has no recorded answer.",
     "disclaimer": "AI may make mistakes. Please verify results before relying on them.",
     "scrollToLatest": "Scroll to latest message",
+    "processing": "Processing…",
+    "processingStage": "Processing — {{stage}}",
     "spokenAnswerLabel": "Spoken answer"
   },
   "sql": {
@@ -522,6 +524,7 @@
     "unavailable": "This shared conversation is unavailable. It may have been removed, expired, or revoked.",
     "turnFailed": "This response could not be completed.",
     "resultTruncated": "Showing a partial result.",
+    "narrativeWithheld": "Part of this answer is hidden. It was written from columns this shared view protects — the result table below shows what you may see.",
     "attachmentUnavailable": "unavailable",
     "openWorkspace": "Open workspace",
     "signIn": "Sign in",

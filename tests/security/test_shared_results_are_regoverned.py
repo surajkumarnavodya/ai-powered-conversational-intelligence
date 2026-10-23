@@ -307,3 +307,189 @@ class TestAnonymousShareViewerIsGoverned:
 
         assert view.status_code == 200, view.text
         assert _REAL_SALARY in view.text
+
+
+def _seed_turn_with_narrative(email: str, columns: list[str], rows: list[list]) -> str:
+    """Seeds one conversation exactly as an **authorized** run leaves it:
+    a stored `result_snapshot` *and* the narrative fields the pipeline
+    derives from those same rows.
+
+    `agent.nodes.generate_insight_node` builds its prose from
+    `state["result_rows"]`, which the result gate has governed for the
+    *runner's* roles -- so an analyst holding `view_restricted_columns`
+    legitimately gets real figures into `agent.insight.summarize_result`
+    (`top_label` is a real cell value, `maximum`/`total` are real
+    measures) and from there into the insight text. `api
+    .chat_persistence._metadata_for_ask` persists that text verbatim,
+    and `_answer_text_for_history` additionally copies it into
+    `ai_outputs.content`.
+
+    Mirrors `_seed_turn_with_snapshot` and differs from it only in
+    carrying those narrative fields, because that is the whole point:
+    the snapshot is re-governed per viewer, and the prose derived from
+    the same rows must be too.
+    """
+    session = identity_db_mod.get_identity_session(_SETTINGS)
+    try:
+        user = session.query(User).filter_by(email=email.strip().lower()).one()
+        conversation = create_conversation(session, user_id=user.id, feature_type="text_to_sql")
+        insight = f"Ada Lovelace has the highest annual salary at {_REAL_SALARY}."
+        append_turn(
+            session,
+            conversation=conversation,
+            user_id=user.id,
+            question="What does each employee earn?",
+            # What `_answer_text_for_history` stores: the insight itself.
+            answer_text=insight,
+            output_metadata={
+                "schema_version": 2,
+                "sources_used": ["sql"],
+                "sql": "SELECT employee_name, annual_salary FROM hr_employees",
+                "insight": insight,
+                "synthesized_answer": insight,
+                "result_snapshot": {
+                    "columns": columns,
+                    "rows": rows,
+                    "row_count": len(rows),
+                    "returned_rows": len(rows),
+                    "truncated": False,
+                    "normalized_sql": "SELECT employee_name, annual_salary FROM hr_employees",
+                },
+            },
+        )
+        return str(conversation.id)
+    finally:
+        session.close()
+
+
+class TestDerivedNarrativeIsGovernedToo:
+    """Masking the table while the same value survives in the prose is
+    the exact failure this module's docstring names. The snapshot is
+    re-governed per viewer; the insight, the synthesized answer and the
+    stored `content` are derived from the *same rows* and must not
+    outlive that decision."""
+
+    def test_an_insight_derived_from_a_salary_is_not_served_to_an_anonymous_visitor(
+        self, client: TestClient
+    ):
+        tokens = _register(client, "owner@example.com")
+        conversation_id = _seed_turn_with_narrative(
+            "owner@example.com",
+            ["employee_name", "annual_salary"],
+            [["Ada Lovelace", _REAL_SALARY]],
+        )
+        token = _public_link_token(client, tokens, conversation_id)
+
+        view = client.get(f"/share-view/{token}")
+
+        assert view.status_code == 200, view.text
+        snapshot = view.json()["turns"][-1]["result_snapshot"]
+        assert "[restricted]" in str(snapshot["rows"]), "the table itself must still be masked"
+        assert _REAL_SALARY not in view.text, (
+            "the real salary reached an anonymous viewer through narrative text "
+            "derived from the same governed rows"
+        )
+
+    def test_the_stored_content_and_synthesized_answer_are_withheld_together(
+        self, client: TestClient
+    ):
+        """`_answer_text_for_history` copies the insight into
+        `ai_outputs.content`, so withholding only `insight` would leave
+        the same sentence in a second field."""
+        tokens = _register(client, "owner@example.com")
+        conversation_id = _seed_turn_with_narrative(
+            "owner@example.com",
+            ["employee_name", "annual_salary"],
+            [["Ada Lovelace", _REAL_SALARY]],
+        )
+        token = _public_link_token(client, tokens, conversation_id)
+
+        turn = client.get(f"/share-view/{token}").json()["turns"][-1]
+
+        assert turn["insight"] is None
+        assert turn["synthesized_answer"] is None
+        assert _REAL_SALARY not in turn["content"]
+        assert turn["narrative_withheld_reason"] is not None
+        assert "annual_salary" in turn["narrative_withheld_reason"]
+
+    def test_the_reason_names_columns_and_never_a_value(self, client: TestClient):
+        """The reason is returned to an anonymous caller, so it must
+        carry column names only -- a reason echoing the protected value
+        would defeat the control it reports."""
+        tokens = _register(client, "owner@example.com")
+        conversation_id = _seed_turn_with_narrative(
+            "owner@example.com",
+            ["employee_name", "annual_salary"],
+            [["Ada Lovelace", _REAL_SALARY]],
+        )
+        token = _public_link_token(client, tokens, conversation_id)
+
+        turn = client.get(f"/share-view/{token}").json()["turns"][-1]
+
+        assert _REAL_SALARY not in turn["narrative_withheld_reason"]
+        assert "Ada Lovelace" not in turn["narrative_withheld_reason"]
+
+    def test_an_ordinary_analytics_insight_is_still_shown(self, client: TestClient):
+        """Over-blocking is its own failure mode. A result with no
+        protected column must keep its prose, or this control would
+        silently strip the answer off every shared conversation."""
+        tokens = _register(client, "owner@example.com")
+        session = identity_db_mod.get_identity_session(_SETTINGS)
+        try:
+            user = session.query(User).filter_by(email="owner@example.com").one()
+            conversation = create_conversation(session, user_id=user.id, feature_type="text_to_sql")
+            insight = "The West region leads with 4812 units sold."
+            append_turn(
+                session,
+                conversation=conversation,
+                user_id=user.id,
+                question="Which region sold the most?",
+                answer_text=insight,
+                output_metadata={
+                    "schema_version": 2,
+                    "sources_used": ["sql"],
+                    "sql": "SELECT region, units_sold FROM sales",
+                    "insight": insight,
+                    "result_snapshot": {
+                        "columns": ["region", "units_sold"],
+                        "rows": [["West", 4812]],
+                        "row_count": 1,
+                        "returned_rows": 1,
+                        "truncated": False,
+                        "normalized_sql": "SELECT region, units_sold FROM sales",
+                    },
+                },
+            )
+            conversation_id = str(conversation.id)
+        finally:
+            session.close()
+        token = _public_link_token(client, tokens, conversation_id)
+
+        turn = client.get(f"/share-view/{token}").json()["turns"][-1]
+
+        assert turn["narrative_withheld_reason"] is None
+        assert turn["insight"] == insight
+        assert "4812" in turn["content"]
+
+    def test_the_narrative_gate_follows_its_own_rollback_switch(
+        self, client: TestClient, monkeypatch
+    ):
+        """`ENABLE_RESULT_GOVERNANCE=false` rolls this back with the rest
+        of result governance -- one switch, not a second one to find."""
+        monkeypatch.setattr(
+            shares_mod,
+            "get_settings",
+            lambda: _SETTINGS.model_copy(update={"enable_result_governance": False}),
+        )
+        tokens = _register(client, "owner@example.com")
+        conversation_id = _seed_turn_with_narrative(
+            "owner@example.com",
+            ["employee_name", "annual_salary"],
+            [["Ada Lovelace", _REAL_SALARY]],
+        )
+        token = _public_link_token(client, tokens, conversation_id)
+
+        turn = client.get(f"/share-view/{token}").json()["turns"][-1]
+
+        assert turn["narrative_withheld_reason"] is None
+        assert _REAL_SALARY in turn["insight"]

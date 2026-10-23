@@ -882,8 +882,12 @@ def _render_shape_items(nodes: object) -> tuple[str, ...]:
     for node in nodes or ():  # type: ignore[union-attr]
         try:
             text = node.sql().strip()
+        # nosec B112 - `describe_sql` is a presentation aid (CLAUDE.md 4.2: an
+        # accuracy aid fails open). Skipping one unrenderable node degrades the
+        # human-readable shape summary; it is not on the validation path, which
+        # is `validate_sql` and refuses rather than continues.
         except Exception:  # noqa: BLE001 - a presentation aid never raises
-            continue
+            continue  # nosec B112
         if not text:
             continue
         text = text[:_MAX_SHAPE_ITEM_CHARS]

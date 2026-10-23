@@ -22,6 +22,7 @@ see `docs/chat-history-architecture.md`'s "Known limitations").
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -36,6 +37,7 @@ from identity.repositories.history import (
     soft_delete_conversation,
     update_conversation,
 )
+from identity.repositories.users import get_user_roles
 from identity.schemas import (
     ConversationListResponse,
     ConversationOut,
@@ -51,7 +53,11 @@ from identity.schemas import (
 from sqlalchemy.orm import Session
 
 from api.identity_authz import require_local_user
-from config.settings import get_settings
+from config.settings import Settings, get_settings
+from governance.domain_detection import detect_domain
+from governance.result_policy import govern_result_for_domain, narrative_withhold_reason
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -185,6 +191,114 @@ def delete_conversation_route(
     return MessageResponse(message="Conversation deleted.")
 
 
+#: Mirrors `api.shares._NARRATIVE_WITHHELD_TEXT`. A fixed module constant,
+#: never built from the turn, so it cannot report what matched.
+_NARRATIVE_WITHHELD_TEXT = (
+    "This answer's wording is not available to you: it was written from "
+    "columns your current permissions protect. The result table shows what you may see."
+)
+
+
+def _governed_metadata(
+    metadata: dict | None,
+    viewer_roles: tuple[str, ...],
+    settings: Settings,
+) -> tuple[dict | None, str | None]:
+    """One persisted turn's metadata, re-governed for the caller reading now.
+
+    Reloading a conversation is the fourth surface serving an
+    already-persisted result, after `api.artifacts._result_out`,
+    `api.shares._governed_result_snapshot` and
+    `api.jobs._regovern_job_result`. It is the only one whose caller is
+    always the data's own owner, which is why it was missed: ownership
+    *is* enforced here (`identity/repositories/history.py` scopes every
+    query by `user_id`), and ownership looked like enough.
+
+    It is not. Ownership answers "whose conversation is this"; result
+    governance answers "may this caller see these values *now*". The rows
+    were governed for the roles the owner held when they confirmed the
+    run, so an analyst who ran a salary query and was later demoted kept
+    a durable, unprivileged window onto it -- the same thing
+    `tests/security/test_artifacts_cannot_bypass_authorization.py`
+    refuses on the artifact saved from that very turn. Reclassifying a
+    column in `config/sensitive_columns.yaml` has the same effect
+    without any role changing at all.
+
+    Returns `(metadata, narrative_withheld_reason)`. The narrative is
+    judged with the rows, because `insight`/`synthesized_answer` were
+    written from them before governing and would otherwise state a
+    figure the table now masks.
+    """
+    if metadata is None or not settings.enable_result_governance:
+        return metadata, None
+
+    snapshot = metadata.get("result_snapshot")
+    if not isinstance(snapshot, dict):
+        return metadata, None
+    columns = snapshot.get("columns")
+    rows = snapshot.get("rows")
+    if not isinstance(columns, list) or not columns:
+        return metadata, None
+
+    column_names = [str(column) for column in columns]
+    stored_sql = snapshot.get("normalized_sql") or metadata.get("sql") or ""
+    domain = detect_domain(str(stored_sql), column_names).domain
+    withheld_reason = narrative_withhold_reason(column_names, viewer_roles, domain)
+
+    governed_snapshot = snapshot
+    if isinstance(rows, list) and rows:
+        governed = govern_result_for_domain(
+            column_names,
+            rows,
+            viewer_roles,
+            domain,
+            settings.governance_min_group_size,
+        )
+        if governed.changed:
+            governed_snapshot = dict(snapshot)
+            governed_snapshot["rows"] = [list(row) for row in governed.rows]
+            # The export ceiling can remove rows, so the bookkeeping has to
+            # follow -- the identical reasoning `api/shares.py` applies.
+            if len(governed.rows) != len(rows):
+                governed_snapshot["returned_rows"] = len(governed.rows)
+                governed_snapshot["truncated"] = True
+            logger.info(
+                "[chat_history] result-level governance re-applied on reload "
+                "(domain=%s, actions=%d)",
+                domain.value,
+                len(governed.actions),
+            )
+
+    if governed_snapshot is snapshot and withheld_reason is None:
+        return metadata, None
+
+    protected = dict(metadata)
+    protected["result_snapshot"] = governed_snapshot
+    protected["narrative_withheld_reason"] = withheld_reason
+    if withheld_reason is not None:
+        protected["insight"] = None
+        protected["synthesized_answer"] = None
+        logger.info("[chat_history] narrative text withheld on reload (%s)", withheld_reason)
+    return protected, withheld_reason
+
+
+def _message_content(
+    row,  # noqa: ANN001 - identity.repositories.history.MessageRow
+    viewer_roles: tuple[str, ...],
+    settings: Settings,
+) -> str:
+    """`row.content`, or the fixed placeholder when the prose was withheld.
+
+    `api.chat_persistence._answer_text_for_history` stores the insight
+    itself as `ai_outputs.content`, so withholding only
+    `metadata["insight"]` would leave the same sentence in a second field.
+    """
+    if row.role != "assistant":
+        return row.content
+    _metadata, withheld_reason = _governed_metadata(row.metadata, viewer_roles, settings)
+    return _NARRATIVE_WITHHELD_TEXT if withheld_reason is not None else row.content
+
+
 @router.get("/conversations/{conversation_id}/messages", response_model=MessageListResponse)
 def list_messages_route(
     conversation_id: str,
@@ -210,19 +324,22 @@ def list_messages_route(
     rows, total_turns = list_messages(
         session, conversation_id=parsed_id, user_id=user.id, limit=page_size, offset=offset
     )
+    # Re-governed against the roles this caller holds *now*, not the ones
+    # they held when the result was captured. See `_governed_metadata`.
+    viewer_roles = tuple(get_user_roles(session, user.id))
     return MessageListResponse(
         messages=[
             MessageOut(
                 id=row.id,
                 conversation_id=row.conversation_id,
                 role=row.role,  # type: ignore[arg-type]
-                content=row.content,
+                content=_message_content(row, viewer_roles, settings),
                 sequence_number=row.sequence_number,
                 created_at=row.created_at,
                 status=row.status,
                 model_name=row.model_name,
                 error_code=row.error_code,
-                metadata=row.metadata,
+                metadata=_governed_metadata(row.metadata, viewer_roles, settings)[0],
             )
             for row in rows
         ],

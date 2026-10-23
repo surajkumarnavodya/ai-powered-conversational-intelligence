@@ -182,6 +182,50 @@ def _restricted_turn(user_id: uuid.UUID) -> tuple[str, str]:
         session.close()
 
 
+def _narrative_turn(user_id: uuid.UUID) -> tuple[str, str]:
+    """`_restricted_turn`, but whose stored prose actually states the
+    restricted figure -- which is what an authorized run really
+    produces: `agent.insight.summarize_result` puts a real measure in
+    `maximum`/`total` and a real cell value in `top_label`, and
+    `api.chat_persistence` persists the resulting sentence verbatim
+    (also copying it into `ai_outputs.content`)."""
+    session = identity_db_mod.get_identity_session(_SETTINGS)
+    try:
+        conversation = create_conversation(
+            session, user_id=user_id, feature_type="text_to_sql", tenant_id="tenant-a"
+        )
+        insight = "Ada has the highest salary at 180000."
+        _prompt, ai_output = append_turn(
+            session,
+            conversation=conversation,
+            user_id=user_id,
+            question="What does each employee earn?",
+            answer_text=insight,
+            output_type="sql_query",
+            output_metadata={
+                "schema_version": 2,
+                "status": "succeeded",
+                "sources_used": ["sql"],
+                "database": "default",
+                "sql": "SELECT name, salary FROM employees",
+                "row_count": 2,
+                "insight": insight,
+                "result_snapshot": {
+                    "columns": ["name", "salary"],
+                    "rows": [["Ada", 180000], ["Linus", 165000]],
+                    "row_count": 2,
+                    "returned_rows": 2,
+                    "truncated": False,
+                    "normalized_sql": "SELECT name, salary FROM employees",
+                    "captured_at": datetime.now(UTC).isoformat(),
+                },
+            },
+        )
+        return str(conversation.id), str(ai_output.id)
+    finally:
+        session.close()
+
+
 def _reassign_role(user_id: uuid.UUID, *, from_role: str, to_role: str) -> None:
     """Demotes an account, the way an administrator genuinely would."""
     from identity.repositories.users import assign_role, remove_role
@@ -233,6 +277,56 @@ class TestStoredRowsAreRegovernedOnEveryRead:
         # The non-restricted column is untouched: this masks a field, it
         # does not withhold the analysis.
         assert "Ada" in values
+
+    def test_the_narrative_is_withheld_once_the_role_is_revoked(self, client):
+        """Masking the table is not the whole job. `answer`/`insight`
+        were written by `generate_insight_node` from these same rows
+        *before* governing, under the runner's permissions -- so a
+        demoted caller whose table correctly reads `[restricted]` must
+        not still be told the figure in a sentence."""
+        headers, user_id = _account(client, "analyst@example.com", "analyst")
+        conversation_id, message_id = _narrative_turn(user_id)
+        artifact_id = client.post(
+            "/artifacts",
+            json={"conversation_id": conversation_id, "message_id": message_id},
+            headers=headers,
+        ).json()["id"]
+
+        _reassign_role(user_id, from_role="analyst", to_role="user")
+        login = client.post(
+            "/auth/login", json={"email": "analyst@example.com", "password": PASSWORD}
+        )
+        demoted = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+        response = client.get(f"/artifacts/{artifact_id}", headers=demoted)
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["answer"] is None
+        assert body["insight"] is None
+        assert body["narrative_withheld_reason"] is not None
+        assert "salary" in body["narrative_withheld_reason"]
+        assert "180000" not in response.text, (
+            "the restricted figure reached a demoted caller through narrative text "
+            "derived from the same governed rows"
+        )
+
+    def test_an_entitled_analyst_still_reads_the_narrative(self, client):
+        """The counterpart: this withholds from a caller who may not see
+        the column, and must not strip the analysis from one who may."""
+        headers, user_id = _account(client, "analyst@example.com", "analyst")
+        conversation_id, message_id = _narrative_turn(user_id)
+
+        body = client.post(
+            "/artifacts",
+            json={"conversation_id": conversation_id, "message_id": message_id},
+            headers=headers,
+        ).json()
+        detail = client.get(f"/artifacts/{body['id']}", headers=headers).json()
+
+        assert detail["narrative_withheld_reason"] is None
+        assert detail["insight"] is not None
+        assert "180000" in detail["insight"]
 
     def test_a_refreshed_result_is_governed_before_it_is_ever_stored(self, client, monkeypatch):
         # Belt and braces: the refresh path governs on the way in *and*

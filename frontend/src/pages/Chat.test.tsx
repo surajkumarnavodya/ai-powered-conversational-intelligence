@@ -249,4 +249,208 @@ describe('Chat page', () => {
       expect(scrollToSpy).toHaveBeenCalledWith({ top: 2000, behavior: 'auto' })
     })
   })
+
+  /** The dotted progress ring on the Jump to Bottom button.
+   *
+   * Driven entirely by `chatStore.pendingQuestion`, which is the real
+   * request lifecycle: set only after a question passes validation, held
+   * across routing/retrieval/SQL/execution, and cleared in the store's
+   * own `finally` on completion, failure, timeout or abort. These tests
+   * drive that state rather than a timer, so a regression that decoupled
+   * the ring from the request would fail here. */
+  describe('processing ring on the Jump to Bottom button', () => {
+    const pending = (stage: string | null = null) => ({
+      question: 'How many employees are there?',
+      startedAt: Date.now(),
+      stage,
+    })
+
+    it('is absent while nothing is in flight', () => {
+      useChatStore.setState({ queryHistory: [makeEntry('First')], pendingQuestion: null } as never)
+      const { container } = renderChat()
+      const button = getScrollToBottomButton(container)
+      expect(button.className).not.toMatch(/dotted-ring/)
+      expect(button).not.toHaveAttribute('aria-busy')
+    })
+
+    it('appears as soon as a question is pending, even at the bottom where the button is normally hidden', () => {
+      // The common case: you ask from the bottom of the conversation. The
+      // ring has to be visible there or the feature does nothing.
+      useChatStore.setState({
+        queryHistory: [makeEntry('First')],
+        pendingQuestion: pending(),
+      } as never)
+      const { container } = renderChat()
+      const button = getScrollToBottomButton(container)
+      expect(button).toHaveAttribute('aria-hidden', 'false')
+      expect(button).toHaveAttribute('aria-busy', 'true')
+      expect(button.className).toMatch(/dotted-ring/)
+    })
+
+    it('says "Processing…" until the server reports a stage, then names it', () => {
+      useChatStore.setState({
+        queryHistory: [makeEntry('First')],
+        pendingQuestion: pending(null),
+      } as never)
+      const { container, rerender } = renderChat()
+      expect(getScrollToBottomButton(container)).toHaveAttribute(
+        'title',
+        'Scroll to latest message — Processing…',
+      )
+
+      // A real progress event for a real graph node.
+      useChatStore.setState({ pendingQuestion: pending('retrieve_schema') } as never)
+      rerenderChat(rerender)
+      expect(getScrollToBottomButton(container)).toHaveAttribute(
+        'title',
+        'Scroll to latest message — Processing — Schema',
+      )
+    })
+
+    it('stays active across the whole pipeline, not just the first stage', () => {
+      useChatStore.setState({
+        queryHistory: [makeEntry('First')],
+        pendingQuestion: pending('retrieve_schema'),
+      } as never)
+      const { container, rerender } = renderChat()
+
+      for (const [node, label] of [
+        ['generate_sql', 'SQL'],
+        ['validate_sql', 'Validation'],
+        ['estimate_cost', 'Cost check'],
+        ['execute_sql', 'Ready to run'],
+      ] as const) {
+        useChatStore.setState({ pendingQuestion: pending(node) } as never)
+        rerenderChat(rerender)
+        const button = getScrollToBottomButton(container)
+        expect(button.className).toMatch(/dotted-ring/)
+        expect(button).toHaveAttribute('title', `Scroll to latest message — Processing — ${label}`)
+      }
+    })
+
+    it('keeps spinning on a post-result node rather than dropping to no label', () => {
+      // generate_insight runs *after* rows exist; QueryLifecycle
+      // deliberately does not show it, so nodeToStage returns null. The
+      // request is still in flight, so the ring must stay and fall back
+      // to the plain label instead of naming an unmapped node.
+      useChatStore.setState({
+        queryHistory: [makeEntry('First')],
+        pendingQuestion: pending('generate_insight'),
+      } as never)
+      const { container } = renderChat()
+      const button = getScrollToBottomButton(container)
+      expect(button.className).toMatch(/dotted-ring/)
+      expect(button).toHaveAttribute('title', 'Scroll to latest message — Processing…')
+    })
+
+    it('stops when the request completes', () => {
+      useChatStore.setState({
+        queryHistory: [makeEntry('First')],
+        pendingQuestion: pending('execute_sql'),
+      } as never)
+      const { container, rerender } = renderChat()
+      expect(getScrollToBottomButton(container).className).toMatch(/dotted-ring/)
+
+      // What the store does on success: the pending turn becomes history.
+      useChatStore.setState({
+        queryHistory: [makeEntry('First'), makeEntry('How many employees are there?')],
+        pendingQuestion: null,
+      } as never)
+      rerenderChat(rerender)
+
+      const button = getScrollToBottomButton(container)
+      expect(button.className).not.toMatch(/dotted-ring/)
+      expect(button).not.toHaveAttribute('aria-busy')
+    })
+
+    it('stops on failure, and on a cancelled request, with no stuck spinner', () => {
+      for (const terminal of ['failed', 'cancelled'] as const) {
+        useChatStore.setState({
+          queryHistory: [makeEntry('First')],
+          pendingQuestion: pending('generate_sql'),
+        } as never)
+        const { container, rerender, unmount } = renderChat()
+        expect(getScrollToBottomButton(container).className).toMatch(/dotted-ring/)
+
+        // Both paths clear `pendingQuestion` in the store's `finally`;
+        // a failure also leaves an error entry behind, a cancel does not.
+        useChatStore.setState({
+          pendingQuestion: null,
+          queryHistory:
+            terminal === 'failed' ? [makeEntry('First'), makeEntry('That failed')] : [makeEntry('First')],
+        } as never)
+        rerenderChat(rerender)
+
+        expect(getScrollToBottomButton(container).className).not.toMatch(/dotted-ring/)
+        unmount()
+      }
+    })
+
+    it('does not leak the ring into a different conversation', () => {
+      useChatStore.setState({
+        activeConversationId: 'conv-a',
+        queryHistory: [makeEntry('First')],
+        pendingQuestion: pending('generate_sql'),
+      } as never)
+      const { container, rerender } = renderChat()
+      expect(getScrollToBottomButton(container).className).toMatch(/dotted-ring/)
+
+      // Switching conversation clears the pending turn with it (the store
+      // scopes `pendingQuestion` to the active conversation).
+      useChatStore.setState({
+        activeConversationId: 'conv-b',
+        queryHistory: [makeEntry('A different conversation entirely')],
+        pendingQuestion: null,
+      } as never)
+      rerenderChat(rerender)
+
+      const button = getScrollToBottomButton(container)
+      expect(button.className).not.toMatch(/dotted-ring/)
+      expect(button).not.toHaveAttribute('aria-busy')
+    })
+
+    it('still scrolls to the latest message while processing', async () => {
+      useChatStore.setState({
+        queryHistory: [makeEntry('First'), makeEntry('Second')],
+        pendingQuestion: pending('generate_sql'),
+      } as never)
+      const { container } = renderChat()
+      const scrollEl = getScrollContainer(container)
+      mockScrollState(scrollEl, { scrollHeight: 2000, scrollTop: 200, clientHeight: 600 })
+      act(() => {
+        fireEvent.scroll(scrollEl)
+      })
+      const scrollToSpy = vi.spyOn(scrollEl, 'scrollTo')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Scroll to latest message' }))
+
+      expect(scrollToSpy).toHaveBeenCalledWith({ top: 2000, behavior: 'smooth' })
+    })
+
+    it('never activates for an empty or whitespace-only submission', async () => {
+      // ChatInput returns before touching the store when the trimmed box
+      // is empty, so no request starts and the ring must stay away.
+      useChatStore.setState({ queryHistory: [makeEntry('First')], pendingQuestion: null } as never)
+      const { container } = renderChat()
+      const box = screen.getByLabelText('Ask a question about your data...')
+
+      await userEvent.type(box, '   ')
+      await userEvent.keyboard('{Enter}')
+
+      expect(useChatStore.getState().pendingQuestion).toBeNull()
+      const button = getScrollToBottomButton(container)
+      expect(button.className).not.toMatch(/dotted-ring/)
+      expect(button).not.toHaveAttribute('aria-busy')
+    })
+
+    it('adds no second live region -- ChatLiveRegion stays the only announcer', () => {
+      useChatStore.setState({
+        queryHistory: [makeEntry('First')],
+        pendingQuestion: pending('generate_sql'),
+      } as never)
+      const { container } = renderChat()
+      // Exactly one polite live region on the whole page: ChatLiveRegion's.
+      expect(container.querySelectorAll('[aria-live="polite"]')).toHaveLength(1)
+    })
+  })
 })
