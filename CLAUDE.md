@@ -350,9 +350,16 @@ restriction as a boundary.** Full detail:
   [`docs/certification/2026-10-17_release_gate_v2.md`](docs/certification/2026-10-17_release_gate_v2.md)
   §11.6. Never "fix" one by weakening the gate.
   **Re-measured 2026-10-22 after a dependency-remediation pass:**
-  `bandit` now **passes** (4 Low / 0 Medium / 0 High across 52,621 lines,
-  run exactly as CI runs it — the Low findings are below its default
-  threshold), and `pip-audit` went from 46 findings in 5 packages to **6
+  `bandit` reported 4 Low / 0 Medium / 0 High across 52,621 lines, run
+  exactly as CI runs it. **That was recorded here as "passes" on a false
+  premise, and the premise is corrected 2026-10-23:** `bandit` exits **1**
+  on any finding at or above its `--severity-level`, whose default is
+  `low` — so "only Low findings remain" never meant the gate passed. It
+  was red. §13's account was the accurate one. It passes now (exit 0)
+  because each deliberate finding carries a justified, correctly-placed
+  `# nosec`; verified by stripping them, which makes the gate exit 1 again
+  (`docs/security/VERIFICATION_RE_REVIEW.md`).
+  `pip-audit` went from 46 findings in 5 packages to **6
   in 2**, both of which are now evidenced as unreachable rather than
   merely benign (see
   [`docs/security/CVE_TRIAGE.md`](docs/security/CVE_TRIAGE.md)'s
@@ -746,7 +753,10 @@ contract lists its specific limitations; these are the cross-cutting ones.
   database and Ollama, which is what `python scripts/integration_test.py`
   is for.
 - **Lint/type findings — measure before claiming one is, or is not, yours.**
-  Measured 2026-10-17: `mypy .` reports **631 errors across 115 files**, of
+  Measured 2026-10-17: `mypy .` reported **631 errors across 115 files**
+  (**re-measured 2026-10-23: 700 across 124** — the growth is entirely in
+  `tests/`, tracking tests added since; the **7 production-code errors
+  below are unchanged**), of
   which **616 are in `tests/`** and 8 in `eval/security_benchmark/` (largely
   `AgentState`-vs-`dict` looseness) — a bounded, separate hygiene pass.
   `black --check .` is clean (1,635 files) and `ruff check .` has exactly
@@ -775,7 +785,10 @@ contract lists its specific limitations; these are the cross-cutting ones.
   gate fails (§5.7).
 - **Three tests fail only in file order, and the cause is cross-file
   state, not the tests.** Measured 2026-10-22: a full `pytest` run
-  reports 6 failures, three of which are
+  reported 6 failures (**re-measured 2026-10-23: 5** — the three
+  `…QueryStore` ones below plus two in
+  `TestGenerateRecommendationsNode`; the sixth is no longer reproducible),
+  three of which are
   `tests/test_agent_nodes.py::TestGenerateRecommendationsNodeQueryStore::{test_non_mssql_database_never_calls_query_store,test_feature_flag_off_never_calls_query_store,test_query_store_failure_fails_open}`.
   All three pass when that file runs alone and fail when
   `tests/security/` runs first (`pytest tests/security
