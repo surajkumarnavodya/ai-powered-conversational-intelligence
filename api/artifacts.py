@@ -107,7 +107,7 @@ from db.connection import get_read_only_engine, get_sqlglot_dialect
 from db.execution import execute_readonly_sql
 from embeddings.schema_indexer import get_last_schema_fingerprint
 from governance.domain_detection import detect_domain
-from governance.result_policy import govern_rows_for_caller, narrative_withhold_reason
+from governance.result_policy import govern_result_for_domain, narrative_withhold_reason
 from security.audit_log import log_security_event
 from security.redaction import redact_secrets
 from security.tenancy import resolve_actor_tenant_id
@@ -226,16 +226,42 @@ def _result_out(
     """One stored snapshot, **re-governed for the caller asking now**.
 
     This is the single most important line in this module: the rows were
-    governed for whoever executed them, and roles change. Re-running
-    `govern_rows_for_caller` here means an artifact can never serve as a
-    durable copy of data its owner is no longer permitted to see.
+    governed for whoever executed them, and roles change. Re-running the
+    gate here means an artifact can never serve as a durable copy of data
+    its owner is no longer permitted to see.
+
+    Runs the **full** `govern_result_for_domain`, not the configured-column
+    layer this used to call. Three controls live only in the full gate, and
+    an artifact is a durable, re-readable copy, which is exactly where they
+    matter most:
+
+    * never-disclosed CREDENTIAL/PAYMENT withholding, which no role
+      unlocks -- an admin opening this artifact previously read a password
+      hash in the clear;
+    * small-group suppression and the per-domain export ceiling, which
+      apply to an authorized caller too;
+    * classification-driven masking, the only layer that does anything at
+      all on the shipped `config/sensitive_columns.yaml` (`tables: []`).
+
+    The domain is detected from the snapshot's own stored SQL with the
+    result's column names as schema evidence -- the same evidence and the
+    same strictest-fallback direction `api.shares`, `api.jobs` and
+    `api.bi_integration` use.
     """
     columns = snapshot.get("columns")
     rows = snapshot.get("rows")
     if not isinstance(columns, list) or not isinstance(rows, list):
         return None
-    if settings.enable_result_governance:
-        rows = govern_rows_for_caller(columns, rows, actor_roles)
+    if settings.enable_result_governance and rows:
+        column_names = [str(column) for column in columns]
+        domain = detect_domain(str(snapshot.get("normalized_sql") or ""), column_names).domain
+        rows = govern_result_for_domain(
+            column_names,
+            rows,
+            actor_roles,
+            domain,
+            settings.governance_min_group_size,
+        ).rows
     chart = snapshot.get("chart_recommendation")
     return ArtifactResultOut(
         columns=[str(column) for column in columns],
@@ -811,8 +837,19 @@ def refresh_artifact(
 
     row_count = len(rows)
     governed_rows: list[Any] = list(rows)
-    if settings.enable_result_governance:
-        governed_rows = govern_rows_for_caller(columns, rows, actor_roles)
+    if settings.enable_result_governance and rows:
+        # The full gate, matching `_result_out` on the way back out -- a
+        # refresh must not store rows the read path would have withheld.
+        domain = detect_domain(str(validation.normalized_sql or ""), list(columns)).domain
+        governed_rows = list(
+            govern_result_for_domain(
+                [str(column) for column in columns],
+                rows,
+                actor_roles,
+                domain,
+                settings.governance_min_group_size,
+            ).rows
+        )
     # Convert to plain JSON values **once**, before anything stores or
     # hashes them. Two real failures, both found by refreshing a real SQL
     # Server result whose `decimal` columns arrive as `decimal.Decimal`:

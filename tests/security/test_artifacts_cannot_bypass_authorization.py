@@ -481,7 +481,14 @@ class TestTheModuleHasNoSecondExecutionPath:
             "enforce_row_limit(",
             "qualify_table_schema(",
             "execute_readonly_sql(",
-            "govern_rows_for_caller(",
+            # Was `govern_rows_for_caller(`. Replaced by the full gate,
+            # which is a strict superset: `govern_result_for_domain` runs
+            # `govern_rows_for_caller_result` first and then adds
+            # classification masking, never-disclosed withholding,
+            # small-group suppression and the per-domain export ceiling.
+            # The sequence this test pins is therefore intact and
+            # stronger, not bypassed -- see `_result_out`'s docstring.
+            "govern_result_for_domain(",
         ):
             assert name in source, f"{name} missing from the refresh path"
 
@@ -517,3 +524,79 @@ class TestTheModuleHasNoSecondExecutionPath:
                     assert not (
                         module == prefix or module.startswith(prefix + ".")
                     ), f"{path} imports {module}"
+
+
+class TestArtifactsApplyTheProtectionsNoRoleWaives:
+    """The same gap F-05 found on the BI export, on this surface.
+
+    `_result_out` and the refresh path both re-govern with
+    `govern_rows_for_caller` -- the configured-column layer only. Three
+    controls live in `govern_result_for_domain` and were therefore absent
+    here, two of which CLAUDE.md 5.4 makes explicitly non-role-waivable:
+
+      * never-disclosed CREDENTIAL/PAYMENT withholding,
+      * small-group suppression and the per-domain export ceiling,
+      * classification-driven masking, which is the only layer that works
+        at all on the shipped `config/sensitive_columns.yaml` (`tables: []`).
+
+    The pre-existing tests in this file pass regardless, because they
+    hand-classify `employees.salary` -- which is exactly the one layer the
+    weaker gate does honour.
+    """
+
+    _SECRET = "ZZTOPSECRETHASHZZ"
+
+    def _credential_turn(self, user_id: uuid.UUID) -> tuple[str, str]:
+        session = identity_db_mod.get_identity_session(_SETTINGS)
+        try:
+            conversation = create_conversation(
+                session, user_id=user_id, feature_type="text_to_sql", tenant_id="tenant-a"
+            )
+            _prompt, ai_output = append_turn(
+                session,
+                conversation=conversation,
+                user_id=user_id,
+                question="Show me the account rows.",
+                answer_text="Two accounts.",
+                output_type="sql_query",
+                output_metadata={
+                    "schema_version": 2,
+                    "status": "succeeded",
+                    "sources_used": ["sql"],
+                    "database": "default",
+                    "sql": "SELECT user_name, password_hash FROM accounts",
+                    "row_count": 1,
+                    "result_snapshot": {
+                        "columns": ["user_name", "password_hash"],
+                        "rows": [["ada", self._SECRET]],
+                        "row_count": 1,
+                        "returned_rows": 1,
+                        "truncated": False,
+                        "normalized_sql": "SELECT user_name, password_hash FROM accounts",
+                        "captured_at": datetime.now(UTC).isoformat(),
+                    },
+                },
+            )
+            return str(conversation.id), str(ai_output.id)
+        finally:
+            session.close()
+
+    def test_a_credential_column_is_withheld_even_from_an_admin(self, client):
+        """ "Withheld from every caller, including an admin -- no role
+        unlocks them." An admin is the strongest case: if the gate were
+        merely role-based this would legitimately pass."""
+        headers, user_id = _account(client, "admin@example.com", "admin")
+        conversation_id, message_id = self._credential_turn(user_id)
+
+        body = client.post(
+            "/artifacts",
+            json={"conversation_id": conversation_id, "message_id": message_id},
+            headers=headers,
+        ).json()
+
+        values = [cell for row in body["origin_result"]["rows"] for cell in row]
+        assert (
+            self._SECRET not in values
+        ), "a never-disclosed credential value was served from a stored artifact"
+        assert "[withheld]" in values
+        assert "ada" in values
