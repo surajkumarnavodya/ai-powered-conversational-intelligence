@@ -250,7 +250,11 @@ caller's roles — never trusted because it was governed when captured.
 Roles change." It then names "**both** read-back surfaces" —
 `api.artifacts._result_out` and `api.shares._governed_result_snapshot`.
 
-There are in fact **four**. `api/jobs.py::_regovern_job_result` is a third
+There are in fact **five** — this report originally said four, and a
+second pass on 2026-10-23 found `GET /bi/connectors/{id}/export` had been
+left off this very list (F-05, `REMEDIATION_SUMMARY.md`). The lesson below
+applied to this write-up too.
+`api/jobs.py::_regovern_job_result` is a third
 and does re-govern correctly. `api/chat_history.py` is the fourth and
 re-governed nothing: it returned `metadata=row.metadata`, the raw
 persisted `metadata_json`, including `result_snapshot` with real rows and
@@ -748,7 +752,9 @@ them — not leaks.
    Low findings outside its reach. Measured, triaged as far as the
    Mediums, recommendation in §12. §7 explains why the widening itself was
    not done unilaterally.
-2. **`GET /chat/search` snippets are not governed.** `SearchHitOut.snippet`
+2. ~~**`GET /chat/search` snippets are not governed.**~~ **Closed
+   2026-10-23** — see `REMEDIATION_SUMMARY.md`'s second-pass section.
+   Original text kept for the record: `SearchHitOut.snippet`
    derives from `ai_outputs.content`, the same field that carries the
    insight prose — so a search result could surface a fragment of a
    narrative that `GET /conversations/{id}/messages` now withholds.
@@ -807,6 +813,10 @@ them — not leaks.
 
 **Residual risk on the fixed findings:**
 
+- ~~F-01's control is **evidence-dependent**.~~ **Closed 2026-10-23**:
+  capture now records `insight_source_columns`, and
+  `GOVERN_NARRATIVE_WITHOUT_EVIDENCE` covers the legacy backlog as an
+  opt-in. Original text kept for the record:
 - F-01's control is **evidence-dependent**. It judges by the stored
   snapshot's column names. A turn with an `insight` but **no** persisted
   `result_snapshot` — an `/ask` that was never confirmed with "Confirm and

@@ -4,8 +4,11 @@ Companion to [`PENETRATION_TEST_REPORT.md`](PENETRATION_TEST_REPORT.md),
 which carries the evidence, reproduction steps and root-cause analysis.
 Branch `feat/source-connectivity-audit`, base commit `e970404`.
 
-**4 findings confirmed · 4 fixed and verified · 0 partially fixed · 0 open
-findings · 5 open observations (not findings) · 1 residual edge on F-01.**
+**6 findings confirmed · 6 fixed and verified · 0 partially fixed · 0 open
+findings · 4 open observations (not findings) · F-01's residual edge closed.**
+
+*Second pass (2026-10-23) added F-05 and F-06 and closed O-2 and F-01's
+residual edge — see "Second pass" below.*
 
 ---
 
@@ -65,6 +68,81 @@ findings · 5 open observations (not findings) · 1 residual edge on F-01.**
 | **Underlying code** | **Safe.** Identifiers reach these f-strings through SQLAlchemy's dialect-aware `identifier_preparer.quote`. Verified against hostile identifiers in all four dialects — every closing delimiter correctly doubled (`a]; DROP TABLE y--` → `[a]]; DROP TABLE y--]`). No SQL injection |
 | **Fix applied** | Suppression moved onto the statement, with the quoting rationale written out. The four `candidate_sql` builders in `onboarding/golden_questions.py` annotated too (Medium, and entirely unscanned), noting that nothing there executes — every candidate is re-parsed by `validate_sql` and row-capped before `evaluate_candidates` runs it |
 | **Result** | `bandit -r onboarding` → 0 Medium (was 5) |
+
+---
+
+## Second pass — 2026-10-23, driven by the security-prompt pack
+
+Files 10 (masking consistency), 11 (stored-result re-governance) and 13
+(open items) were run against the source. Branch
+`sec/governance-open-items`.
+
+### F-05 · Medium · NEW · Fixed, verified
+
+| | |
+|---|---|
+| **Title** | BI connector export replayed a stored result with no re-governance |
+| **Affected** | `api/bi_integration.py` — the export read-back, and the refresh that fills its cache |
+| **Why it was missed** | The first pass enumerated **four** read-back surfaces. There are **five**. Prompt 11A's instruction — *do not trust any doc that enumerates the surfaces, find them empirically* — is what surfaced it |
+| **Not the exposure** | `BI_INTEGRATION_MANAGE` is admin-tier, so a less-privileged colleague cannot export (403, now pinned) and a demoted admin loses BI access entirely. An earlier draft of this fix claimed both as exploitable; the 403 disproved it |
+| **The exposure** | The path used `govern_rows_for_caller` (configured-column layer only) instead of `govern_result_for_domain`. Two controls CLAUDE.md §5.4 makes **non-role-waivable** were therefore absent from the bulk-export endpoint: a `CREDENTIAL`/`PAYMENT` column exported in the clear to an admin, and the per-domain export ceiling never applied (150 rows left a connector whose HR ceiling is 100) |
+| **Fix** | One `_govern_for_caller` helper, applied at capture *and* at every export read-back, so the ends cannot drift and a push target is governed before rows leave the process |
+| **Tests** | 6 in `tests/security/test_bi_export_is_regoverned.py`; neutering the helper fails 3 |
+
+### F-06 · Low · NEW · Fixed, verified
+
+`agent/nodes.py` logged the full insight text at INFO on success and
+WARNING on drop. That sentence is derived from rows governed *for the
+runner*, so for an authorized caller it carried real restricted values
+into a log whose readership is usually wider than the database's. Now
+length and the verified-number count only.
+
+### F-01 residual · Closed (with a documented default)
+
+Capture records `insight_source_columns` (names only — `sql` beside it
+already names the same columns), so an `/ask` never confirmed with
+"Confirm and Run" is now judgeable. `identity.repositories.shares
+._PROJECTED_METADATA_FIELDS` carries it to the share surface; without
+that allowlist entry the anonymous path would have been the only
+read-back still unable to judge, which mutation-testing the allowlist
+caught.
+
+Legacy turns carry no evidence. Withholding the whole backlog would
+strip the answer from conversations already shared, so
+`GOVERN_NARRATIVE_WITHOUT_EVIDENCE` (**default false**) makes that case
+fail-closed *opt-in* rather than on upgrade. A caller holding
+`VIEW_RESTRICTED_COLUMNS` reads the prose either way. Operators handling
+sensitive data should turn it on; that is a deliberate deviation from
+"fail closed by default", taken to keep the change backward-compatible
+and recorded here rather than left implicit.
+
+### O-2 · Closed
+
+`/chat/search` cut its snippet from `AiOutput.content` — the same prose
+the reload and share surfaces withhold, selected by the caller's own
+query terms. `ConversationSearchHit` now carries the matched turn's
+metadata and `api.chat_history._governed_snippet` applies the same gate,
+failing closed on a message hit with no evidence. The hit itself is
+always returned (title, conversation and message id) so search still
+finds the conversation; title and question matches are untouched, being
+the user's own words.
+
+### Correction to the first pass
+
+The first report stated there were four read-back surfaces and that
+`api.chat_history` was the fourth. Both numbers were wrong: the BI
+export is a fifth, and it was never enumerated. The lesson the F-02
+write-up drew — *the root cause was enumeration* — applied to the
+write-up itself.
+
+### Still open after this pass
+
+| Item | Why not closed here |
+|---|---|
+| **O-1** bandit scope (12 of 41 packages) | Widening changes what fails the build for every contributor; the 17 remaining Low findings must be triaged and annotated **before** the scope change lands, never by relaxing `--severity-level` |
+| **O-3** `.secrets.baseline` staleness | Needs one authoritative run on a Linux runner; the Windows reproduction is not trustworthy (see §11.3 of the report) |
+| **O-4** SQL-echo disagreement | A product decision, not a security one — options written up, including stripping `WHERE`-clause literals bound to restricted columns |
+| **O-5** CLAUDE.md drift | Housekeeping; corrections recorded in the report |
 
 ---
 

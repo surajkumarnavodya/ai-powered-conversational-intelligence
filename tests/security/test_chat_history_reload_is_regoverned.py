@@ -402,3 +402,108 @@ class TestReloadingOwnConversationIsRegoverned:
         response = client.get(f"/conversations/{conversation_id}/messages", headers=demoted)
 
         assert str(_REAL_SALARY) in response.text
+
+
+class TestSearchSnippetsAreGovernedToo:
+    """`GET /chat/search` cuts its snippet from `AiOutput.content`, which
+    holds the insight prose the reload surface withholds -- so governing
+    the reload and not the search would only move the channel, with the
+    caller's own query terms selecting the fragment.
+    """
+
+    def _search(self, client, headers: dict, q: str):
+        return client.get(f"/chat/search?q={q}", headers=headers)
+
+    def test_a_restricted_narrative_is_not_returned_as_a_snippet(self, client):
+        headers, user_id = _account(client, "analyst@example.com", "analyst")
+        _restricted_turn(user_id)
+        _reassign_role(user_id, from_role="analyst", to_role="user")
+        demoted = _login(client, "analyst@example.com")
+
+        response = self._search(client, demoted, "salary")
+
+        assert response.status_code == 200, response.text
+        assert (
+            str(_REAL_SALARY) not in response.text
+        ), "a withheld narrative came back as a search snippet"
+
+    def test_the_hit_itself_is_still_returned_so_search_keeps_working(self, client):
+        """Fail-closed on the snippet, not on the result: the user must
+        still be able to find and open their own conversation."""
+        headers, user_id = _account(client, "analyst@example.com", "analyst")
+        conversation_id = _restricted_turn(user_id)
+        _reassign_role(user_id, from_role="analyst", to_role="user")
+        demoted = _login(client, "analyst@example.com")
+
+        body = self._search(client, demoted, "salary").json()
+
+        assert body["total"] >= 1
+        hit = body["results"][0]
+        assert hit["conversation_id"] == conversation_id
+        assert "Preview hidden" in hit["snippet"]
+
+    def test_an_entitled_analyst_still_sees_the_snippet(self, client):
+        headers, user_id = _account(client, "analyst@example.com", "analyst")
+        _restricted_turn(user_id)
+
+        body = self._search(client, headers, "salary").json()
+
+        assert body["total"] >= 1
+        assert str(_REAL_SALARY) in body["results"][0]["snippet"]
+
+    def test_an_ordinary_snippet_is_unaffected(self, client):
+        """Over-blocking is its own failure mode."""
+        headers, user_id = _account(client, "analyst@example.com", "analyst")
+        session = identity_db_mod.get_identity_session(_SETTINGS)
+        try:
+            conversation = create_conversation(
+                session, user_id=user_id, feature_type="text_to_sql", tenant_id="tenant-a"
+            )
+            insight = "The West region leads with 4812 units sold."
+            append_turn(
+                session,
+                conversation=conversation,
+                user_id=user_id,
+                question="Which region sold the most?",
+                answer_text=insight,
+                output_type="sql_query",
+                output_metadata={
+                    "schema_version": 2,
+                    "sources_used": ["sql"],
+                    "sql": "SELECT region, units_sold FROM sales",
+                    "insight": insight,
+                    "result_snapshot": {
+                        "columns": ["region", "units_sold"],
+                        "rows": [["West", 4812]],
+                        "row_count": 1,
+                        "returned_rows": 1,
+                        "truncated": False,
+                        "normalized_sql": "SELECT region, units_sold FROM sales",
+                    },
+                },
+            )
+        finally:
+            session.close()
+        _reassign_role(user_id, from_role="analyst", to_role="user")
+        demoted = _login(client, "analyst@example.com")
+
+        # "4812" appears only in the answer, so this is a message match
+        # rather than a question match.
+        body = self._search(client, demoted, "4812").json()
+
+        assert body["total"] >= 1
+        assert "4812" in body["results"][0]["snippet"]
+
+    def test_a_question_match_is_never_governed(self, client):
+        """A title or question match is the user's own words, not text
+        derived from a result -- governing it would hide their own query
+        back from them."""
+        headers, user_id = _account(client, "analyst@example.com", "analyst")
+        _restricted_turn(user_id)
+        _reassign_role(user_id, from_role="analyst", to_role="user")
+        demoted = _login(client, "analyst@example.com")
+
+        body = self._search(client, demoted, "earn").json()
+
+        assert body["total"] >= 1
+        assert "earn" in body["results"][0]["snippet"].lower()
