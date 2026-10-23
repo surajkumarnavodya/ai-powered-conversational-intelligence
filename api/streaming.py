@@ -79,7 +79,11 @@ def _sse(event: str, data: dict[str, Any]) -> str:
     newline would otherwise split one message into two malformed ones.
     """
     payload = json.dumps(data, separators=(",", ":"), default=str)
-    assert "\n" not in payload, "an SSE data line must never contain a newline"
+    # nosec B101 - a wiring invariant, not an input check. `json.dumps` cannot
+    # emit a raw newline inside a string, so this can only fire on a future edit
+    # that changes the serializer; nothing a caller sends can reach it. Framing
+    # does not depend on it holding at runtime under `-O`.
+    assert "\n" not in payload, "an SSE data line must never contain a newline"  # nosec B101
     return f"event: {event}\ndata: {payload}\n\n"
 
 

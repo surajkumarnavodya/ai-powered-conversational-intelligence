@@ -253,8 +253,12 @@ def _sample_freshness_days(
         with engine.connect() as connection:
             row = connection.execute(
                 text(
-                    f"SELECT MAX({quoted_column}) AS most_recent FROM {qualified_table}"
-                )  # nosec B608
+                    # nosec B608 - identifiers only, and both already passed through
+                    # `_quote`/`_qualified` (SQLAlchemy's dialect-aware
+                    # `identifier_preparer.quote`, which doubles any embedded
+                    # delimiter). No caller value is interpolated here.
+                    f"SELECT MAX({quoted_column}) AS most_recent FROM {qualified_table}"  # nosec B608
+                )
             ).fetchone()
     except SQLAlchemyError as exc:
         logger.debug("[profiling] freshness query failed: %s", exc)

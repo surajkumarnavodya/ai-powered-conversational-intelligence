@@ -46,7 +46,10 @@ logger = logging.getLogger(__name__)
 
 PROVIDER_NAME: ProviderName = "huggingface"
 
-_REASON_NO_TOKEN = "No Hugging Face token is configured (HF_TOKEN)."
+# nosec B105 - a false positive: this is the user-facing *message* shown when no
+# token is set, matched only because the constant's name ends in `_TOKEN`. The
+# real token is a `SecretStr` read from settings, never a literal.
+_REASON_NO_TOKEN = "No Hugging Face token is configured (HF_TOKEN)."  # nosec B105
 _REASON_DISABLED = "The Hugging Face provider is switched off (ENABLE_HF_GENERATION)."
 
 #: Shown verbatim to the user on a 402. Deliberately specific: "generation

@@ -252,8 +252,12 @@ def _record_recent_event(
                     "context": rendered_context,
                 }
             )
+    # nosec B110 - deliberate and load-bearing: audit logging must never turn a
+    # successful request into a failure, and must never be the thing that breaks
+    # a security control it is only observing. The swallowed error is the log
+    # write itself, not a policy decision.
     except Exception:  # noqa: BLE001 - must never break the caller
-        pass
+        pass  # nosec B110
 
 
 def recent_security_events(

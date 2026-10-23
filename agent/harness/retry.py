@@ -72,7 +72,10 @@ class RetryPolicy:
         capped = min(raw, self.max_backoff_seconds)
         if not self.jitter:
             return capped
-        return random.uniform(0.0, capped)  # noqa: S311 - load spreading, not security
+        # nosec B311 - retry jitter spreads load; nothing here is a secret or a token.
+        return random.uniform(
+            0.0, capped
+        )  # noqa: S311 - load spreading, not security  # nosec B311
 
 
 #: The default for model and tool calls. Conservative on purpose: three

@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import logging
 import re
-from xml.etree import ElementTree
+from xml.etree import ElementTree  # nosec B405 - justified at the parse site
 
 logger = logging.getLogger(__name__)
 
@@ -256,8 +256,27 @@ def sanitize_svg(markup: str) -> str:
     if "<!DOCTYPE" in markup.upper() or "<!ENTITY" in markup.upper():
         raise SvgRejected("SVG carries a DOCTYPE or ENTITY declaration")
 
+    # bandit B314 (`xml.etree.ElementTree.fromstring` on untrusted input).
+    # Kept, rather than taking a `defusedxml` dependency, because every
+    # attack in that advisory class is already refused *before* this line
+    # and each refusal is pinned by a test in
+    # `tests/test_media_gen_svg_sanitize.py`:
+    #   * entity expansion (billion laughs) and XXE both require a DTD,
+    #     and the `<!DOCTYPE`/`<!ENTITY` guard above rejects the construct
+    #     outright -- there is no valid XML spelling of either that gets
+    #     past it, since XML permits no whitespace inside `<!DOCTYPE`.
+    #   * quadratic blowup likewise needs an `<!ENTITY` declaration.
+    #   * entity *references* without a declaration are a `ParseError`
+    #     ("undefined entity"), handled below as a clean refusal.
+    #   * unbounded input and deep nesting are capped by `MAX_SVG_BYTES`
+    #     and `MAX_DEPTH` (the latter enforced in `_strip`, which is what
+    #     keeps a deeply-nested document from reaching recursive
+    #     serialization).
+    # So this is a scoped, per-line suppression of a verified-benign
+    # finding, not a threshold change: a new unsafe parse anywhere else
+    # still fails the gate.
     try:
-        root = ElementTree.fromstring(encoded)
+        root = ElementTree.fromstring(encoded)  # nosec B314
     except ElementTree.ParseError as exc:
         raise SvgRejected(f"SVG did not parse: {exc}") from exc
 

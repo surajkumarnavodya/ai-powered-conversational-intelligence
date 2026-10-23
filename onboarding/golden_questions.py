@@ -80,6 +80,13 @@ def generate_candidate_questions(
             reliable questions are never crowded out by a large schema's
             many join candidates.
     """
+    # nosec B608 (the four `candidate_sql` f-strings below). These build
+    # *candidate* query text from schema-derived identifiers; nothing here
+    # executes. Every candidate is re-parsed by `agent.sql_validator
+    # .validate_sql` and then row-capped before `onboarding.evaluation
+    # .evaluate_candidates` runs it, so the SELECT-only allowlist -- not
+    # this string construction -- is what bounds what can execute, and an
+    # identifier that did not survive validation never reaches a cursor.
     relationships = relationships or []
     by_table: dict[str, list[SemanticLabel]] = {}
     for label in semantic_labels:
@@ -94,7 +101,7 @@ def generate_candidate_questions(
                 tables_involved=(table_name,),
                 question_type="count",
                 confidence=0.9,
-                candidate_sql=f"SELECT COUNT(*) FROM {table_name}",
+                candidate_sql=f"SELECT COUNT(*) FROM {table_name}",  # nosec B608
             )
         )
 
@@ -119,7 +126,7 @@ def generate_candidate_questions(
                         question_type="aggregate_by_category",
                         confidence=confidence,
                         candidate_sql=(
-                            f"SELECT {category.column_name}, SUM({measure.column_name}) "
+                            f"SELECT {category.column_name}, SUM({measure.column_name}) "  # nosec B608
                             f"FROM {table_name} GROUP BY {category.column_name}"
                         ),
                     )
@@ -145,7 +152,7 @@ def generate_candidate_questions(
                         question_type="top_n",
                         confidence=confidence,
                         candidate_sql=(
-                            f"SELECT {category.column_name}, SUM({measure.column_name}) AS total "
+                            f"SELECT {category.column_name}, SUM({measure.column_name}) AS total "  # nosec B608
                             f"FROM {table_name} GROUP BY {category.column_name} "
                             f"ORDER BY total DESC"
                         ),
@@ -165,7 +172,7 @@ def generate_candidate_questions(
                 question_type="join_count",
                 confidence=round(0.6 * relationship.confidence, 4),
                 candidate_sql=(
-                    f"SELECT t.{target_column}, COUNT(*) FROM {relationship.source_table} s "
+                    f"SELECT t.{target_column}, COUNT(*) FROM {relationship.source_table} s "  # nosec B608
                     f"JOIN {relationship.target_table} t ON s.{source_column} = t.{target_column} "
                     f"GROUP BY t.{target_column}"
                 ),
