@@ -2919,8 +2919,8 @@ def generate_insight_node(state: AgentState) -> dict[str, Any]:
     if not is_insight_grounded(insight_text, summary, question=question, sql=sql):
         logger.warning(
             "[generate_insight] dropped ungrounded insight (contains a number not "
-            "supported by the result): %r",
-            insight_text,
+            "supported by the result): %d chars",
+            len(insight_text),
         )
         return {"insight": None, "insight_summary": summary, "insight_numbers_checked": None}
 
@@ -2931,9 +2931,15 @@ def generate_insight_node(state: AgentState) -> dict[str, Any]:
     # is what lets the UI state the evidence for this claim as a fact
     # rather than inferring it from this node's drop behaviour.
     numbers_checked = len(extract_numbers(insight_text))
+    # Length and the verified-number count, never the sentence itself: the
+    # insight is derived from governed rows *for the runner*, so for an
+    # authorized caller it legitimately contains restricted values. Writing
+    # it to the application log would put those values somewhere the
+    # governance gate does not reach and whose readership is usually wider
+    # than the database's (CLAUDE.md 5.6).
     logger.info(
-        "[generate_insight] generated: %r (%d number(s) verified against the result)",
-        insight_text,
+        "[generate_insight] generated: %d chars (%d number(s) verified against the result)",
+        len(insight_text),
         numbers_checked,
     )
     return {

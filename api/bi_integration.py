@@ -43,7 +43,9 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from identity.models import BiConnector, User
@@ -72,10 +74,11 @@ from bi_integration.outbound_safety import OutboundUrlBlockedError
 from bi_integration.policy import BiAction, authorize_bi_action
 from bi_integration.push import BiPushNotConfiguredError, push_looker_webhook, push_power_bi
 from bi_integration.rendering import render_csv, render_json, render_xlsx
-from config.settings import get_settings
+from config.settings import Settings, get_settings
 from db.connection import get_read_only_engine, get_sqlglot_dialect
 from db.execution import execute_readonly_sql
-from governance.result_policy import govern_rows_for_caller
+from governance.domain_detection import detect_domain
+from governance.result_policy import govern_result_for_domain
 from security.audit_log import log_security_event
 from security.redaction import redact_secrets
 from security.tenancy import resolve_actor_tenant_id
@@ -130,6 +133,64 @@ def _authorize(
             detail="Could not resolve a tenant for this account.",
         )
     return actor_tenant_id
+
+
+def _govern_for_caller(
+    connector: BiConnector,
+    columns: Sequence[str],
+    rows: Sequence[Sequence[Any]],
+    user: User,
+    session: Session,
+    settings: Settings,
+) -> list[Any]:
+    """One connector's rows, governed for the caller acting **now**.
+
+    Used at both ends of this module's lifecycle -- the refresh that fills
+    the export cache, and every read-back that serves it -- so the two
+    cannot drift. The export path is the fifth surface in this codebase
+    that replays an already-governed result (after artifacts, shares, jobs
+    and chat history) and was previously the only one that re-governed
+    nothing at all.
+
+    Two reasons this matters even though `BI_INTEGRATION_MANAGE` is
+    admin-tier, i.e. even though the caller is always privileged:
+
+    * A `CREDENTIAL`/`PAYMENT` column is withheld from **every** caller
+      including an admin -- no role unlocks it (CLAUDE.md 5.4). The gate
+      this path used before (`govern_rows_for_caller`) implements the
+      configured-column layer only and has no concept of a never-disclosed
+      category, so such a value exported in the clear.
+    * The per-domain **export ceiling** and small-group suppression apply
+      to an authorized caller too: permission to see a value is not
+      permission to extract every one of them at once. Those live in
+      `govern_result_for_domain` and were absent from the one endpoint
+      whose entire purpose is bulk extraction.
+
+    The domain is detected from the connector's own stored SQL with the
+    result's column names as schema evidence -- the same evidence
+    `api.shares` and `api.jobs` use, and the same degradation direction: a
+    worse guess falls back to `GENERAL`, the strictest policy in the
+    registry.
+    """
+    if not settings.enable_result_governance:
+        return list(rows)
+    column_names = [str(column) for column in columns]
+    domain = detect_domain(connector.sql_text or "", column_names).domain
+    governed = govern_result_for_domain(
+        column_names,
+        rows,
+        get_user_roles(session, user.id),
+        domain,
+        settings.governance_min_group_size,
+    )
+    if governed.changed:
+        logger.info(
+            "[bi] result-level governance applied (connector=%s, domain=%s, actions=%s)",
+            connector.id,
+            domain.value,
+            ",".join(governed.actions),
+        )
+    return list(governed.rows)
 
 
 def _out(connector: BiConnector) -> BiConnectorOut:
@@ -368,9 +429,12 @@ def refresh_connector(
         )
         return _out(updated)
 
-    if settings.enable_result_governance:
-        caller_roles = get_user_roles(session, user.id)
-        rows = govern_rows_for_caller(columns, rows, caller_roles)
+    # Governed before anything leaves this process -- a push target sends
+    # these rows to Power BI/Looker, where this app's gate no longer
+    # reaches. The export cache is re-governed again on the way out (see
+    # `_govern_for_caller`), because the roles that filled it are not
+    # necessarily the roles reading it.
+    rows = _govern_for_caller(connector, columns, rows, user, session, settings)
 
     target_type = BiTargetType(connector.target_type)
     if target_type in PUSH_TARGETS:
@@ -447,6 +511,7 @@ def export_connector(
             detail=f"Unsupported format {format!r}. Supported: csv, xlsx, json.",
         ) from None
 
+    settings = get_settings()
     cached = get_export_cache().get(str(connector_id))
     if cached is None:
         raise HTTPException(
@@ -454,16 +519,22 @@ def export_connector(
             detail="This connector has never been successfully refreshed -- nothing to export yet.",
         )
 
+    # Re-governed against the caller downloading *now*, not the roles that
+    # filled this cache. See `_govern_for_caller`.
+    export_rows = _govern_for_caller(
+        connector, cached.columns, cached.rows, user, session, settings
+    )
+
     if export_format is BiExportFormat.CSV:
-        data = render_csv(cached.columns, cached.rows)
+        data = render_csv(cached.columns, export_rows)
         media_type = "text/csv"
         extension = "csv"
     elif export_format is BiExportFormat.XLSX:
-        data = render_xlsx(cached.columns, cached.rows, connector.display_name)
+        data = render_xlsx(cached.columns, export_rows, connector.display_name)
         media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         extension = "xlsx"
     else:
-        data = render_json(cached.columns, cached.rows)
+        data = render_json(cached.columns, export_rows)
         media_type = "application/json"
         extension = "json"
 

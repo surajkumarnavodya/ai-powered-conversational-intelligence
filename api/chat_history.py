@@ -28,6 +28,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from identity.models import User
 from identity.repositories.history import (
+    ConversationSearchHit,
     append_single_message,
     create_conversation,
     get_conversation,
@@ -53,6 +54,7 @@ from identity.schemas import (
 from sqlalchemy.orm import Session
 
 from api.identity_authz import require_local_user
+from api.shares import _no_evidence_reason
 from config.settings import Settings, get_settings
 from governance.domain_detection import detect_domain
 from governance.result_policy import govern_result_for_domain, narrative_withhold_reason
@@ -233,12 +235,23 @@ def _governed_metadata(
         return metadata, None
 
     snapshot = metadata.get("result_snapshot")
-    if not isinstance(snapshot, dict):
-        return metadata, None
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
     columns = snapshot.get("columns")
     rows = snapshot.get("rows")
     if not isinstance(columns, list) or not columns:
-        return metadata, None
+        # No confirmed result, but the turn may still carry the evidence
+        # recorded at capture. See `api.shares._no_evidence_reason`.
+        columns = extra_columns = metadata.get("insight_source_columns")
+        rows = None if extra_columns else rows
+    if not isinstance(columns, list) or not columns:
+        reason = _no_evidence_reason(metadata, viewer_roles, settings)
+        if reason is None:
+            return metadata, None
+        protected = dict(metadata)
+        protected["narrative_withheld_reason"] = reason
+        protected["insight"] = None
+        protected["synthesized_answer"] = None
+        return protected, reason
 
     column_names = [str(column) for column in columns]
     stored_sql = snapshot.get("normalized_sql") or metadata.get("sql") or ""
@@ -280,6 +293,48 @@ def _governed_metadata(
         protected["synthesized_answer"] = None
         logger.info("[chat_history] narrative text withheld on reload (%s)", withheld_reason)
     return protected, withheld_reason
+
+
+#: Replaces a snippet cut from narrative the caller may not read. A fixed
+#: constant, never built from the hit, so it cannot report what matched.
+_SNIPPET_WITHHELD_TEXT = "[Preview hidden - this answer references protected columns.]"
+
+
+def _governed_snippet(
+    hit: ConversationSearchHit,
+    viewer_roles: tuple[str, ...],
+    settings: Settings,
+) -> str:
+    """`hit.snippet`, or a fixed placeholder when it was cut from prose
+    this caller may not read.
+
+    `AiOutput.content` holds the insight text (see
+    `api.chat_persistence._answer_text_for_history`), so a search snippet
+    is a fragment of exactly what `_governed_metadata` withholds on
+    reload -- selected, worse, by the caller's own query terms. Governing
+    the reload but not the search would just move the channel.
+
+    Fail-closed on a *message* hit whose metadata is missing or carries
+    no evidence: the snippet is withheld rather than served, because an
+    assistant turn with no evidence is precisely the case the gate cannot
+    judge. The hit itself is always returned -- title, conversation and
+    message id -- so search still finds the conversation and the user can
+    open it, where the reload surface applies its own decision.
+
+    Title and question matches are returned untouched: they are the
+    user's own words, not text derived from a result.
+    """
+    if not settings.enable_result_governance or hit.matched_in != "message":
+        return hit.snippet
+    metadata = hit.output_metadata
+    if metadata is None:
+        # A question match rather than an assistant turn.
+        return hit.snippet
+    governed, withheld_reason = _governed_metadata(metadata, viewer_roles, settings)
+    del governed
+    if withheld_reason is not None:
+        return _SNIPPET_WITHHELD_TEXT
+    return hit.snippet
 
 
 def _message_content(
@@ -411,13 +466,16 @@ def search_chat_history_route(
         limit, settings.chat_search_page_size, settings.chat_search_max_page_size
     )
     hits, total = search_history(session, user_id=user.id, query=q, limit=page_size, offset=offset)
+    # Governed against the roles this caller holds *now*, like every other
+    # surface that replays stored narrative. See `_governed_snippet`.
+    viewer_roles = tuple(get_user_roles(session, user.id))
     return SearchResponse(
         results=[
             SearchHitOut(
                 conversation_id=hit.conversation_id,
                 title=hit.title,
                 matched_in=hit.matched_in,  # type: ignore[arg-type]
-                snippet=hit.snippet,
+                snippet=_governed_snippet(hit, viewer_roles, settings),
                 message_id=hit.message_id,
                 updated_at=hit.updated_at,
             )

@@ -2201,6 +2201,25 @@ class Settings(BaseSettings):
     # domain declaring its own minimum_group_size overrides this; a domain
     # declaring 0 opts out because it has no individuals to protect.
     governance_min_group_size: int = Field(default=5, ge=0)
+    # Whether a persisted turn whose narrative carries NO column evidence
+    # withholds that narrative from a caller who lacks
+    # VIEW_RESTRICTED_COLUMNS, rather than serving it.
+    #
+    # `governance.result_policy.narrative_withhold_reason` judges prose by
+    # the columns it was derived from. A turn captured before
+    # `insight_source_columns` was persisted -- or an `/ask` the user never
+    # confirmed with "Confirm and Run", which stores no result_snapshot --
+    # has no such evidence, so the gate cannot tell a salary summary from a
+    # regional sales one.
+    #
+    # Defaults False: turning it on withholds the narrative of every
+    # *legacy* turn from anonymous share viewers, which is a visible change
+    # to conversations already shared. New turns persist their evidence, so
+    # the flag only ever governs the backlog. Operators handling sensitive
+    # data should turn it on; the safe-by-default choice would break
+    # existing shares on upgrade, so it is opt-in and documented rather
+    # than silent.
+    govern_narrative_without_evidence: bool = Field(default=False)
     # Whether an unsafe recommendation is withheld before the response is
     # built (governance/recommendation_safety.py). On by default: a
     # deterministic, zero-cost content check with no LLM call, and the

@@ -563,3 +563,69 @@ class TestPersistExecuteResult:
             settings=_BASE_SETTINGS,
         )
         assert ok is False
+
+
+class TestInsightSourceColumns:
+    """The column evidence a later read-back needs to judge this turn's
+    narrative (`governance.result_policy.narrative_withhold_reason`).
+
+    Recorded at capture specifically so an `/ask` the user never confirmed
+    with "Confirm and Run" -- which stores no `result_snapshot` -- is still
+    judgeable. Without it that turn's prose had no evidence at all and was
+    served ungoverned, which was F-01's residual edge.
+    """
+
+    def test_it_records_the_columns_a_narrative_was_derived_from(self):
+        metadata = _build_history_metadata(
+            _ask_response(
+                insight="Ada has the highest salary at 187431.",
+                result_columns=["name", "salary"],
+            ),
+            _BASE_SETTINGS,
+            attachment_refs=[],
+        )
+        assert metadata["insight_source_columns"] == ["name", "salary"]
+
+    def test_it_records_them_even_with_no_confirmed_result_snapshot(self):
+        """The whole point: an unconfirmed `/ask` stores no snapshot, so
+        this is the only evidence that turn will ever carry."""
+        metadata = _build_history_metadata(
+            _ask_response(
+                insight="Ada has the highest salary at 187431.",
+                result_columns=["name", "salary"],
+            ),
+            _BASE_SETTINGS,
+            attachment_refs=[],
+        )
+        assert metadata["result_snapshot"] is None
+        assert metadata["insight_source_columns"] == ["name", "salary"]
+
+    def test_a_turn_with_no_narrative_records_no_evidence(self):
+        """Nothing derived means nothing to judge -- recording columns
+        anyway would make the gate withhold a turn that has no prose."""
+        metadata = _build_history_metadata(
+            _ask_response(insight=None, result_columns=["name", "salary"]),
+            _BASE_SETTINGS,
+            attachment_refs=[],
+        )
+        assert metadata["insight_source_columns"] is None
+
+    def test_a_narrative_with_no_known_columns_records_none(self):
+        metadata = _build_history_metadata(
+            _ask_response(insight="A document answer.", result_columns=None),
+            _BASE_SETTINGS,
+            attachment_refs=[],
+        )
+        assert metadata["insight_source_columns"] is None
+
+    def test_a_synthesized_answer_counts_as_narrative_too(self):
+        metadata = _build_history_metadata(
+            _ask_response(
+                insight=None,
+                synthesized_answer="Ada earns the most.",
+                result_columns=["name", "salary"],
+            ),
+            _BASE_SETTINGS,
+            attachment_refs=[],
+        )
+        assert metadata["insight_source_columns"] == ["name", "salary"]

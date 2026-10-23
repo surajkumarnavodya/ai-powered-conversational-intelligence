@@ -46,6 +46,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
@@ -489,6 +490,17 @@ class ConversationSearchHit:
     snippet: str
     message_id: uuid.UUID | None
     updated_at: datetime
+    #: The matched assistant turn's own stored metadata, when this hit
+    #: matched one -- the evidence `api.chat_history` needs to decide
+    #: whether the snippet below may be shown.
+    #:
+    #: A snippet cut from `AiOutput.content` is a fragment of the same
+    #: narrative prose the reload and share surfaces now withhold
+    #: (`governance.result_policy.narrative_withhold_reason`), so search
+    #: would otherwise reopen that channel with the caller's own query
+    #: terms doing the selecting. `None` for a title or question match,
+    #: which are the user's own words and carry no result-derived value.
+    output_metadata: dict[str, Any] | None = None
 
 
 def _snippet(text: str, query: str, *, radius: int = 60) -> str:
@@ -613,6 +625,7 @@ def search_history(
                 matched_in="message",
                 snippet=_snippet(output.content, normalized),
                 message_id=output.id,
+                output_metadata=output.metadata_json or {},
                 updated_at=conversation.last_message_at or conversation.created_at,
             )
         )

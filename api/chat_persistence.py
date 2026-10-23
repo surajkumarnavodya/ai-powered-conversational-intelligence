@@ -208,6 +208,22 @@ def _build_history_metadata(
         ),
         "schema_tables": _schema_table_refs(ask_response),
         "insight": _truncate_text(ask_response.insight, settings),
+        # The column names the narrative above was derived from -- the
+        # evidence `governance.result_policy.narrative_withhold_reason`
+        # needs to judge that prose on a later read-back.
+        #
+        # Without it the gate can only judge a turn that also stored a
+        # `result_snapshot`, i.e. one the user confirmed with "Confirm and
+        # Run"; an `/ask` left unconfirmed still carries an insight written
+        # from real rows and had no evidence attached to it at all.
+        #
+        # Names only, never values, and no new exposure: `sql` directly
+        # above already names these same columns. That is also why this
+        # does not contradict the deliberate exclusion of `result_columns`/
+        # `result_rows` documented above -- what is excluded there is the
+        # agent's internal, never-shown execution *data*, not the schema
+        # identifiers the stored SQL already carries.
+        "insight_source_columns": _insight_source_columns(ask_response),
         "synthesized_answer": _truncate_text(ask_response.synthesized_answer, settings),
         "cost_notice": ask_response.cost_notice,
         "low_confidence_notice": ask_response.low_confidence_notice,
@@ -238,6 +254,20 @@ def _build_history_metadata(
         "attachment_refs": attachment_refs,
         "result_snapshot": None,
     }
+
+
+def _insight_source_columns(ask_response: AskResponse) -> list[str] | None:
+    """The result column names this turn's narrative was written from, or
+    `None` when the turn produced no narrative to judge.
+
+    Deliberately recorded even when `result_snapshot` stays `None` (the
+    user never pressed "Confirm and Run"), because that is exactly the case
+    the narrative gate could not otherwise see.
+    """
+    has_narrative = bool(ask_response.insight or ask_response.synthesized_answer)
+    if not has_narrative or not ask_response.result_columns:
+        return None
+    return [str(column) for column in ask_response.result_columns]
 
 
 def _answer_text_for_history(ask_response: AskResponse) -> str:
