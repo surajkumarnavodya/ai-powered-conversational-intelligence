@@ -10,8 +10,11 @@ cannot see/touch it" counterpart, matching this feature's own explicit
 
 from __future__ import annotations
 
+import uuid
+
 import identity.db as identity_db_mod
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from identity.bootstrap import seed_rbac
 from identity.models import Base
@@ -23,7 +26,9 @@ import api.chat_history as chat_history_mod
 import api.identity_auth as identity_auth_mod
 import api.identity_authz as identity_authz_mod
 import api.main as api_main
+from api.chat_history import CONVERSATION_NOT_FOUND_DETAIL, require_owned_conversation
 from config.settings import Settings
+from security.oidc import AuthIdentity
 
 _SETTINGS = Settings(
     local_auth_enabled=True,
@@ -390,3 +395,130 @@ class TestAskPersistence:
         # attributed to "nobody."
         response = client.post("/ask", json={"question": "test"})
         assert response.status_code == 401
+
+
+class TestRequireOwnedConversation:
+    """`api.chat_history.require_owned_conversation` -- the pre-check that
+    `POST /ask` and `POST /questions` run before spending any work on a
+    caller-supplied `conversation_id`.
+
+    The anti-enumeration property is the point of several of these: an id
+    that belongs to someone else and an id that never existed must be
+    *indistinguishable* in the response, so the pair of tests asserting
+    that compare the two refusals against each other rather than each
+    against a hardcoded string.
+    """
+
+    @staticmethod
+    def _user_id(email: str) -> uuid.UUID:
+        from identity.db import get_identity_session
+        from identity.repositories.users import get_user_by_email
+
+        session = get_identity_session(_SETTINGS)
+        try:
+            user = get_user_by_email(session, email)
+            assert user is not None, f"{email} was not registered"
+            return user.id
+        finally:
+            session.close()
+
+    @staticmethod
+    def _identity(subject: str, mode: str = "local") -> AuthIdentity:
+        return AuthIdentity(subject=subject, roles=("user",), mode=mode)  # type: ignore[arg-type]
+
+    def _alice_conversation(self, client: TestClient) -> str:
+        tokens = _register_and_login(client, "alice@example.com", "Alice")
+        response = client.post(
+            "/conversations", json={"title": "Alice's chat"}, headers=_auth_headers(tokens)
+        )
+        assert response.status_code == 201, response.text
+        return response.json()["id"]
+
+    def test_omitted_id_is_allowed(self, client: TestClient):
+        """The first turn of a new conversation supplies no id at all."""
+        identity = self._identity(str(uuid.uuid4()))
+        require_owned_conversation(identity, None, _SETTINGS)
+
+    def test_own_conversation_is_allowed(self, client: TestClient):
+        conversation_id = self._alice_conversation(client)
+        alice = self._identity(str(self._user_id("alice@example.com")))
+
+        require_owned_conversation(alice, conversation_id, _SETTINGS)
+
+    def test_another_users_conversation_is_refused(self, client: TestClient):
+        """Test case 13: User B sends User A's conversation_id."""
+        alice_conversation = self._alice_conversation(client)
+        _register_and_login(TestClient(api_main.app), "bob@example.com", "Bob")
+        bob = self._identity(str(self._user_id("bob@example.com")))
+
+        with pytest.raises(HTTPException) as excinfo:
+            require_owned_conversation(bob, alice_conversation, _SETTINGS)
+
+        assert excinfo.value.status_code == 404
+        assert excinfo.value.detail == CONVERSATION_NOT_FOUND_DETAIL
+
+    def test_foreign_and_unknown_ids_are_indistinguishable(self, client: TestClient):
+        """The anti-enumeration guarantee, asserted as an equality between
+        the two refusals rather than against a literal: a caller must not
+        be able to tell a real id they don't own from one that was never
+        issued."""
+        alice_conversation = self._alice_conversation(client)
+        _register_and_login(TestClient(api_main.app), "bob@example.com", "Bob")
+        bob = self._identity(str(self._user_id("bob@example.com")))
+
+        with pytest.raises(HTTPException) as foreign:
+            require_owned_conversation(bob, alice_conversation, _SETTINGS)
+        with pytest.raises(HTTPException) as unknown:
+            require_owned_conversation(bob, str(uuid.uuid4()), _SETTINGS)
+
+        assert foreign.value.status_code == unknown.value.status_code == 404
+        assert foreign.value.detail == unknown.value.detail
+
+    def test_malformed_id_is_refused_the_same_way(self, client: TestClient):
+        identity = self._identity(str(uuid.uuid4()))
+
+        with pytest.raises(HTTPException) as excinfo:
+            require_owned_conversation(identity, "not-a-uuid", _SETTINGS)
+
+        assert excinfo.value.status_code == 404
+        assert excinfo.value.detail == CONVERSATION_NOT_FOUND_DETAIL
+
+    @pytest.mark.parametrize("mode", ["oidc", "none", "static_token"])
+    def test_non_local_identity_is_skipped(self, client: TestClient, mode: str):
+        """A caller with no `identity.users` row owns nothing, has nothing
+        persisted, and never has server-side history loaded -- so there is
+        nothing to refuse. Deliberately checked against a *real* id owned
+        by someone else: the skip must be because the id is meaningless on
+        this path, not because the lookup happened to miss."""
+        alice_conversation = self._alice_conversation(client)
+        identity = self._identity("some-opaque-subject", mode=mode)
+
+        require_owned_conversation(identity, alice_conversation, _SETTINGS)
+
+    def test_local_auth_disabled_is_skipped(self, client: TestClient):
+        alice_conversation = self._alice_conversation(client)
+        alice = self._identity(str(self._user_id("alice@example.com")))
+
+        require_owned_conversation(
+            alice, alice_conversation, _SETTINGS.model_copy(update={"local_auth_enabled": False})
+        )
+
+    def test_non_uuid_subject_is_skipped(self, client: TestClient):
+        alice_conversation = self._alice_conversation(client)
+        identity = self._identity("not-a-uuid-subject")
+
+        require_owned_conversation(identity, alice_conversation, _SETTINGS)
+
+    def test_unreachable_identity_db_fails_open(self, client: TestClient, monkeypatch):
+        """Documented fail-open: ownership cannot be verified, but the write
+        path re-resolves the same id through the same ownership-scoped
+        query, so it cannot be violated either."""
+        alice_conversation = self._alice_conversation(client)
+        bob = self._identity(str(uuid.uuid4()))
+
+        def _boom(settings=None):
+            raise RuntimeError("identity DB unreachable")
+
+        monkeypatch.setattr(identity_db_mod, "get_identity_session", _boom)
+
+        require_owned_conversation(bob, alice_conversation, _SETTINGS)

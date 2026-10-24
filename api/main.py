@@ -88,6 +88,7 @@ from api.attachments import router as attachments_router
 from api.authz import require_permission
 from api.bi_integration import router as bi_integration_router
 from api.briefing import router as briefing_router
+from api.chat_history import require_owned_conversation
 from api.chat_history import router as chat_history_router
 from api.chat_persistence import persist_ask_turn, persist_execute_result
 from api.data_quality import router as data_quality_router
@@ -1448,6 +1449,13 @@ def ask(
             detail=QUESTION_LIMIT_MESSAGE,
             headers={"Retry-After": str(int(rate_limit_result.retry_after_seconds) + 1)},
         )
+
+    # A borrowed or guessed conversation_id is refused here -- before an
+    # admission slot, an LLM call or a database query is spent on it, and
+    # before any history is read -- with the same generic 404 every other
+    # conversation route returns, so "not yours" and "doesn't exist" stay
+    # indistinguishable. See api.chat_history.require_owned_conversation.
+    require_owned_conversation(identity, payload.conversation_id, settings)
 
     conversation_history: list[ConversationExchange] = [
         ConversationExchange(

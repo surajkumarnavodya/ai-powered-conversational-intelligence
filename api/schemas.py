@@ -72,6 +72,10 @@ class AskRequest(BaseModel):
             "turn under -- only meaningful for a locally-authenticated caller (see "
             "api/chat_persistence.py); ignored otherwise. Omit on the first turn of a new "
             "conversation -- one is created automatically and returned in AskResponse. "
+            "Never invent one: an id that is not a live conversation this caller owns is "
+            "refused with 404 before any work starts (api.chat_history"
+            ".require_owned_conversation), using the same generic message a nonexistent "
+            "id gets, so it cannot be used to discover which ids are real. "
             "Unrelated to session_id above: this is real, permanent server-side storage, "
             "not a correlation token."
         ),
