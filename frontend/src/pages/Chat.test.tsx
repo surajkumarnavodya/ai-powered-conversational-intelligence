@@ -491,3 +491,50 @@ describe('Chat page', () => {
     })
   })
 })
+
+describe('Chat page -- keyboard scrolling', () => {
+  /** Arrow keys, PageUp/PageDown, Home and End scroll whichever scrollable
+   * element holds focus. A bare `overflow-y-auto` div cannot hold focus,
+   * so none of them reached the transcript -- and `<main>` is
+   * `overflow-hidden`, so the document could not take them either. The
+   * region was mouse-and-touch only.
+   *
+   * jsdom performs no layout and does not implement native scroll-on-key,
+   * so these pin the thing that was actually broken -- the region can take
+   * focus and is named -- rather than simulating a scroll jsdom would fake
+   * either way. */
+  it('makes the transcript focusable, so the keyboard can scroll it', () => {
+    useChatStore.setState({ queryHistory: [makeEntry('First')] } as never)
+    const { container } = renderChat()
+    const scrollEl = getScrollContainer(container)
+
+    expect(scrollEl).toHaveAttribute('tabindex', '0')
+    scrollEl.focus()
+    expect(scrollEl).toHaveFocus()
+  })
+
+  it('names the transcript region, so the new tab stop is not an unlabelled stop', () => {
+    useChatStore.setState({ queryHistory: [makeEntry('First')] } as never)
+    const { container } = renderChat()
+    const scrollEl = getScrollContainer(container)
+
+    expect(scrollEl).toHaveAttribute('role', 'region')
+    expect(scrollEl.getAttribute('aria-label')).toBeTruthy()
+  })
+
+  it('leaves arrow keys to the browser rather than intercepting them', () => {
+    // The fix is focusability, not a key handler. If something here began
+    // calling preventDefault on an arrow key, native scrolling would stop
+    // again and this is what would catch it.
+    useChatStore.setState({ queryHistory: [makeEntry('First')] } as never)
+    const { container } = renderChat()
+    const scrollEl = getScrollContainer(container)
+    scrollEl.focus()
+
+    for (const key of ['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'PageDown', 'Home']) {
+      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+      scrollEl.dispatchEvent(event)
+      expect(event.defaultPrevented, `${key} must stay with the browser`).toBe(false)
+    }
+  })
+})

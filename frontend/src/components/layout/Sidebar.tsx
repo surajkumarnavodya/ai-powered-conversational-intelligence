@@ -134,7 +134,15 @@ export function Sidebar({ onNavigate, collapsed = false }: SidebarProps) {
         />
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
+      {/* Focusable so Up/Down scroll the list -- same reason as the
+          transcript and the results table. Tabbing here lands on the
+          region first, then into the conversation links themselves. */}
+      <div
+        tabIndex={0}
+        role="region"
+        aria-label={t('common.scrollRegionHistory')}
+        className="min-h-0 flex-1 overflow-y-auto px-3 pb-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--focus-ring)]"
+      >
         {search.isSearchMode ? (
           <ConversationSearchResults
             results={search.results}

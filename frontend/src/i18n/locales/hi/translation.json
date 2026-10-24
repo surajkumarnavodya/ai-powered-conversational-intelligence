@@ -260,7 +260,10 @@
     "confirm": "पुष्टि करें",
     "readAloud": "ज़ोर से पढ़ें",
     "stopReading": "पढ़ना बंद करें",
-    "readAloudFailed": "इसे ज़ोर से नहीं पढ़ा जा सका"
+    "readAloudFailed": "इसे ज़ोर से नहीं पढ़ा जा सका",
+    "scrollRegionConversation": "बातचीत, स्क्रॉल करने योग्य",
+    "scrollRegionHistory": "बातचीत का इतिहास, स्क्रॉल करने योग्य",
+    "scrollRegionResults": "परिणाम तालिका, स्क्रॉल करने योग्य"
   },
   "share": {
     "menuItem": "साझा करें",

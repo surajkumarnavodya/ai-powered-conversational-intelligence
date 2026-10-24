@@ -149,7 +149,31 @@ export function Chat() {
         onClick={() => scrollToBottom()}
         bottomOffsetPx={composerHeight + 16}
       />
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+      {/* Focusable so the keyboard can actually scroll it.
+
+          Arrow keys, PageUp/PageDown, Home and End scroll whichever
+          scrollable element has focus. A bare `overflow-y-auto` div is not
+          focusable, so none of those keys reached this region at all --
+          and `<main>` above is `overflow-hidden`, so the document could
+          not take them either. The transcript was mouse-and-touch only.
+
+          `tabIndex={0}` is the whole fix: the browser then scrolls it
+          natively, so there is no key handler here to get wrong, nothing
+          to `preventDefault`, and PageUp/Home keep working for free. This
+          is also what axe's `scrollable-region-focusable` rule and WCAG
+          2.1.1 ask for.
+
+          Always a tab stop rather than only when it overflows: whether a
+          region scrolls changes with every answer and every window
+          resize, and a tab stop that comes and goes under you is worse
+          than one that is reliably there. */}
+      <div
+        ref={scrollRef}
+        tabIndex={0}
+        role="region"
+        aria-label={t('common.scrollRegionConversation')}
+        className="min-h-0 flex-1 overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--focus-ring)]"
+      >
         {/* `max-w-chat` (48rem, --chat-column in index.css) is the one
             owner of the conversation's measure -- the composer below
             sits in this same box, so the two can never drift apart. The

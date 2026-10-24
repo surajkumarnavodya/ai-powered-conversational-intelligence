@@ -260,7 +260,10 @@
     "confirm": "Confirmer",
     "readAloud": "Lire à voix haute",
     "stopReading": "Arrêter la lecture",
-    "readAloudFailed": "Impossible de lire ce texte à voix haute"
+    "readAloudFailed": "Impossible de lire ce texte à voix haute",
+    "scrollRegionConversation": "Conversation, défilable",
+    "scrollRegionHistory": "Historique des conversations, défilable",
+    "scrollRegionResults": "Tableau de résultats, défilable"
   },
   "share": {
     "menuItem": "Partager",
