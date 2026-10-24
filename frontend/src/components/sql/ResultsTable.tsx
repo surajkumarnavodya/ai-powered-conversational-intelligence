@@ -182,7 +182,17 @@ export function ResultsTable({ columns, rows }: { columns: string[]; rows: unkno
   // dialog -- a second copy of this markup is how the two would drift.
   // `heightClass` is the only difference between them.
   const grid = (heightClass: string) => (
-    <div className={`scroll-x rounded-md border border-[var(--border)] ${heightClass}`}>
+    // Focusable for the same reason the transcript is: this is the one
+    // region in a turn that scrolls *horizontally* (a wide result exceeds
+    // the reading column), and Left/Right only reach a scroll container
+    // that can hold focus. Without it a wide table was draggable with a
+    // mouse and unreachable from the keyboard.
+    <div
+      tabIndex={0}
+      role="region"
+      aria-label={t('common.scrollRegionResults')}
+      className={`scroll-x rounded-md border border-[var(--border)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--focus-ring)] ${heightClass}`}
+    >
       <table className="w-full min-w-max text-left text-sm">
         <caption className="sr-only">
           {t('results.title')} ({filteredRowCount} {t('common.rows')})

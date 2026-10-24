@@ -260,7 +260,10 @@
     "confirm": "पुष्टी करा",
     "readAloud": "मोठ्याने वाचा",
     "stopReading": "वाचणे थांबवा",
-    "readAloudFailed": "हे मोठ्याने वाचता आले नाही"
+    "readAloudFailed": "हे मोठ्याने वाचता आले नाही",
+    "scrollRegionConversation": "संभाषण, स्क्रोल करण्यायोग्य",
+    "scrollRegionHistory": "संभाषण इतिहास, स्क्रोल करण्यायोग्य",
+    "scrollRegionResults": "निकाल सारणी, स्क्रोल करण्यायोग्य"
   },
   "share": {
     "menuItem": "शेअर करा",

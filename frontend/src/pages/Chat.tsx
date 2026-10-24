@@ -125,18 +125,55 @@ export function Chat() {
       />
       <QuestionNavigator entries={queryHistory} scrollContainerRef={scrollRef} />
       <ScrollToBottomButton
-        // Shown when the user has scrolled away from the latest message
-        // (its original rule) *or* while a question is in flight, so the
-        // progress ring is actually visible in the common case of asking
-        // a question from the bottom of the conversation. Clicking it
-        // still only ever scrolls.
-        visible={!isAtBottom || isProcessing}
+        // Shown only when the user has scrolled away from the latest
+        // message -- its original rule, restored.
+        //
+        // It briefly also appeared whenever a question was in flight, so
+        // that the progress ring below would be visible when asking from
+        // the bottom of the conversation. That put a scroll control on
+        // screen in the one state where scrolling to the bottom does
+        // nothing (`useScrollToBottom.scrollToBottom` is
+        // `el.scrollTo({ top: el.scrollHeight })`, a no-op when you are
+        // already there), so the arrow looked broken: you click it and
+        // the page does not move. An affordance that cannot act is worse
+        // than an indicator you have to scroll to see.
+        //
+        // Nothing is lost. At the bottom the pending turn is on screen
+        // with `TimingBadge`'s own live "Thinking Ns…" counter; the ring
+        // matters when you have scrolled away from that and would
+        // otherwise have no sign a question is still running -- which is
+        // exactly when this button is visible anyway.
+        visible={!isAtBottom}
         processing={isProcessing}
         stageLabel={stageLabel}
         onClick={() => scrollToBottom()}
         bottomOffsetPx={composerHeight + 16}
       />
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+      {/* Focusable so the keyboard can actually scroll it.
+
+          Arrow keys, PageUp/PageDown, Home and End scroll whichever
+          scrollable element has focus. A bare `overflow-y-auto` div is not
+          focusable, so none of those keys reached this region at all --
+          and `<main>` above is `overflow-hidden`, so the document could
+          not take them either. The transcript was mouse-and-touch only.
+
+          `tabIndex={0}` is the whole fix: the browser then scrolls it
+          natively, so there is no key handler here to get wrong, nothing
+          to `preventDefault`, and PageUp/Home keep working for free. This
+          is also what axe's `scrollable-region-focusable` rule and WCAG
+          2.1.1 ask for.
+
+          Always a tab stop rather than only when it overflows: whether a
+          region scrolls changes with every answer and every window
+          resize, and a tab stop that comes and goes under you is worse
+          than one that is reliably there. */}
+      <div
+        ref={scrollRef}
+        tabIndex={0}
+        role="region"
+        aria-label={t('common.scrollRegionConversation')}
+        className="min-h-0 flex-1 overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--focus-ring)]"
+      >
         {/* `max-w-chat` (48rem, --chat-column in index.css) is the one
             owner of the conversation's measure -- the composer below
             sits in this same box, so the two can never drift apart. The

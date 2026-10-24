@@ -273,14 +273,37 @@ describe('Chat page', () => {
       expect(button).not.toHaveAttribute('aria-busy')
     })
 
-    it('appears as soon as a question is pending, even at the bottom where the button is normally hidden', () => {
-      // The common case: you ask from the bottom of the conversation. The
-      // ring has to be visible there or the feature does nothing.
+    it('stays hidden at the bottom even while a question is pending, so it is never a dead control', () => {
+      // Regression. The ring briefly forced the button visible whenever a
+      // question was in flight, including at the bottom -- where
+      // `scrollToBottom` is `el.scrollTo({ top: el.scrollHeight })` and so
+      // does nothing. That is an arrow you can click that never moves the
+      // page, which reads as broken. The pending turn's own "Thinking Ns…"
+      // badge is on screen in that state; the ring is for when you have
+      // scrolled away from it.
       useChatStore.setState({
         queryHistory: [makeEntry('First')],
         pendingQuestion: pending(),
       } as never)
       const { container } = renderChat()
+      const button = getScrollToBottomButton(container)
+      expect(button).toHaveAttribute('aria-hidden', 'true')
+      expect(button).toHaveAttribute('tabindex', '-1')
+      expect(button.className).toMatch(/pointer-events-none/)
+    })
+
+    it('shows the ring once the user scrolls away, where the arrow does move the page', () => {
+      useChatStore.setState({
+        queryHistory: [makeEntry('First'), makeEntry('Second')],
+        pendingQuestion: pending(),
+      } as never)
+      const { container } = renderChat()
+      const scrollEl = getScrollContainer(container)
+      mockScrollState(scrollEl, { scrollHeight: 2000, scrollTop: 200, clientHeight: 600 })
+      act(() => {
+        fireEvent.scroll(scrollEl)
+      })
+
       const button = getScrollToBottomButton(container)
       expect(button).toHaveAttribute('aria-hidden', 'false')
       expect(button).toHaveAttribute('aria-busy', 'true')
@@ -466,5 +489,52 @@ describe('Chat page', () => {
       // ChatLiveRegion is still mounted and still the lifecycle announcer.
       expect(container.querySelector('[role="status"][aria-live="polite"]')).toBeInTheDocument()
     })
+  })
+})
+
+describe('Chat page -- keyboard scrolling', () => {
+  /** Arrow keys, PageUp/PageDown, Home and End scroll whichever scrollable
+   * element holds focus. A bare `overflow-y-auto` div cannot hold focus,
+   * so none of them reached the transcript -- and `<main>` is
+   * `overflow-hidden`, so the document could not take them either. The
+   * region was mouse-and-touch only.
+   *
+   * jsdom performs no layout and does not implement native scroll-on-key,
+   * so these pin the thing that was actually broken -- the region can take
+   * focus and is named -- rather than simulating a scroll jsdom would fake
+   * either way. */
+  it('makes the transcript focusable, so the keyboard can scroll it', () => {
+    useChatStore.setState({ queryHistory: [makeEntry('First')] } as never)
+    const { container } = renderChat()
+    const scrollEl = getScrollContainer(container)
+
+    expect(scrollEl).toHaveAttribute('tabindex', '0')
+    scrollEl.focus()
+    expect(scrollEl).toHaveFocus()
+  })
+
+  it('names the transcript region, so the new tab stop is not an unlabelled stop', () => {
+    useChatStore.setState({ queryHistory: [makeEntry('First')] } as never)
+    const { container } = renderChat()
+    const scrollEl = getScrollContainer(container)
+
+    expect(scrollEl).toHaveAttribute('role', 'region')
+    expect(scrollEl.getAttribute('aria-label')).toBeTruthy()
+  })
+
+  it('leaves arrow keys to the browser rather than intercepting them', () => {
+    // The fix is focusability, not a key handler. If something here began
+    // calling preventDefault on an arrow key, native scrolling would stop
+    // again and this is what would catch it.
+    useChatStore.setState({ queryHistory: [makeEntry('First')] } as never)
+    const { container } = renderChat()
+    const scrollEl = getScrollContainer(container)
+    scrollEl.focus()
+
+    for (const key of ['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'PageDown', 'Home']) {
+      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+      scrollEl.dispatchEvent(event)
+      expect(event.defaultPrevented, `${key} must stay with the browser`).toBe(false)
+    }
   })
 })

@@ -83,10 +83,17 @@ export function ScrollToBottomButton({
       className={cn(
         // h-8/w-8 (32px) rather than the original 40px: the smaller disc
         // reads as a lighter-weight affordance and leaves more of the
-        // conversation visible. `hit-area-44` keeps the *clickable* box at
-        // a comfortable ~44px via a transparent pseudo-element, so the
-        // visual shrink does not cost tap accuracy on a phone.
-        'hit-area-44 absolute left-1/2 z-20 flex h-8 w-8 -translate-x-1/2 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--card)] text-[var(--muted-foreground)] shadow-md transition-[opacity,transform] duration-150 ease-out hover:bg-[var(--muted)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] motion-reduce:transition-none',
+        // conversation visible.
+        //
+        // It briefly carried a `hit-area-44` class that grew the clickable
+        // box to ~44px with a transparent pseudo-element. Removed: that
+        // box is invisible and sits *over* the conversation, so it also
+        // swallowed clicks and text selection in a 6px band around a
+        // control the user never saw there. 32px already clears WCAG 2.2's
+        // 24px minimum target size, and buying the more comfortable 44px
+        // by making a strip of the transcript unselectable is the wrong
+        // trade on a control that floats over content.
+        'absolute left-1/2 z-20 flex h-8 w-8 -translate-x-1/2 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--card)] text-[var(--muted-foreground)] shadow-md transition-[opacity,transform] duration-150 ease-out hover:bg-[var(--muted)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] motion-reduce:transition-none',
         visible ? 'translate-y-0 opacity-100' : 'pointer-events-none translate-y-1 opacity-0',
         // Ring is a pseudo-element at a negative inset, so adding it
         // cannot resize this button or shift anything around it.

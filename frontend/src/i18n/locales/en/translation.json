@@ -472,7 +472,10 @@
     "confirm": "Confirm",
     "readAloud": "Read aloud",
     "stopReading": "Stop reading",
-    "readAloudFailed": "Couldn't read this aloud"
+    "readAloudFailed": "Couldn't read this aloud",
+    "scrollRegionConversation": "Conversation, scrollable",
+    "scrollRegionHistory": "Conversation history, scrollable",
+    "scrollRegionResults": "Results table, scrollable"
   },
   "share": {
     "menuItem": "Share",

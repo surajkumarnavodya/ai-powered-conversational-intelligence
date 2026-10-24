@@ -173,9 +173,11 @@ describe('ScrollToBottomButton', () => {
       const busy = screen.getByRole('button', { name: 'Scroll to latest message' })
       // Identical box/position utilities; the ring is a pseudo-element.
       expect(busy.className).toMatch(/h-8 w-8/)
-      // The shrunken disc keeps a ~44px clickable box via `hit-area-44`,
-      // so the visual size change does not regress tap accuracy.
-      expect(busy.className).toMatch(/hit-area-44/)
+      // No invisible hit-area expansion: the transparent 44px box this
+      // briefly carried floated over the conversation and swallowed
+      // clicks and text selection around a control the reader could not
+      // see. 32px already clears WCAG 2.2's 24px minimum.
+      expect(busy.className).not.toMatch(/hit-area/)
       expect(busy.style.bottom).toBe('92px')
       expect(busy.className.replace(/\s+/g, ' ').replace(' dotted-ring', '')).toBe(idleClass)
     })

@@ -260,7 +260,10 @@
     "confirm": "Confirmar",
     "readAloud": "Leer en voz alta",
     "stopReading": "Detener lectura",
-    "readAloudFailed": "No se pudo leer en voz alta"
+    "readAloudFailed": "No se pudo leer en voz alta",
+    "scrollRegionConversation": "Conversación, desplazable",
+    "scrollRegionHistory": "Historial de conversaciones, desplazable",
+    "scrollRegionResults": "Tabla de resultados, desplazable"
   },
   "share": {
     "menuItem": "Compartir",

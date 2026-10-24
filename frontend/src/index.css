@@ -526,23 +526,6 @@ body {
   animation: dotted-ring-spin 2.4s linear infinite;
 }
 
-/* Keeps the shrunken button a comfortable touch target without making it
-   look bigger: a transparent, non-painting pseudo-element that extends
-   the clickable box to ~44px around the 32px circle. Without it, dropping
-   the button from 40px to 32px would quietly regress tap accuracy on a
-   phone -- WCAG 2.2's 24px floor would still be met, but the comfortable
-   44px it recommends would not.
-
-   `::before` rather than `::after` because the ring already owns
-   `::after`; pointer events on a pseudo-element are dispatched to its
-   originating button, so this needs no handler of its own. */
-.hit-area-44::before {
-  content: '';
-  position: absolute;
-  inset: -6px;
-  border-radius: 9999px;
-}
-
 /* Respects the OS-level "reduce motion" preference across every animated
    surface in the app (drawer slide, gear rotation, workspace padding
    shift, skeletons) -- a single global override rather than remembering
