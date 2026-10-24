@@ -1,0 +1,620 @@
+# Labelled corpus for conversational context resolution.
+#
+# Needs no database, no Ollama and no vector store: `resolve_context` is a
+# pure function of (message, history), so this whole corpus runs in
+# milliseconds and in CI. That is the point -- CLAUDE.md 13 records that
+# the main eval harness covers the SQL path only and needs real
+# infrastructure, which is why routing and resolution had no measured
+# accuracy figure at all.
+#
+# Each case is one message against one conversation, with the relation a
+# careful reader would assign. Labels are deliberately *hand-written
+# judgements*, not generated from the implementation -- a corpus derived
+# from the code measures nothing. Where a reasonable person could read a
+# message either way, the case is left out rather than labelled
+# arbitrarily; `notes` records the ones that were close.
+#
+# Fields:
+#   history             prior turns, oldest first. `q` question, `a` answer
+#                       (optional), `tables` (optional), `status`
+#                       (optional, default succeeded).
+#   message             what the user typed next.
+#   relation            expected ContextRelation value.
+#   antecedent          expected index into the *eligible* window, when the
+#                       relation uses one and the referent is unambiguous.
+#   resolved_contains   substrings the standalone form must carry. This is
+#                       the entity-resolution signal: it is how we check
+#                       "its" actually became the right product.
+#   resolved_excludes   substrings the standalone form must NOT carry. This
+#                       is the context-leakage signal, used on new topics.
+#   notes               why a case is labelled the way it is, where that is
+#                       not self-evident.
+
+cases:
+  # --- Product research ---------------------------------------------------
+  - id: product_bare_attribute
+    history:
+      - q: Tell me about the Google Pixel 10a
+        a: The Google Pixel 10a is a mid-range phone with a Tensor G5 chip.
+    message: "Price?"
+    relation: followup
+    antecedent: 0
+    resolved_contains: ["Pixel 10a"]
+
+  - id: product_possessive_pronoun
+    history:
+      - q: Tell me about the Google Pixel 10a
+    message: "What is its price?"
+    relation: followup
+    antecedent: 0
+    resolved_contains: ["Pixel 10a"]
+
+  - id: product_pronoun_with_market
+    history:
+      - q: Tell me about the Google Pixel 10a
+    message: "What is its price in the US?"
+    relation: followup
+    antecedent: 0
+    resolved_contains: ["Pixel 10a", "US"]
+    notes: The market is the substance of the ask and must survive the rewrite.
+
+  - id: product_how_much
+    history:
+      - q: Tell me about the Google Pixel 10a
+    message: "how much does it cost"
+    relation: followup
+    antecedent: 0
+    resolved_contains: ["Pixel 10a"]
+
+  - id: product_battery
+    history:
+      - q: Tell me about the Google Pixel 10a
+    message: "Battery life?"
+    relation: followup
+    antecedent: 0
+    resolved_contains: ["Pixel 10a"]
+
+  - id: product_availability
+    history:
+      - q: Tell me about the Samsung Galaxy A56
+    message: "Is it available in India?"
+    relation: followup
+    antecedent: 0
+    resolved_contains: ["Galaxy A56", "India"]
+
+  - id: product_specs_paraphrase
+    history:
+      - q: Tell me about the Samsung Galaxy A56
+    message: "specs?"
+    relation: followup
+    antecedent: 0
+    resolved_contains: ["Galaxy A56"]
+
+  - id: product_comparison_names_both
+    history:
+      - q: Tell me about the Google Pixel 10a
+    message: "compare it with the Galaxy A56"
+    relation: followup
+    antecedent: 0
+    resolved_contains: ["Pixel 10a", "Galaxy A56"]
+
+  - id: product_two_candidates_is_ambiguous
+    history:
+      - q: Tell me about the Google Pixel 10a
+      - q: Tell me about the Samsung Galaxy A56
+    message: "What is its price?"
+    relation: ambiguous
+    notes: >
+      Two named products, and the message carries nothing to choose
+      between them. Asking is correct; picking the most recent silently is
+      the behaviour this feature replaces.
+
+  - id: product_two_candidates_disambiguated
+    history:
+      - q: Tell me about the Google Pixel 10a
+      - q: Tell me about the Samsung Galaxy A56
+    message: "What is the Pixel 10a's price?"
+    relation: new_topic
+    notes: >
+      It names its own subject outright, so it needs nothing carried --
+      and must not be reported ambiguous.
+
+  - id: product_budget_change
+    history:
+      - q: Recommend laptops for programming under 80,000 rupees
+    message: "I meant 60,000."
+    relation: correction
+    antecedent: 0
+
+  # --- Programming and debugging -----------------------------------------
+  - id: code_show_an_example
+    history:
+      - q: Explain dependency injection in .NET
+    message: "Show an example."
+    relation: followup
+    antecedent: 0
+    resolved_contains: ["dependency injection"]
+
+  - id: code_example_paraphrase
+    history:
+      - q: Explain dependency injection in .NET
+    message: "Can I see a sample?"
+    relation: followup
+    antecedent: 0
+    resolved_contains: ["dependency injection"]
+
+  - id: debug_how_do_i_fix_it
+    history:
+      - q: My Angular application has a CORS error
+    message: "How do I fix it?"
+    relation: followup
+    antecedent: 0
+    resolved_contains: ["CORS"]
+
+  - id: debug_still_failing
+    history:
+      - q: My Angular application has a CORS error
+      - q: How do I fix it?
+        a: Add the origin to the server's allowed origins.
+    message: "that didn't work, what else could cause it"
+    relation: followup
+
+  - id: debug_performance_followup
+    history:
+      - q: This Postgres query takes 40 seconds
+        a: Check whether the join column is indexed.
+    message: "How do I add that index?"
+    relation: followup
+    antecedent: 0
+
+  - id: code_new_topic_after_code
+    history:
+      - q: Explain dependency injection in .NET
+    message: "What is the price of crude oil?"
+    relation: new_topic
+    resolved_excludes: ["dependency", "injection", ".NET"]
+
+  # --- Writing and artifacts ---------------------------------------------
+  - id: writing_tone
+    history:
+      - q: Draft a LinkedIn post about our analytics release
+        a: Excited to share that we have shipped a new analytics release!
+    message: "Make it more professional."
+    relation: refinement
+    antecedent: 0
+    resolved_contains: ["LinkedIn"]
+
+  - id: writing_tone_paraphrase
+    history:
+      - q: Draft a LinkedIn post about our analytics release
+        a: Excited to share that we have shipped a new analytics release!
+    message: "Can you make that more formal?"
+    relation: refinement
+    antecedent: 0
+
+  - id: writing_shorten
+    history:
+      - q: Draft a LinkedIn post about our analytics release
+        a: Excited to share that we have shipped a new analytics release!
+    message: "shorten it"
+    relation: refinement
+    antecedent: 0
+
+  - id: writing_reformat
+    history:
+      - q: Draft a LinkedIn post about our analytics release
+        a: Excited to share that we have shipped a new analytics release!
+    message: "rewrite it in bullet points"
+    relation: refinement
+    antecedent: 0
+
+  - id: writing_audience_change
+    history:
+      - q: Write a summary of the Q3 results for the board
+        a: Revenue grew and costs held flat.
+    message: "Rewrite it for the engineering team instead."
+    relation: refinement
+    antecedent: 0
+
+  # --- Planning and education --------------------------------------------
+  - id: plan_expand_a_day
+    history:
+      - q: Create a three-day study plan for the AZ-900 exam
+    message: "Expand day two."
+    relation: refinement
+    antecedent: 0
+    resolved_contains: ["study plan"]
+
+  - id: plan_add_a_constraint
+    history:
+      - q: Create a five-day itinerary for Kerala
+    message: "Make it four days instead."
+    relation: refinement
+    antecedent: 0
+
+  - id: recipe_substitution
+    history:
+      - q: Give me a recipe for paneer butter masala
+    message: "Can you make it vegan?"
+    relation: refinement
+    antecedent: 0
+
+  # --- Business analysis -------------------------------------------------
+  - id: business_scenario
+    history:
+      - q: Analyze a project budget of 2 crore
+    message: "What if costs increase by 15%?"
+    relation: followup
+    antecedent: 0
+    resolved_contains: ["15%", "2 crore"]
+    notes: The baseline it varies has to be carried, not re-asked for.
+
+  - id: business_scenario_paraphrase
+    history:
+      - q: Analyze a project budget of 2 crore
+    message: "Suppose the costs go up 10 percent."
+    relation: followup
+    antecedent: 0
+
+  - id: business_kpi_followup
+    history:
+      - q: Show total sales by year
+        tables: [FactResellerSales]
+        a: Sales grew from 2011 to 2013.
+    message: "Now break that down by month"
+    relation: followup
+    antecedent: 0
+
+  - id: business_narrow_a_year
+    history:
+      - q: Show total sales by year
+        tables: [FactResellerSales]
+      - q: Now break that down by month
+        tables: [FactResellerSales]
+    message: "just 2013 please"
+    relation: followup
+
+  - id: business_add_a_dimension
+    history:
+      - q: Show total sales by year
+        tables: [FactResellerSales]
+      - q: Now break that down by month
+        tables: [FactResellerSales]
+    message: "And by region as well?"
+    relation: followup
+    notes: >
+      A refinement chain on one subject. Every turn shares entities, so
+      this must never be reported ambiguous however closely turns score.
+
+  - id: business_correction_of_a_period
+    history:
+      - q: Show total sales for Q3 2025
+        tables: [FactResellerSales]
+    message: "Sorry, I meant Q2 2025."
+    relation: correction
+    antecedent: 0
+
+  # --- SQL refinements ---------------------------------------------------
+  - id: sql_exclude_a_case
+    history:
+      - q: Write a SQL query for revenue by month
+        tables: [orders]
+        a: "SELECT month, SUM(amount) FROM orders GROUP BY month"
+    message: "Exclude cancelled orders."
+    relation: refinement
+    antecedent: 0
+
+  - id: sql_add_a_column
+    history:
+      - q: Write a SQL query for revenue by month
+        tables: [orders]
+    message: "Also include the order count."
+    relation: refinement
+    antecedent: 0
+
+  - id: sql_change_the_sort
+    history:
+      - q: Top 10 products by revenue
+        tables: [products]
+    message: "Sort it ascending instead."
+    relation: refinement
+    antecedent: 0
+
+  # --- Politely-phrased refinements --------------------------------------
+  # A modifying verb inside a wh-question is part of the question ("How do
+  # I add that index?"); inside a polite modal it is an instruction ("Can
+  # you exclude cancelled orders?"). Getting that backwards made the
+  # second kind come out `new_topic` carrying nothing -- an independent
+  # answer to a message that was refining the previous query. These pin
+  # both sides of the distinction.
+  - id: polite_refinement_can_you
+    history:
+      - q: Write a SQL query for revenue by month
+        sql: SELECT month, SUM(amount) FROM orders GROUP BY month
+        tables: [orders]
+    message: "Can you exclude cancelled orders?"
+    relation: refinement
+    antecedent: 0
+    resolved_contains: ["cancelled"]
+
+  - id: polite_refinement_would_you
+    history:
+      - q: Write a SQL query for revenue by month
+        tables: [orders]
+    message: "Would you add the order count too?"
+    relation: refinement
+    antecedent: 0
+
+  - id: polite_refinement_could_you_sort
+    history:
+      - q: Top 10 products by revenue
+        tables: [products]
+    message: "Could you sort it ascending?"
+    relation: refinement
+    antecedent: 0
+
+  - id: wh_question_with_a_modifying_verb_is_not_a_refinement
+    history:
+      - q: This Postgres query takes 40 seconds
+        a: Check whether the join column is indexed.
+    message: "How do I add that index?"
+    relation: followup
+    antecedent: 0
+    notes: >
+      Asks how to do something; it revises no artifact. The counterpart to
+      the three cases above.
+
+  - id: wh_question_asking_what_to_exclude
+    history:
+      - q: This Postgres query takes 40 seconds
+        a: Check whether the join column is indexed.
+    message: "What should I exclude to speed it up?"
+    relation: followup
+    antecedent: 0
+
+  # --- Documents and data analysis ---------------------------------------
+  - id: doc_risk_followup
+    history:
+      - q: Summarize the Q3 variance report
+        a: Spend was 8% over plan, driven by contractor costs.
+    message: "What risks does it name?"
+    relation: followup
+    antecedent: 0
+
+  - id: doc_which_section
+    history:
+      - q: Summarize the Q3 variance report
+        a: Spend was 8% over plan.
+    message: "Which section says that?"
+    relation: followup
+    antecedent: 0
+
+  - id: doc_new_document_is_a_new_topic
+    history:
+      - q: Summarize the Q3 variance report
+    message: "Summarize the FY25 hiring plan."
+    relation: new_topic
+    resolved_excludes: ["variance"]
+
+  # --- Independence -------------------------------------------------------
+  - id: independent_crude_oil
+    history:
+      - q: Tell me about the Google Pixel 10a
+    message: "What is the price of crude oil?"
+    relation: new_topic
+    resolved_excludes: ["Pixel"]
+    notes: >
+      The sharpest leakage case: an attribute word ("price") with a
+      subject of its own. Carrying the phone here would be wrong.
+
+  - id: independent_photosynthesis
+    history:
+      - q: Explain our cloud architecture
+    message: "Explain photosynthesis."
+    relation: new_topic
+    resolved_excludes: ["cloud"]
+
+  - id: independent_database_normalization
+    history:
+      - q: Tell me about the Google Pixel 10a
+    message: "Explain database normalization."
+    relation: new_topic
+    resolved_excludes: ["Pixel"]
+
+  - id: independent_long_question_is_not_a_followup
+    history:
+      - q: Tell me about the Google Pixel 10a
+    message: "Could you walk me through how TCP congestion control works?"
+    relation: new_topic
+    resolved_excludes: ["Pixel"]
+
+  - id: independent_new_metric
+    history:
+      - q: Show total sales by year
+        tables: [FactResellerSales]
+    message: "How many distinct products do we sell?"
+    relation: new_topic
+
+  # --- Explicit resets ----------------------------------------------------
+  - id: reset_forget_that
+    history:
+      - q: Tell me about the Google Pixel 10a
+    message: "Forget that. Explain database normalization."
+    relation: new_topic
+    resolved_contains: ["normalization"]
+    resolved_excludes: ["Pixel", "Forget"]
+
+  - id: reset_new_topic_prefix
+    history:
+      - q: Explain our cloud architecture
+    message: "New topic: explain photosynthesis"
+    relation: new_topic
+    resolved_contains: ["photosynthesis"]
+    resolved_excludes: ["cloud", "New topic"]
+
+  - id: reset_never_mind
+    history:
+      - q: Tell me about the Google Pixel 10a
+    message: "Never mind. What is database sharding?"
+    relation: new_topic
+    resolved_excludes: ["Pixel"]
+
+  - id: reset_unrelated_question
+    history:
+      - q: Show total sales by year
+        tables: [FactResellerSales]
+    message: "Completely different question: what is a materialized view?"
+    relation: new_topic
+    resolved_excludes: ["sales"]
+
+  - id: reset_lets_switch
+    history:
+      - q: Explain our cloud architecture
+    message: "Let's switch topic: how does DNS resolution work?"
+    relation: new_topic
+    resolved_excludes: ["cloud"]
+
+  # --- Returning to an older topic ---------------------------------------
+  - id: return_named_issue
+    history:
+      - q: My Angular application has a CORS error
+      - q: Explain dependency injection in .NET
+      - q: Show total sales by year
+        tables: [FactResellerSales]
+    message: "Back to that CORS issue from earlier -- what else could cause it?"
+    relation: topic_return
+    antecedent: 0
+    resolved_contains: ["CORS"]
+
+  - id: return_going_back_to
+    history:
+      - q: My Angular application has a CORS error
+      - q: Explain dependency injection in .NET
+      - q: Show total sales by year
+        tables: [FactResellerSales]
+    message: "going back to dependency injection, show another example"
+    relation: topic_return
+    antecedent: 1
+    resolved_contains: ["dependency injection"]
+
+  - id: return_you_mentioned
+    history:
+      - q: Recommend laptops under 80,000 rupees
+        a: The ThinkPad E14 and the IdeaPad Slim 5 both fit.
+      - q: Explain dependency injection in .NET
+    message: "you mentioned the ThinkPad earlier -- what is its warranty?"
+    relation: topic_return
+    antecedent: 0
+
+  - id: return_the_first_option
+    history:
+      - q: Recommend laptops under 80,000 rupees
+        a: The ThinkPad E14 and the IdeaPad Slim 5 both fit.
+      - q: Explain dependency injection in .NET
+      - q: Show total sales by year
+        tables: [FactResellerSales]
+    message: "what about the first option you gave?"
+    relation: topic_return
+    antecedent: 0
+
+  # --- Missing context and genuinely unanswerable fragments --------------
+  - id: missing_context_first_turn
+    history: []
+    message: "Now break that down by month"
+    relation: missing_context
+
+  - id: missing_context_bare_pronoun
+    history: []
+    message: "What is its price?"
+    relation: missing_context
+
+  - id: missing_context_bare_attribute
+    history: []
+    message: "Price?"
+    relation: missing_context
+
+  - id: fragment_why_with_history
+    history:
+      - q: Show total sales by year
+        tables: [FactResellerSales]
+    message: "why"
+    relation: ambiguous
+    notes: >
+      Names no subject and no attribute, so there is no question to
+      rewrite -- supplying one would mean inventing it. Distinct from
+      "Price?", which does ask something.
+
+  - id: fragment_single_word_no_history
+    history: []
+    message: "more"
+    relation: ambiguous
+
+  # --- Unsuccessful turns are not context --------------------------------
+  - id: failed_turn_is_not_an_antecedent
+    history:
+      - q: Tell me about the Google Pixel 10a
+      - q: Tell me about the Samsung Galaxy A56
+        status: failed
+    message: "Price?"
+    relation: followup
+    antecedent: 0
+    resolved_contains: ["Pixel 10a"]
+    notes: >
+      The failed turn established nothing, so it is neither an antecedent
+      nor a competing referent -- which is also why this is not ambiguous.
+
+  - id: clarified_turn_is_not_an_antecedent
+    history:
+      - q: Show total sales by year
+        tables: [FactResellerSales]
+      - q: and that one?
+        status: needs_clarification
+    message: "Now by month"
+    relation: followup
+    antecedent: 0
+
+  # --- Long conversations ------------------------------------------------
+  - id: long_conversation_recent_wins
+    history:
+      - q: Show headcount by department
+        tables: [DimEmployee]
+      - q: Show total sales by year
+        tables: [FactResellerSales]
+      - q: Now break that down by month
+        tables: [FactResellerSales]
+      - q: Just 2013
+        tables: [FactResellerSales]
+      - q: And by region
+        tables: [FactResellerSales]
+      - q: Top 10 resellers
+        tables: [DimReseller]
+    message: "Show only the top 3 of those."
+    relation: refinement
+    antecedent: 5
+    notes: >
+      Labelled `followup` on first authoring and corrected to
+      `refinement`: narrowing the previous result to its top 3 is a
+      refinement of that result, which is what the brief's own
+      "refine/expand/summarize a previous response" category describes.
+      Recorded here rather than quietly changed, because a corpus tuned to
+      match an implementation measures nothing -- the point of this case
+      is the *antecedent*, which must be turn 5 and not an earlier topic
+      in a six-turn conversation about three different subjects.
+
+  - id: long_conversation_explicit_return
+    history:
+      - q: My Angular application has a CORS error
+      - q: Show total sales by year
+        tables: [FactResellerSales]
+      - q: Now break that down by month
+        tables: [FactResellerSales]
+      - q: Just 2013
+        tables: [FactResellerSales]
+      - q: And by region
+        tables: [FactResellerSales]
+      - q: Top 10 resellers
+        tables: [DimReseller]
+    message: "Earlier I asked about a CORS error -- any other causes?"
+    relation: topic_return
+    antecedent: 0
+    resolved_contains: ["CORS"]

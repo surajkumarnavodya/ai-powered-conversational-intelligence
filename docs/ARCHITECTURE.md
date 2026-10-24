@@ -28,7 +28,7 @@ the full picture, straight from `agent/graph.py::build_graph()`:
 flowchart TD
     START(["run_agent(question)"]) --> SI["sanitize_input<br/>length cap, Unicode normalization,<br/>injection-pattern pre-filter"]
     SI -->|rejected| ENDREJ1(["END — rejected"])
-    SI --> CF["classify_followup<br/>standalone / follow-up / ambiguous"]
+    SI --> CF["classify_followup<br/>resolve against the conversation"]
     CF -->|ambiguous| ENDCLAR(["END — needs_clarification"])
     CF --> RS["retrieve_schema<br/>ChromaDB top-k + FK-adjacency bridge"]
     RS --> RGE["retrieve_golden_examples<br/>human-approved past (question, SQL) pairs"]
@@ -131,12 +131,29 @@ becomes `"rejected"` and the graph ends immediately with a standardized,
 non-technical message — never the raw reason or which pattern matched, so
 a rejection gives an attacker no signal to iterate against.
 
-**`classify_followup_node`** — a cheap, regex-only heuristic
-(`agent.followup.classify_followup`) deciding whether the (already
-sanitized) question is standalone, a follow-up to the most recent prior
-exchange, or ambiguous — before any schema retrieval or LLM call. On
-`"ambiguous"`, the graph ends immediately with `status="needs_clarification"`
-rather than guessing.
+**`classify_followup_node`** — resolves what the (already sanitized)
+question *means* relative to the conversation before it, before any schema
+retrieval or LLM call. Three outputs the rest of the graph reads: a
+**relation** (`agent.context_resolution.ContextRelation` — new topic,
+follow-up, refinement of a previous answer, correction of an earlier
+constraint, return to an older topic, or "cannot tell"); the
+**antecedent**, chosen by scoring every turn in the resolution window
+rather than by taking the most recent one; and the question's
+**standalone form** in `state["resolved_question"]`, which is what this
+node's successors embed and prompt with. `state["question"]` is left
+exactly as typed — the transcript and the audit log read that.
+
+On a relation that needs clarification, the graph ends immediately with
+`status="needs_clarification"` rather than guessing, exactly as the
+narrower "ambiguous" classification always has. A rewrite is also
+re-governed before use: it widens what is being asked, so
+`governance.request_policy.evaluate_request` runs again on the resolved
+text and can refuse (fail-closed) even though the typed text passed.
+
+`ENABLE_CONTEXT_RESOLUTION=false` restores the previous behaviour —
+`agent.followup.classify_followup` alone, the antecedent bound to
+`conversation_history[-1]`, and no rewrite.
+**Authoritative:** [`CONVERSATIONAL_CONTEXT.md`](CONVERSATIONAL_CONTEXT.md).
 
 **`retrieve_schema_node`** — on the first pass, if more than one database is
 configured (`Settings.databases`, via `DB_CONNECTIONS`), calls

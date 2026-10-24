@@ -73,6 +73,61 @@ def _isolate_settings_from_real_environment(monkeypatch: pytest.MonkeyPatch) -> 
         monkeypatch.delenv(field_name.upper(), raising=False)
 
 
+class RealOllamaCallInTest(AssertionError):
+    """A test reached the real Ollama server.
+
+    Its own class so the message is unmistakable in a failure report, and
+    so a test that deliberately wants to assert this guard fires can catch
+    it precisely.
+    """
+
+
+@pytest.fixture(autouse=True)
+def _block_real_ollama_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Makes CLAUDE.md 7's "no real Ollama" rule load-bearing.
+
+    That rule was documented but nothing enforced it, and the gap was
+    real: `tests/test_orchestrator.py::TestRunOrchestrated
+    ::test_flag_off_with_attachments_still_runs_the_orchestrator_graph`
+    ran the orchestrator graph for real, so `router_node` called
+    `agent.orchestrator.nodes.classify_sources_structured`, which submits
+    `rag.llm.call_ollama` to a `ThreadPoolExecutor` it then abandons with
+    `shutdown(wait=False)`. The test passed on the keyword fallback while
+    the abandoned worker went on to make a genuine HTTP request to
+    `localhost:11434` -- visible only as an `httpx` log line printed
+    *after* pytest's own summary, which is why it survived so long.
+
+    On a developer machine with Ollama running that makes the suite
+    slower, non-deterministic, and dependent on which models happen to be
+    installed. In CI, where no Ollama exists, the same call fails and
+    falls back, so the suite stayed green either way and never reported
+    the difference.
+
+    Patching `ollama.Client.chat` rather than `rag.llm.call_ollama` or
+    `agent.llm_client`'s helpers is deliberate: it is the single point
+    every path reaches the network through, including from a thread a node
+    has already stopped waiting for, so no new call site can route around
+    it. A test that wants an LLM reply patches its own seam
+    (`rag.llm.call_ollama`, `agent.nodes.generate_sql_from_llm`, ...) as
+    tests here already do, and never sees this.
+    """
+
+    def _refuse(*_args: object, **_kwargs: object) -> object:
+        raise RealOllamaCallInTest(
+            "A test reached the real Ollama server. Patch the seam the code "
+            "under test actually uses (rag.llm.call_ollama, "
+            "agent.nodes.generate_sql_from_llm, ...) instead of relying on a "
+            "timeout or a fallback. See tests/conftest.py's "
+            "_block_real_ollama_calls."
+        )
+
+    import ollama
+
+    monkeypatch.setattr(ollama.Client, "chat", _refuse, raising=False)
+    monkeypatch.setattr(ollama.Client, "embed", _refuse, raising=False)
+    monkeypatch.setattr(ollama.Client, "embeddings", _refuse, raising=False)
+
+
 @pytest.fixture(autouse=True)
 def _isolate_published_database_registration(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -135,6 +190,7 @@ def _clear_process_singleton_caches() -> None:
     from model_routing.budget import reset_escalation_limiters
     from model_routing.evidence import reset_evidence_cache
     from model_routing.metrics import get_route_metrics
+    from observability.metrics import get_default_metrics
 
     build_graph.cache_clear()
     build_orchestrator_graph.cache_clear()
@@ -144,6 +200,25 @@ def _clear_process_singleton_caches() -> None:
     _cached_identity_engine.cache_clear()
     _cached_session_factory.cache_clear()
     _get_ask_executor.cache_clear()
+    # `observability.metrics.get_default_metrics` is the same
+    # `functools.cache` singleton pattern, and leaving it out had a real,
+    # long-unattributed consequence. CLAUDE.md 13 recorded five tests
+    # that "fail only in file order" with the cause unknown: when
+    # `tests/security/` ran first,
+    # `TestGenerateRecommendationsNode`/`...QueryStore`'s
+    # `recommendations == []` assertions failed. Root-caused 2026-10-24
+    # with a two-test reproduction --
+    # `test_run_agent_honors_an_explicit_selection_over_routing` ran the
+    # real graph against a real Ollama server (the fixture had not mocked
+    # the two planning seams), `build_analytical_plan` took **14
+    # seconds**, that landed in this process-global rollup, and
+    # `generate_recommendations_node` then correctly emitted "the
+    # 'build_analytical_plan' stage is slow (p95 14039ms)".
+    #
+    # `_block_real_ollama_calls` removes the cause; clearing the rollup
+    # removes the mechanism, so a genuinely slow stage in any future test
+    # cannot leak a performance recommendation into an unrelated one.
+    get_default_metrics.cache_clear()
     # The harness's provider circuit breakers are process-lifetime state
     # in the live LLM path, exactly like the caches above. Without this,
     # a test that drives enough Ollama failures leaves the circuit open

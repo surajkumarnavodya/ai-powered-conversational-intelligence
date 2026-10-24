@@ -142,6 +142,21 @@ def graph_run(monkeypatch):
         )
         monkeypatch.setattr("agent.nodes.generate_analytical_intent_from_llm", lambda *a, **k: None)
         monkeypatch.setattr("agent.nodes.generate_insight_from_llm", lambda *a, **k: None)
+        # The two planning seams. Easy to miss, because they only fire for
+        # a question `agent.complexity` judges non-trivial -- which is
+        # exactly what `test_run_agent_honors_an_explicit_selection_over
+        # _routing` asks ("top 5 products per region with year-over-year
+        # growth and total margin ratio"), and no other test in this file
+        # does. Until `tests/conftest.py::_block_real_ollama_calls`
+        # existed, that one test made a genuine call to a real Ollama
+        # server and passed anyway, so nothing reported the gap. Both are
+        # part of "the LLM calls" this fixture's own docstring says it
+        # mocks.
+        monkeypatch.setattr("agent.nodes.generate_analytical_plan_from_llm", lambda *a, **k: None)
+        monkeypatch.setattr("agent.nodes.generate_query_plan_from_llm", lambda *a, **k: None)
+        monkeypatch.setattr(
+            "agent.nodes.review_sql_against_plan_from_llm", lambda *a, **k: (True, "")
+        )
         if isinstance(generated_sql, str):
             monkeypatch.setattr("agent.nodes.generate_sql_from_llm", lambda *a, **k: generated_sql)
         else:

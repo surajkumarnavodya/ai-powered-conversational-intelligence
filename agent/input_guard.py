@@ -275,16 +275,23 @@ def sanitize_conversation_history(
     backstop, exactly as they already are for every other untrusted text
     that reaches the prompt.
 
-    2026 Phase 3 resource-governance finding: only the single most recent
-    entry is ever functionally read downstream (`agent.nodes
-    .retrieve_schema_node`'s follow-up resolution uses `history[-1]`;
-    `classify_followup_node` only checks whether the list is non-empty at
-    all) -- every older entry was being fully normalized and regex-scanned
-    here for zero functional benefit, an unbounded cost a caller could
-    trivially inflate with an arbitrarily long array. `max_turns` (see
-    `Settings.max_conversation_history_turns`) keeps only the most recent
-    entries before any of that per-entry work runs, rather than doing the
-    work first and truncating the result.
+    `max_turns` (see `Settings.max_conversation_history_turns`) keeps only
+    the most recent entries before any of that per-entry work runs, rather
+    than doing the work first and truncating the result -- a 2026 Phase 3
+    resource-governance finding: `api.schemas.AskRequest
+    .conversation_history` has no schema-level length cap, so an
+    arbitrarily long array would otherwise be fully normalized and
+    regex-scanned, an unbounded cost a caller could trivially inflate.
+
+    That finding also recorded that only `history[-1]` was ever
+    functionally read downstream. **That is no longer true**, and the
+    change is the point of `agent/context_resolution.py`: every turn this
+    function returns is now scored as a candidate antecedent
+    (`score_antecedents`), contributes entities and constraints
+    (`agent.conversation_memory.build_memory`), and -- beyond the
+    resolution window -- is quoted into that snapshot's digest. So the
+    per-entry work here now has a consumer for every entry, and
+    `max_turns` is the real bound on it rather than a bound on waste.
 
     Args:
         history: Raw, caller-supplied prior turns.
@@ -312,9 +319,20 @@ def sanitize_conversation_history(
         question = normalize_text(entry.get("question", ""))[:max_length]
         raw_sql = entry.get("sql")
         sql = normalize_text(raw_sql)[:max_length] if raw_sql is not None else raw_sql
+        # `answer` gets the identical treatment, for the identical reason
+        # (finding LLM-01): it is caller-resent text, and it now reaches
+        # both `agent.context_resolution`'s tier-2 prompt and the router's
+        # "Conversation so far" block, so leaving it unnormalized would
+        # reopen the homoglyph gap on a second entry point. Scanned
+        # alongside the question rather than separately, so one warning
+        # covers the whole turn.
+        raw_answer = entry.get("answer")
+        answer = normalize_text(raw_answer)[:max_length] if raw_answer else raw_answer
 
         matches = tuple(
-            name for name, pattern in _INJECTION_PATTERNS.items() if pattern.search(question)
+            name
+            for name, pattern in _INJECTION_PATTERNS.items()
+            if pattern.search(question) or (answer and pattern.search(answer))
         )
         if matches:
             logger.warning(
@@ -333,12 +351,18 @@ def sanitize_conversation_history(
                 patterns=matches,
             )
 
-        cleaned.append(
-            ConversationExchange(
-                question=question,
-                sql=sql,
-                tables=entry.get("tables", []),
-                status=entry.get("status", "succeeded"),
-            )
+        sanitized = ConversationExchange(
+            question=question,
+            sql=sql,
+            tables=entry.get("tables", []),
+            status=entry.get("status", "succeeded"),
         )
+        # Set only when the caller actually sent one. `answer` is
+        # `NotRequired`, so a turn with no answer comes back exactly as it
+        # went in -- which keeps this function's output equal to its input
+        # for every caller that predates the field, rather than adding an
+        # `answer: None` key to each turn.
+        if answer:
+            sanitized["answer"] = answer
+        cleaned.append(sanitized)
     return cleaned

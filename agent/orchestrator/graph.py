@@ -88,6 +88,8 @@ from agent.orchestrator.nodes import (
     generation_node,
     media_search_node,
     policy_rag_node,
+    resolve_context_node,
+    route_after_context,
     route_after_router,
     router_node,
     sql_subgraph_node,
@@ -115,6 +117,7 @@ def build_orchestrator_graph():
     """
     graph = StateGraph(OrchestratorState)
 
+    graph.add_node("resolve_context", resolve_context_node)
     graph.add_node("router", router_node)
     graph.add_node("sql_subgraph", sql_subgraph_node)
     graph.add_node("document_rag", document_rag_node)
@@ -125,7 +128,26 @@ def build_orchestrator_graph():
     graph.add_node("attachments", attachment_node)
     graph.add_node("synthesis", synthesis_node)
 
-    graph.set_entry_point("router")
+    # `resolve_context` is the entry point, not `router`: the router picks
+    # sources from the question's text, and so do web search, both RAG
+    # collections and media search, so the standalone form has to exist
+    # before any of them run. See `resolve_context_node`.
+    graph.set_entry_point("resolve_context")
+    graph.add_conditional_edges(
+        "resolve_context",
+        route_after_context,
+        {
+            "router": "router",
+            # Both end the run before a router call or any retrieval is
+            # spent: a reference nothing could pin down, and a resolved
+            # question request governance refuses. Straight to END rather
+            # than through `synthesis`, which has nothing to compose --
+            # `status` and `clarification_message`/`rejection_message` are
+            # already set, and the API reads them directly.
+            "needs_clarification": END,
+            "rejected": END,
+        },
+    )
     graph.add_conditional_edges(
         "router",
         route_after_router,
@@ -318,6 +340,12 @@ def run_orchestrated(
         "conversation_history": conversation_history or [],
         "followup_classification": None,
         "followup_resolved_against": None,
+        # Filled by `resolve_context_node` (the entry point) and read by
+        # the router, every source node, and `sql_subgraph_node`, which
+        # forwards them so the SQL graph reuses this resolution rather
+        # than making a second one.
+        "resolved_question": None,
+        "context_resolution": None,
         "clarification_message": None,
         "selected_database": None,
         "selected_model": model,

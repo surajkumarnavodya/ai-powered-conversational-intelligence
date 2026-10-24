@@ -285,6 +285,11 @@ def _question_job_runner(job: JobRecord, envelope: Any) -> JobOutcome:
             sql=turn.get("sql"),
             tables=list(turn.get("tables") or []),
             status=turn.get("status", "succeeded"),
+            # Carried here too, so a queued question resolves against the
+            # same context a synchronous /ask one does. A second path that
+            # saw less history would drift from the governed one -- which
+            # is exactly what `jobs/` injecting its runner exists to stop.
+            answer=turn.get("answer"),
         )
         for turn in request.get("conversation_history", [])
     ]

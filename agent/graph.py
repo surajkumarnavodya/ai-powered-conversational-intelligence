@@ -258,7 +258,7 @@ from agent.nodes import (
     sanitize_input_node,
     validate_sql_node,
 )
-from agent.state import AgentState, ConversationExchange
+from agent.state import AgentState, ContextResolutionRecord, ConversationExchange
 from config.settings import get_settings
 from observability.metrics import get_default_metrics
 from security.audit_log import reset_audit_tenant_id, set_audit_tenant_id
@@ -441,6 +441,9 @@ def run_agent(
     forecast_horizon: int | None = None,
     model_explicitly_selected: bool = False,
     envelope: ExecutionEnvelope | None = None,
+    resolved_question: str | None = None,
+    context_resolution: ContextResolutionRecord | None = None,
+    followup_resolved_against: ConversationExchange | None = None,
 ) -> AgentState:
     """Runs the full agent graph for a single natural-language question.
 
@@ -448,12 +451,15 @@ def run_agent(
         question: The user's natural-language question.
         conversation_history: Recent prior exchanges in this session (oldest
             first), already capped by the caller -- see
-            `ui/session_history.py::build_conversation_history`, which is the
-            single source of truth this is built from (the UI's History
-            panel and follow-up resolution both read the same underlying
-            session state, not two parallel copies). None/empty means "no
-            prior context," which `classify_followup_node` treats the same
-            as an empty list.
+            `frontend/src/lib/history.ts::buildConversationHistory` (the
+            web path) or `eval/history.py` (a script driving the agent),
+            each the single source of truth this is built from -- the
+            history panel and follow-up resolution read the same underlying
+            state, not two parallel copies. (The
+            `ui/session_history.py::build_conversation_history` this used
+            to name was the removed Streamlit app's -- CLAUDE.md §1.)
+            None/empty means "no prior context," which
+            `classify_followup_node` treats the same as an empty list.
         enable_insight: Whether `generate_insight_node` should attempt a
             plain-English insight after a successful execution. True by
             default (normally low-risk, high-value); the UI exposes this as
@@ -482,6 +488,29 @@ def run_agent(
             per-retry -- see that field's own docstring in `agent/state.py`
             for why a question's model choice, like its `selected_database`,
             must stay fixed for the life of one run.
+        resolved_question: The standalone form of `question`, when some
+            caller above this one has already resolved it. Supplied only
+            by `agent.orchestrator.nodes.sql_subgraph_node`, whose graph
+            runs `classify_followup_node` as its own entry point so the
+            router and the non-SQL sources get the resolved question too.
+            `None` (every other caller, including `/ask` with the
+            multi-source router off, `eval/runner.py` and
+            `scripts/integration_test.py`) makes `classify_followup_node`
+            resolve it here, exactly as it does when nothing above it did.
+        context_resolution: The matching `ContextResolutionRecord` for
+            `resolved_question`. Passed together with it and never
+            separately -- it is the presence of *this* value that makes
+            `classify_followup_node` reuse the existing resolution instead
+            of making a second one, so supplying a resolved question
+            without its record would silently resolve twice.
+        followup_resolved_against: The prior exchange that resolution
+            chose, passed with the two above and for the same reason. The
+            record carries the antecedent's question *text*, which is
+            enough to report but not enough to rebuild the block
+            `generate_sql_node` shows the model (that needs the prior
+            SQL and tables too), so the exchange itself is threaded rather
+            than looked up again -- a lookup by question text would pick
+            the wrong turn whenever a conversation repeats a question.
         tenant_id: The authenticated caller's tenant, resolved once by the
             caller (`api/main.py`'s `/ask` handler, via
             `security.tenancy.resolve_tenant_id_for_identity`) exactly like
@@ -569,7 +598,13 @@ def run_agent(
         "rate_limit_message": None,
         "conversation_history": conversation_history or [],
         "followup_classification": None,
-        "followup_resolved_against": None,
+        # Pre-seeded only when a caller above this one already resolved
+        # this question (see the parameters of the same names). Both None
+        # on every other path, which is what makes
+        # `classify_followup_node` do the resolving.
+        "resolved_question": resolved_question,
+        "context_resolution": context_resolution,
+        "followup_resolved_against": followup_resolved_against,
         "clarification_message": None,
         "selected_database": None,
         "selected_model": effective_model,

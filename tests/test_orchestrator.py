@@ -1143,7 +1143,14 @@ class TestNoRetrievalAnswer:
     """`synthesis_node` answering a route that ran no source at all."""
 
     def test_an_unmatched_question_is_told_so(self):
+        # `question` is required now that this route reads the question
+        # (resolved where resolution produced one) to hand to
+        # `answer_without_retrieval`. With
+        # ENABLE_GENERAL_KNOWLEDGE_ANSWERS off -- the default, and what
+        # `conftest.py` strips the environment down to -- the fixed
+        # message is still exactly what comes back.
         state = {
+            "question": "something unmatched",
             "sources_used": [],
             "route_decision": {
                 "sources": [],
@@ -1163,6 +1170,7 @@ class TestNoRetrievalAnswer:
         who said "Hi" that their question matched no data source is not an
         answer to what they said."""
         state = {
+            "question": "Hi there",
             "sources_used": [],
             "route_decision": {
                 "sources": [],
@@ -2700,6 +2708,26 @@ class TestRunOrchestrated:
             )
 
         monkeypatch.setattr(orchestrator_graph, "run_agent", _should_not_be_called)
+        # This test runs the *real* orchestrator graph, so `router_node`
+        # reaches `classify_sources_structured` for real. Stubbed here so
+        # routing is a decision rather than an accident: before this, the
+        # router's abandoned worker thread made a genuine HTTP request to
+        # localhost:11434 and the test only passed because the keyword
+        # fallback happened to agree. `tests/conftest.py
+        # ::_block_real_ollama_calls` now stops the request itself, but a
+        # test that depends on a fallback firing is still testing the
+        # fallback, not what it says it tests.
+        # `general_knowledge` is a no-retrieval route, so it contributes no
+        # source of its own and the only thing left is the attachment the
+        # caller explicitly attached -- which is exactly what this test is
+        # about. ("attachments" is deliberately not a value the router can
+        # return; `router_node` forces it in, it is never the classifier's
+        # to choose. See `ROUTED_SOURCE_NAMES`.)
+        monkeypatch.setattr(
+            orchestrator_nodes,
+            "classify_sources_structured",
+            _structured_stub(["general_knowledge"], "no retrieval needed"),
+        )
         # attachment_node imports run_attachment_qa locally (from
         # attachments.graph import run_attachment_qa) at call time, not at
         # agent.orchestrator.nodes's own module scope -- patch it at its

@@ -91,6 +91,7 @@ from api.briefing import router as briefing_router
 from api.chat_history import require_owned_conversation
 from api.chat_history import router as chat_history_router
 from api.chat_persistence import persist_ask_turn, persist_execute_result
+from api.conversation_context import load_server_history
 from api.data_quality import router as data_quality_router
 from api.decision_center import router as decision_center_router
 from api.documents import router as documents_router
@@ -131,6 +132,7 @@ from api.schemas import (
     ColumnOut,
     ColumnSemanticsOut,
     ComponentHealth,
+    ContextResolutionOut,
     ConversationExchangeOut,
     DatabaseHealth,
     ExecuteRequest,
@@ -1075,6 +1077,32 @@ def _followup_resolved_against_out(
         sql=exchange.get("sql"),
         tables=exchange.get("tables", []),
         status=exchange["status"],
+        answer=exchange.get("answer"),
+    )
+
+
+def _context_resolution_out(
+    record: Mapping[str, Any] | None,
+) -> ContextResolutionOut | None:
+    """Maps `agent.state.ContextResolutionRecord` onto the response model.
+
+    None passes through as None, which is what a client sees whenever
+    `ENABLE_CONTEXT_RESOLUTION` is off -- the field's documented "switched
+    off" value, not an error.
+    """
+    if record is None:
+        return None
+    return ContextResolutionOut(
+        relation=record["relation"],
+        resolved_question=record["resolved_question"],
+        rewritten=record["rewritten"],
+        antecedent_question=record.get("antecedent_question"),
+        confidence=record["confidence"],
+        source=record["source"],
+        carried_constraints=record.get("carried_constraints", []),
+        replaced_constraints=record.get("replaced_constraints", []),
+        candidate_topics=record.get("candidate_topics", []),
+        signals=record.get("signals", []),
     )
 
 
@@ -1151,6 +1179,8 @@ def _ask_response_from_state(
         followup_resolved_against=_followup_resolved_against_out(
             state.get("followup_resolved_against")
         ),
+        context_resolution=_context_resolution_out(state.get("context_resolution")),
+        answer_truth_level=state.get("answer_truth_level"),
         permission_denied_notice=_redact_text(state.get("permission_denied_notice"), settings),
         source_selection_notice=_redact_text(state.get("source_selection_notice"), settings),
         analytical_intent=_analytical_intent_out(state.get("analytical_intent")),
@@ -1457,12 +1487,34 @@ def ask(
     # indistinguishable. See api.chat_history.require_owned_conversation.
     require_owned_conversation(identity, payload.conversation_id, settings)
 
-    conversation_history: list[ConversationExchange] = [
-        ConversationExchange(
-            question=turn.question, sql=turn.sql, tables=turn.tables, status=turn.status
+    # This server's own record of the conversation, when an operator has
+    # made it authoritative (`CONVERSATION_HISTORY_SOURCE=server`) and
+    # this caller actually has one. `None` -- the default, and every
+    # caller with nothing stored -- means the client's array is used,
+    # exactly as before. Read *after* `require_owned_conversation` above,
+    # so a borrowed id is already refused.
+    stored_history = load_server_history(identity, payload.conversation_id, settings)
+    conversation_history: list[ConversationExchange] = (
+        stored_history
+        if stored_history is not None
+        else [
+            ConversationExchange(
+                question=turn.question,
+                sql=turn.sql,
+                tables=turn.tables,
+                status=turn.status,
+                answer=turn.answer,
+            )
+            for turn in payload.conversation_history
+        ]
+    )
+    if stored_history is not None:
+        logger.info(
+            "[ask] using this server's stored history for this conversation "
+            "(%d turn(s)); the caller sent %d",
+            len(stored_history),
+            len(payload.conversation_history),
         )
-        for turn in payload.conversation_history
-    ]
 
     # Validated before any admission-control slot is acquired or any LLM/DB
     # work starts -- an invalid/disallowed AskRequest.model is a malformed

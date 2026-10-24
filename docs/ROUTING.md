@@ -247,6 +247,28 @@ contribution leads.
 - **SQL preflight (`SET PARSEONLY ON`, `sp_describe_first_result_set`) is
   not implemented.** The existing AST validator, the double row cap and
   the query timeout (SECURITY.md) are unchanged and still apply.
-- **Per-source `source_queries` are parsed but not yet threaded into each
-  subgraph** — every source still receives the full question, which is
-  the pre-existing behaviour noted in CLAUDE.md §13.
+- ~~**Per-source `source_queries` are parsed but not yet threaded into
+  each subgraph.**~~ **Closed 2026-10-24.** Each rewrite is translated to
+  this graph's internal source names, validated
+  (`agent.orchestrator.nodes._validated_source_queries`: the source must
+  be one actually routed to, the text must be non-empty and capped, and
+  it must preserve the question's own content words — the same check a
+  context rewrite gets, since both are model output), and read by each
+  source node through `source_query`. A rewrite that fails validation
+  falls back to the resolved question, per source, so this is an accuracy
+  aid that fails open.
+
+  Two things remain deliberately true. **`sql` is excluded**: its text is
+  `resolved_question`, which is re-checked against the request-governance
+  policy, and a second ungoverned rewrite would mean the governed text is
+  not the used text. And the *base* question every source falls back to
+  is now the **resolved, standalone** form rather than the raw text, so
+  the `{question}` this prompt labels "(standalone form)" finally is one
+  (see [`CONVERSATIONAL_CONTEXT.md`](CONVERSATIONAL_CONTEXT.md) §7).
+- ~~**The LLM composer in the brief's Part 5 is not implemented.**~~
+  Still true for *merging* several sources, but the **no-retrieval route
+  now composes a real answer** when an operator enables it
+  (`ENABLE_GENERAL_KNOWLEDGE_ANSWERS`,
+  `agent/orchestrator/general_knowledge.py`): `general_knowledge` and
+  `conversation` used to return a fixed message with no model call at
+  all. Multi-source merging is still deterministic.

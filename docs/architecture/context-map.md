@@ -43,6 +43,7 @@ task actually touches its area.
 | Why a result shows a product *name* rather than a ProductKey: display-name metadata, the deterministic SQL repair, join rules, chart-label binding | [`../DISPLAY_NAMES.md`](../DISPLAY_NAMES.md) | entity display names end to end |
 | Which column a chart puts on each axis, and the column semantics behind it | [`../CHART_AXIS_BINDING.md`](../CHART_AXIS_BINDING.md) | measure-vs-key axis binding |
 | Where request time actually goes, measured per stage and per model call | [`../PERFORMANCE.md`](../PERFORMANCE.md) | latency diagnosis and the VRAM ceiling |
+| How a message is read against the conversation before it: relations, antecedent selection, the standalone rewrite, ambiguity, conversation memory | [`../CONVERSATIONAL_CONTEXT.md`](../CONVERSATIONAL_CONTEXT.md) | the decision table, the thresholds and this feature's limitations |
 | Asynchronous question queue, per-user concurrency, deterministic source routing, per-task model pins, the guardrail façade and the grounding gate | [`../CONCURRENCY.md`](../CONCURRENCY.md) | concurrency limits and behaviour, routing rules, model fallback, guardrail configuration, hallucination controls, scaling guidance |
 | Per-capability implementation **status**, file evidence and priority | [`feature-inventory.md`](feature-inventory.md) | what state a capability is actually in |
 | Source-type **capability/auth/ACL comparison**, including unimplemented sources | [`data-source-matrix.md`](data-source-matrix.md) | per-source-type capabilities, auth model and verification status |

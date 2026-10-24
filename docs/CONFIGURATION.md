@@ -220,7 +220,15 @@ checks all of them too.
 | `LLM_MAX_TOKENS` | `1024` | Max tokens the LLM may generate per SQL-generation call. |
 | `INSIGHT_MAX_TOKENS` | `120` | Max tokens for the post-query plain-English insight sentence. |
 | `MAX_QUESTION_LENGTH` | `500` | Max accepted character length of a typed question (`agent/input_guard.py`). |
-| `MAX_CONVERSATION_HISTORY_TURNS` | `20` | Max prior turns from a caller-supplied `conversation_history` that are ever processed — older turns beyond this count are dropped (`agent/input_guard.py::sanitize_conversation_history`). |
+| `MAX_CONVERSATION_HISTORY_TURNS` | `20` | Max prior turns from a caller-supplied `conversation_history` that are ever processed — older turns beyond this count are dropped (`agent/input_guard.py::sanitize_conversation_history`). The resource cap on the whole array; the *resolution* window is the much smaller `CONTEXT_RESOLUTION_RECENT_TURNS` below. |
+| `ENABLE_CONTEXT_RESOLUTION` | `true` | Conversational context resolution (`agent/context_resolution.py`): the relation, the antecedent and the standalone rewrite. `false` is the rollback switch — it restores the regex-only classifier, the antecedent bound to `conversation_history[-1]`, and no rewrite. See [`CONVERSATIONAL_CONTEXT.md`](CONVERSATIONAL_CONTEXT.md). |
+| `CONTEXT_RESOLUTION_RECENT_TURNS` | `6` | How many recent **successful** turns are eligible to be the antecedent. Older turns are quoted into the memory digest, not dropped. |
+| `ENABLE_CONTEXT_RESOLUTION_LLM` | `false` | Whether an unsure deterministic resolution may escalate to one small `ROUTER_MODEL` call. **Off by default**: one escalation measured 11.1s on this hardware, on the user's latency path. |
+| `CONTEXT_RESOLUTION_MIN_CONFIDENCE` | `0.60` | Below this, the escalation above runs if enabled. A judgement call, not a measurement. |
+| `CONTEXT_RESOLUTION_MAX_TOKENS` | `256` | Generation cap for that call — one JSON object, so deliberately small and separate from `LLM_MAX_TOKENS`. |
+| `ENABLE_GENERAL_KNOWLEDGE_ANSWERS` | `false` | Whether the router's `general_knowledge`/`conversation` routes are answered from the model's own knowledge instead of returning a fixed "I couldn't match that to a data source" message. **Off by default**: the router picks that route *because* it could not match a source, which is sometimes a routing miss on a real data question, and answering that from model weights replaces a helpful routing failure with a confident unsourced claim. Every answer carries a fixed provenance disclaimer and `AskResponse.answer_truth_level="ai_inference"`. See [`CONVERSATIONAL_CONTEXT.md`](CONVERSATIONAL_CONTEXT.md) §12. |
+| `GENERAL_KNOWLEDGE_MAX_TOKENS` | `800` | Generation cap for one such answer. |
+| `CONVERSATION_HISTORY_SOURCE` | `client` | Where a question's prior turns come from. `client` (the default, unchanged behaviour) uses `AskRequest.conversation_history`. `server` reads them from this deployment's chat store for a locally-authenticated caller with a `conversation_id`, so an edit or delete actually changes the next answer's context — at the cost of the chat UI's per-turn "remove from context" control, which only works because the client is what sends the history. |
 
 ## Agentic query planning + plan-conformance self-correction
 
