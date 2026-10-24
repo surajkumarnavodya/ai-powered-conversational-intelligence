@@ -1,10 +1,19 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { isSqlResult, newHistoryEntry } from '@/lib/history'
 import type { AskResponse } from '@/lib/types'
 import { TurnCard } from './TurnCard'
+
+// jsdom has no `navigator.clipboard`, so the real helper would take its
+// failure path and no copy here would ever confirm. What the clipboard
+// helper itself does (rich + plain write, and its fallbacks) is covered by
+// `CopyAnswerButton.test.tsx`; this file is about how many copy controls a
+// turn offers and whose state is whose.
+vi.mock('@/lib/clipboard', () => ({
+  copyMarkdownToClipboard: vi.fn().mockResolvedValue(undefined),
+}))
 
 // ResultsTable (rendered once a turn has confirmedColumns/confirmedRows)
 // reads schema-table metadata via react-query's useSchemaTables() -- a real
@@ -157,5 +166,51 @@ describe('TurnCard -- SQL editor / Confirm and Run gating', () => {
     }
     renderTurnCard({ entry, isMultiDb: false })
     expect(screen.getByText('42 orders.')).toBeInTheDocument()
+  })
+})
+
+describe('TurnCard -- copy controls', () => {
+  function answeredEntry() {
+    return newHistoryEntry(
+      'How many orders?',
+      makeAskResponse({
+        sql: 'SELECT COUNT(*) FROM orders',
+        sources_used: [],
+        insight: '42 orders.',
+      }),
+      100,
+    )
+  }
+
+  it('offers copy at both ends of the answer: the card corner and the foot', () => {
+    renderTurnCard({ entry: answeredEntry(), isMultiDb: false })
+
+    // Same action, same content, reachable from either end -- the corner
+    // is predictable on a long answer, the foot is where the eye already
+    // is on a short one.
+    expect(screen.getAllByRole('button', { name: /copy answer/i })).toHaveLength(2)
+  })
+
+  it('keeps the two copy buttons’ confirmation states independent', async () => {
+    const { default: userEvent } = await import('@testing-library/user-event')
+    renderTurnCard({ entry: answeredEntry(), isMultiDb: false })
+
+    const [corner, foot] = screen.getAllByRole('button', { name: /copy answer/i })
+    await userEvent.click(foot)
+
+    // The check mark belongs to the button that was pressed, not to both:
+    // the feedback is about the click, not about the answer.
+    await waitFor(() =>
+      expect(screen.getAllByRole('button', { name: /copied/i })).toHaveLength(1),
+    )
+    expect(corner).toHaveAttribute('aria-label', expect.stringMatching(/copy answer/i))
+  })
+
+  it('offers no copy control at all while the turn has no answer yet', () => {
+    const entry = newHistoryEntry('Orphaned question', makeAskResponse({ status: 'pending' }), 0)
+    renderTurnCard({ entry, isMultiDb: false })
+
+    // Copying a placeholder would silently paste nothing useful.
+    expect(screen.queryByRole('button', { name: /copy answer/i })).toBeNull()
   })
 })

@@ -150,18 +150,19 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
             hear it. They belong next to the timing and timestamp for the
             same reason: all five describe or operate on the exchange as a
             whole, and none of them needs you to have read the answer
-            first. The controls that consume the finished text -- download,
-            rate it -- sit at the foot instead, where the eye lands after
-            reading.
+            first. The controls that consume the finished text -- copy,
+            download, rate it -- sit at the foot instead, where the eye
+            lands after reading.
 
-            Copy is the exception and sits top-right. It is the most-reached-
-            for action on an answer, and putting it at a fixed corner means
-            it is in the same place for a two-line answer and a two-screen
-            one, instead of wherever the foot happens to land. `ml-auto`
-            rather than absolute positioning: the button then *reserves* its
-            corner in the flex row, so it can never overlap the timing badge
-            or a long timestamp, and it moves with the card rather than with
-            the viewport. */}
+            Copy also sits here, top-right: it is the most-reached-for
+            action on an answer, and a fixed corner puts it in the same
+            place for a two-line answer and a two-screen one, instead of
+            wherever the foot happens to land. `ml-auto` rather than
+            absolute positioning: the button then *reserves* its corner in
+            the flex row, so it can never overlap the timing badge or a
+            long timestamp, and it moves with the card rather than with the
+            viewport. The twin at the foot is intentional -- see its own
+            note there. */}
         <div className="flex flex-wrap items-center gap-2">
           <TimingBadge mode="done" durationMs={entry.answerDurationMs} />
           <time dateTime={entry.timestamp} className="text-xs text-[var(--muted-foreground)]">
@@ -410,10 +411,22 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
             the parent cannot quietly re-centre the row. */}
         {answerMarkdown && (
           <div className="flex flex-wrap items-center justify-start gap-0.5 pt-1">
-            {/* Copy moved to the card's top-right corner. Deliberately
-                *moved*, not duplicated -- two identical copy buttons on
-                one answer is a second control for the same action, and
-                the person then has to work out whether they differ. */}
+            {/* Copy appears twice per answer on purpose: once pinned to
+                the card's top-right corner, and once here at the foot
+                beside Download and the feedback control.
+
+                They are the same action on the same content, deliberately
+                reachable from both ends -- the corner is in a fixed,
+                predictable place for a two-screen answer, and this one is
+                where the eye already is after finishing a short one, next
+                to the other things you do with a finished answer.
+
+                Each instance keeps its own confirmation state, so the
+                check mark appears on the button you actually pressed
+                rather than on both at once. They share no state by
+                design: the feedback belongs to the click, not to the
+                answer. */}
+            <CopyAnswerButton answer={answerMarkdown} />
             <DownloadAnswerButton question={entry.question} answer={answerMarkdown} />
             <ResponseFeedbackWidget entryId={entry.entryId} />
           </div>
