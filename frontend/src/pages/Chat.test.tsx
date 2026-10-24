@@ -273,14 +273,37 @@ describe('Chat page', () => {
       expect(button).not.toHaveAttribute('aria-busy')
     })
 
-    it('appears as soon as a question is pending, even at the bottom where the button is normally hidden', () => {
-      // The common case: you ask from the bottom of the conversation. The
-      // ring has to be visible there or the feature does nothing.
+    it('stays hidden at the bottom even while a question is pending, so it is never a dead control', () => {
+      // Regression. The ring briefly forced the button visible whenever a
+      // question was in flight, including at the bottom -- where
+      // `scrollToBottom` is `el.scrollTo({ top: el.scrollHeight })` and so
+      // does nothing. That is an arrow you can click that never moves the
+      // page, which reads as broken. The pending turn's own "Thinking Ns…"
+      // badge is on screen in that state; the ring is for when you have
+      // scrolled away from it.
       useChatStore.setState({
         queryHistory: [makeEntry('First')],
         pendingQuestion: pending(),
       } as never)
       const { container } = renderChat()
+      const button = getScrollToBottomButton(container)
+      expect(button).toHaveAttribute('aria-hidden', 'true')
+      expect(button).toHaveAttribute('tabindex', '-1')
+      expect(button.className).toMatch(/pointer-events-none/)
+    })
+
+    it('shows the ring once the user scrolls away, where the arrow does move the page', () => {
+      useChatStore.setState({
+        queryHistory: [makeEntry('First'), makeEntry('Second')],
+        pendingQuestion: pending(),
+      } as never)
+      const { container } = renderChat()
+      const scrollEl = getScrollContainer(container)
+      mockScrollState(scrollEl, { scrollHeight: 2000, scrollTop: 200, clientHeight: 600 })
+      act(() => {
+        fireEvent.scroll(scrollEl)
+      })
+
       const button = getScrollToBottomButton(container)
       expect(button).toHaveAttribute('aria-hidden', 'false')
       expect(button).toHaveAttribute('aria-busy', 'true')

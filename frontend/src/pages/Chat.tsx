@@ -125,12 +125,25 @@ export function Chat() {
       />
       <QuestionNavigator entries={queryHistory} scrollContainerRef={scrollRef} />
       <ScrollToBottomButton
-        // Shown when the user has scrolled away from the latest message
-        // (its original rule) *or* while a question is in flight, so the
-        // progress ring is actually visible in the common case of asking
-        // a question from the bottom of the conversation. Clicking it
-        // still only ever scrolls.
-        visible={!isAtBottom || isProcessing}
+        // Shown only when the user has scrolled away from the latest
+        // message -- its original rule, restored.
+        //
+        // It briefly also appeared whenever a question was in flight, so
+        // that the progress ring below would be visible when asking from
+        // the bottom of the conversation. That put a scroll control on
+        // screen in the one state where scrolling to the bottom does
+        // nothing (`useScrollToBottom.scrollToBottom` is
+        // `el.scrollTo({ top: el.scrollHeight })`, a no-op when you are
+        // already there), so the arrow looked broken: you click it and
+        // the page does not move. An affordance that cannot act is worse
+        // than an indicator you have to scroll to see.
+        //
+        // Nothing is lost. At the bottom the pending turn is on screen
+        // with `TimingBadge`'s own live "Thinking Ns…" counter; the ring
+        // matters when you have scrolled away from that and would
+        // otherwise have no sign a question is still running -- which is
+        // exactly when this button is visible anyway.
+        visible={!isAtBottom}
         processing={isProcessing}
         stageLabel={stageLabel}
         onClick={() => scrollToBottom()}
