@@ -60,7 +60,7 @@ chromadb==1.5.9
 # `rag/ingestion.py` and `attachments/processors/` both parse
 # caller-supplied PDFs. Comment restored after a master merge kept the
 # version but dropped the reasoning.
-pypdf==6.21.1
+pypdf==6.21.2
 
 # XXE/billion-laughs-hardened XML parsing for db/query_cost.py's MSSQL
 # SHOWPLAN_XML parsing -- was already present transitively but pinned
