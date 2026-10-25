@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ToastProvider } from '@/components/ui/toast'
@@ -193,9 +193,76 @@ describe('ChatInput -- attachment composer lifecycle', () => {
 })
 
 describe('ChatInput -- composer layout', () => {
+  const DISCLAIMER = 'AI may make mistakes. Please verify results before relying on them.'
+
   it('shows the AI disclaimer below the composer', () => {
     renderChatInput()
-    expect(screen.getByText('AI may make mistakes. Please verify results before relying on them.')).toBeInTheDocument()
+    expect(screen.getByText(DISCLAIMER)).toBeInTheDocument()
+  })
+
+  it('centre-aligns the disclaimer', () => {
+    renderChatInput()
+    expect(screen.getByText(DISCLAIMER).className).toMatch(/text-center/)
+  })
+
+  describe('word limit', () => {
+    // `MAX_WORDS` is 500 in ChatInput.tsx. Built by repetition rather
+    // than typed through userEvent: 500+ keystrokes per test would
+    // dominate the suite's runtime for no extra coverage.
+    const words = (n: number) => Array.from({ length: n }, (_, i) => `w${i}`).join(' ')
+
+    function typeIntoComposer(text: string) {
+      const textarea = screen.getByLabelText(/ask a question/i) as HTMLTextAreaElement
+      fireEvent.change(textarea, { target: { value: text } })
+      return textarea
+    }
+
+    it('shows no running word tally on an empty composer', () => {
+      renderChatInput()
+      // The old "0 / 500 words" readout was present from the first
+      // render; nothing about the limit should be on screen until it
+      // actually matters.
+      expect(screen.queryByText(/\/\s*500/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/maximum 500 words/i)).not.toBeInTheDocument()
+    })
+
+    it('stays quiet at exactly the limit, which is still a sendable draft', () => {
+      renderChatInput()
+      typeIntoComposer(words(500))
+      expect(screen.queryByText(/maximum 500 words/i)).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /send/i })).not.toBeDisabled()
+    })
+
+    it('warns, reddens the box and blocks sending once the limit is exceeded', () => {
+      renderChatInput()
+      const textarea = typeIntoComposer(words(501))
+
+      expect(screen.getByText(/maximum 500 words allowed/i)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /send/i })).toBeDisabled()
+      // The red outline is on the whole composer box, not the textarea
+      // itself -- that is the bordered element the user sees.
+      const box = textarea.closest('.rounded-2xl') as HTMLElement
+      expect(box.className).toMatch(/border-\[var\(--danger\)\]/)
+    })
+
+    it('keeps an over-long draft intact instead of truncating it', () => {
+      // The previous behaviour silently dropped everything past word 500
+      // on paste. The text has to survive for the user to be able to
+      // edit it down to the limit themselves.
+      renderChatInput()
+      const textarea = typeIntoComposer(words(520))
+      expect(textarea.value.trim().split(/\s+/)).toHaveLength(520)
+    })
+
+    it('clears the warning again once the draft is trimmed back', () => {
+      renderChatInput()
+      typeIntoComposer(words(501))
+      expect(screen.getByText(/maximum 500 words allowed/i)).toBeInTheDocument()
+
+      typeIntoComposer(words(10))
+      expect(screen.queryByText(/maximum 500 words/i)).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /send/i })).not.toBeDisabled()
+    })
   })
 
   it('starts as a single-line textarea', () => {
