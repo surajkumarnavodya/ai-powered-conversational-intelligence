@@ -237,6 +237,77 @@ So a schema-rich, data-empty database can and will win the route, and:
 product decision, which Shared Rule 8 reserves for the owner. §5 has the
 two proposals.
 
+### 3.5a Tenant partitioning per persistence layer — **a gap, S1-class and latent**
+
+`docs/MULTI_TENANCY.md` §3 carries a partition table listing 17 scoped
+surfaces, and §5 lists 7 known limitations. It is a genuinely good
+document, and most of what it claims checks out: attachments are keyed by
+**caller identity** rather than tenant and §5.6 says so explicitly (sound
+— a caller belongs to exactly one tenant), and business-context retrieval
+is partitioned in `retrieval.retriever._chunk_tenant_id` rather than in
+`retrieval/vector_store.py`, which is why that file shows no tenant
+references.
+
+**Three surfaces are in neither the partition table nor the limitations
+list, and are not partitioned at any layer:**
+
+| Surface | Store | Routes | Default |
+|---|---|---|---|
+| Document RAG | `rag/store.py` — **0** tenant references | `api/documents.py` — **0** | `enable_document_rag=False` |
+| Policy RAG | same store | same | `enable_policy_rag=False` |
+| Media library / search | `media/store.py` — **0** | `api/media.py`, `api/media_search.py`, `api/media_library.py` — **0** each | `enable_media_search=`**`True`** |
+
+Evidence for documents specifically:
+
+- `rag/store.py:84-120` — `DocumentRecord` and `ChunkMatch` have no
+  `tenant_id` field. Scoping fields are `collection`,
+  `sensitivity_category`, `uploaded_by` and `restricted_roles`.
+- No store function accepts a tenant: `list_documents(engine, collection)`
+  (`:390`), `similarity_search(...)` (`:502`),
+  `get_document_bytes(engine, document_id)` (`:476`),
+  `delete_document(engine, document_id)` (`:494`).
+- `api/documents.py` contains the string "tenant" **zero** times. All four
+  routes guard on a base role only —
+  `require_permission(Permission.DOCUMENTS_READ|WRITE|DELETE)` at `:55`,
+  `:104`, `:172`, `:194`.
+
+So in a deployment with two real tenants, a caller in tenant B holding
+`DOCUMENTS_READ` can list and download tenant A's documents, and with
+`DOCUMENTS_DELETE` can delete them. By the rubric that is **S1
+(cross-tenant access)**.
+
+**Why it is recorded as latent, and not as a live S1.** Two things
+currently stand between this and exploitability, and both are documented
+by `docs/MULTI_TENANCY.md` itself:
+
+- §5.3 — "**No self-service tenant assignment.** All four `create_user`
+  call sites leave `tenant_id` at its default, so a non-default tenant can
+  only be assigned by an operator running code against the identity
+  database." So today **every user is in tenant `default`**, and there is
+  no second tenant to cross.
+- §5.2 — tenant isolation means nothing under `AUTH_MODE=none` or
+  `static_token` anyway.
+
+The risk is therefore: **the moment an operator uses multi-tenancy as the
+document describes, documents, policies and media silently stop being
+isolated** — while the partition table reads as though every persistence
+layer is covered. Media search is the sharpest case because it is **on by
+default**, and Phase 0 recorded this environment running with document
+RAG, policy RAG and media search all enabled.
+
+**Not fixed here.** Adding `tenant_id` to `rag.documents` is a schema
+change to a non-Alembic raw-SQL store plus a change to four route
+contracts — squarely what Shared Rule 8 reserves for an owner. Recorded
+as **`AUZ-002` (S1, Flagged)**.
+
+**Runtime proof is owed by Phase 4**, which is the phase that builds two
+real tenants and an IDOR matrix. This finding is structural (store and
+route signatures) and is explicitly **not** a runtime reproduction. The
+minimum Phase 4 must do: hand-assign `tenant_id` on two users in the
+identity DB, upload a document as each, and attempt cross-tenant
+`GET /documents`, `GET /documents/{id}/download` and
+`DELETE /documents/{id}`.
+
 ### 3.6 Concurrency and shared state — **one real race, fixed**
 
 `api.main.lifespan` pre-warms the DB engines, the Ollama client and both
@@ -507,6 +578,40 @@ product decision and is not proposed here.
 Both code fixes use real threads / the real app rather than mocks, and the
 Chroma fix carries a non-vacuity test, per CLAUDE.md §7.
 
+### 6.1 Gates re-measured after the changes
+
+Per Shared Rule 10 — a phase is not done if it broke something another
+phase relies on.
+
+| Gate | Phase 0 baseline | After Phase 1 | Verdict |
+|---|---|---|---|
+| `pytest -q` | 8,297 passed / 0 failed | **8,325 passed / 0 failed**, 11 deselected (420s) | +28 = exactly the tests added here |
+| `ruff check .` | 1 finding (`I001`) | **1 finding** — the same `agent/multiagent/agents.py:23:1 I001` | unchanged; `BP-002`, not mine |
+| `black --check .` | clean, 1,665 files | **clean, 1,667 files** | +2 = the two new test files |
+| `bandit` (same 12 packages) | 0 Low / 0 Med / 0 High, exit 0 | **0 / 0 / 0, exit 0**, 57,002 LOC | unchanged; no `# nosec` added |
+| `mypy .` | 723 errors / 129 files | **7 errors across the 4 files this branch touches, all pre-existing** | see below |
+
+**On mypy, reported honestly.** The first form of the `ARC-003` fix
+forwarded `cache_clear`/`cache_info` as function attributes, which could
+not be typed; `mypy .` went 723/129 → **729/131**, and all six new errors
+were mine. That is why commit `40eb9f8` exists: the forwarding was
+replaced with a named `clear_chroma_client_cache()` (matching the
+`clear_query_store_cache` precedent `tests/conftest.py` already imports),
+which removed two `# type: ignore` comments as well. A targeted
+`mypy` over the four files this branch touches now reports **only the 7
+pre-existing production errors** CLAUDE.md §13 documents
+(`agent/sql_validator.py:882` ×2, `db/schema_introspection.py:469`,
+`identity/repositories/semantic_intelligence.py:199,200,242`,
+`identity/repositories/recommendation_governance.py:402`) and none in
+this branch's own files.
+
+Note that those line numbers have **drifted** from CLAUDE.md §13's
+recorded ones (`sql_validator.py:839` → `:882`,
+`schema_introspection.py:376` → `:469`) while remaining the same seven
+findings. Not corrected here — §13 is explicit that its entries are
+dated, and a Phase 8 pass that re-measures the whole file should update
+them together.
+
 ---
 
 ## 7. Commands a human must run
@@ -526,6 +631,12 @@ passing.
 
 ## 8. Phase 1 summary
 
+- **Open S1: 1** — `AUZ-002`: document RAG, policy RAG and media are not
+  tenant-partitioned at either the store or the route layer, and are
+  absent from `docs/MULTI_TENANCY.md`'s partition table *and* its
+  limitations list. Latent today only because no route assigns a
+  non-default tenant (that document's own §5.3), so there is no second
+  tenant to cross. Flagged; runtime proof owed by Phase 4.
 - **Open S2: 2** — `ARC-002` (routing has no data-presence signal or
   override) and `OPS-003` (three fail-closed controls inert outside
   production). Both flagged for an owner decision.
