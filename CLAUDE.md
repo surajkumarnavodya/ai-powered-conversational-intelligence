@@ -271,10 +271,12 @@ restriction as a boundary.** Full detail:
   the result gate names it in `actions`.
 - A **stored** result is re-governed on every read against the *current*
   caller's roles — never trusted because it was governed when captured. Roles
-  change. Both read-back surfaces do this: `api.artifacts._result_out` and
-  `api.shares._governed_result_snapshot`. A share is the sharpest case — an
-  "anyone with the link" viewer holds no roles at all — so a new surface that
-  serves a persisted `result_snapshot` must re-govern it too.
+  change. All **three** read-back surfaces do this: `api.artifacts._result_out`,
+  `api.shares._governed_result_snapshot` and `api.jobs._regovern_job_result`
+  (the asynchronous question queue's stored result — this entry said "both"
+  and named only the first two until 2026-10-25). A share is the sharpest
+  case — an "anyone with the link" viewer holds no roles at all — so a new
+  surface that serves a persisted `result_snapshot` must re-govern it too.
 
 ### 5.5 Untrusted content and prompt injection
 

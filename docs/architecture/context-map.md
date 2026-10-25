@@ -122,6 +122,30 @@ feature's contract is authoritative for that feature** — it holds the
 inspection findings, the design, the full testing summary, and the
 security/tenant-isolation/performance review.
 
+**They are dated records, not living documents.** Each one describes the
+repository as it stood when that prompt finished, and later prompts did
+not go back and revise it. So a contract is authoritative for *its
+feature's design and invariants*, and never for a **cross-cutting count
+or a figure about some other part of the system** — node counts, route
+counts, test counts, permission counts, latency. Measure those against
+the code; do not quote them from a contract. Two live examples of the
+drift this causes, both measured 2026-10-25:
+
+| Claim | Where | Measured today |
+|---|---|---|
+| "`agent/graph.py` (12 nodes)" | `02_TARGET_ARCHITECTURE.md` §1 | **19** nodes |
+| "`api/` (67 real routes)" | `02_TARGET_ARCHITECTURE.md` §1 | **212** operations / 187 paths |
+
+The 12-node figure in particular has already been copied forward into
+later material as if current. `02_TARGET_ARCHITECTURE.md` §4.5's
+"plumbing only, no enforcement" note on tenancy is stale in the opposite
+direction — tenant isolation *is* enforced now (CLAUDE.md §5.3) — which
+is the more dangerous kind of staleness, because it understates a
+control that exists.
+
+For a current cross-cutting figure, the living sources are CLAUDE.md
+(§2–§5, §13) and the reference documents in §2 above.
+
 | # | Feature | Contract |
 |---|---|---|
 | 00 | Master implementation contract — the rules all numbered prompts followed | [`00_MASTER_IMPLEMENTATION_CONTRACT.md`](../../00_MASTER_IMPLEMENTATION_CONTRACT.md) |
