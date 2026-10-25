@@ -71,7 +71,14 @@ export function SourcePicker({ disabled = false }: { disabled?: boolean }) {
               ? t('sources.activeCount', { count: activeCount })
               : t('sources.pickerLabel')
           }
-          className="relative rounded-xl"
+          // `-ml-1` pulls this toward the attach (+) button beside it.
+          // Both are `size="icon"` boxes (36px, 32px from `sm`) around a
+          // 16px glyph, so even with no gap class between them the two
+          // icons sat about 16px apart and read as separate controls
+          // rather than one toolbar. The 4px overlap is on this button's
+          // left edge; the attach button keeps ~28px of clear target,
+          // still above WCAG 2.2 SC 2.5.8's 24px minimum.
+          className="relative -ml-1 rounded-xl"
         >
           <Database className="h-4 w-4" />
           {activeCount > 0 && (

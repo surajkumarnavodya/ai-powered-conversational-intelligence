@@ -48,7 +48,15 @@ export function ConversationListItem({
   return (
     <div
       className={cn(
-        'group flex items-center gap-1 rounded-md px-2 py-1 text-left text-[13px] leading-5 transition-colors',
+        // `py-0` is the floor, not a round-down: the row's height is set
+        // by the 24px `h-6` menu trigger inside it, so with no padding a
+        // row is exactly 24px -- WCAG 2.2 SC 2.5.8's minimum target
+        // size, hit precisely rather than crossed. Rows went 32px
+        // (`py-1`) to 28px (`py-0.5`) to 24px here, ~25% more
+        // conversations per screenful than the original. The `gap-px`
+        // between rows in `ConversationList` is what still separates one
+        // target from the next.
+        'group flex items-center gap-1 rounded-md px-2 py-0 text-left text-[13px] leading-5 transition-colors',
         // Neutral selection rather than an accent-tinted fill. A saturated
         // block behind a whole row reads as a highlight on the *text*,
         // which it is not -- it marks which conversation is open. The

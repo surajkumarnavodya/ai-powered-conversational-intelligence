@@ -45,6 +45,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from agent.analytical_plan import AnalyticalPlan, render_plan_as_steps
 from agent.authz import Permission, has_role_permission
 from agent.complexity import detect_complexity_signals
+from agent.context_resolution import ContextRelation, ResolvedContext, resolve_context
+from agent.conversation_memory import build_memory, render_memory_block
 from agent.display_name_guard import (
     NO_DISPLAY_NAME_NOTICE,
     enforce_display_names,
@@ -99,6 +101,7 @@ from agent.sql_validator import (
 from agent.state import (
     AgentState,
     AttemptRecord,
+    ContextResolutionRecord,
     ConversationExchange,
     GoldenExample,
     StageOutcome,
@@ -346,7 +349,9 @@ def _routed_llm_call(state: AgentState, task: RouteTask, call: Callable[[str | N
     from model_routing.signals import assess_request
 
     profile = assess_request(
-        state["question"],
+        # The resolved form: a terse follow-up assessed on its raw text
+        # looks trivial regardless of what it actually asks for.
+        retrieval_question(state),
         state.get("complexity_signals"),
         state.get("analytical_intent"),
     )
@@ -628,31 +633,81 @@ def _governance_domain(state: AgentState) -> BusinessDomain:
         return BusinessDomain.GENERAL
 
 
-@_timed_node("classify_followup")
-def classify_followup_node(state: AgentState) -> dict[str, Any]:
-    """Decides whether this question is standalone, a follow-up, or ambiguous.
+def _context_resolution_llm() -> Callable[[str, str], str] | None:
+    """The tier-2 callable for `agent.context_resolution.resolve_context`, or None.
 
-    Runs first, before any schema retrieval or LLM call, on a cheap
-    regex-only heuristic (`agent.followup.classify_followup`) -- see that
-    module's docstring for the referring_signal / has_subject decision
-    table. Logged the same way every other agent decision is logged (see
-    CLAUDE.md), so the classification and (on a follow-up) which prior
-    exchange it resolved against are visible in the terminal, not just
-    encoded in state.
+    None whenever the escalation is switched off, which keeps resolution
+    entirely deterministic and free. When it is on, the call goes to
+    `ModelTask.ROUTER` for the same reason source classification does:
+    short structured output, directly on the user's latency path.
 
-    On "ambiguous", the graph short-circuits straight to END with
-    `status="needs_clarification"` rather than guessing -- the same
-    fail-closed philosophy as the validator's SAFETY_VIOLATION_TYPES path,
-    just for "I don't know what you're asking" instead of "I won't run
-    that."
+    The caller's own `AskRequest.model` is deliberately *not* passed as
+    `caller_pinned`, matching
+    `agent.orchestrator.nodes.classify_sources_structured`. A caller
+    choosing `sqlcoder` for their SQL is choosing a SQL model, not a model
+    for classifying English, and an operator who wants to pin this call
+    has `ROUTER_MODEL` for it.
+    """
+    settings = get_settings()
+    if not settings.enable_context_resolution_llm:
+        return None
+
+    # Imported here, not at module scope, following the same convention
+    # `_call_with_routing` uses for `model_routing.signals`: nothing in
+    # the routing stack loads for a deployment that leaves this off.
+    from model_routing.tasks import ModelTask, resolve_task_model
+    from rag.llm import call_ollama
+
+    model = resolve_task_model(ModelTask.ROUTER, settings)
+
+    def _call(system_prompt: str, user_prompt: str) -> str:
+        return call_ollama(
+            system_prompt,
+            user_prompt,
+            settings,
+            settings.context_resolution_max_tokens,
+            model=model,
+        )
+
+    return _call
+
+
+def _resolution_record(resolution: ResolvedContext) -> ContextResolutionRecord:
+    """Flattens a `ResolvedContext` for state and the API response."""
+    return ContextResolutionRecord(
+        relation=resolution.relation.value,
+        resolved_question=resolution.resolved_question,
+        rewritten=resolution.was_rewritten,
+        antecedent_question=(
+            resolution.antecedent.get("question") if resolution.antecedent else None
+        ),
+        confidence=round(resolution.confidence, 3),
+        source=resolution.source,
+        carried_constraints=[c.text for c in resolution.carried_constraints],
+        replaced_constraints=[c.text for c in resolution.replaced_constraints],
+        candidate_topics=list(resolution.candidate_topics),
+        signals=list(resolution.signals),
+    )
+
+
+def _legacy_followup_resolution(state: AgentState) -> dict[str, Any]:
+    """The pre-resolution behaviour, for `ENABLE_CONTEXT_RESOLUTION=false`.
+
+    Kept as a real, exercised branch rather than deleted, because that
+    setting is this feature's rollback switch and a rollback switch that
+    has never been run is not one. The logic this node had before
+    `agent/context_resolution.py` existed: the regex-only classifier, the
+    antecedent bound to `conversation_history[-1]`, and no rewrite -- so
+    `resolved_question` stays None and every downstream reader
+    (`retrieval_question`) falls back to the raw question.
     """
     question = state["question"]
     conversation_history = state.get("conversation_history") or []
     result = classify_followup(question, has_history=bool(conversation_history))
 
     logger.info(
-        "[classify_followup] question=%r classification=%s referring_signal=%s "
-        "has_subject=%s matched_patterns=%s",
+        "[classify_followup] (resolution disabled) question=%r classification=%s "
+        "referring_signal=%s has_subject=%s matched_patterns=%s",
         question,
         result.classification,
         result.referring_signal,
@@ -672,10 +727,11 @@ def classify_followup_node(state: AgentState) -> dict[str, Any]:
                 "This question doesn't have enough on its own for me to tell what "
                 "you're asking. Could you rephrase with the topic or metric you want?"
             )
-        logger.info("[classify_followup] ambiguous -- asking for clarification: %s", message)
         return {
             "followup_classification": "ambiguous",
             "followup_resolved_against": None,
+            "resolved_question": None,
+            "context_resolution": None,
             "status": "needs_clarification",
             "clarification_message": message,
         }
@@ -683,16 +739,199 @@ def classify_followup_node(state: AgentState) -> dict[str, Any]:
     resolved_against: ConversationExchange | None = None
     if result.classification == "followup":
         resolved_against = conversation_history[-1]
-        logger.info(
-            "[classify_followup] resolved as follow-up against prior question=%r",
-            resolved_against["question"],
-        )
 
     return {
         "followup_classification": result.classification,
         "followup_resolved_against": resolved_against,
+        "resolved_question": None,
+        "context_resolution": None,
         "status": "retrieving_schema",
     }
+
+
+@_timed_node("classify_followup")
+def classify_followup_node(state: AgentState) -> dict[str, Any]:
+    """Resolves what this question means relative to the conversation.
+
+    Runs before any schema retrieval or LLM call, and produces three
+    things the rest of the graph reads:
+
+    - a **relation** (`agent.context_resolution.ContextRelation`) saying
+      whether this is a new topic, a follow-up, a refinement of a previous
+      answer, a correction of an earlier constraint, a return to an older
+      topic, or something it cannot tell;
+    - the **antecedent**, chosen by scoring every turn in the resolution
+      window rather than by taking the most recent one -- which is what
+      makes returning to an older topic reachable at all, and what makes a
+      reference with two plausible referents ask instead of guess;
+    - the **standalone form** of the question (`resolved_question`), which
+      is what `retrieve_schema_node` embeds and `generate_sql_node` puts
+      in its prompt. `state["question"]` is left exactly as typed.
+
+    Three node-level concerns the resolution module deliberately does not
+    own, because they are application policy rather than linguistics:
+
+    **The resolved question is re-governed.** A rewrite widens what is
+    being asked, so `governance.request_policy.evaluate_request` runs
+    again on the resolved text whenever it differs from the original. A
+    follow-up whose *resolved* meaning is a prohibited individual-level
+    question ("and their salary?" against a turn that named one person) is
+    refused on that meaning. This check fails **closed**, through the same
+    rejection path `sanitize_input_node` uses -- unlike the rewrite
+    itself, which fails open to the original text. The two directions are
+    consistent: a rewrite that cannot be produced leaves today's
+    behaviour, and one that is produced is judged on its merits
+    (CLAUDE.md 4.2 / 5.4).
+
+    **A needs-clarification outcome short-circuits to END** with
+    `status="needs_clarification"`, exactly as the narrower "ambiguous"
+    classification always has (see `route_after_classification`) -- the
+    same fail-closed philosophy as the validator's refusal path, applied
+    to "I don't know which of these you mean."
+
+    **The legacy fields keep working.** `followup_classification` and
+    `followup_resolved_against` are derived from the resolution rather
+    than computed separately, so the frontend's existing context panel and
+    `AskResponse`'s frozen `Literal` contract are unaffected (CLAUDE.md
+    4.8 / 6.3).
+    """
+    settings = get_settings()
+    if not settings.enable_context_resolution:
+        return _legacy_followup_resolution(state)
+
+    # Already resolved by the orchestrator, which runs this exact node as
+    # its own entry point so the router and every non-SQL source get the
+    # standalone question too (see `agent.orchestrator.graph`). Reusing it
+    # here keeps one resolution per question rather than two -- which
+    # matters beyond tidiness, because resolving twice could pay for a
+    # second tier-2 LLM call and, worse, could reach a *different* answer
+    # for the same question within one request.
+    existing = state.get("context_resolution")
+    if existing is not None:
+        logger.info(
+            "[classify_followup] reusing the resolution already made for this request "
+            "(relation=%s source=%s)",
+            existing["relation"],
+            existing["source"],
+        )
+        # Derived from the record, not read back from state. `run_agent`
+        # builds a *fresh* `AgentState` in which only `resolved_question`
+        # and `context_resolution` are seeded, so reading
+        # `followup_classification`/`followup_resolved_against` from state
+        # here returned None on the multi-source path -- which silently
+        # cost the follow-up reference block in `generate_sql_node`, the
+        # prior-question fold in `retrieve_schema_node`, and reported
+        # `followup_classification: null` in the response. Found by
+        # reproducing that exact state; pinned by
+        # `tests/test_context_resolution_integration.py::TestResolutionReuse`.
+        return {
+            "followup_classification": ContextRelation(
+                existing["relation"]
+            ).legacy_classification(),
+            "followup_resolved_against": state.get("followup_resolved_against"),
+            "resolved_question": state.get("resolved_question"),
+            "context_resolution": existing,
+            "status": "retrieving_schema",
+        }
+
+    question = state["question"]
+    conversation_history = state.get("conversation_history") or []
+
+    resolution = resolve_context(
+        question,
+        conversation_history,
+        recent_turns=settings.context_resolution_recent_turns,
+        min_confidence=settings.context_resolution_min_confidence,
+        llm=_context_resolution_llm(),
+    )
+
+    logger.info(
+        "[classify_followup] question=%r relation=%s confidence=%.2f source=%s "
+        "antecedent=%r rewritten=%s signals=%s",
+        question,
+        resolution.relation.value,
+        resolution.confidence,
+        resolution.source,
+        resolution.antecedent["question"] if resolution.antecedent else None,
+        resolution.was_rewritten,
+        resolution.signals,
+    )
+    if resolution.replaced_constraints:
+        # Reported, never silent: an answer narrowed by a different
+        # constraint than the user last stated has to be explicable.
+        logger.info(
+            "[classify_followup] correction replaced constraint(s) %s with %s",
+            [c.text for c in resolution.replaced_constraints],
+            [c.text for c in resolution.carried_constraints],
+        )
+
+    record = _resolution_record(resolution)
+
+    if resolution.relation.needs_clarification:
+        logger.info("[classify_followup] %s -- asking for clarification", resolution.relation.value)
+        return {
+            "followup_classification": resolution.relation.legacy_classification(),
+            "followup_resolved_against": None,
+            "resolved_question": None,
+            "context_resolution": record,
+            "status": "needs_clarification",
+            "clarification_message": resolution.clarification,
+        }
+
+    if resolution.was_rewritten and settings.enable_request_governance:
+        verdict = evaluate_request(resolution.resolved_question, state.get("caller_roles", ()))
+        if verdict.is_blocking:
+            log_security_event(
+                "governance_decision",
+                "warning",
+                "A question was refused by the data-governance request policy after "
+                "conversational context resolution widened what it was asking. The "
+                "question as typed did not match; its resolved form did.",
+                domain=verdict.domain,
+                category=verdict.category,
+                decision=verdict.decision.value,
+            )
+            logger.info(
+                "[classify_followup] resolved question refused by request governance "
+                "(domain=%s category=%s) -- the typed question alone did not match",
+                verdict.domain,
+                verdict.category,
+            )
+            return {
+                "status": "rejected",
+                "rejection_reason": "policy_refused",
+                "rejection_message": verdict.message,
+                "followup_classification": resolution.relation.legacy_classification(),
+                "followup_resolved_against": resolution.antecedent,
+                "resolved_question": None,
+                "context_resolution": record,
+            }
+
+    return {
+        "followup_classification": resolution.relation.legacy_classification(),
+        "followup_resolved_against": resolution.antecedent,
+        "resolved_question": resolution.resolved_question,
+        "context_resolution": record,
+        "status": "retrieving_schema",
+    }
+
+
+def retrieval_question(state: AgentState) -> str:
+    """The question text every retrieval and prompt step should use.
+
+    One owner for "which form of the question does downstream work read"
+    (CLAUDE.md 4.8). Returns the standalone form when context resolution
+    produced one, and the raw question otherwise -- which covers a first
+    turn, a new topic, a disabled feature flag, and any caller that built
+    an `AgentState` directly without going through the graph. So a call
+    site reads this unconditionally and never needs to know whether
+    resolution ran.
+
+    Never used for anything that *displays* the question. The transcript,
+    the audit log and the chat bubble all show `state["question"]`.
+    """
+    resolved = state.get("resolved_question")
+    return resolved if resolved else state["question"]
 
 
 @_timed_node("retrieve_schema")
@@ -734,14 +973,19 @@ def retrieve_schema_node(state: AgentState) -> dict[str, Any]:
     """
     settings = get_settings()
     question = state["question"]
+    # The standalone form when context resolution produced one -- so a
+    # terse follow-up ("Price?") is embedded as the question it actually
+    # is, rather than as two words that match no table. See
+    # `retrieval_question`.
+    resolved = retrieval_question(state)
     error_history = state.get("error_history", [])
     is_schema_retry = state.get("retry_count", 0) > 0 and bool(error_history)
     resolved_against = state.get("followup_resolved_against")
 
-    query_text = question
+    query_text = resolved
     top_k = settings.schema_top_k
     if is_schema_retry:
-        query_text = f"{question}\n{error_history[-1]}"
+        query_text = f"{resolved}\n{error_history[-1]}"
         top_k = settings.schema_top_k + 2
         logger.info(
             "[retrieve_schema] retry after missing-reference failure: "
@@ -750,12 +994,21 @@ def retrieve_schema_node(state: AgentState) -> dict[str, Any]:
             top_k,
         )
     elif resolved_against is not None:
-        # The question alone may lack a subject ("now break that down by
-        # month") -- fold the prior question's text in so similarity search
-        # still has something to match tables against. Widened by 1 rather
-        # than the +2 used for a missing-reference retry: this is filling a
-        # gap, not correcting a wrong retrieval.
-        query_text = f"{question}\n{resolved_against['question']}"
+        # The prior question's text is folded in *on top of* the resolved
+        # form, and top_k is still widened by 1, both for the reason they
+        # always were: a follow-up searches a slightly wider candidate set
+        # than a standalone question, because the resolved form carries the
+        # subject but not necessarily the vocabulary the prior turn's
+        # tables were embedded under. Widened by 1 rather than the +2 a
+        # missing-reference retry uses -- this is filling a gap, not
+        # correcting a wrong retrieval.
+        #
+        # This concatenation used to be the *only* way the prior subject
+        # reached retrieval at all. It is now additive, and kept rather
+        # than removed because dropping it would narrow retrieval for any
+        # follow-up the resolver rewrote into wording that happens to share
+        # less with the schema than the original turn did.
+        query_text = f"{resolved}\n{resolved_against['question']}"
         top_k = settings.schema_top_k + 1
         logger.info(
             "[retrieve_schema] follow-up: folding prior question into retrieval "
@@ -763,7 +1016,7 @@ def retrieve_schema_node(state: AgentState) -> dict[str, Any]:
             settings.schema_top_k,
             top_k,
         )
-    logger.info("[retrieve_schema] question=%r", question)
+    logger.info("[retrieve_schema] question=%r resolved=%r", question, resolved)
 
     try:
         selected_database = state.get("selected_database")
@@ -909,7 +1162,10 @@ def retrieve_golden_examples_node(state: AgentState) -> dict[str, Any]:
         logger.info("[retrieve_golden_examples] skipped (enable_golden_examples=False)")
         return {"golden_examples": None, "status": "generating"}
 
-    question = state["question"]
+    # The standalone form, for the same reason `retrieve_schema_node`
+    # uses it: the golden-example lookup is a similarity search, and a
+    # terse follow-up carries no subject of its own to read.
+    question = retrieval_question(state)
     db_name = state.get("selected_database") or "default"
     try:
         # Prompt 20: only this tenant's own approved examples may reach this
@@ -978,7 +1234,10 @@ def retrieve_business_context_node(state: AgentState) -> dict[str, Any]:
     never replaces or overrides it (see `docs/vector-retrieval-design.md`).
     """
     settings = get_settings()
-    question = state["question"]
+    # The standalone form, for the same reason `retrieve_schema_node`
+    # uses it: the business-context lookup is a similarity search, and a
+    # terse follow-up carries no subject of its own to read.
+    question = retrieval_question(state)
     db_name = state.get("selected_database") or "default"
     caller_roles = state.get("caller_roles", ())
 
@@ -1065,7 +1324,10 @@ def classify_analytical_intent_node(state: AgentState) -> dict[str, Any]:
         logger.info("[classify_analytical_intent] skipped (enable_intent_classification=False)")
         return {"analytical_intent": None, "status": "generating"}
 
-    question = state["question"]
+    # The standalone form, for the same reason `retrieve_schema_node`
+    # uses it: the intent classifier reads the question text, and a
+    # terse follow-up carries no subject of its own to read.
+    question = retrieval_question(state)
 
     # Latency: this call measured 12-25s on the reference machine (see
     # docs/PERFORMANCE.md) for a question like "total sales by product",
@@ -1196,7 +1458,10 @@ def build_analytical_plan_node(state: AgentState) -> dict[str, Any]:
         )
         return {"analytical_plan": None, "analytical_plan_violations": None, "status": "generating"}
 
-    question = state["question"]
+    # The standalone form, for the same reason `retrieve_schema_node`
+    # uses it: the planner reads the question text, and a
+    # terse follow-up carries no subject of its own to read.
+    question = retrieval_question(state)
     schema_context = state.get("schema_context_text", "")
     try:
         raw_plan = _routed_llm_call(
@@ -1321,7 +1586,10 @@ def plan_query_node(state: AgentState) -> dict[str, Any]:
         )
         return {"query_plan": None, "status": "generating"}
 
-    question = state["question"]
+    # The standalone form, for the same reason `retrieve_schema_node`
+    # uses it: the planner reads the question text, and a
+    # terse follow-up carries no subject of its own to read.
+    question = retrieval_question(state)
     schema_context = state.get("schema_context_text", "")
     try:
         plan = _routed_llm_call(
@@ -1368,7 +1636,13 @@ def generate_sql_node(state: AgentState) -> dict[str, Any]:
     would just hit the same limiter again for no benefit.
     """
     settings = get_settings()
-    question = state["question"]
+    # The standalone form of the question (`retrieval_question`), not the
+    # raw text. This is the fix for the case this whole feature exists
+    # for: "Price?" reaching the model as "Price?" produces a query about
+    # nothing, while reaching it as the resolved question produces the
+    # query the person asked for. `state["question"]` is untouched and is
+    # still what the transcript and the audit log show.
+    question = retrieval_question(state)
     schema_context = state.get("schema_context_text", "")
     error_history = state.get("error_history", [])
     last_error = error_history[-1] if error_history else None
@@ -1379,6 +1653,22 @@ def generate_sql_node(state: AgentState) -> dict[str, Any]:
     # the same question already has its own previous_sql/error_feedback from
     # this run, which is the more relevant reference at that point.
     followup_context = state.get("followup_resolved_against") if attempt_number == 1 else None
+    # Same first-attempt-only rule, same reason. Rebuilt here rather than
+    # carried in state because it is derived data: `conversation_history`
+    # is the fact, and a second stored copy of a projection of it is a
+    # second owner of it (CLAUDE.md 4.8). Costs one pass over a window of
+    # at most `context_resolution_recent_turns` turns.
+    conversation_memory = None
+    if attempt_number == 1 and settings.enable_context_resolution:
+        conversation_memory = (
+            render_memory_block(
+                build_memory(
+                    state.get("conversation_history") or [],
+                    recent_turns=settings.context_resolution_recent_turns,
+                )
+            )
+            or None
+        )
 
     rate_limit_result = get_llm_call_limiter(settings.llm_call_rate_limit_per_minute).check()
     if not rate_limit_result.allowed:
@@ -1430,6 +1720,7 @@ def generate_sql_node(state: AgentState) -> dict[str, Any]:
                 error_category=last_error_category,
                 settings=settings,
                 followup_context=followup_context,
+                conversation_memory=conversation_memory,
                 query_plan=state.get("query_plan"),
                 golden_examples=state.get("golden_examples"),
                 retrieved_context=state.get("retrieved_context"),
@@ -2893,7 +3184,10 @@ def generate_insight_node(state: AgentState) -> dict[str, Any]:
 
     settings = get_settings()
     summary = summarize_result(columns, rows)
-    question = state["question"]
+    # The standalone form, for the same reason `retrieve_schema_node`
+    # uses it: the insight prompt reads the question text, and a
+    # terse follow-up carries no subject of its own to read.
+    question = retrieval_question(state)
     sql = state.get("sql") or ""
 
     try:

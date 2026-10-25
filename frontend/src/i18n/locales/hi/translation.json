@@ -81,7 +81,9 @@
     "searchError": "खोज विफल रही। कृपया पुनः प्रयास करें।",
     "clearSearch": "खोज साफ़ करें",
     "loadingConversation": "लोड हो रहा है…",
-    "untitled": "शीर्षकहीन बातचीत"
+    "untitled": "शीर्षकहीन बातचीत",
+    "collapseGroup": "{{group}} संक्षिप्त करें",
+    "expandGroup": "{{group}} विस्तृत करें"
   },
   "workspace": {
     "heading": "अपने डेटा से कुछ भी पूछें",
@@ -165,7 +167,8 @@
     "scrollToLatest": "नवीनतम संदेश पर जाएं",
     "processing": "प्रक्रिया जारी है…",
     "processingStage": "प्रक्रिया जारी है — {{stage}}",
-    "spokenAnswerLabel": "बोला गया उत्तर"
+    "spokenAnswerLabel": "बोला गया उत्तर",
+    "wordLimitExceeded": "अधिकतम {{max}} शब्दों की अनुमति है"
   },
   "sql": {
     "title": "जनरेट किया गया SQL",

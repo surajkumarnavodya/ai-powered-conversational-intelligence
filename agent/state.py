@@ -11,13 +11,20 @@ prior failures on a retry.
 from __future__ import annotations
 
 import operator
-from typing import Annotated, Literal
 
 # typing_extensions.TypedDict (not stdlib typing.TypedDict) is required here:
 # this TypedDict is used as a LangGraph node's state, and LangGraph's
 # StateGraph.get_graph() triggers pydantic v2 to build a schema for it --
 # which raises PydanticUserError on Python < 3.12, where stdlib TypedDict
 # lacks __orig_bases__ (added in CPython 3.12). Production runs Python 3.11.
+#
+# `NotRequired` comes from stdlib `typing` (3.11+) rather than from
+# `typing_extensions` alongside `TypedDict`: the reason above is specific
+# to `TypedDict`, and ruff's UP035 flags the `typing_extensions` import of
+# anything stdlib already provides. The split is deliberate, not an
+# oversight -- do not "tidy" `TypedDict` back to stdlib with it.
+from typing import Annotated, Literal, NotRequired
+
 from typing_extensions import TypedDict
 
 from agent.insight import ResultSummary
@@ -78,15 +85,38 @@ class ConversationExchange(TypedDict):
     keeps the reference-resolution prompt bounded regardless of how large
     the actual result set was (see CLAUDE.md's constraint on this).
 
-    Built by the caller (`ui/session_history.py`) from the same session
-    query history that powers the UI's History panel -- one source of truth
-    for "what was asked and what happened," not a parallel state.
+    Built by the caller from the same session query history the UI's own
+    history panel reads -- one source of truth for "what was asked and
+    what happened," not a parallel state. On the web path that caller is
+    `frontend/src/lib/history.ts::buildConversationHistory`; for a script
+    driving the agent it is `eval/history.py`. (The `ui/session_history.py`
+    this docstring used to name was the Streamlit app's, removed when the
+    React dashboard reached parity -- see CLAUDE.md §1.)
     """
 
     question: str
     sql: str | None
     tables: list[str]
     status: str  # "succeeded" | "failed" | "needs_clarification"
+    # The assistant's own reply for this turn, when the caller recorded one.
+    #
+    # `NotRequired` rather than a plain field: this TypedDict is `total=True`
+    # and is constructed positionally-by-keyword in a dozen places (the API
+    # layer, `eval/history.py`, every test fixture), so a required key would
+    # be a breaking change to all of them (CLAUDE.md 6.3 -- additive with a
+    # default, never a break).
+    #
+    # Still structure, not result data: a short natural-language answer, the
+    # same thing the transcript already shows. Result *rows* remain excluded
+    # by design (see this class's docstring) -- what this adds is the text a
+    # refinement acts on ("make it more professional" has nothing to revise
+    # without it) and the entities an answer named that the question did not.
+    #
+    # `agent.orchestrator.nodes._recent_turns_text` has read
+    # `exchange.get("answer", "")` since the router was written; until this
+    # field existed that read always returned "", so the router's own
+    # "Conversation so far" block showed questions with no answers.
+    answer: NotRequired[str | None]
 
 
 StageOutcome = Literal["ok", "error", "no_op"]
@@ -173,6 +203,52 @@ class AttemptRecord(TypedDict):
     will_retry: bool
 
 
+class ContextResolutionRecord(TypedDict):
+    """One question's context resolution, flattened for transport.
+
+    A plain `TypedDict` of primitives rather than the
+    `agent.context_resolution.ResolvedContext` dataclass itself, for two
+    reasons. It lands in `AgentState`, whose other structured values are
+    all `TypedDict`s for the same LangGraph/pydantic-schema reason
+    `ConversationExchange` is one; and it is surfaced through
+    `api.schemas.AskResponse`, which cannot carry a dataclass holding a
+    `MemorySnapshot` of further dataclasses.
+
+    Attributes:
+        relation: `agent.context_resolution.ContextRelation`'s value --
+            "new_topic" | "followup" | "refinement" | "correction" |
+            "topic_return" | "ambiguous" | "missing_context".
+        resolved_question: The standalone form actually used downstream.
+        rewritten: Whether `resolved_question` differs from what was typed.
+        antecedent_question: The prior turn's question text this resolved
+            against, or None. Distinct from
+            `AgentState["followup_resolved_against"]`, which carries that
+            turn's whole exchange; this is the one field a log line and a
+            badge need.
+        confidence: Evidence for the resolution, in [0, 1]. **Never a
+            probability that the answer is correct** -- the same caveat
+            `AskResponse.source_confidence` carries (CLAUDE.md 13).
+        source: "deterministic" | "llm" | "disabled" -- which tier decided.
+        carried_constraints: Constraints in force, as written.
+        replaced_constraints: Constraints a correction displaced. Reported
+            rather than dropped silently, so a narrowed answer is explicable.
+        candidate_topics: On an ambiguous reference, the competing topics
+            the clarifying question named.
+        signals: Deterministic signal names that fired, for inspection.
+    """
+
+    relation: str
+    resolved_question: str
+    rewritten: bool
+    antecedent_question: str | None
+    confidence: float
+    source: str
+    carried_constraints: list[str]
+    replaced_constraints: list[str]
+    candidate_topics: list[str]
+    signals: list[str]
+
+
 class AgentState(TypedDict, total=False):
     """Full state threaded through the LangGraph graph.
 
@@ -244,6 +320,25 @@ class AgentState(TypedDict, total=False):
     # explanation of why the agent couldn't tell what was being asked,
     # mirroring failure_explanation's role for the "failed" status.
     clarification_message: str | None
+
+    # --- Conversational context resolution (agent/context_resolution.py) ---
+    # Set by classify_followup_node alongside the three legacy fields above,
+    # which are derived from this one (`ContextRelation.legacy_classification`)
+    # rather than computed separately -- one owner per fact (CLAUDE.md 4.8).
+    #
+    # The question in standalone form: pronouns substituted for the entity
+    # they refer to, the referenced topic quoted, and any constraint still in
+    # force appended. `retrieve_schema_node` embeds it, `generate_sql_node`
+    # puts it in the prompt, and the orchestrator routes and searches on it.
+    # Equal to `question` whenever nothing was carried, so every consumer can
+    # read it unconditionally -- see `agent.nodes.retrieval_question`.
+    #
+    # `question` itself is never replaced with it. The transcript shows what
+    # the person typed, and a rewrite is an internal processing form.
+    resolved_question: str | None
+    # The full resolution, as a flat record for the API and the UI -- see
+    # `ContextResolutionRecord`.
+    context_resolution: ContextResolutionRecord | None
 
     # Set by retrieve_schema on its first pass through (see that node's
     # docstring) via embeddings.retriever.select_database -- which

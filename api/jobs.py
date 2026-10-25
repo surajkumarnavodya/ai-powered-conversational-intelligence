@@ -72,6 +72,7 @@ from agent.harness.failures import FailureClass
 from agent.model_registry import InvalidModelSelectionError, validate_model_selection
 from agent.state import ConversationExchange
 from api.authz import require_permission
+from api.chat_history import require_owned_conversation
 from api.jobs_schemas import (
     QuestionJobListOut,
     QuestionJobOut,
@@ -284,6 +285,11 @@ def _question_job_runner(job: JobRecord, envelope: Any) -> JobOutcome:
             sql=turn.get("sql"),
             tables=list(turn.get("tables") or []),
             status=turn.get("status", "succeeded"),
+            # Carried here too, so a queued question resolves against the
+            # same context a synchronous /ask one does. A second path that
+            # saw less history would drift from the governed one -- which
+            # is exactly what `jobs/` injecting its runner exists to stop.
+            answer=turn.get("answer"),
         )
         for turn in request.get("conversation_history", [])
     ]
@@ -501,6 +507,11 @@ def submit_question(
     settings = get_settings()
     owner_key = _require_owner_key(identity)
     queue = _require_queue(settings)
+
+    # Same pre-check `POST /ask` runs, for the same reason: a job that
+    # would be filed under someone else's conversation is refused before
+    # it is ever queued, not after it has run.
+    require_owned_conversation(identity, payload.conversation_id, settings)
 
     # Validated before a queue slot is spent, mirroring `/ask`'s own
     # "validate before any admission-control slot is acquired" posture: an

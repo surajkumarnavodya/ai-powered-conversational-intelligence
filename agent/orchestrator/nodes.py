@@ -36,7 +36,15 @@ from guardrails.engine import UNGROUNDED_MESSAGE
 from guardrails.grounding import assess_grounding
 
 from agent.authz import Permission, has_role_permission
+from agent.context_resolution import rewrite_preserves_question
+from agent.conversation_memory import build_memory, render_memory_block
 from agent.graph import run_agent
+from agent.nodes import classify_followup_node, retrieval_question
+from agent.orchestrator.general_knowledge import (
+    NO_RETRIEVAL_CONVERSATION_MESSAGE,
+    NO_RETRIEVAL_UNMATCHED_MESSAGE,
+    answer_without_retrieval,
+)
 from agent.orchestrator.router_catalog import build_source_catalog
 from agent.orchestrator.router_contract import (
     ROUTED_SOURCE_NAMES,
@@ -779,6 +787,141 @@ def _apply_source_selection(
     return narrowed, notice
 
 
+#: `run_rag`'s collection names mapped to this graph's source names. The
+#: two differ for exactly one collection ("policies" vs "policy"), which
+#: is precisely the kind of near-miss worth naming once rather than
+#: hard-coding at each call site.
+_COLLECTION_SOURCE_NAMES = {"documents": "documents", "policies": "policy"}
+
+#: The longest a per-source rewrite may be. The router is asked for a
+#: search query or a precise data request, not an essay, and an unbounded
+#: string from a model goes straight into a retrieval call.
+_MAX_SOURCE_QUERY_CHARS = 600
+
+
+def _validated_source_queries(
+    decision: RouterDecision | None, question: str, sources: list[str]
+) -> dict[str, str]:
+    """`decision.source_queries`, translated to internal names and checked.
+
+    The router is asked to rewrite the question for each source it picks
+    -- a keyword query for web and the document collections, a detailed
+    visual description for image generation, a precise data request for
+    SQL (`prompts/router.md` rule 8). Those rewrites have been parsed into
+    `RouterDecision.source_queries` since the structured contract was
+    written and consumed by nothing; `docs/ROUTING.md` carried it as a
+    known gap.
+
+    Every entry is validated before it can reach a retrieval call,
+    because it is model output being used as a query:
+
+    - the source name must be one this graph actually routed to, so a
+      rewrite for a source that is not running cannot be picked up by one
+      that is;
+    - the text must be non-empty after stripping and no longer than
+      `_MAX_SOURCE_QUERY_CHARS`;
+    - it must **preserve the question's own content words**
+      (`agent.context_resolution.rewrite_preserves_question`, the same
+      check and the same reasoning as a context rewrite): a "rewrite" that
+      drops what was asked is not a better query for that source, it is a
+      different question. Measured behaviour on small local models
+      includes answering in the rewrite field, which this rejects.
+
+    Anything that fails is simply absent from the result, and
+    `source_query` then falls back to the resolved question -- the
+    behaviour every source had before this was threaded. So this is an
+    accuracy aid that fails open, per source (CLAUDE.md 4.2).
+
+    **`sql` is deliberately excluded**, even when the router supplies one.
+    The SQL path already has its own rewrite chain: `resolved_question` is
+    produced by `agent.context_resolution`, re-checked against the
+    request-governance policy in `classify_followup_node`, and that is the
+    text generation sees. Accepting a second, ungoverned rewrite there
+    would mean the text that was governed is not the text that is used --
+    a real hole, not a missing nicety. Retrieval sources have no such
+    chain: a rewritten query only changes what is *retrieved*, and the
+    answer still passes the result and grounding gates.
+    """
+    if decision is None or not decision.source_queries:
+        return {}
+
+    routed = set(sources)
+    validated: dict[str, str] = {}
+    for external, raw in decision.source_queries.items():
+        internal = ROUTED_SOURCE_NAMES.get(external.strip().lower())
+        if internal is None or internal not in routed or internal == "sql":
+            continue
+        rewritten = " ".join(str(raw).split())[:_MAX_SOURCE_QUERY_CHARS]
+        if not rewritten:
+            continue
+        if not rewrite_preserves_question(question, rewritten):
+            logger.info(
+                "[router] per-source query for %s discarded -- it did not preserve the "
+                "question's own content",
+                internal,
+            )
+            continue
+        validated[internal] = rewritten
+
+    if validated:
+        logger.info("[router] per-source queries accepted for %s", sorted(validated))
+    return validated
+
+
+def source_query(state: OrchestratorState, source: str) -> str:
+    """The query one source node should run.
+
+    One owner for "which text does *this* source search with", the
+    per-source counterpart of `agent.nodes.retrieval_question` (CLAUDE.md
+    4.8). Returns the router's validated rewrite for `source` when there
+    is one, and the resolved question otherwise -- which covers a
+    deterministically short-circuited route, a rewrite that failed
+    validation, a router that supplied none, and the whole
+    multi-source-router-off path. So a call site reads this
+    unconditionally and never needs to know whether a rewrite exists.
+    """
+    decision: RouteDecision | dict[str, Any] = state.get("route_decision") or {}
+    rewritten = (decision.get("source_queries") or {}).get(source)
+    return rewritten or retrieval_question(cast("Any", state))
+
+
+def resolve_context_node(state: OrchestratorState) -> dict[str, Any]:
+    """The orchestrator's entry point: resolve what this message means.
+
+    **This is `agent.nodes.classify_followup_node`, called directly, not a
+    second implementation of it.** `OrchestratorState` is a superset of
+    `AgentState` (see `agent/orchestrator/state.py`), so the node reads
+    and writes the same keys here as it does inside the SQL graph, and
+    there is exactly one owner of the resolution logic (CLAUDE.md 4.8,
+    6.1.2). `sql_subgraph_node` then forwards the result into `run_agent`,
+    where the SQL graph's own `classify_followup` node recognises it and
+    reuses it rather than resolving a second time.
+
+    Running it *here* rather than only inside the SQL subgraph is the
+    whole point: the router picks sources from the question text, and so
+    do web search, the two RAG collections and media search. Before this,
+    every one of them received the raw "Price?" -- while
+    `prompts/router.md` has always labelled its own input "(standalone
+    form)", a contract nothing satisfied.
+    """
+    return classify_followup_node(cast("Any", state))
+
+
+def route_after_context(state: OrchestratorState) -> str:
+    """Conditional edge after `resolve_context`: route, or stop and ask.
+
+    Mirrors `agent.nodes.route_after_classification` on the SQL path. A
+    reference the resolver could not pin down, and a resolved question the
+    request-governance policy refuses, both end the run here -- before a
+    router call, a retrieval, or any LLM work is spent on a question we
+    cannot read or must not answer.
+    """
+    status = state.get("status")
+    if status in ("needs_clarification", "rejected"):
+        return status
+    return "router"
+
+
 def router_node(state: OrchestratorState) -> dict[str, Any]:
     """Decides which source(s) this question should be routed to.
 
@@ -809,7 +952,10 @@ def router_node(state: OrchestratorState) -> dict[str, Any]:
     settings = get_settings()
     has_attachments = bool(state.get("pending_attachment_ids"))
     available = get_available_sources(settings, has_attachments=has_attachments)
-    question = state["question"]
+    # The standalone form (`agent.nodes.retrieval_question`). Routing from
+    # the raw text is how "Price?" ended up at general_knowledge while the
+    # conversation was two turns into a product question.
+    question = retrieval_question(cast("Any", state))
 
     # Caller-supplied source restriction (AskRequest.sources). Applied
     # before the branch below so the short-circuit, the deterministic
@@ -1183,6 +1329,10 @@ def router_node(state: OrchestratorState) -> dict[str, Any]:
             if router_decision and router_decision.is_no_retrieval() and not sources
             else None
         ),
+        # Per-source rewrites, translated and validated. Parsed since the
+        # structured router contract was written and, until now, used by
+        # nothing -- `docs/ROUTING.md` listed that as a known gap.
+        "source_queries": _validated_source_queries(router_decision, question, sources),
     }
     logger.info(
         "[router] available=%s sources=%s short_circuited=%s requires_database=%s reasoning=%s",
@@ -1288,6 +1438,10 @@ def sql_subgraph_node(state: OrchestratorState) -> dict[str, Any]:
     the orchestrator.
     """
     sql_state = run_agent(
+        # The question as typed, not the resolved form: `run_agent` is
+        # also the direct entry point for a single-source deployment, and
+        # `state["question"]` is what the input guard normalized and what
+        # the transcript shows. The resolution travels separately, below.
         state["question"],
         state.get("conversation_history"),
         state.get("enable_insight", True),
@@ -1308,6 +1462,15 @@ def sql_subgraph_node(state: OrchestratorState) -> dict[str, Any]:
         envelope=state.get("harness_envelope"),  # type: ignore[arg-type]
         forecast_horizon=state.get("forecast_horizon"),
         model_explicitly_selected=state.get("model_explicitly_selected", False),
+        # The resolution `resolve_context_node` already made for this
+        # request, so the SQL graph reuses it instead of resolving the
+        # same question a second time -- which would cost a second
+        # tier-2 LLM call and could reach a different answer for one
+        # question within one request. See
+        # `agent.nodes.classify_followup_node`'s reuse guard.
+        resolved_question=state.get("resolved_question"),
+        context_resolution=state.get("context_resolution"),
+        followup_resolved_against=state.get("followup_resolved_against"),
     )
     result = dict(sql_state)
     result["sources_used"] = ["sql"]
@@ -1327,7 +1490,15 @@ def _run_rag_node(state: OrchestratorState, collection: str, result_key: str) ->
     # single-collection call that happened to pass caller_roles explicitly.
     caller_roles = tuple(state.get("caller_roles", ()))
     try:
-        rag_state = run_rag(state["question"], collection, caller_roles=caller_roles)  # type: ignore[arg-type]
+        rag_state = run_rag(
+            # `collection` is the store's name ("documents"/"policies");
+            # the route's own source name for the policy collection is
+            # "policy", so the lookup uses the mapping rather than the
+            # collection name.
+            source_query(state, _COLLECTION_SOURCE_NAMES.get(collection, collection)),
+            collection,  # type: ignore[arg-type]
+            caller_roles=caller_roles,
+        )
     except RagStoreNotConfiguredError as exc:
         logger.error("[%s] not configured: %s", collection, exc)
         return {
@@ -1526,7 +1697,7 @@ def web_search_node(state: OrchestratorState) -> dict[str, Any]:
 
     settings = get_settings()
     try:
-        results = web_search(state["question"], settings)
+        results = web_search(source_query(state, "web"), settings)
     except WebSearchNotConfiguredError as exc:
         logger.error("[web_search] not configured: %s", exc)
         return {
@@ -1869,7 +2040,13 @@ def generation_node(state: OrchestratorState) -> dict[str, Any]:
     never going to work at all.
     """
     settings = get_settings()
-    question = state["question"]
+    # The router's own rewrite for this source when it supplied one --
+    # `prompts/router.md` asks for "a detailed visual description" here,
+    # which is a genuinely different and better prompt than the question
+    # as asked. Falls back to the standalone form, so "make it a wider
+    # shot" still revises the image the conversation is about. The prompt
+    # safety check below runs on whichever text this resolves to.
+    question = source_query(state, "generation")
 
     if not settings.require_generation_approval:
         return {
@@ -1961,7 +2138,7 @@ def media_search_node(state: OrchestratorState) -> dict[str, Any]:
 
     settings = get_settings()
     try:
-        hits = search_media(state["question"], settings)
+        hits = search_media(source_query(state, "media_search"), settings)
     except Exception as exc:  # noqa: BLE001 - an embedding/Chroma outage must not crash the run
         logger.warning("[media_search] request failed: %s", exc)
         return {
@@ -2036,7 +2213,9 @@ def attachment_node(state: OrchestratorState) -> dict[str, Any]:
 
     attachment_ids = state.get("pending_attachment_ids") or []
     result = run_attachment_qa(
-        state["question"], attachment_ids, owner_subject=state.get("caller_subject")
+        retrieval_question(cast("Any", state)),
+        attachment_ids,
+        owner_subject=state.get("caller_subject"),
     )
 
     graph_status = result.get("status")
@@ -2095,16 +2274,49 @@ _NO_INFORMATION_FOUND_MESSAGE = "I couldn't find any relevant information to ans
 # that destroys trust in every other answer", and `guardrails/grounding.py`
 # refuses an answer with no evidence behind it. Honouring that is the whole
 # point: a no-retrieval route has no evidence by construction.
-_NO_RETRIEVAL_UNMATCHED_MESSAGE = (
-    "I couldn't match that question to any of the connected data sources, so there was "
-    "nothing to look it up in. Try naming what you're asking about -- a table, a "
-    "metric, or a document you've uploaded -- and I'll query it directly."
-)
-_NO_RETRIEVAL_CONVERSATION_MESSAGE = (
-    "I answer questions from this deployment's own data -- your connected databases, "
-    "and any documents or policies that have been uploaded. Ask me something about "
-    "that data and I'll query it."
-)
+# Both messages now live with the module that owns the no-retrieval route's
+# answer (`agent.orchestrator.general_knowledge`), which needs them as its
+# own fallbacks -- one owner, so the text a caller sees when the feature is
+# off cannot drift from the text it falls back to when a model call fails.
+_NO_RETRIEVAL_UNMATCHED_MESSAGE = NO_RETRIEVAL_UNMATCHED_MESSAGE
+_NO_RETRIEVAL_CONVERSATION_MESSAGE = NO_RETRIEVAL_CONVERSATION_MESSAGE
+
+
+def _no_retrieval_llm(settings: Settings, state: OrchestratorState):
+    """The model callable for the no-retrieval route, or None.
+
+    None when the feature is off, so `answer_without_retrieval` takes its
+    "no model" path without the caller having to check the flag twice.
+
+    Uses `ModelTask.RAG_ANSWER` rather than `ROUTER`: this is answer
+    composition in prose, which is what that task is defined for
+    (instruction-following and faithfulness, not SQL ability and not a
+    two-token classification). A caller's own `AskRequest.model` is passed
+    as `caller_pinned` here -- unlike the router and the context
+    resolver, where a caller pinning `sqlcoder` for their SQL is not
+    choosing a model for classifying English. Here they *are* choosing
+    the model that writes their answer, so their choice wins, exactly as
+    `resolve_task_model`'s precedence intends.
+    """
+    if not settings.enable_general_knowledge_answers:
+        return None
+
+    from rag.llm import call_ollama
+
+    model = resolve_task_model(
+        ModelTask.RAG_ANSWER, settings, caller_pinned=state.get("selected_model")
+    )
+
+    def _call(system_prompt: str, user_prompt: str) -> str:
+        return call_ollama(
+            system_prompt,
+            user_prompt,
+            settings,
+            settings.general_knowledge_max_tokens,
+            model=model,
+        )
+
+    return _call
 
 
 def _no_retrieval_answer(state: OrchestratorState) -> dict[str, Any]:
@@ -2116,11 +2328,26 @@ def _no_retrieval_answer(state: OrchestratorState) -> dict[str, Any]:
     carries which of the two it was, because `primary_source` maps both to
     None by design -- see `RouteDecision`'s own docstring.
 
-    Returns `{}` unchanged for any *other* way of reaching `synthesis_node`
-    with no `sources_used`. That case is a source node that ran but failed
-    to tag itself, which is a bug worth leaving visible rather than
-    papering over with a friendly message -- and before this function
-    existed it was the only case the bare `return {}` could describe.
+    Returns `{}` unchanged for any *other* way of reaching
+    `synthesis_node` with no `sources_used`. That case is a source node
+    that ran but failed to tag itself, which is a bug worth leaving
+    visible rather than papering over with a friendly message -- and
+    before `_no_retrieval_answer` existed it was the only case the bare
+    `return {}` could describe.
+
+    **What changed 2026-10-24.** This used to return a fixed "I couldn't
+    match that to a data source" message and nothing else, so a writing
+    task, a coding question, a study plan or a greeting routed correctly
+    here and then had no answer behind it. It now delegates to
+    `agent.orchestrator.general_knowledge.answer_without_retrieval`,
+    which answers from the model's own knowledge *when an operator has
+    enabled it* (`ENABLE_GENERAL_KNOWLEDGE_ANSWERS`, off by default -- see
+    that module's docstring for the specific failure mode behind the
+    default) and otherwise returns the identical fixed message as before.
+
+    The question handed over is the **resolved** one
+    (`agent.nodes.retrieval_question`), so a refinement arrives naming
+    what it refines, and the conversation memory goes with it as data.
 
     `status` is "succeeded" for the same reason a zero-row SELECT is:
     routing ran correctly and reached a correct conclusion. The conclusion
@@ -2138,15 +2365,45 @@ def _no_retrieval_answer(state: OrchestratorState) -> dict[str, Any]:
     no_retrieval_route = route_decision.get("no_retrieval_route")
     if not no_retrieval_route:
         return {}
-    answer = (
-        _NO_RETRIEVAL_CONVERSATION_MESSAGE
-        if no_retrieval_route == "conversation"
-        else _NO_RETRIEVAL_UNMATCHED_MESSAGE
+
+    settings = get_settings()
+    memory_block: str | None = None
+    if settings.enable_context_resolution:
+        # Rebuilt from `conversation_history` rather than carried in
+        # state, for the reason `generate_sql_node` rebuilds it too: the
+        # history is the fact, and a stored projection of it would be a
+        # second owner (CLAUDE.md 4.8).
+        memory_block = (
+            render_memory_block(
+                build_memory(
+                    state.get("conversation_history") or [],
+                    recent_turns=settings.context_resolution_recent_turns,
+                )
+            )
+            or None
+        )
+
+    answer = answer_without_retrieval(
+        retrieval_question(cast("Any", state)),
+        route=no_retrieval_route,
+        settings=settings,
+        conversation_memory=memory_block,
+        llm=_no_retrieval_llm(settings, state),
     )
     logger.info(
-        "[synthesis] no-retrieval route=%s -- answered without running a source", no_retrieval_route
+        "[synthesis] no-retrieval route=%s answered_by=%s%s",
+        no_retrieval_route,
+        "model" if answer.from_model else "fixed_message",
+        f" reason={answer.reason}" if answer.reason else "",
     )
-    return {"status": "succeeded", "synthesized_answer": answer}
+    update: dict[str, Any] = {"status": "succeeded", "synthesized_answer": answer.text}
+    if answer.truth_level is not None:
+        # Reported as well as disclaimed in the text. The text is what a
+        # user reads and cannot be dropped by a client; this is what a
+        # client can act on (CLAUDE.md 4.4 -- provenance travels with the
+        # claim, and is never upgraded silently).
+        update["answer_truth_level"] = answer.truth_level.value
+    return update
 
 
 def synthesis_node(state: OrchestratorState) -> dict[str, Any]:

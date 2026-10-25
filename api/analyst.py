@@ -97,7 +97,11 @@ def investigate(
     history = sanitize_conversation_history(
         [
             ConversationExchange(
-                question=turn.question, sql=turn.sql, tables=turn.tables, status=turn.status
+                question=turn.question,
+                sql=turn.sql,
+                tables=turn.tables,
+                status=turn.status,
+                answer=turn.answer,
             )
             for turn in payload.conversation_history
         ],
@@ -174,7 +178,11 @@ def supervise(
     history = sanitize_conversation_history(
         [
             ConversationExchange(
-                question=turn.question, sql=turn.sql, tables=turn.tables, status=turn.status
+                question=turn.question,
+                sql=turn.sql,
+                tables=turn.tables,
+                status=turn.status,
+                answer=turn.answer,
             )
             for turn in payload.conversation_history
         ],

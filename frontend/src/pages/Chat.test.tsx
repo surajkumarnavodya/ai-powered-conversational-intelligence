@@ -273,23 +273,62 @@ describe('Chat page', () => {
       expect(button).not.toHaveAttribute('aria-busy')
     })
 
-    it('stays hidden at the bottom even while a question is pending, so it is never a dead control', () => {
-      // Regression. The ring briefly forced the button visible whenever a
-      // question was in flight, including at the bottom -- where
-      // `scrollToBottom` is `el.scrollTo({ top: el.scrollHeight })` and so
-      // does nothing. That is an arrow you can click that never moves the
-      // page, which reads as broken. The pending turn's own "Thinking Ns…"
-      // badge is on screen in that state; the ring is for when you have
-      // scrolled away from it.
+    it('is shown at the bottom while a question is pending, but as an indicator that takes no clicks', () => {
+      // The resolution of two opposite reports, so both directions are
+      // pinned here at once.
+      //
+      // It must be SEEN: asking from the bottom is the common case, and
+      // hiding the disc there hid the ring for the whole of it ("the
+      // arrow icon and round dotted line not appearing when I ask any
+      // question").
+      //
+      // It must not be ACTIONABLE: at the bottom `scrollToBottom` is
+      // `el.scrollTo({ top: el.scrollHeight })`, a no-op, and offering an
+      // arrow that cannot move the page is the earlier report ("the
+      // arrow is not working").
       useChatStore.setState({
         queryHistory: [makeEntry('First')],
         pendingQuestion: pending(),
       } as never)
       const { container } = renderChat()
       const button = getScrollToBottomButton(container)
-      expect(button).toHaveAttribute('aria-hidden', 'true')
+      const scrollEl = getScrollContainer(container)
+      const scrollToSpy = vi.spyOn(scrollEl, 'scrollTo')
+
+      // Seen, with the ring.
+      expect(button).toHaveAttribute('aria-hidden', 'false')
+      expect(button).toHaveAttribute('aria-busy', 'true')
+      expect(button.className).toMatch(/dotted-ring/)
+
+      // But inert: not focusable, reported unavailable, pointer-proof,
+      // and wired to nothing -- a click cannot reach a no-op scroll.
+      expect(button).toHaveAttribute('aria-disabled', 'true')
       expect(button).toHaveAttribute('tabindex', '-1')
       expect(button.className).toMatch(/pointer-events-none/)
+      fireEvent.click(button)
+      expect(scrollToSpy).not.toHaveBeenCalled()
+    })
+
+    it('becomes a real arrow again once scrolled away, where it can move the page', () => {
+      // The other half of the seam above: the same disc, now genuinely
+      // actionable, because scrolling down from here does something.
+      useChatStore.setState({
+        queryHistory: [makeEntry('First'), makeEntry('Second')],
+        pendingQuestion: pending(),
+      } as never)
+      const { container } = renderChat()
+      const scrollEl = getScrollContainer(container)
+      mockScrollState(scrollEl, { scrollHeight: 2000, scrollTop: 200, clientHeight: 600 })
+      act(() => {
+        fireEvent.scroll(scrollEl)
+      })
+      const scrollToSpy = vi.spyOn(scrollEl, 'scrollTo')
+
+      const button = getScrollToBottomButton(container)
+      expect(button).not.toHaveAttribute('aria-disabled')
+      expect(button).toHaveAttribute('tabindex', '0')
+      fireEvent.click(button)
+      expect(scrollToSpy).toHaveBeenCalled()
     })
 
     it('shows the ring once the user scrolls away, where the arrow does move the page', () => {

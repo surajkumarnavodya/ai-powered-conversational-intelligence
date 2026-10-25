@@ -526,6 +526,41 @@ body {
   animation: dotted-ring-spin 2.4s linear infinite;
 }
 
+/* The continuous right-to-left marquee `ui/scrolling-text.tsx` runs while
+   a clipped label is hovered or focused.
+
+   The track holds two identical copies of the label, each followed by the
+   same trailing gap, so the track is exactly twice one copy's width.
+   Translating it by -50% therefore advances it by precisely one copy: at
+   the end of the cycle the second copy sits exactly where the first
+   started, so restarting the animation is invisible and the label never
+   scrolls away into an empty box. That is the whole reason for the
+   duplicate -- a single copy translated by its own width leaves the
+   container blank until it loops back.
+
+   `animation-duration` is set inline per instance, because the cycle has
+   to cover a measured pixel distance at one constant reading speed; a
+   fixed duration here would crawl for a short label and blur for a long
+   one.
+
+   Reduced motion needs no rule of its own: the global block below caps
+   `animation-duration` and `animation-iteration-count` for everything, so
+   this resolves to a single instantaneous cycle and the label simply sits
+   still at its start. Nothing is hidden -- the full text stays in the DOM
+   and in the `title` tooltip. */
+@keyframes marquee-loop {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.marquee-track {
+  animation: marquee-loop linear infinite;
+}
+
 /* Respects the OS-level "reduce motion" preference across every animated
    surface in the app (drawer slide, gear rotation, workspace padding
    shift, skeletons) -- a single global override rather than remembering

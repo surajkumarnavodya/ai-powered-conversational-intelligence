@@ -81,7 +81,9 @@
     "searchError": "La búsqueda falló. Inténtalo de nuevo.",
     "clearSearch": "Borrar búsqueda",
     "loadingConversation": "Cargando…",
-    "untitled": "Conversación sin título"
+    "untitled": "Conversación sin título",
+    "collapseGroup": "Contraer {{group}}",
+    "expandGroup": "Expandir {{group}}"
   },
   "workspace": {
     "heading": "Pregunta lo que quieras sobre tus datos",
@@ -165,7 +167,8 @@
     "scrollToLatest": "Desplazarse al último mensaje",
     "processing": "Procesando…",
     "processingStage": "Procesando — {{stage}}",
-    "spokenAnswerLabel": "Respuesta hablada"
+    "spokenAnswerLabel": "Respuesta hablada",
+    "wordLimitExceeded": "Máximo {{max}} palabras permitidas"
   },
   "sql": {
     "title": "SQL generado",

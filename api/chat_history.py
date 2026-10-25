@@ -58,10 +58,18 @@ from api.shares import _no_evidence_reason
 from config.settings import Settings, get_settings
 from governance.domain_detection import detect_domain
 from governance.result_policy import govern_result_for_domain, narrative_withhold_reason
+from security.oidc import AuthIdentity
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+#: The one generic message every "that conversation isn't yours" refusal
+#: uses, wherever it is raised from. A second, more specific wording
+#: anywhere would re-introduce exactly the oracle `_not_found` exists to
+#: close.
+CONVERSATION_NOT_FOUND_DETAIL = "Conversation not found."
 
 
 def _not_found() -> HTTPException:
@@ -70,7 +78,9 @@ def _not_found() -> HTTPException:
     # another user's conversation even exists is the point, the same
     # account-enumeration-avoidance principle `identity.exceptions
     # .InvalidCredentialsError` applies to login.
-    return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found.")
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND, detail=CONVERSATION_NOT_FOUND_DETAIL
+    )
 
 
 def _parse_uuid(value: str) -> uuid.UUID:
@@ -78,6 +88,96 @@ def _parse_uuid(value: str) -> uuid.UUID:
         return uuid.UUID(value)
     except ValueError:
         raise _not_found() from None
+
+
+def require_owned_conversation(
+    identity: AuthIdentity,
+    conversation_id: str | None,
+    settings: Settings | None = None,
+) -> None:
+    """Refuses a `conversation_id` the caller does not own, before any work starts.
+
+    Called at the top of `POST /ask` (`api/main.py`) and `POST /questions`
+    (`api/jobs.py`) so a guessed or borrowed id is rejected *before* a
+    concurrency slot, an LLM call or a database query is spent on it --
+    not afterwards, when the answer already exists and the only remaining
+    question is where to file it.
+
+    Refuses with the same generic 404 `_not_found` builds for every other
+    conversation route: "doesn't exist" and "exists but is someone else's"
+    are deliberately indistinguishable, so this cannot be used to
+    enumerate which ids are real (this module's own docstring, and
+    CLAUDE.md 5.3's anti-enumeration rule).
+
+    Returns silently -- rather than refusing -- in three cases where there
+    is nothing to own and nothing to leak:
+
+    - `conversation_id is None`: the first turn of a new conversation. One
+      is minted at persist time (`api.chat_persistence.persist_ask_turn`),
+      which is the only place an id is ever created, so a caller never
+      has to invent one.
+    - The caller isn't locally authenticated, or local auth is off. There
+      is no `identity.users` row to own a conversation, nothing is
+      persisted, and no server-side history is ever loaded for them --
+      see this module's own docstring on that documented limitation.
+    - The identity database can't be reached. Ownership then can't be
+      *verified*, but neither can it be *violated*: the write path
+      resolves the same id through the same ownership-scoped query
+      (`get_conversation`, which carries `user_id` in its own `WHERE`
+      clause) and falls back to creating a fresh conversation, so an
+      unverified id can never attach a turn to another user's thread.
+      Refusing every question during an identity-DB blip would take
+      answering down over a history-only concern -- the fail-open
+      contract `api/chat_persistence.py`'s docstring sets out.
+
+    Raises:
+        HTTPException: 404, with `CONVERSATION_NOT_FOUND_DETAIL`, when the
+            id is malformed or does not resolve to a live conversation
+            owned by this caller.
+    """
+    if conversation_id is None:
+        return
+
+    settings = settings or get_settings()
+    if identity.mode != "local" or not settings.local_auth_enabled:
+        return
+
+    try:
+        user_id = uuid.UUID(identity.subject)
+    except ValueError:
+        # Same non-UUID-subject guard `persist_ask_turn` applies: such a
+        # caller owns nothing, so there is nothing to check against.
+        logger.warning(
+            "[chat_history] local identity had a non-UUID subject; "
+            "skipping the conversation ownership pre-check"
+        )
+        return
+
+    try:
+        from identity.db import get_identity_session
+
+        session = get_identity_session(settings)
+    except Exception as exc:  # noqa: BLE001 - identity DB may be unreachable
+        logger.warning(
+            "[chat_history] could not open identity session for the conversation "
+            "ownership pre-check: %s",
+            exc,
+        )
+        return
+
+    try:
+        if get_conversation(session, conversation_id=_parse_uuid(conversation_id), user_id=user_id):
+            return
+    finally:
+        session.close()
+
+    # Logged at info with the id only -- never the question, the caller's
+    # subject, or whether the row exists for somebody else (CLAUDE.md 5.6).
+    logger.info(
+        "[chat_history] refused conversation_id %r: not a live conversation owned by this caller",
+        conversation_id,
+    )
+    raise _not_found()
 
 
 def _conversation_out(

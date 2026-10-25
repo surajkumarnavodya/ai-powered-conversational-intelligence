@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { ScrollToBottomButton } from './ScrollToBottomButton'
@@ -158,6 +158,46 @@ describe('ScrollToBottomButton', () => {
       const button = screen.getByRole('button', { name: 'Scroll to latest message' })
       expect(button.className).not.toMatch(/dotted-ring/)
       expect(button).not.toHaveAttribute('aria-busy')
+    })
+
+    it('renders the ring but refuses clicks and focus when it cannot scroll', () => {
+      // `interactive={false}` is the at-the-bottom state: the disc is on
+      // screen purely to show progress, so it must keep the ring and
+      // lose every affordance -- otherwise it is an arrow that does not
+      // move the page.
+      const onClick = vi.fn()
+      render(
+        <ScrollToBottomButton
+          visible={true}
+          processing
+          interactive={false}
+          onClick={onClick}
+          bottomOffsetPx={16}
+        />,
+      )
+      const button = screen.getByRole('button', { name: 'Scroll to latest message' })
+      expect(button.className).toMatch(/dotted-ring/)
+      expect(button).toHaveAttribute('aria-busy', 'true')
+      expect(button).toHaveAttribute('aria-disabled', 'true')
+      expect(button).toHaveAttribute('tabindex', '-1')
+      expect(button.className).toMatch(/pointer-events-none/)
+      // Wired to nothing, so even a synthetic click cannot act.
+      fireEvent.click(button)
+      expect(onClick).not.toHaveBeenCalled()
+    })
+
+    it('is a normal arrow button again when it can scroll', () => {
+      const onClick = vi.fn()
+      render(
+        <ScrollToBottomButton visible={true} processing onClick={onClick} bottomOffsetPx={16} />,
+      )
+      const button = screen.getByRole('button', { name: 'Scroll to latest message' })
+      // `interactive` defaults to true, so the pre-existing call sites
+      // and behaviour are unchanged.
+      expect(button).not.toHaveAttribute('aria-disabled')
+      expect(button).toHaveAttribute('tabindex', '0')
+      fireEvent.click(button)
+      expect(onClick).toHaveBeenCalledTimes(1)
     })
 
     it('keeps the same 32px box and offset while processing, so nothing shifts', () => {

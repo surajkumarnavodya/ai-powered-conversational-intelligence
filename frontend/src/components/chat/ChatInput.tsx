@@ -14,6 +14,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import { ChatAttachmentChip } from '@/components/chat/ChatAttachmentChip'
 import { ImageUploader } from '@/components/image/ImageUploader'
+import { ComposerModelPicker } from '@/components/chat/ComposerModelPicker'
 import { SourcePicker } from '@/components/chat/SourcePicker'
 import { ImageViewer } from '@/components/image/ImageViewer'
 import { OcrResultDialog } from '@/components/image/OcrResultDialog'
@@ -172,7 +173,12 @@ export function ChatInput({ onSend }: { onSend?: () => void } = {}) {
     // safe and is what lets a user ask several things at once. Still
     // blocked while an attachment is uploading: sending early would
     // either omit it or race the server still writing its record.
-    if (!trimmed || attachments.isUploading) return
+    // The word limit is enforced here, not by truncating as the user
+    // types (see `handleChange`). This is the only place it can be
+    // enforced without destroying text the user may still want to edit,
+    // and it covers every route in: Enter, the send button, and a voice
+    // transcript long enough to overrun the cap.
+    if (!trimmed || attachments.isUploading || countWords(value) > MAX_WORDS) return
 
     // A "show this as a pie chart"/"switch to line" style follow-up is
     // answered instantly, client-side, against the most recent chartable
@@ -254,11 +260,14 @@ export function ChatInput({ onSend }: { onSend?: () => void } = {}) {
   }
 
   const handleChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
-    const el = event.target
-    const words = el.value.trim() === '' ? [] : el.value.trim().split(/\s+/)
-    // Hard cap at 250 words -- typing or pasting past it simply stops
-    // accepting more, rather than rejecting the whole input.
-    const next = words.length > MAX_WORDS ? words.slice(0, MAX_WORDS).join(' ') : el.value
+    const next = event.target.value
+    // Deliberately no longer truncated at `MAX_WORDS`. Silently dropping
+    // the tail of a paste is the worst of the options: the user cannot
+    // see what was lost, and an over-long draft they wanted to trim
+    // themselves is destroyed by the act of pasting it. The limit is now
+    // *shown and enforced at send* instead -- the box turns red, the
+    // count explains why, and `submit()` refuses -- which leaves the text
+    // in the user's hands to edit down.
     setValue(next)
     if (fromVoice && next.trim() === '') setFromVoice(false)
   }
@@ -273,6 +282,9 @@ export function ChatInput({ onSend }: { onSend?: () => void } = {}) {
   }
 
   const wordCount = countWords(value)
+  // Strictly over the limit. `=== MAX_WORDS` is a valid, sendable draft:
+  // the cap is "at most 500 words", so the warning starts at 501.
+  const isOverWordLimit = wordCount > MAX_WORDS
   const isListening = voice.phase === 'listening'
   const isTranscribing = voice.phase === 'transcribing'
   const isSpeaking = voice.phase === 'speaking'
@@ -302,8 +314,17 @@ export function ChatInput({ onSend }: { onSend?: () => void } = {}) {
         onDragLeave={() => setIsDraggingOver(false)}
         onDrop={handleDrop}
         onPaste={handlePaste}
-        className={`flex flex-col gap-0.5 rounded-2xl border p-1.5 shadow-sm transition-shadow focus-within:border-[var(--accent)] focus-within:shadow-md ${
-          isDraggingOver ? 'border-[var(--accent)] bg-[var(--accent-soft)]' : 'border-[var(--border)] bg-[var(--card)]'
+        // Over the word limit the whole box goes red, and stays red even
+        // while focused -- hence the `focus-within:` override here rather
+        // than letting the accent colour win back on the next keystroke,
+        // which is exactly when the user is still typing into an
+        // already-too-long draft.
+        className={`flex flex-col gap-0.5 rounded-2xl border p-1.5 shadow-sm transition-shadow focus-within:shadow-md ${
+          isOverWordLimit
+            ? 'border-[var(--danger)] bg-[var(--card)] focus-within:border-[var(--danger)]'
+            : isDraggingOver
+              ? 'border-[var(--accent)] bg-[var(--accent-soft)] focus-within:border-[var(--accent)]'
+              : 'border-[var(--border)] bg-[var(--card)] focus-within:border-[var(--accent)]'
         }`}
       >
         {attachments.attachments.length > 0 && (
@@ -421,7 +442,10 @@ export function ChatInput({ onSend }: { onSend?: () => void } = {}) {
             // one in flight, which is what lets several questions run at
             // once. Keeping Stop as the only option whenever anything was
             // pending is exactly what made the UI single-threaded.
-            disabled={!showStop && (voiceLocked || !value.trim() || attachments.isUploading)}
+            disabled={
+              !showStop &&
+              (voiceLocked || !value.trim() || attachments.isUploading || isOverWordLimit)
+            }
             aria-label={showStop ? t('common.stop') : t('chat.send')}
             title={showStop ? t('common.stop') : t('chat.send')}
             className="rounded-xl"
@@ -494,15 +518,37 @@ export function ChatInput({ onSend }: { onSend?: () => void } = {}) {
           <Volume2 className="h-3 w-3" /> {t('voice.speaking')}
         </p>
       )}
-      <div className="flex items-start justify-between gap-3 px-1">
-        <p className="text-xs text-[var(--muted-foreground)]">{t('chat.disclaimer')}</p>
-        <span
-          className={`shrink-0 text-xs ${
-            wordCount >= MAX_WORDS ? 'text-[var(--danger)]' : 'text-[var(--muted-foreground)]'
-          }`}
-        >
-          {wordCount} / {MAX_WORDS} {t('chat.words')}
-        </span>
+      {/* Three columns, with the outer two sharing the leftover width
+          equally (`1fr ... 1fr`). That is what centres the disclaimer on
+          the *composer*, rather than merely centring it in whatever space
+          the model picker and the warning happen to leave -- those two
+          differ in width, and with a plain flex row the sentence would
+          drift sideways as the warning appeared and disappeared.
+
+          Below `sm` it stacks instead: three columns of this on a phone
+          would squeeze the sentence into a narrow ribbon. The disclaimer
+          is ordered last there so the controls stay nearest the box. */}
+      <div className="flex flex-col items-center gap-1 px-1 sm:grid sm:grid-cols-[1fr_auto_1fr] sm:items-center sm:gap-3">
+        <div className="order-1 flex w-full justify-start sm:order-none sm:w-auto sm:justify-self-start">
+          <ComposerModelPicker disabled={disabled} />
+        </div>
+        <p className="order-3 text-center text-xs text-[var(--muted-foreground)] sm:order-none">
+          {t('chat.disclaimer')}
+        </p>
+        {/* Nothing at all until the limit is actually exceeded -- the
+            running "0 / 500 words" tally was noise on every empty
+            composer, and a counter that is only ever interesting at one
+            value may as well say what that value means. `role="status"`
+            so the warning is announced when it appears; it is not an
+            `alert`, because the draft is still intact and nothing has
+            failed yet. */}
+        <div className="order-2 flex w-full justify-end sm:order-none sm:w-auto sm:justify-self-end">
+          {isOverWordLimit && (
+            <span role="status" className="shrink-0 text-xs text-[var(--danger)]">
+              {t('chat.wordLimitExceeded', { max: MAX_WORDS })}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   )

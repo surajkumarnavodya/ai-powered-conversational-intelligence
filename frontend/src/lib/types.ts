@@ -25,6 +25,43 @@ export interface ConversationExchange {
   sql: string | null
   tables: string[]
   status: AgentStatus
+  /** The assistant's own reply for this turn, when there was one.
+   *
+   * Optional and additive (`api.schemas.ConversationExchangeIn.answer`).
+   * Sending it is what lets the server resolve a refinement -- "make it
+   * shorter", "expand point two" -- against the text being revised, and
+   * it supplies the entities an answer named that the question did not.
+   * See `conversationAnswerText` for which of a turn's several answer
+   * fields this is taken from. */
+  answer?: string | null
+}
+
+/** Mirrors `api.schemas.ContextResolutionOut`.
+ *
+ * How the server read this question against the conversation. Metadata
+ * beside the transcript, never rendered as an assistant message:
+ * `resolved_question` is an internal processing form and the chat bubble
+ * keeps showing what the person typed. */
+export interface ContextResolution {
+  /** 'new_topic' | 'followup' | 'refinement' | 'correction' |
+   * 'topic_return' | 'ambiguous' | 'missing_context'. Richer than
+   * `AskResponse.followup_classification`, which keeps its original three
+   * values because that field is a frozen contract. Typed as a string
+   * rather than a union so a server that adds a relation does not make
+   * this type wrong. */
+  relation: string
+  resolved_question: string
+  rewritten: boolean
+  antecedent_question: string | null
+  /** Evidence for the resolution, 0..1. **Not** a probability that the
+   * answer is correct -- the same caveat `source_confidence` carries. */
+  confidence: number
+  /** 'deterministic' | 'llm' | 'disabled'. */
+  source: string
+  carried_constraints: string[]
+  replaced_constraints: string[]
+  candidate_topics: string[]
+  signals: string[]
 }
 
 /** Mirrors `api.schemas.SqlSummaryOut` -- what the generated SQL is.
@@ -676,6 +713,18 @@ export interface AskResponse {
   error_history: string[]
   sources_used: string[]
   synthesized_answer: string | null
+  /** `DataTruthLevel`'s value for `synthesized_answer` when that answer
+   * came from the model's own knowledge rather than from any source --
+   * so `'ai_inference'`, and only on the router's no-retrieval route with
+   * `ENABLE_GENERAL_KNOWLEDGE_ANSWERS` on.
+   *
+   * Null everywhere else, which is meaningful rather than missing: an
+   * answer composed from sources carries each source's own citations and
+   * status, a stronger statement than one truth level over the whole
+   * text. The answer text itself also leads with a fixed disclaimer, so
+   * a client that ignores this field still cannot present model output as
+   * the organization's own data. */
+  answer_truth_level?: string | null
   document_result: SourceAnswer | null
   policy_result: SourceAnswer | null
   web_result: SourceAnswer | null
@@ -686,6 +735,12 @@ export interface AskResponse {
   schema_tables: SchemaTable[]
   followup_classification: 'standalone' | 'followup' | 'ambiguous' | null
   followup_resolved_against: ConversationExchange | null
+  /** Null when context resolution is switched off server-side
+   * (`ENABLE_CONTEXT_RESOLUTION=false`), and absent on a turn
+   * reconstructed from saved history, which never recorded one --
+   * optional for that reason, like every other field this response gained
+   * after clients already existed. */
+  context_resolution?: ContextResolution | null
   // Set when the multi-source router dropped a picked source because the
   // caller's account role lacks permission for it (e.g. media generation
   // needs analyst/admin) -- the question was answered from whatever

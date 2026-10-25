@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { askState } from '@/test/analyticsFixtures'
 import {
   buildConversationHistory,
+  buildSpokenAnswerText,
+  conversationAnswerText,
   MAX_FOLLOWUP_EXCHANGES,
   newHistoryEntry,
   nlCacheKey,
@@ -393,5 +395,54 @@ describe('nlCacheKey', () => {
 
   it('defaults to no exclusions', () => {
     expect(nlCacheKey('q', [], true)).toBe(nlCacheKey('q', [], true, new Set()))
+  })
+})
+
+describe('conversationAnswerText', () => {
+  it('prefers a grounded insight, the SQL path answer', () => {
+    const entry = newHistoryEntry('Q?', askState({ insight: 'Sales grew 12%.' }), 1000)
+    expect(conversationAnswerText(entry)).toBe('Sales grew 12%.')
+  })
+
+  it('falls back to the multi-source synthesized answer', () => {
+    const entry = newHistoryEntry(
+      'Q?',
+      askState({ insight: null, synthesized_answer: 'The policy allows 12 days.' }),
+      1000,
+    )
+    expect(conversationAnswerText(entry)).toBe('The policy allows 12 days.')
+  })
+
+  it('returns null rather than a row count when there is no answer text', () => {
+    // "Found 12 rows." is not context a refinement can act on, so it is
+    // deliberately not carried -- unlike buildSpokenAnswerText, which has
+    // to say something out loud.
+    const entry = newHistoryEntry('Q?', askState({ insight: null, row_count: 12 }), 1000)
+    expect(conversationAnswerText(entry)).toBeNull()
+  })
+
+  it('still gives buildSpokenAnswerText something to say', () => {
+    const entry = newHistoryEntry('Q?', askState({ insight: null, row_count: 12 }), 1000)
+    expect(buildSpokenAnswerText(entry)).toContain('12')
+  })
+})
+
+describe('buildConversationHistory carries the prior answer', () => {
+  it('sends the answer text alongside the question', () => {
+    const base = newHistoryEntry('Tell me about the Pixel 10a', askState({
+      status: 'succeeded',
+      insight: 'It is a mid-range phone.',
+    }), 1000)
+    const entries = [{ ...base, agentStatus: 'succeeded' as AgentStatus }]
+    expect(buildConversationHistory(entries)[0].answer).toBe('It is a mid-range phone.')
+  })
+
+  it('omits the field entirely when the turn produced no answer text', () => {
+    // `undefined`, not null, so the key is simply absent from the request
+    // body -- the server treats a missing answer and an explicit null
+    // identically, and absent is the smaller request.
+    const base = newHistoryEntry('Q?', askState({ status: 'succeeded', insight: null }), 1000)
+    const entries = [{ ...base, agentStatus: 'succeeded' as AgentStatus }]
+    expect(buildConversationHistory(entries)[0].answer).toBeUndefined()
   })
 })

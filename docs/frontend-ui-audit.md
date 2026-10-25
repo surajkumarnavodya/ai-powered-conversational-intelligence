@@ -111,8 +111,28 @@ at every viewport width.
   counter. `ScrollToBottomButton.tsx` draws a dotted progress ring
   (`.dotted-ring` in `index.css`) while a question in the active
   conversation is in flight, and names the running stage in its tooltip
-  and accessible description. It is an *additional visual state only*:
-  the button still just scrolls, during processing as much as before.
+  and accessible description.
+
+  The ring is *visible* for the whole of every in-flight question,
+  including when the reader is at the bottom of the conversation — which
+  is the common case, since that is where you are when you ask. But the
+  disc is only *actionable* where scrolling down would actually move the
+  page. At the bottom `useScrollToBottom.scrollToBottom`
+  (`el.scrollTo({ top: el.scrollHeight })`) is a no-op, so there the disc
+  renders as a pure progress indicator: `pointer-events-none`,
+  `tabIndex -1`, `aria-disabled`, and no click handler bound at all,
+  while `aria-busy` and the description still carry the progress.
+
+  That split (`visible` vs `interactive` in `Chat.tsx`) is the resolution
+  of two opposite reports about the same control: it was first reported
+  as "the arrow is not working", because showing it at the bottom offered
+  an arrow whose click could not move anything; hiding it at the bottom
+  then produced "the arrow icon and round dotted line not appearing when
+  I ask any question", because that removed the ring from the entire
+  common case. Separating *seen* from *actionable* satisfies both, and
+  both directions are pinned by test in `Chat.test.tsx`
+  (mutation-verified: forcing `interactive` true, or reverting `visible`
+  to `!isAtBottom`, each fails).
 
   It stays deliberately **indeterminate**, for the same reason the
   counter is honest today — the server reports *which graph node is

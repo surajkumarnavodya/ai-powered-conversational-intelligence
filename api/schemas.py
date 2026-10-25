@@ -29,6 +29,21 @@ class ConversationExchangeIn(BaseModel):
     sql: str | None = None
     tables: list[str] = Field(default_factory=list)
     status: AgentStatus = "succeeded"
+    answer: str | None = Field(
+        default=None,
+        description=(
+            "The assistant's own reply for this turn, if the client kept one. "
+            "Optional and additive -- a client that omits it gets exactly the "
+            "pre-existing behaviour. Supplying it is what lets a refinement "
+            "('make it shorter', 'expand point two') resolve against the text "
+            "it is meant to revise, and it feeds the entities an answer named "
+            "that the question did not. Length-capped and injection-scanned "
+            "server-side like every other prior-turn field (see "
+            "`agent.input_guard.sanitize_conversation_history`); no cap is "
+            "declared here, matching `AskRequest.question`'s own "
+            "enforce-it-downstream convention."
+        ),
+    )
 
 
 class AskRequest(BaseModel):
@@ -72,6 +87,10 @@ class AskRequest(BaseModel):
             "turn under -- only meaningful for a locally-authenticated caller (see "
             "api/chat_persistence.py); ignored otherwise. Omit on the first turn of a new "
             "conversation -- one is created automatically and returned in AskResponse. "
+            "Never invent one: an id that is not a live conversation this caller owns is "
+            "refused with 404 before any work starts (api.chat_history"
+            ".require_owned_conversation), using the same generic message a nonexistent "
+            "id gets, so it cannot be used to discover which ids are real. "
             "Unrelated to session_id above: this is real, permanent server-side storage, "
             "not a correlation token."
         ),
@@ -824,6 +843,55 @@ class ConversationExchangeOut(BaseModel):
     sql: str | None = None
     tables: list[str] = Field(default_factory=list)
     status: AgentStatus
+    answer: str | None = None
+
+
+class ContextResolutionOut(BaseModel):
+    """Mirrors `agent.state.ContextResolutionRecord`.
+
+    Additive and entirely optional for a client. It exists so the
+    resolution is *inspectable* -- which earlier turn the answer was read
+    against, whether the question was rewritten, which constraints are
+    still being applied, and whether a correction displaced one. A silent
+    rewrite that narrows an answer differently than the person expects is
+    the main way this feature can be wrong, and a field they can look at
+    is what makes that visible before they act on the answer.
+
+    Never rendered as an assistant message. The chat transcript shows the
+    question as typed; this is metadata beside it.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    relation: str = Field(
+        description=(
+            "How this message related to the conversation: new_topic, followup, "
+            "refinement, correction, topic_return, ambiguous, or missing_context "
+            "(`agent.context_resolution.ContextRelation`). Richer than "
+            "`AskResponse.followup_classification`, which stays on its original "
+            "three values because that field's Literal is a frozen contract."
+        )
+    )
+    resolved_question: str = Field(
+        description=(
+            "The standalone form actually used for retrieval, routing and the "
+            "generation prompt. Equal to the question as typed when nothing was "
+            "carried."
+        )
+    )
+    rewritten: bool
+    antecedent_question: str | None = None
+    confidence: float = Field(
+        description=(
+            "Evidence for the resolution, 0..1. **Not a probability that the "
+            "answer is correct** -- the same caveat `source_confidence` carries."
+        )
+    )
+    source: str = Field(description="Which tier decided: deterministic, llm, or disabled.")
+    carried_constraints: list[str] = Field(default_factory=list)
+    replaced_constraints: list[str] = Field(default_factory=list)
+    candidate_topics: list[str] = Field(default_factory=list)
+    signals: list[str] = Field(default_factory=list)
 
 
 class AskResponse(BaseModel):
@@ -1041,7 +1109,27 @@ class AskResponse(BaseModel):
     )
     synthesized_answer: str | None = Field(
         default=None,
-        description="Combined answer text when 2+ sources contributed; None when only one did.",
+        description=(
+            "Combined answer text when 2+ sources contributed; None when only one "
+            "did. Also carries the whole answer on the router's no-retrieval route "
+            "(general_knowledge/conversation), where no source ran at all -- see "
+            "`answer_truth_level`."
+        ),
+    )
+    answer_truth_level: str | None = Field(
+        default=None,
+        description=(
+            "`agent.provenance.DataTruthLevel`'s value for `synthesized_answer` when "
+            "that answer came from the model's own knowledge rather than from any "
+            'source -- so "ai_inference", and only on the router\'s no-retrieval '
+            "route with ENABLE_GENERAL_KNOWLEDGE_ANSWERS on. None everywhere else, "
+            "which is meaningful rather than missing: an answer composed from "
+            "sources carries each source's own citations and status, a stronger "
+            "statement than one truth level over the whole text. The answer text "
+            "itself also leads with a fixed disclaimer, so a client that ignores "
+            "this field still cannot present model output as the organization's own "
+            "data."
+        ),
     )
     document_result: SourceAnswerOut | None = None
     policy_result: SourceAnswerOut | None = None
@@ -1075,6 +1163,15 @@ class AskResponse(BaseModel):
     )
     followup_classification: Literal["standalone", "followup", "ambiguous"] | None = None
     followup_resolved_against: ConversationExchangeOut | None = None
+    context_resolution: ContextResolutionOut | None = Field(
+        default=None,
+        description=(
+            "How this question was read against the conversation, and what was "
+            "carried into it. None when context resolution is switched off "
+            "(`ENABLE_CONTEXT_RESOLUTION=false`). Additive -- an existing client "
+            "that ignores it is unaffected."
+        ),
+    )
     permission_denied_notice: str | None = Field(
         default=None,
         description=(

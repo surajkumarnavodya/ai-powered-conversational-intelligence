@@ -72,6 +72,15 @@ class RouteDecision(TypedDict):
             database," independent of parsing `sources` yourself. Always
             `False` for a question the deterministic attachment-only
             pre-check routed, since that path never includes "sql".
+        source_queries: The question rewritten for each routed source,
+            keyed by this graph's **internal** source names ("web",
+            "policy", ...) rather than the router prompt's own vocabulary,
+            so a source node can look itself up without translating. Only
+            the entries that survived validation are present, and a source
+            with no entry uses the resolved question
+            (`agent.orchestrator.nodes.source_query`). Empty whenever the
+            route was short-circuited deterministically, since those paths
+            never produce a `RouterDecision`.
         no_retrieval_route: The router's own primary name
             ("general_knowledge" or "conversation", see
             `router_contract.NO_RETRIEVAL_SOURCES`) when the route
@@ -94,6 +103,7 @@ class RouteDecision(TypedDict):
     needs_clarification: NotRequired[bool]
     clarifying_question: NotRequired[str | None]
     fallback_source: NotRequired[str | None]
+    source_queries: NotRequired[dict[str, str]]
     no_retrieval_route: NotRequired[str | None]
 
 
@@ -167,6 +177,19 @@ class MediaSearchResult(SourceAnswer):
 
 class OrchestratorState(AgentState, total=False):
     """Full state threaded through the orchestrator graph."""
+
+    # Provenance for `synthesized_answer` when it came from the model's
+    # own knowledge rather than from a source
+    # (`agent.orchestrator.general_knowledge`) --
+    # `agent.provenance.DataTruthLevel`'s value, so "ai_inference".
+    #
+    # Absent on every other path, and that absence is meaningful rather
+    # than a gap: an answer composed from retrieved source answers
+    # carries each source's own citations and status, which is a stronger
+    # and more specific statement than one truth level over the whole
+    # text. Only the no-retrieval route produces an answer with no source
+    # behind it at all, so only it needs to say so here.
+    answer_truth_level: str | None
 
     # Set once by run_orchestrated from its own `session_id` parameter --
     # a real (if untrusted) per-conversation correlation token

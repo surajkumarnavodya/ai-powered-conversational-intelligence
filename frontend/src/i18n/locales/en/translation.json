@@ -89,7 +89,9 @@
     "searchError": "Search failed. Please try again.",
     "clearSearch": "Clear search",
     "loadingConversation": "Loading…",
-    "untitled": "Untitled conversation"
+    "untitled": "Untitled conversation",
+    "collapseGroup": "Collapse {{group}}",
+    "expandGroup": "Expand {{group}}"
   },
   "workspace": {
     "heading": "Ask your data anything",
@@ -186,7 +188,8 @@
     "scrollToLatest": "Scroll to latest message",
     "processing": "Processing…",
     "processingStage": "Processing — {{stage}}",
-    "spokenAnswerLabel": "Spoken answer"
+    "spokenAnswerLabel": "Spoken answer",
+    "wordLimitExceeded": "Maximum {{max}} words allowed"
   },
   "sql": {
     "title": "Generated SQL",

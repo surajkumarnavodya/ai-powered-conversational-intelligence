@@ -81,7 +81,9 @@
     "searchError": "La recherche a échoué. Veuillez réessayer.",
     "clearSearch": "Effacer la recherche",
     "loadingConversation": "Chargement…",
-    "untitled": "Conversation sans titre"
+    "untitled": "Conversation sans titre",
+    "collapseGroup": "Réduire {{group}}",
+    "expandGroup": "Développer {{group}}"
   },
   "workspace": {
     "heading": "Posez n'importe quelle question sur vos données",
@@ -165,7 +167,8 @@
     "scrollToLatest": "Faire défiler jusqu'au dernier message",
     "processing": "Traitement…",
     "processingStage": "Traitement — {{stage}}",
-    "spokenAnswerLabel": "Réponse vocale"
+    "spokenAnswerLabel": "Réponse vocale",
+    "wordLimitExceeded": "Maximum {{max}} mots autorisés"
   },
   "sql": {
     "title": "SQL généré",

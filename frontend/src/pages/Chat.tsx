@@ -125,25 +125,29 @@ export function Chat() {
       />
       <QuestionNavigator entries={queryHistory} scrollContainerRef={scrollRef} />
       <ScrollToBottomButton
-        // Shown only when the user has scrolled away from the latest
-        // message -- its original rule, restored.
+        // Visibility and actionability are two different questions here,
+        // and conflating them is what produced two opposite bug reports
+        // in a row.
         //
-        // It briefly also appeared whenever a question was in flight, so
-        // that the progress ring below would be visible when asking from
-        // the bottom of the conversation. That put a scroll control on
-        // screen in the one state where scrolling to the bottom does
-        // nothing (`useScrollToBottom.scrollToBottom` is
-        // `el.scrollTo({ top: el.scrollHeight })`, a no-op when you are
-        // already there), so the arrow looked broken: you click it and
-        // the page does not move. An affordance that cannot act is worse
-        // than an indicator you have to scroll to see.
+        // `visible` is the union: scrolled away from the latest message
+        // (the control's original reason to exist) *or* a question in
+        // flight (so the dotted progress ring is actually seen in the
+        // common case -- asking from the bottom of the conversation).
         //
-        // Nothing is lost. At the bottom the pending turn is on screen
-        // with `TimingBadge`'s own live "Thinking Ns…" counter; the ring
-        // matters when you have scrolled away from that and would
-        // otherwise have no sign a question is still running -- which is
-        // exactly when this button is visible anyway.
-        visible={!isAtBottom}
+        // `interactive` is the narrower condition: only when scrolling
+        // down would genuinely move the page. At the bottom
+        // `useScrollToBottom.scrollToBottom` is
+        // `el.scrollTo({ top: el.scrollHeight })`, a no-op -- so there
+        // the disc renders as a progress *indicator* and takes no
+        // clicks or focus at all, instead of as an arrow that looks
+        // broken because pressing it does nothing.
+        //
+        // So the ring keeps the case it was built for without the dead
+        // affordance that case used to cost. `TimingBadge`'s live
+        // "Thinking Ns…" counter on the pending turn still owns the
+        // elapsed time; this only ever signals "still running".
+        visible={!isAtBottom || isProcessing}
+        interactive={!isAtBottom}
         processing={isProcessing}
         stageLabel={stageLabel}
         onClick={() => scrollToBottom()}

@@ -492,6 +492,21 @@ WSL/macOS/Linux. Frontend: `npm run test` / `npm run lint` /
 `npx tsc --noEmit -p tsconfig.app.json` inside `frontend/`.
 
 - **Every pytest test is fully mocked — no real database, no Ollama.**
+  **Enforced since 2026-10-24, not merely stated**:
+  `tests/conftest.py::_block_real_ollama_calls` patches
+  `ollama.Client.chat`/`embed`/`embeddings` to raise for every test. It
+  was added because the rule was being broken silently --
+  `tests/test_orchestrator.py::TestRunOrchestrated
+  ::test_flag_off_with_attachments_still_runs_the_orchestrator_graph` ran
+  the orchestrator graph for real, so `router_node` submitted a genuine
+  `call_ollama` to a thread pool it then abandoned
+  (`shutdown(wait=False)`), and the request went through on any machine
+  with Ollama running. The test passed on the keyword fallback either
+  way, and the only trace was an `httpx` log line printed *after*
+  pytest's summary. If a test needs an LLM reply, patch the seam the code
+  under test uses (`rag.llm.call_ollama`,
+  `agent.nodes.generate_sql_from_llm`, ...) — never rely on a timeout or
+  a fallback firing.
   `scripts/integration_test.py`, `scripts/run_benchmark.py` and
   `eval/security_benchmark/` are manual and require real infrastructure; CI
   never runs them.
@@ -535,6 +550,7 @@ authoritative, and explains how to resolve a conflict.
 | Result-column semantics and chart axis binding (measure vs key) | [`docs/CHART_AXIS_BINDING.md`](docs/CHART_AXIS_BINDING.md) |
 | Measured latency, what causes it, and the hardware ceiling | [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) |
 | Intent-based source routing, the router contract and its fallback | [`docs/ROUTING.md`](docs/ROUTING.md) |
+| How a message is read against the conversation before it: relations, antecedent selection, the standalone rewrite, ambiguity, conversation memory | [`docs/CONVERSATIONAL_CONTEXT.md`](docs/CONVERSATIONAL_CONTEXT.md) |
 | Per-user concurrency, the question queue, deterministic source routing, per-task model pins, guardrails, grounding | [`docs/CONCURRENCY.md`](docs/CONCURRENCY.md) |
 | Production readiness verdict | [`docs/PRODUCTION_READINESS_RELEASE_GATE.md`](docs/PRODUCTION_READINESS_RELEASE_GATE.md) |
 | One feature's full design, tests and limitations | `NN_*_CONTRACT.md` at the repo root — one per numbered prompt; indexed in the context map |
@@ -688,10 +704,41 @@ contract lists its specific limitations; these are the cross-cutting ones.
 - **The eval harness covers the SQL path only** — it exercises
   `agent.graph.run_agent`, not multi-source or cross-source questions.
 - **Follow-up resolution is per-request, not checkpointed.**
-  `agent/followup.py`'s `classify_followup_node` sees only the
+  `agent.nodes.classify_followup_node` sees only the
   `conversation_history` the caller resends, capped at
   `MAX_FOLLOWUP_EXCHANGES`; no LangGraph checkpointer exists (none ships for
   SQL Server, so it would need a custom `BaseCheckpointSaver`).
+  **Narrowed 2026-10-24.** What that node *does* with the window is no
+  longer "check whether it is non-empty and take `[-1]`":
+  `agent/context_resolution.py` + `agent/conversation_memory.py` now
+  classify the message's relation to the conversation, score every turn
+  in the window as a candidate antecedent, carry constraints forward with
+  same-kind replacement on a correction, and produce a standalone
+  `resolved_question` that reaches schema retrieval, the router, every
+  source node and the generation prompt. The *statelessness* above is
+  unchanged and is still the real limitation: the window is whatever the
+  client resends, so editing or deleting an earlier turn changes context
+  only because the client sends a different array, and nothing is cached
+  across requests. Authoritative:
+  [`docs/CONVERSATIONAL_CONTEXT.md`](docs/CONVERSATIONAL_CONTEXT.md).
+  Three things that doc records and a session should not rediscover.
+  `ENABLE_CONTEXT_RESOLUTION_LLM` is **off by default** because one
+  escalation measured 11.1s on this hardware *and* because defaulting it
+  on put a real Ollama call inside the test suite. The router's
+  `general_knowledge`/`conversation` routes **do** compose a real answer
+  now (`agent/orchestrator/general_knowledge.py`), but only when
+  `ENABLE_GENERAL_KNOWLEDGE_ANSWERS=true`; the default still returns the
+  fixed message, because that route is chosen *when routing could not
+  match a source*, which is sometimes a miss on a real data question.
+  And resolution now has a **measured** accuracy figure --
+  `eval/context_resolution_benchmark/` (65 hand-labelled cases, no
+  infrastructure needed, asserted in CI by
+  `tests/test_context_resolution_benchmark.py`), which is the one place
+  in this repo where routing-adjacent accuracy is quantified rather than
+  only pinned by test. It earned its keep: it found seven real defects
+  during development, one of which made a politely-phrased refinement
+  ("Can you exclude cancelled orders?") come out as a new topic carrying
+  no context at all.
   *Corrected twice. 2026-10-17: this entry cited `langgraph==0.2.62`,
   while the pin read `1.0.10rc1`.* **2026-10-22: both were true at once —
   `requirements.txt` pinned `1.0.10rc1` and the venv actually had
@@ -783,23 +830,37 @@ contract lists its specific limitations; these are the cross-cutting ones.
   Still 0 High and 0 Medium, and all four are deliberate and already
   annotated for `ruff` but not for `bandit` — which is why that blocking
   gate fails (§5.7).
-- **Three tests fail only in file order, and the cause is cross-file
-  state, not the tests.** Measured 2026-10-22: a full `pytest` run
-  reported 6 failures (**re-measured 2026-10-23: 5** — the three
-  `…QueryStore` ones below plus two in
-  `TestGenerateRecommendationsNode`; the sixth is no longer reproducible),
-  three of which are
-  `tests/test_agent_nodes.py::TestGenerateRecommendationsNodeQueryStore::{test_non_mssql_database_never_calls_query_store,test_feature_flag_off_never_calls_query_store,test_query_store_failure_fails_open}`.
-  All three pass when that file runs alone and fail when
-  `tests/security/` runs first (`pytest tests/security
-  tests/test_agent_nodes.py::TestGenerateRecommendationsNodeQueryStore`
-  reproduces it in ~1 min) — `tests/security/` sorts before every root
-  `test_*.py`, so a default full run always hits it. Each asserts
-  `recommendations == []`, so something in `tests/security/` leaves a
-  recommendation-producing state behind that `tests/conftest.py`'s three
-  cache clears do not cover. **Verified pre-existing**, by stashing the
-  working tree and reproducing identically. Not yet attributed to a
-  specific leaking test.
+- ~~**Three tests fail only in file order, and the cause is cross-file
+  state, not the tests.**~~ **Closed 2026-10-24, with the cause
+  attributed.** The entry was right that it was cross-file state and
+  right that `tests/conftest.py`'s cache clears did not cover it. The
+  specific chain, reproduced with two tests
+  (`pytest tests/security/test_model_routing_never_weakens_deterministic_controls.py::TestACallerPinnedModelIsNeverOverridden::test_run_agent_honors_an_explicit_selection_over_routing
+  tests/test_agent_nodes.py::TestGenerateRecommendationsNode::test_missing_state_fields_default_to_empty_without_crashing`):
+
+  1. That security test runs the **real** compiled graph. Its `graph_run`
+     fixture mocks four LLM seams but not `generate_analytical_plan_from_llm`
+     or `generate_query_plan_from_llm`, and its question ("top 5 products
+     per region with year-over-year growth and total margin ratio") is the
+     only one in the file complex enough to trip the planning gate.
+  2. So it made **three genuine HTTP calls to a real Ollama server**, and
+     `build_analytical_plan` took **14 seconds**.
+  3. That latency landed in `observability.metrics.get_default_metrics`'
+     process-global rollup, which `tests/conftest.py` was not clearing.
+  4. `generate_recommendations_node` reads that rollup and correctly
+     emitted "The 'build_analytical_plan' stage is slow (p95 14039ms over
+     1 recent request(s))" — so every later `recommendations == []`
+     assertion failed, and only when `tests/security/` ran first.
+
+  Fixed in three places, because the cause and the mechanism are
+  different: `_block_real_ollama_calls` (§7) stops the slow call, the
+  fixture now mocks the two planning seams, and
+  `_clear_process_singleton_caches` clears the rollup so a genuinely slow
+  stage in any future test cannot leak a recommendation into an unrelated
+  one. **Mutation-verified**: removing the rollup clear fails 2 of the 9
+  tests in `tests/test_no_real_llm_calls_in_tests.py`, one of them the
+  exact `recommendations == []` assertion the five failures made. A full
+  run is now **0 failed** (8261 passed, measured 2026-10-24).
 
 - **The local 7B model still refuses some answerable terse questions.**
   Measured 2026-10-22, after the retrieval fix in

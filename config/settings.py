@@ -584,18 +584,16 @@ class Settings(BaseSettings):
             `api.schemas.AskRequest.conversation_history` has no
             schema-level length cap (matching `question`'s own
             deliberately-downstream-enforced convention -- see that field's
-            docstring), and only the single most recent entry is ever
-            functionally read (`agent.nodes.retrieve_schema_node`'s
-            follow-up resolution uses `conversation_history[-1]`;
-            `classify_followup_node` only checks whether the list is
-            non-empty) -- every entry beyond that was being fully
-            normalized and regex-scanned for injection patterns
-            (`sanitize_conversation_history`) for zero functional benefit,
-            a real, unbounded-by-anything CPU/memory cost a caller could
-            trivially inflate by sending an arbitrarily long array. The
-            default (20) is deliberately generous relative to the "only the
-            last entry matters" reality above -- it exists to bound the
-            worst case, not to constrain any real conversation.
+            docstring), so without this bound an arbitrarily long array
+            would be fully normalized and regex-scanned for injection
+            patterns, a real CPU/memory cost a caller could trivially
+            inflate. This is the resource bound on the whole array; the
+            *resolution* window is the much smaller
+            `context_resolution_recent_turns`, and turns between the two
+            are quoted into the memory digest rather than dropped. The
+            finding's original note that "only the last entry is ever
+            functionally read" no longer holds -- see
+            `agent.input_guard.sanitize_conversation_history`'s docstring.
         question_rate_limit_per_minute: Max question submissions per minute,
             per client IP -- see `agent.rate_limit`. A basic, in-memory
             safeguard for local/single-user use, not a multi-tenant rate
@@ -1960,6 +1958,110 @@ class Settings(BaseSettings):
     insight_max_tokens: int = Field(default=120, gt=0)
     max_question_length: int = Field(default=5000, gt=0)
     max_conversation_history_turns: int = Field(default=20, gt=0)
+
+    # --- Conversational context resolution (agent/context_resolution.py) ---
+    # The master switch. False restores the exact pre-resolution behaviour:
+    # `classify_followup_node` falls back to `agent.followup
+    # .classify_followup` alone and binds the antecedent to
+    # `conversation_history[-1]`, nothing is rewritten, and
+    # `resolved_question` stays None so every downstream reader
+    # (`agent.nodes.retrieval_question`) sees the raw question. Same
+    # independent-rollback pattern as ENABLE_REQUEST_GOVERNANCE and friends.
+    enable_context_resolution: bool = Field(default=True)
+    # How many recent *successful* turns are eligible to be the antecedent.
+    # Six rather than `max_conversation_history_turns`' 20 because this is
+    # the window a reference is resolved against, not the cap on what a
+    # caller may send: every turn in it is scored on every resolved
+    # question, and a person referring back more than six turns almost
+    # always says so ("earlier", "the first one"), which the topic-return
+    # path handles against the same window. Turns older than this are
+    # quoted into the snapshot's digest rather than dropped.
+    context_resolution_recent_turns: int = Field(default=6, gt=0, le=50)
+    # Whether an unsure deterministic resolution may escalate to one small
+    # LLM call (`ModelTask.ROUTER`). **Off by default**, for two measured
+    # reasons rather than caution:
+    #
+    # 1. Cost on this hardware. Measured 2026-10-24 against the running
+    #    Ollama server: one escalation on a two-candidate reference took
+    #    **11.1s**, on the user's latency path, before any schema
+    #    retrieval or generation had started. That is the same ceiling
+    #    `docs/PERFORMANCE.md` records for every local model call here,
+    #    and it is why every other extra-model-call feature in this
+    #    codebase is opt-in too (CLAUDE.md 1's "off by default" tier).
+    # 2. It would put a network call inside the test suite. CLAUDE.md 7
+    #    requires every pytest test to be fully mocked -- no real DB, no
+    #    Ollama -- and this setting is read by a node that many tests
+    #    exercise directly. Defaulting it on made those tests reach the
+    #    real server (found exactly that way, measured above).
+    #
+    # The deterministic tier is unaffected by this flag and still
+    # resolves every case `tests/test_context_resolution.py` covers; what
+    # escalation adds is a judgement on a reference with two or more
+    # plausible referents, where the alternative is asking the user.
+    # Turning it on is a deliberate latency-for-accuracy trade an
+    # operator makes with `docs/PERFORMANCE.md` in hand.
+    enable_context_resolution_llm: bool = Field(default=False)
+    # The confidence below which that escalation happens. A judgement call,
+    # not a measurement -- see `agent.context_resolution
+    # ._AMBIGUITY_TIE_MARGIN`'s comment and CLAUDE.md 13's standing note on
+    # this class of threshold.
+    context_resolution_min_confidence: float = Field(default=0.6, ge=0.0, le=1.0)
+    # Max tokens the tier-2 call may generate. Small and separate from
+    # `llm_max_tokens` for the same reason `insight_max_tokens` is: the
+    # output is one JSON object with a rewritten sentence in it, not SQL.
+    context_resolution_max_tokens: int = Field(default=256, gt=0)
+
+    # --- No-retrieval answering (agent/orchestrator/general_knowledge.py) ---
+    # Whether the router's `general_knowledge`/`conversation` routes are
+    # answered from the model's own knowledge, instead of returning the
+    # fixed "I couldn't match that to a data source" message.
+    #
+    # **Off by default**, and the reason is a specific failure mode rather
+    # than caution. The router picks `general_knowledge` *because it could
+    # not match the question to a source*, which happens for two very
+    # different reasons: the question genuinely needs no data ("draft a
+    # LinkedIn post"), or it needed data and routing got it wrong ("what
+    # did we bill Contoso?" against a table the retriever missed). For the
+    # first, a model answer is right. For the second, replacing a helpful
+    # routing failure with a fluent answer from model weights turns it
+    # into a confident, unsourced claim about the business -- the
+    # provenance failure CLAUDE.md 4.4 exists to prevent, and worse than
+    # the gap it closes.
+    #
+    # Turning it on makes this a general assistant as well as a data
+    # platform: writing, planning, coding and explanation questions get
+    # real answers, each carrying
+    # `general_knowledge.MODEL_KNOWLEDGE_DISCLAIMER` in the answer text.
+    # It also costs one model call per unmatched question (10-300s on this
+    # hardware -- docs/PERFORMANCE.md), which is the other reason it is
+    # opt-in, like every other model-call feature here.
+    enable_general_knowledge_answers: bool = Field(default=False)
+    # Max tokens one such answer may generate. Larger than
+    # `insight_max_tokens` (a sentence) and smaller than `llm_max_tokens`
+    # (SQL, where truncation is fatal): this is prose, where a long answer
+    # is cut off rather than made invalid.
+    general_knowledge_max_tokens: int = Field(default=800, gt=0)
+
+    # --- Where a question's prior turns come from (api/conversation_context.py) ---
+    # "client" (the default, and the unchanged behaviour) takes them from
+    # `AskRequest.conversation_history`, the array the client resends on
+    # every request. "server" reads them from this deployment's own chat
+    # store instead, for a locally-authenticated caller with a
+    # `conversation_id`.
+    #
+    # "server" buys two things: an edit or delete actually changes the next
+    # answer's context, and the text the resolver reasons over is this
+    # server's record rather than a caller-supplied copy of it. It **costs
+    # one real feature**: the chat UI's per-turn "remove from context"
+    # control works precisely because the client is what sends the
+    # history, so a server-authoritative history ignores it. That is why
+    # this is a setting and why the default leaves it alone.
+    #
+    # Never applies to a caller with no stored history -- an OIDC or
+    # unauthenticated caller has no `identity.users` row (CLAUDE.md 13),
+    # and they keep using their own array whatever this says.
+    conversation_history_source: Literal["client", "server"] = Field(default="client")
+
     question_rate_limit_per_minute: int = Field(default=10, gt=0)
     llm_call_rate_limit_per_minute: int = Field(default=20, gt=0)
     max_concurrent_ask_requests: int = Field(default=50, gt=0)

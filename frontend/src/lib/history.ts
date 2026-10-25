@@ -546,6 +546,11 @@ export function buildConversationHistory(
       sql: entry.sql,
       tables: entry.tables,
       status: entry.agentStatus,
+      // Carried so the server can resolve a refinement against the text
+      // it is meant to revise. `undefined` rather than null when the turn
+      // produced no answer text, so the field is simply absent from the
+      // request body instead of sending an explicit null.
+      answer: conversationAnswerText(entry) ?? undefined,
     }))
 }
 
@@ -648,13 +653,36 @@ export function buildAnswerMarkdown(entry: QueryHistoryEntry): string {
  * per-source answer (multi-source path) > a row-count fallback -- never
  * silent on a successful turn, since the user asked out loud and should
  * hear *something* back. */
-export function buildSpokenAnswerText(entry: QueryHistoryEntry): string {
+/** The one piece of answer text worth carrying into the next question, or
+ * null when the turn produced none.
+ *
+ * The same priority `buildSpokenAnswerText` has always used -- a grounded
+ * insight on the SQL path, then a synthesized or per-source answer on the
+ * multi-source path -- factored out rather than duplicated, so "which of a
+ * turn's several answer fields is *the* answer" has one owner. The
+ * difference is the tail: this returns null where that one falls back to a
+ * row count or "Done.", because "Found 12 rows." is not context a
+ * refinement can act on and sending it would just be noise in the
+ * server's prompt.
+ *
+ * Length-capped server-side (`agent.input_guard
+ * .sanitize_conversation_history`), so a long answer is truncated there
+ * rather than being trimmed differently here. */
+export function conversationAnswerText(entry: QueryHistoryEntry): string | null {
   const state = entry.finalState
-  if (state.insight) return state.insight
-  if (state.synthesized_answer) return state.synthesized_answer
-  if (state.document_result?.answer) return state.document_result.answer
-  if (state.policy_result?.answer) return state.policy_result.answer
-  if (state.web_result?.answer) return state.web_result.answer
+  return (
+    state.insight ??
+    state.synthesized_answer ??
+    state.document_result?.answer ??
+    state.policy_result?.answer ??
+    state.web_result?.answer ??
+    null
+  )
+}
+
+export function buildSpokenAnswerText(entry: QueryHistoryEntry): string {
+  const answer = conversationAnswerText(entry)
+  if (answer) return answer
   if (entry.rowCount !== null) {
     return entry.rowCount === 1 ? 'Found 1 row.' : `Found ${entry.rowCount} rows.`
   }

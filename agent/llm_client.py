@@ -683,6 +683,7 @@ def _build_user_prompt(
     error_feedback: str | None,
     error_category: str | None = None,
     followup_context: ConversationExchange | None = None,
+    conversation_memory: str | None = None,
     query_plan: list[str] | None = None,
     golden_examples: list[GoldenExample] | None = None,
     retrieved_context: list[dict] | None = None,
@@ -713,6 +714,20 @@ def _build_user_prompt(
         parts.append(
             Section("followup", _build_followup_block(followup_context), SectionPriority.FOLLOWUP)
         )
+    if conversation_memory:
+        # `SectionPriority.FOLLOWUP`, deliberately the same tier as the
+        # block above: both are reference material for resolving what the
+        # question refers to, both are accuracy aids, and neither is worth
+        # keeping at the cost of a schema table. Placed immediately after
+        # the follow-up block so the two read as one piece of context
+        # rather than being separated by the plan.
+        #
+        # Already bounded and rendered by
+        # `agent.conversation_memory.render_memory_block`, which caps
+        # entities, constraints and digest length -- this function never
+        # sees unbounded history, and the budget can still drop the whole
+        # block if the prompt is tight.
+        parts.append(Section("conversation_memory", conversation_memory, SectionPriority.FOLLOWUP))
     # A validated structured analytical_plan (Prompt 12,
     # 12_ANALYTICAL_PLANNING_CONTRACT.md) supersedes the generic free-text
     # query_plan block for *prompt* purposes -- state["query_plan"] is
@@ -953,6 +968,7 @@ def generate_sql_from_llm(
     settings: Settings,
     error_category: str | None = None,
     followup_context: ConversationExchange | None = None,
+    conversation_memory: str | None = None,
     query_plan: list[str] | None = None,
     golden_examples: list[GoldenExample] | None = None,
     retrieved_context: list[dict] | None = None,
@@ -975,6 +991,14 @@ def generate_sql_from_llm(
             `agent.sql_validator.ViolationType`), used to pick a more
             targeted retry hint than the raw error text alone. None on the
             first attempt.
+        conversation_memory: A rendered
+            `agent.conversation_memory.MemorySnapshot` -- the entities the
+            conversation has named, the constraints the user has stated and
+            not retracted, and a quoted digest of turns older than the
+            resolution window. Framed in the block itself as data, never
+            instructions (CLAUDE.md 5.5). `None` (every caller before
+            context resolution existed, and every question with no
+            established context) adds nothing to the prompt at all.
         followup_context: The prior exchange this question was classified as
             following up on (see `agent.followup.classify_followup`), or
             None for a standalone question. Injected as reference-only
@@ -1050,6 +1074,7 @@ def generate_sql_from_llm(
         error_feedback,
         error_category,
         followup_context,
+        conversation_memory,
         query_plan,
         golden_examples,
         retrieved_context,
