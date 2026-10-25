@@ -24,11 +24,34 @@ export function ScrollToBottomButton({
   onClick,
   bottomOffsetPx,
   processing = false,
+  interactive = true,
   stageLabel,
 }: {
   visible: boolean
   onClick: () => void
   bottomOffsetPx: number
+  /** Whether activating this control would actually move the page.
+   *
+   * False exactly when the reader is already at the bottom, where
+   * `useScrollToBottom.scrollToBottom` (`el.scrollTo({ top:
+   * el.scrollHeight })`) is a no-op. In that state the disc is still
+   * *shown* -- it is how the progress ring gets seen when you ask from
+   * the bottom, which is the common case -- but it is shown as a status
+   * indicator rather than an offer to navigate: `pointer-events-none` so
+   * a click falls through to the transcript instead of visibly doing
+   * nothing, `tabIndex -1` so nobody reaches a no-op by keyboard, and
+   * `aria-disabled` so assistive tech reports it as currently
+   * unavailable while `aria-busy` and the description still carry the
+   * progress.
+   *
+   * This is the narrow seam between two real reports: "the arrow is not
+   * working" (it was clickable at the bottom, where clicking cannot
+   * move anything) and "the arrow and ring do not appear when I ask a
+   * question" (hiding it at the bottom hid it for the whole of the
+   * common case). Separating *visible* from *actionable* satisfies both
+   * -- the indicator is seen, and the affordance is only offered where
+   * it can act. */
+  interactive?: boolean
   /** Whether a question in *this* conversation is still being answered.
    *
    * Purely an additional visual state: it draws the dotted progress ring
@@ -72,13 +95,21 @@ export function ScrollToBottomButton({
   return (
     <button
       type="button"
-      onClick={onClick}
+      // Not wired at all when it cannot act, so neither a programmatic
+      // click nor a synthetic one in a test can reach a no-op scroll.
+      // `pointer-events-none` below already stops a real pointer.
+      onClick={interactive ? onClick : undefined}
       aria-label={label}
       title={status ? `${label} — ${status}` : label}
       aria-hidden={!visible}
       aria-busy={processing || undefined}
+      // `aria-disabled` rather than the `disabled` attribute: a disabled
+      // button drops its accessible description in several screen
+      // readers, and the description is what carries "Processing…" /
+      // the stage name here.
+      aria-disabled={!interactive || undefined}
       aria-describedby={status ? statusId : undefined}
-      tabIndex={visible ? 0 : -1}
+      tabIndex={visible && interactive ? 0 : -1}
       style={{ bottom: bottomOffsetPx }}
       className={cn(
         // h-8/w-8 (32px) rather than the original 40px: the smaller disc
@@ -95,6 +126,11 @@ export function ScrollToBottomButton({
         // trade on a control that floats over content.
         'absolute left-1/2 z-20 flex h-8 w-8 -translate-x-1/2 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--card)] text-[var(--muted-foreground)] shadow-md transition-[opacity,transform] duration-150 ease-out hover:bg-[var(--muted)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] motion-reduce:transition-none',
         visible ? 'translate-y-0 opacity-100' : 'pointer-events-none translate-y-1 opacity-0',
+        // Shown but not offering an action: no pointer cursor, no hover
+        // state (`:hover` cannot match an element that takes no pointer
+        // events), and a click lands on the conversation underneath
+        // rather than on a control that would not react.
+        !interactive && 'pointer-events-none',
         // Ring is a pseudo-element at a negative inset, so adding it
         // cannot resize this button or shift anything around it.
         processing && 'dotted-ring',
