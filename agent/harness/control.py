@@ -8,8 +8,8 @@ nothing in it can forget to check a budget, because checking is not
 its job.
 
 **Why wrap at registration rather than decorate each node.**
-`agent/graph.py` registers 18 nodes with `graph.add_node(name, fn)`. A
-decorator on each would be 18 places to forget one, and a new node
+`agent/graph.py` registers 19 nodes with `graph.add_node(name, fn)`. A
+decorator on each would be 19 places to forget one, and a new node
 would silently be unguarded. Wrapping at the single registration site
 makes the guard the default and an unguarded node impossible to add by
 accident.

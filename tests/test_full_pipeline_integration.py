@@ -8,7 +8,7 @@ itself at the API boundary (`tests/test_api_ask.py`,
 nothing in this codebase, before this file, called the real, compiled
 `agent.graph.run_agent()` and let it traverse more than one real node.
 That left a real, structural gap: every node's own unit-level contract is
-well tested, but nothing had ever proven those 18 nodes actually *compose*
+well tested, but nothing had ever proven those 19 nodes actually *compose*
 correctly through the real LangGraph conditional-edge wiring -- state
 merging across nodes, the self-correction retry loop actually looping,
 governed-metric enforcement actually engaging mid-run.

@@ -2083,7 +2083,7 @@ class Settings(BaseSettings):
     # fires *before* the structural stop would make the structural stop
     # unreachable and untestable.
     harness_max_steps: int = Field(default=120, gt=0)
-    # Model calls per execution. The 18-node graph makes roughly 6-8 on
+    # Model calls per execution. The 19-node graph makes roughly 6-8 on
     # a clean run; a fully-retried complex run is well under 40.
     harness_max_llm_calls: int = Field(default=40, gt=0)
     harness_max_tool_calls: int = Field(default=30, gt=0)
