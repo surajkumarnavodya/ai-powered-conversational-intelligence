@@ -252,7 +252,12 @@ function buildSources(state: AskResponse): LineageSource[] {
       name: names.length > 0 ? String(names.length) : null,
       retrieval: 'live_web_search',
       truthLevel: 'ai_inference',
-      details: names.length > 0 ? [{ label: 'pages', value: joinNames(names, 8) }] : [],
+      // No `pages` detail. The cited URLs are owned by the answer's own
+      // `SourcesSection`, which lists each one once with its real title
+      // and a working link. Repeating a truncated, unlinked copy of the
+      // same list here is how the same five URLs ended up on screen three
+      // times in one turn (CLAUDE.md §4.8: one owner per fact).
+      details: [],
     })
   }
 

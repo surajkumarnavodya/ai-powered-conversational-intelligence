@@ -3,8 +3,6 @@ import type { Citation, SourceAnswer } from './types'
 import {
   insightEvidenceSummary,
   sourceAnswerEvidenceStatus,
-  sourceEvidenceSummary,
-  uniqueCitations,
 } from './evidence'
 
 function citation(overrides: Partial<Citation> = {}): Citation {
@@ -76,44 +74,5 @@ describe('sourceAnswerEvidenceStatus -- source-backed requires a source', () => 
     const restricted = sourceAnswer([], 'That information is not available to your role.')
     expect(sourceAnswerEvidenceStatus(restricted)).toBe('unavailable')
     expect(sourceAnswerEvidenceStatus(restricted)).not.toBe('source_backed')
-  })
-})
-
-describe('uniqueCitations / sourceEvidenceSummary', () => {
-  it('counts one source per document, not per matched chunk', () => {
-    const chunks = [
-      citation({ chunk_index: 0 }),
-      citation({ chunk_index: 1 }),
-      citation({ chunk_index: 7 }),
-    ]
-    expect(uniqueCitations(chunks)).toHaveLength(1)
-    expect(sourceEvidenceSummary(chunks)).toBe('Backed by 1 cited source.')
-  })
-
-  it('counts distinct documents separately', () => {
-    const two = [citation(), citation({ document_id: 'doc-2', filename: 'policy.pdf' })]
-    expect(sourceEvidenceSummary(two)).toBe('Backed by 2 cited sources.')
-  })
-
-  it('falls back to the filename when there is no document id', () => {
-    // A web citation's filename is the page URL and its document_id is
-    // empty, so de-duplication has to key on the filename there.
-    const web = [
-      citation({ document_id: '', filename: 'https://example.com/a' }),
-      citation({ document_id: '', filename: 'https://example.com/a' }),
-      citation({ document_id: '', filename: 'https://example.com/b' }),
-    ]
-    expect(uniqueCitations(web)).toHaveLength(2)
-  })
-
-  it('says plainly when nothing was cited', () => {
-    expect(sourceEvidenceSummary([])).toBe('No source was cited for this answer.')
-  })
-
-  it('agrees with the status derivation on what counts as having a source', () => {
-    // The count shown and the badge shown must never disagree.
-    const none: Citation[] = []
-    expect(sourceEvidenceSummary(none)).toContain('No source')
-    expect(sourceAnswerEvidenceStatus(sourceAnswer(none))).toBe('unavailable')
   })
 })

@@ -1,5 +1,5 @@
 import type { EvidenceStatus } from '@/components/analytics/EvidenceBadge'
-import type { Citation, SourceAnswer } from './types'
+import type { SourceAnswer } from './types'
 
 /** Pure derivations of a claim's evidence status from server-returned
  * fields. Kept out of the components so each one is directly testable and
@@ -52,27 +52,4 @@ export function insightEvidenceSummary(
  */
 export function sourceAnswerEvidenceStatus(result: SourceAnswer): EvidenceStatus {
   return result.citations.length > 0 ? 'source_backed' : 'unavailable'
-}
-
-/** De-duplicated citations, by document id where there is one.
- *
- * Extracted from `SourceAnswerCard`'s own inline logic so the card's
- * citation list and its evidence summary count the same things -- stating
- * "3 sources" beside a list of 2 would be its own small lie.
- */
-export function uniqueCitations(citations: Citation[]): Citation[] {
-  const seen = new Set<string>()
-  return citations.filter((citation) => {
-    const key = citation.document_id || citation.filename
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
-}
-
-/** One line naming how many distinct sources back a source answer. */
-export function sourceEvidenceSummary(citations: Citation[]): string {
-  const count = uniqueCitations(citations).length
-  if (count === 0) return 'No source was cited for this answer.'
-  return count === 1 ? 'Backed by 1 cited source.' : `Backed by ${count} cited sources.`
 }

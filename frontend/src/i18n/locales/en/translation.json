@@ -802,10 +802,16 @@
       "model": "Model",
       "duration": "Answered in",
       "analyticsEngineVersion": "Analytics engine"
-    }
+    },
+    "diagnostics": "Diagnostics"
   },
   "evidence": {
-    "insightDetail": "This is a written summary of the result. Its wording is generated; its figures are checked against the data before the summary is shown."
+    "insightDetail": "This is a written summary of the result. Its wording is generated; its figures are checked against the data before the summary is shown.",
+    "sourceBacked": "Source-backed",
+    "notAvailable": "Not available",
+    "show": "Show evidence",
+    "hide": "Hide evidence",
+    "inlineMarkerHint": "Numbered markers in the answer refer to these sources."
   },
   "sources": {
     "pickerLabel": "Choose data sources",
@@ -818,7 +824,10 @@
     "loadFailed": "Sources could not be loaded.",
     "unavailableHeading": "Not available",
     "notConfigured": "not set up",
-    "notPermitted": "no access"
+    "notPermitted": "no access",
+    "sectionTitle": "Sources ({{count}})",
+    "countLabel": "{{count}} source",
+    "countLabel_other": "{{count}} sources"
   },
   "shortcuts": {
     "title": "Keyboard shortcuts",

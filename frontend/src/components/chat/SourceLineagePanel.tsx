@@ -51,6 +51,14 @@ export function SourceLineagePanel({ state }: { state: AskResponse }) {
   // lineage was hidden rather than absent.
   if (lineage.sources.length === 0) return null
 
+  // "Did this answer run a query at all?" -- asked of the lineage the
+  // server reported, not of `sources_used`, so it stays correct for a
+  // mixed SQL+web answer (which does have a query stage and should show
+  // the chain).
+  const hasQueryStage = lineage.steps.some(
+    (step) => step.key === 'query' && step.state === 'present',
+  )
+
   const sourceLabel = (source: LineageSource) => t(`lineage.source.${source.kind}`)
   const summaryLine = lineage.sources
     .flatMap((source) => [sourceLabel(source), ...(source.name ? [source.name] : [])])
@@ -70,7 +78,16 @@ export function SourceLineagePanel({ state }: { state: AskResponse }) {
         {/* The expanded one-line roll-call the feature asks for. */}
         <p className="text-xs text-[var(--foreground)]">{summaryLine}</p>
 
-        <LineageChain steps={lineage.steps} />
+        {/* The Question -> Source -> Tables -> Query -> Result -> Insight
+            chain is shown only for an answer that actually has a query
+            stage. For a web or document answer every stage after Source
+            is struck through by definition -- there is no SQL, no result
+            set and no insight -- so the chain was four greyed-out words
+            telling the reader nothing about their answer, in the panel
+            they opened to learn where it came from. It remains for the
+            SQL path, where a missing stage is genuinely informative
+            (a retry that never reached execution, say). */}
+        {hasQueryStage && <LineageChain steps={lineage.steps} />}
 
         {/* `role="list"` is not redundant here: Tailwind preflight removes the
             list marker, and WebKit then drops list semantics, so VoiceOver on
@@ -145,15 +162,31 @@ export function SourceLineagePanel({ state }: { state: AskResponse }) {
           </p>
         )}
 
+        {/* Model name, duration and the rest are diagnostics, not an
+            answer. They were a permanently-visible row inside a panel
+            that is itself about provenance, so every turn paid vertical
+            space for "llama3.1:8b / 150752 ms" whether or not anyone
+            cared. Now one more click, in a disclosure that says what it
+            holds -- nothing is removed, it just stops being the last
+            thing under every answer. */}
         {lineage.metadata.length > 0 && (
-          <dl className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--muted-foreground)]">
-            {lineage.metadata.map((item) => (
-              <div key={item.label} className="flex gap-1.5">
-                <dt>{t(`lineage.detail.${item.label}`)}</dt>
-                <dd className="text-[var(--foreground)]">{item.value}</dd>
-              </div>
-            ))}
-          </dl>
+          <details className="group/diag">
+            <summary className="inline-flex cursor-pointer list-none items-center gap-1 rounded text-xs text-[var(--muted-foreground)] marker:content-none hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]">
+              <ChevronRight
+                className="h-3 w-3 shrink-0 transition-transform group-open/diag:rotate-90"
+                aria-hidden="true"
+              />
+              {t('lineage.diagnostics')}
+            </summary>
+            <dl className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--muted-foreground)]">
+              {lineage.metadata.map((item) => (
+                <div key={item.label} className="flex gap-1.5">
+                  <dt>{t(`lineage.detail.${item.label}`)}</dt>
+                  <dd className="text-[var(--foreground)]">{item.value}</dd>
+                </div>
+              ))}
+            </dl>
+          </details>
         )}
       </div>
     </details>

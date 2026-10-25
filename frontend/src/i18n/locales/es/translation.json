@@ -495,7 +495,12 @@
     }
   },
   "evidence": {
-    "insightDetail": "Este es un resumen escrito del resultado. Su redacción se genera; sus cifras se comprueban con los datos antes de mostrar el resumen."
+    "insightDetail": "Este es un resumen escrito del resultado. Su redacción se genera; sus cifras se comprueban con los datos antes de mostrar el resumen.",
+    "sourceBacked": "Respaldado por fuentes",
+    "notAvailable": "No disponible",
+    "show": "Mostrar evidencia",
+    "hide": "Ocultar evidencia",
+    "inlineMarkerHint": "Los marcadores numerados de la respuesta remiten a estas fuentes."
   },
   "sources": {
     "pickerLabel": "Elegir fuentes de datos",
@@ -508,7 +513,10 @@
     "loadFailed": "No se pudieron cargar las fuentes.",
     "unavailableHeading": "No disponible",
     "notConfigured": "no configurada",
-    "notPermitted": "sin acceso"
+    "notPermitted": "sin acceso",
+    "sectionTitle": "Fuentes ({{count}})",
+    "countLabel": "{{count}} fuente",
+    "countLabel_other": "{{count}} fuentes"
   },
   "shortcuts": {
     "title": "Atajos de teclado",
