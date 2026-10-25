@@ -63,8 +63,7 @@
   },
   "header": {
     "openHistory": "Abrir historial de chat",
-    "closeHistory": "Cerrar historial de chat",
-    "envIndicator": "Espacio de trabajo de IA SQL"
+    "closeHistory": "Cerrar historial de chat"
   },
   "history": {
     "title": "Historial de chat",

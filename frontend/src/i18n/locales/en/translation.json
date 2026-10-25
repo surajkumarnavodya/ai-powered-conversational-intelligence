@@ -68,8 +68,7 @@
   "header": {
     "openHistory": "Open chat history",
     "closeHistory": "Close chat history",
-    "openNavigation": "Open navigation",
-    "envIndicator": "AI SQL Workspace"
+    "openNavigation": "Open navigation"
   },
   "history": {
     "title": "Chat history",

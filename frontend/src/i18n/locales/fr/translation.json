@@ -63,8 +63,7 @@
   },
   "header": {
     "openHistory": "Ouvrir l'historique du chat",
-    "closeHistory": "Fermer l'historique du chat",
-    "envIndicator": "Espace de travail IA SQL"
+    "closeHistory": "Fermer l'historique du chat"
   },
   "history": {
     "title": "Historique du chat",

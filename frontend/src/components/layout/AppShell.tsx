@@ -227,9 +227,13 @@ export function AppShell({ children }: { children?: ReactNode } = {}) {
                     name (aria-label) and tooltip. */}
                 <span className="truncate text-sm font-semibold">{t('app.title')}</span>
               </button>
-              <span className="hidden rounded-full bg-[var(--muted)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted-foreground)] sm:inline">
-                {t('header.envIndicator')}
-              </span>
+              {/* The "AI SQL Workspace" pill that used to sit here is
+                  gone. It rendered immediately to the left of the screen
+                  menu, whose own label is "AI Workspace" -- two near
+                  identical strings side by side, one of which was a
+                  static badge that never changed and never did anything.
+                  The product name is already in the home button to its
+                  left, so nothing is left unsaid by dropping it. */}
             </div>
 
               <nav aria-label="Primary navigation" className="flex min-w-0 shrink-0 flex-1 items-center gap-1">
