@@ -26,9 +26,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, cast
 
-from governance.request_policy import evaluate_request
-from governance.result_policy import govern_rows_for_caller
-
 from agent.analyst.evidence import build_outcome
 from agent.analyst.graph import recommend_node
 from agent.analyst.state import AnalystState
@@ -51,6 +48,8 @@ from agent.multiagent.tools import (
 from agent.provenance import DataTruthLevel
 from agent.tools.types import ToolResult
 from config.settings import Settings
+from governance.request_policy import evaluate_request
+from governance.result_policy import govern_rows_for_caller
 
 SPECS: dict[AgentName, AgentSpec] = {
     AgentName.PLANNER: AgentSpec(

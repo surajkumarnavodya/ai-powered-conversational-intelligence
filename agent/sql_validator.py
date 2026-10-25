@@ -1459,3 +1459,209 @@ def qualify_table_schema(
         if not table.args.get("db"):
             table.set("db", exp.to_identifier(schema))
     return statement.sql(dialect=dialect)
+
+
+class ProjectionSources(BaseModel):
+    """What each output column of one statement was computed from.
+
+    Two views of the same facts, because neither alone reaches every
+    projection shape:
+
+    * `by_name` keys on the output column's own name. It survives wildcard
+      expansion and compound-query merging, and is what CTE resolution
+      produces.
+    * `in_order` keys on projection position. It is the only way to reach
+      an **unaliased** expression (`SELECT salary * 1`), whose output name
+      the driver invents. Empty unless the statement is a single `Select`
+      with no wildcard, where position is unambiguous.
+
+    A consumer should use `in_order` when its length matches the result's
+    column count and fall back to `by_name` otherwise -- see
+    `governance.result_policy._source_names_for_column`.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    by_name: dict[str, frozenset[str]] = {}
+    in_order: tuple[frozenset[str], ...] = ()
+
+
+#: Guards `projection_source_columns`'s walk through chained CTEs. A
+#: recursive CTE references itself, and a long `WITH a AS (...), b AS
+#: (SELECT ... FROM a), ...` chain is legitimate, so the walk needs a
+#: bound that is neither "no recursion" nor "unbounded".
+_MAX_PROJECTION_RESOLUTION_DEPTH = 12
+
+
+def _projection_is_aggregated(projection: exp.Expression) -> bool:
+    """Whether this output expression aggregates over rows.
+
+    Kept separate because it marks the one deliberate limit of
+    `projection_source_columns` -- see that function's own note on
+    aggregates.
+    """
+    return any(isinstance(node, exp.AggFunc) for node in projection.walk())
+
+
+def _select_output_sources(
+    select: exp.Expression,
+    cte_outputs: dict[str, dict[str, frozenset[str]]],
+    depth: int,
+) -> dict[str, frozenset[str]]:
+    """One query level's output name -> the base column names it reads.
+
+    Name-keyed, which is what CTE resolution needs. `projection_source_columns`
+    additionally returns the same information in projection *order*, because
+    an unaliased expression (`SELECT salary * 1`) has no output name of its
+    own -- the driver invents one -- and position is then the only way to
+    reach it.
+    """
+    if depth > _MAX_PROJECTION_RESOLUTION_DEPTH:
+        return {}
+
+    # A compound query contributes every branch's sources under the same
+    # output names: `SELECT salary AS c FROM e UNION ALL SELECT 0 AS c`
+    # must inherit `salary` for `c`, not be let through because one branch
+    # happens to be a literal.
+    if isinstance(select, exp.Union | exp.Except | exp.Intersect):
+        merged: dict[str, frozenset[str]] = {}
+        for side in (select.left, select.right):
+            if side is None:
+                continue
+            for name, sources in _select_output_sources(side, cte_outputs, depth + 1).items():
+                merged[name] = merged.get(name, frozenset()) | sources
+        return merged
+
+    if not isinstance(select, exp.Select):
+        return {}
+
+    outputs: dict[str, frozenset[str]] = {}
+    for projection in select.expressions:
+        name = (projection.alias_or_name or "").lower()
+        if not name or name == "*":
+            # `SELECT *` and `t.*` name nothing of their own. They are
+            # already safe: a wildcard preserves the base column names, so
+            # the existing name-based classification sees them unchanged.
+            continue
+        if _projection_is_aggregated(projection):
+            outputs.setdefault(name, frozenset())
+            continue
+        sources: set[str] = set()
+        for column in projection.find_all(exp.Column):
+            column_name = (column.name or "").lower()
+            if not column_name or column_name == "*":
+                continue
+            sources.add(column_name)
+            # Reading a CTE's output column inherits whatever that CTE's
+            # own projection read, which is how `WITH x AS (SELECT salary
+            # AS region ...) SELECT region FROM x` resolves back to
+            # `salary`. Additive on purpose -- a name is never dropped,
+            # only ever joined by the names behind it.
+            for cte_name, cte_map in cte_outputs.items():
+                del cte_name  # the match is on the column, not the CTE's name
+                sources |= cte_map.get(column_name, frozenset())
+        if sources:
+            outputs[name] = outputs.get(name, frozenset()) | frozenset(sources)
+    return outputs
+
+
+def projection_source_columns(sql: str, dialect: str | None = DEFAULT_DIALECT) -> ProjectionSources:
+    """Maps each output column name to the base column names it reads.
+
+    2026-10-25, UAT-readiness Phase 2 (SEC-006). The result-governance
+    gate classifies a result's **returned column names**, which is the
+    right default -- it catches `SELECT *`, a `UNION`, and any projection
+    that keeps the column's own name. What it cannot see is a *rename*:
+    `SELECT salary AS region FROM employees` returns a column called
+    `region`, which classifies as ordinary business data, so the value was
+    returned in the clear. Measured against the shipped configuration, 13
+    of 14 rename and wrapper variants defeated the gate this way,
+    including `SELECT password_hash AS note`, whose category no role may
+    ever see.
+
+    This function supplies the missing half: the names *behind* each
+    output column, so the gate can classify an output by the strictest of
+    (its own name, every name it was computed from). It resolves through
+    aliases, single-argument wrappers (`UPPER`, `CAST`, arithmetic),
+    CTE renames, and every branch of a compound query.
+
+    **Aggregates are deliberately excluded**, and this is the one place
+    that judgement is recorded. An aggregated projection maps to an empty
+    source set, so `AVG(salary) AS avg_pay` is *not* masked by this
+    mechanism. Masking it would reject ordinary, legitimate analytics --
+    "average pay by department" is the normal case, not an attack -- and
+    CLAUDE.md §5.8 names over-blocking ordinary analytics as its own
+    failure mode. The narrow residual, an aggregate over one row
+    (`MAX(salary) WHERE id = 7`), is what small-group suppression exists
+    for, and extending that to this shape is a policy decision rather
+    than a defect fix. It is reported as an open item, not silently
+    closed here.
+
+    Args:
+        sql: The statement whose result is being governed. On the governed
+            path this has already passed `validate_sql`, so it parses.
+        dialect: sqlglot dialect to parse with.
+
+    Returns:
+        A `ProjectionSources`. Both of its views can legitimately be
+        empty -- that leaves the caller's own name-based classification
+        exactly as it was. This function only ever *adds* names to
+        classify, so an empty result is a no-op and never a relaxation.
+    """
+    try:
+        statement = sqlglot.parse_one(sql, read=dialect)
+    except (SqlglotError, RecursionError):
+        # Unreachable on the governed path (`validate_sql` parsed the same
+        # text with the same dialect first, and refuses what it cannot).
+        # Returning an empty map here is a no-op, not a weakening: the
+        # name-based gate still runs on every column.
+        logger.debug("[sql_validator] projection sources unavailable: SQL did not re-parse")
+        return ProjectionSources()
+
+    cte_outputs: dict[str, dict[str, frozenset[str]]] = {}
+    for cte in statement.find_all(exp.CTE):
+        cte_name = (cte.alias_or_name or "").lower()
+        if not cte_name:
+            continue
+        cte_outputs[cte_name] = _select_output_sources(cte.this, cte_outputs, 0)
+
+    by_name = _select_output_sources(statement, cte_outputs, 0)
+    ordered = _ordered_projection_sources(statement, cte_outputs)
+    return ProjectionSources(by_name=by_name, in_order=ordered)
+
+
+def _ordered_projection_sources(
+    statement: exp.Expression,
+    cte_outputs: dict[str, dict[str, frozenset[str]]],
+) -> tuple[frozenset[str], ...]:
+    """The same source sets, in the order the projections appear.
+
+    Only produced for a single `Select` whose projection list has no
+    wildcard: a `SELECT *` expands to a column count this function cannot
+    know, and a compound query's branches are already merged by name, so in
+    both cases position would be a guess. Returns `()` then, and the
+    name-keyed map is used alone.
+    """
+    if not isinstance(statement, exp.Select):
+        return ()
+    projections = list(statement.expressions)
+    if any(
+        isinstance(projection, exp.Star) or projection.find(exp.Star) is not None
+        for projection in projections
+    ):
+        return ()
+    ordered: list[frozenset[str]] = []
+    for projection in projections:
+        if _projection_is_aggregated(projection):
+            ordered.append(frozenset())
+            continue
+        sources: set[str] = set()
+        for column in projection.find_all(exp.Column):
+            column_name = (column.name or "").lower()
+            if not column_name or column_name == "*":
+                continue
+            sources.add(column_name)
+            for cte_map in cte_outputs.values():
+                sources |= cte_map.get(column_name, frozenset())
+        ordered.append(frozenset(sources))
+    return tuple(ordered)

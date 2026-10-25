@@ -43,7 +43,7 @@ module decides, and the module never logs cell values, only counts.
 from __future__ import annotations
 
 import logging
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -53,6 +53,7 @@ from governance.classification import (
     DataClassification,
     MaskingStrategy,
     classify_columns,
+    classify_field,
 )
 from governance.domains import BusinessDomain, minimum_group_size_for, policy_for
 from governance.suppression import suppress_small_groups
@@ -163,10 +164,38 @@ def govern_rows_for_caller(
 WITHHELD_MASK = "[withheld]"
 
 
+def _source_names_for_column(
+    index: int,
+    name: str,
+    source_columns: Mapping[str, Collection[str]] | None,
+    source_columns_in_order: Sequence[Collection[str]] | None,
+    column_count: int,
+) -> frozenset[str]:
+    """The base column names output column `index` was computed from.
+
+    Prefers the positional view when it lines up with the result's own
+    column count, because that is the only view that reaches an unaliased
+    expression (`SELECT salary * 1`, whose output name the driver
+    invents). Falls back to the name-keyed view, which survives wildcard
+    expansion and compound-query merging.
+
+    Returns an empty set when neither view has anything for this column --
+    which leaves the column classified by its own name alone, exactly as
+    before these parameters existed.
+    """
+    if source_columns_in_order is not None and len(source_columns_in_order) == column_count:
+        return frozenset(source_columns_in_order[index])
+    if source_columns is not None:
+        return frozenset(source_columns.get(name.lower(), ()))
+    return frozenset()
+
+
 def _classification_masks(
     columns: Sequence[str],
     can_view_restricted: bool,
     restricted_categories: Collection[str] | None = None,
+    source_columns: Mapping[str, Collection[str]] | None = None,
+    source_columns_in_order: Sequence[Collection[str]] | None = None,
 ) -> tuple[dict[int, str], dict[int, str]]:
     """Which column indexes to mask, and which to withhold outright.
 
@@ -178,12 +207,45 @@ def _classification_masks(
     detected domain actually restricts. `None` means "apply the
     classification level alone", which is the behaviour for a caller
     that supplies no domain.
+
+    `source_columns`/`source_columns_in_order` carry what each output
+    column was *computed from*, so a column is classified by the strictest
+    of its own name and every name behind it. Without them a rename
+    defeats the gate outright -- `SELECT salary AS region` returns a
+    column called `region`, which classifies as ordinary business data
+    (UAT-readiness Phase 2, `SEC-006`). Both are optional and additive: a
+    caller that supplies neither gets precisely the previous behaviour,
+    which is what keeps the other five callers of
+    `govern_result_for_domain` working unchanged.
+
+    They are plain mappings rather than
+    `agent.sql_validator.ProjectionSources` on purpose. `agent` already
+    depends on `governance`; importing a type back the other way would add
+    to the shared-leaf-type import cycles the Phase 1 audit catalogued
+    (`ARC-005`). The caller computes the facts and passes them as data --
+    `sources.by_name` and `sources.in_order`.
     """
     policies = classify_columns(list(columns))
+    column_count = len(columns)
     masked: dict[int, str] = {}
     withheld: dict[int, str] = {}
     for index, name in enumerate(columns):
         policy = policies[name]
+        for source_name in _source_names_for_column(
+            index, name, source_columns, source_columns_in_order, column_count
+        ):
+            if source_name == name.lower():
+                continue
+            source_policy = classify_field("", source_name)
+            # Strictest wins, and a policy can be stricter in two
+            # independent ways: a higher classification level, and a
+            # never-disclosed category. Comparing the level alone would let
+            # `password_hash AS note` through, because CREDENTIAL is
+            # withheld by *category*, not by level.
+            if source_policy.is_never_disclosed or (
+                source_policy.classification > policy.classification
+            ):
+                policy = source_policy
         if policy.is_never_disclosed:
             withheld[index] = name
             continue
@@ -227,6 +289,8 @@ def govern_result_for_domain(
     caller_roles: Sequence[str],
     domain: BusinessDomain = BusinessDomain.GENERAL,
     minimum_group_size: int = 0,
+    source_columns: Mapping[str, Collection[str]] | None = None,
+    source_columns_in_order: Sequence[Collection[str]] | None = None,
 ) -> GovernedResult:
     """Full result-level governance for one caller in one domain.
 
@@ -248,6 +312,17 @@ def govern_result_for_domain(
             are restricted and the default k threshold.
         minimum_group_size: The operator's configured k default. The
             domain's own threshold wins when it declares one.
+        source_columns: Output column name (lowercased) -> the base column
+            names it was computed from, i.e.
+            `agent.sql_validator.projection_source_columns(sql).by_name`.
+            Optional and additive: without it a rename defeats the gate,
+            because classification sees only the name the result came back
+            under (`SEC-006`). Omitting it reproduces the previous
+            behaviour exactly.
+        source_columns_in_order: The same facts in projection order
+            (`...projection_source_columns(sql).in_order`), used when its
+            length matches `columns` -- the only view that reaches an
+            unaliased expression, whose output name the driver invents.
 
     Returns:
         A `GovernedResult` whose `actions` name what changed, with no
@@ -271,7 +346,13 @@ def govern_result_for_domain(
     restricted_category_values = {
         category.value for category in policy.effective_restricted_categories
     }
-    masked, withheld = _classification_masks(columns, can_view, restricted_category_values)
+    masked, withheld = _classification_masks(
+        columns,
+        can_view,
+        restricted_category_values,
+        source_columns,
+        source_columns_in_order,
+    )
 
     if masked or withheld:
         protected: list[Any] = []

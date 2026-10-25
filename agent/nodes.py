@@ -93,6 +93,7 @@ from agent.sql_validator import (
     enforce_row_limit,
     find_restricted_column_references,
     find_unexpected_table_references,
+    projection_source_columns,
     qualify_table_schema,
     references_multiple_tables,
     strip_row_limit,
@@ -2702,12 +2703,23 @@ def execute_sql_node(state: AgentState) -> dict[str, Any]:
     # Result-level governance (governance/result_policy.py): protected before the
     # insight step, the recommendation engine, or the UI sees the values.
     if settings.enable_result_governance:
+        # The names *behind* each output column, so an alias cannot strip a
+        # column's classification off its own values -- `SELECT salary AS
+        # region` comes back as `region`, which classifies as ordinary
+        # business data (UAT-readiness Phase 2, `SEC-006`). Derived from the
+        # statement actually executed, which `validate_sql` already parsed
+        # with this same dialect.
+        projection_sources = projection_source_columns(
+            execution_sql, dialect=get_sqlglot_dialect(db_config.db_type)
+        )
         governed = govern_result_for_domain(
             columns,
             rows,
             state.get("caller_roles", ()),
             _governance_domain(state),
             settings.governance_min_group_size,
+            projection_sources.by_name,
+            projection_sources.in_order,
         )
         rows = governed.rows
         # An `audit_required` domain (HR, healthcare, BFSI, legal, ...)

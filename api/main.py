@@ -77,6 +77,7 @@ from agent.sql_validator import (
     describe_sql,
     enforce_row_limit,
     find_unexpected_table_references,
+    projection_source_columns,
     qualify_table_schema,
     summarize_sql,
     validate_sql,
@@ -1973,12 +1974,20 @@ def execute(
         governance_domain = detect_domain(
             execution_sql, _referenced_names(execution_sql, columns)
         ).domain
+        # The names behind each output column (see
+        # agent.sql_validator.projection_source_columns): without them an
+        # alias strips a column's classification off its own values, and
+        # this is the route a caller hand-edits SQL on (UAT-readiness
+        # Phase 2, `SEC-006`).
+        projection_sources = projection_source_columns(execution_sql, dialect=dialect)
         governed = govern_result_for_domain(
             columns,
             rows,
             identity.roles,
             governance_domain,
             settings.governance_min_group_size,
+            projection_sources.by_name,
+            projection_sources.in_order,
         )
         rows = governed.rows
         # See agent/nodes.py's identical condition: an `audit_required`
