@@ -228,10 +228,11 @@ class TestWebSource:
             "status": "succeeded",
             "sources_used": ["web"],
             "web_result": {
-                "answer": "According to a live web search: the sky is blue.",
+                "answer": "The sky is blue because of Rayleigh scattering.",
                 "citations": [
                     {
                         "filename": "https://example.com/sky",
+                        "title": "Why the sky is blue",
                         "chunk_index": 0,
                         "page_number": None,
                         "document_id": "web-1",
@@ -251,8 +252,18 @@ class TestWebSource:
         metadata = _assistant_metadata(messages)
         assert metadata["sources_used"] == ["web"]
         assert metadata["sql"] is None
-        assert metadata["web_result"]["answer"].startswith("According to a live web search")
+        assert metadata["web_result"]["answer"].startswith(
+            "The sky is blue because of Rayleigh scattering"
+        )
         assert metadata["web_result"]["citations"][0]["filename"] == "https://example.com/sky"
+        # The cited page's real title survives the API boundary. Pinned
+        # because `_source_answer_out` maps `CitationOut`'s fields
+        # explicitly rather than splatting the dict, so a newly-added
+        # field is silently dropped unless it is listed there -- which is
+        # exactly what happened to `title` on its first outing, and was
+        # invisible to every unit test because the node itself was right.
+        assert metadata["web_result"]["citations"][0]["title"] == "Why the sky is blue"
+        assert ask_body["web_result"]["citations"][0]["title"] == "Why the sky is blue"
 
 
 class TestDocumentsSource:

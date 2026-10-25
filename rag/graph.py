@@ -37,7 +37,7 @@ vector (see the original design note on this).
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, NotRequired
 
 from langgraph.graph import END, StateGraph
 
@@ -95,6 +95,14 @@ _INSUFFICIENT_MESSAGE = "I couldn't find any relevant information to answer that
 
 class Citation(TypedDict):
     filename: str
+    # Human-readable title of the cited source, when the producer has a
+    # real one. `NotRequired` rather than a required key on purpose: every
+    # existing construction site (document and policy RAG, which cite a
+    # stored filename and have no separate title) stays valid unchanged,
+    # and only `agent.orchestrator.nodes.web_search_node` -- whose results
+    # carry a genuine page title -- sets it. Never synthesised from a URL
+    # or a filename; absent means the UI shows what it does have.
+    title: NotRequired[str]
     chunk_index: int
     page_number: int | None
     # Identifies which rag.documents row this citation came from, and

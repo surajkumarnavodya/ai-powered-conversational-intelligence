@@ -308,6 +308,12 @@ class CitationOut(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     filename: str
+    #: Real title of the cited page, when the producer has one (a live web
+    #: result does; a stored document cites its filename and does not).
+    #: Optional with a default, so every existing producer and every
+    #: persisted turn stays valid -- `api/schemas.py` response models are
+    #: frozen and widely consumed (CLAUDE.md §6.3).
+    title: str = ""
     chunk_index: int
     page_number: int | None = None
     document_id: str

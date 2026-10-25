@@ -934,6 +934,12 @@ def _source_answer_out(result: Mapping[str, Any] | None, settings: Any) -> Sourc
         citations=[
             CitationOut(
                 filename=citation["filename"],
+                # `.get`, not `[...]`: only a live web result carries a
+                # title (see `rag.graph.Citation`, where it is
+                # `NotRequired`), and a document/policy citation has none.
+                # Redacted like the answer text, because it is provider
+                # text this app did not author.
+                title=_redact_text(citation.get("title", ""), settings) or "",
                 chunk_index=citation["chunk_index"],
                 page_number=citation.get("page_number"),
                 document_id=citation["document_id"],
