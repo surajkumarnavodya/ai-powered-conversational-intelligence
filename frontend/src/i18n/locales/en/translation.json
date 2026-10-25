@@ -750,7 +750,7 @@
     }
   },
   "lineage": {
-    "collapsedTitle": "Sources ({{count}})",
+    "collapsedTitle": "How this answer was produced",
     "chainLabel": "How this answer was produced",
     "withheld": "Some fields or sources were withheld for your role — see the notice above.",
     "step": {

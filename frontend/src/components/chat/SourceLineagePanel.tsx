@@ -71,12 +71,22 @@ export function SourceLineagePanel({ state }: { state: AskResponse }) {
           className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90"
           aria-hidden="true"
         />
-        {t('lineage.collapsedTitle', { count: lineage.sources.length })}
+        {/* Not "Sources (N)" any more. That title sat directly below the
+            answer's own `Sources (5)` while counting something else
+            entirely -- source *kinds*, not pages -- so one turn showed
+            two "Sources" headings with two different numbers. This panel
+            is about how the answer was produced; the pages it cites have
+            one owner, and it is not here. */}
+        {t('lineage.collapsedTitle')}
       </summary>
 
       <div className="flex flex-col gap-3 border-t border-[var(--border)] p-3">
-        {/* The expanded one-line roll-call the feature asks for. */}
-        <p className="text-xs text-[var(--foreground)]">{summaryLine}</p>
+        {/* The one-line roll-call, kept only where it says something the
+            answer does not. On the SQL path it names the database and the
+            glossary that contributed. For a web/document answer it read
+            "Web • 5" directly beneath the answer's own `Sources (5)` and
+            a `Web` chip -- the same fact, a third time. */}
+        {hasQueryStage && <p className="text-xs text-[var(--foreground)]">{summaryLine}</p>}
 
         {/* The Question -> Source -> Tables -> Query -> Result -> Insight
             chain is shown only for an answer that actually has a query

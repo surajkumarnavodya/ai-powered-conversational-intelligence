@@ -25,7 +25,7 @@ function renderPanel(overrides: Partial<AskResponse> = {}) {
 
 /** Opens the outer collapsed panel, exactly as a click would. */
 function expand() {
-  const summary = screen.getByText(/^Sources \(/)
+  const summary = screen.getByText(/How this answer was produced/)
   fireEvent.click(summary)
   return summary
 }
@@ -40,19 +40,23 @@ const sqlState: Partial<AskResponse> = {
 }
 
 describe('SourceLineagePanel -- collapsed state', () => {
-  it('is one line showing the source count, per the requested UX', () => {
+  it('is one line describing what the panel holds', () => {
     renderPanel(sqlState)
-    expect(screen.getByText('Sources (1)')).toBeInTheDocument()
+    expect(screen.getByText('How this answer was produced')).toBeInTheDocument()
   })
 
-  it('counts every contributing source', () => {
-    renderPanel({
+  it('never titles itself "Sources", which the answer’s own list owns', () => {
+    // Regression. This read "Sources (1)" directly beneath the answer's
+    // own "Sources (5)" -- two headings of the same name, counting
+    // different things (source *kinds* here, cited *pages* there), so the
+    // numbers disagreed on screen for every multi-page web answer.
+    const { container } = renderPanel({
       ...sqlState,
       sources_used: ['sql', 'documents', 'web'],
       document_result: sourceAnswer(),
       web_result: sourceAnswer({ citations: [citation({ filename: 'https://example.com', page_number: null })] }),
     })
-    expect(screen.getByText('Sources (3)')).toBeInTheDocument()
+    expect(container.textContent).not.toMatch(/Sources \(\d+\)/)
   })
 
   it('renders nothing at all when no source can honestly be attributed', () => {

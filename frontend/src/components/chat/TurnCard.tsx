@@ -16,7 +16,6 @@ import { useSettingsStore } from '@/store/settingsStore'
 import { ChatMessage } from './ChatMessage'
 import { CopyAnswerButton } from './CopyAnswerButton'
 import { DownloadAnswerButton } from './DownloadAnswerButton'
-import { AgentExecutionTimeline } from './AgentExecutionTimeline'
 import { SaveArtifactButton } from './ArtifactWorkspace'
 import { FollowUpSuggestions } from './FollowUpSuggestions'
 import { QuestionActions } from './QuestionActions'
@@ -25,7 +24,7 @@ import { RegenerateAnswerButton } from './RegenerateAnswerButton'
 import { ResponseFeedbackWidget } from './ResponseFeedbackWidget'
 import { SentAttachmentsPreview } from './SentAttachmentsPreview'
 import { SourceLineagePanel } from './SourceLineagePanel'
-import { SourcesUsedChips, SourcesUsedPanel } from './SourcesUsedPanel'
+import { SourcesUsedPanel } from './SourcesUsedPanel'
 import { TimingBadge } from './TimingBadge'
 
 // Chart.js is the largest remaining chunk in this app -- lazy-loaded so a
@@ -287,13 +286,17 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
           onAsk={(question) => void askQuestion(question)}
           disabled={pendingQuestion !== null}
         />
-        {/* What the agent did, stage by stage. Replaces the former
-            `RetryTimeline`: it listed the same retries, but rendered each
-            attempt's raw server error text and raw outcome codes. */}
-        <AgentExecutionTimeline
-          timings={state.stage_timings ?? []}
-          agentStatus={entry.agentStatus}
-        />
+        {/* `AgentExecutionTimeline` is deliberately not rendered here.
+
+            On an ordinary answer it reduced to "Agent completed • 1ms in
+            1 stage" -- internal pipeline detail, stated under every turn,
+            that tells a reader nothing about their answer. The component
+            and its tests are kept intact rather than deleted: the stage
+            timings it reads (`state.stage_timings`) are still returned by
+            the server and still populate `AskResponse`, so restoring it
+            is re-adding this one element, not rebuilding a feature. Stage
+            timing also remains visible while a question is in flight, via
+            `QueryLifecycle` and `TimingBadge`. */}
         <SourcesUsedPanel state={state} entryId={entry.entryId} />
         {/* Cross-source provenance for this answer. Sits after the
             answer body and before the SQL-specific panel, because it
@@ -432,12 +435,18 @@ export function TurnCard({ entry, isMultiDb }: { entry: QueryHistoryEntry; isMul
           </div>
         )}
 
-        {/* Attribution last, under the actions. It used to sit above the
-            answer, inside `SourcesUsedPanel` -- which put a row of chips
-            between the question and the first line of the response. Which
-            sources were consulted is something you check *after* reading,
-            so it reads better here. */}
-        <SourcesUsedChips state={state} />
+        {/* `SourcesUsedChips` ("Answered using: Web") is deliberately not
+            rendered here either.
+
+            It restated, as a third copy, something the turn already says
+            twice: the answer's own `Sources (N)` lists the actual pages
+            with their domains, and the provenance panel names the source
+            kind and its retrieval method. Naming the source *type* on top
+            of that added a row without adding a fact.
+
+            Attribution is not weakened -- it moved, it did not go. The
+            component and its tests are kept, so a surface that genuinely
+            wants a compact source-type row can use it. */}
       </div>
     </div>
   )

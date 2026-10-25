@@ -174,10 +174,45 @@ at every viewport width.
   about one word.
 
   The layout is now answer-first: the answer, then inline `[n]` markers,
-  then one collapsible `Sources (N)`, then a one-line evidence
-  indicator (`Source-backed · 5 sources · Show evidence`), with model
-  name and duration moved into a `Diagnostics` disclosure inside the
-  lineage panel. Specifics worth not rediscovering:
+  then one collapsible `Sources (N)`, then a one-line evidence control
+  (`Source-backed · Show evidence`), with model name and duration in a
+  `Diagnostics` disclosure inside the provenance panel.
+
+  **A second pass was needed, because the first one left two of the three
+  copies in place.** The evidence disclosure re-rendered the whole
+  `SourcesSection`, so opening it put the same five URLs on screen twice
+  inside one card; and the provenance panel below still titled itself
+  `Sources (1)` with a `Web • 5` summary line, directly beneath the
+  answer's own `Sources (5)`. Both were deliberate choices and both were
+  wrong. What fixed them:
+
+  - The evidence disclosure now shows **supporting excerpts, no links and
+    no URLs** — each source's own words beside the `[n]` it is cited by.
+    That is real data newly surfaced, not invented: `ChunkResult
+    .chunk_text` and `WebResult.snippet` were already in hand (they are
+    what feeds the model's context) and are now carried on the citation,
+    bounded to 500 chars and redacted by
+    `api.main._citation_excerpt_out`. It is **rendered as plain text, never
+    through the markdown renderer** — it is untrusted retrieved content,
+    and markup would let a poisoned page inject links into the answer
+    area (CLAUDE.md §5.5). Safe to add because
+    `rag.graph._generate_node` returns `citations: []` *before* the list
+    is built when any chunk carries a `sensitivity_category`, so
+    restricted text cannot reach the field; pinned by
+    `tests/test_citation_excerpts.py`.
+  - The evidence control no longer repeats the source **count** — the
+    `Sources (N)` heading directly above owns it.
+  - When no source carries an excerpt the control is **not offered at
+    all**, because opening it would reveal nothing the Sources list has
+    not already said. That absence is what keeps the duplication from
+    coming back by a different route.
+  - `lineage.collapsedTitle` is now **"How this answer was produced"**,
+    not `Sources ({{count}})`. Two headings called Sources, counting
+    source *kinds* and cited *pages* respectively, disagreed on screen
+    for every multi-page web answer. The web lineage row also dropped its
+    citation count for the same reason.
+
+  Specifics worth not rediscovering:
 
   - **`lib/citations.ts` is the single owner of "which sources back this
     answer".** It canonicalises a URL (scheme-folded, `www.` and

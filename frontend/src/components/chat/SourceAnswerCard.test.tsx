@@ -8,6 +8,7 @@ function citation(overrides: Partial<Citation> = {}): Citation {
   return {
     filename: 'https://www.lemonde.fr/a',
     title: 'Le Monde report',
+    excerpt: 'Clashes were reported in five cities overnight.',
     chunk_index: 0,
     page_number: null,
     document_id: '',
@@ -67,7 +68,6 @@ describe('SourceAnswerCard -- one canonical source list', () => {
       ],
     })
     expect(screen.getByText('Sources (2)')).toBeInTheDocument()
-    expect(screen.getByText('2 sources')).toBeInTheDocument()
   })
 
   it('shows each source by its real title, linked', async () => {
@@ -95,11 +95,13 @@ describe('SourceAnswerCard -- one canonical source list', () => {
 })
 
 describe('SourceAnswerCard -- compact evidence indicator', () => {
-  it('states the evidence status and source count on one line', () => {
+  it('states the evidence status compactly, without repeating the source count', () => {
     renderCard()
     expect(screen.getByText('Source-backed')).toBeInTheDocument()
-    expect(screen.getByText('1 source')).toBeInTheDocument()
     expect(screen.getByText('Show evidence')).toBeInTheDocument()
+    // `Sources (1)` sits directly above and owns the count; a second one
+    // beside it was itself a duplicated fact.
+    expect(screen.queryByText(/^\d+ sources?$/)).not.toBeInTheDocument()
   })
 
   it('keeps the evidence detail collapsed until asked for', () => {
@@ -117,6 +119,66 @@ describe('SourceAnswerCard -- compact evidence indicator', () => {
       'true',
     )
     expect(screen.getByText(/refer to these sources/i)).toBeInTheDocument()
+  })
+
+  it('shows the source’s own words, not a second copy of the source list', async () => {
+    // The regression this file exists for. The evidence disclosure used
+    // to re-render the whole `Sources (N)` list, so the same URLs were on
+    // screen twice in one card -- once under Sources, once under
+    // evidence.
+    const { container } = renderCard({
+      citations: [
+        citation(),
+        citation({
+          filename: 'https://www.reuters.com/b',
+          title: 'Reuters report',
+          excerpt: 'Police confirmed 6,000 arrests.',
+        }),
+      ],
+    })
+    await userEvent.click(screen.getByRole('button', { name: /show evidence/i }))
+
+    expect(screen.getByText(/Clashes were reported in five cities/)).toBeInTheDocument()
+    expect(screen.getByText(/Police confirmed 6,000 arrests/)).toBeInTheDocument()
+    // Exactly one `Sources (N)` heading in the whole card.
+    expect(container.querySelectorAll('summary')).toHaveLength(1)
+  })
+
+  it('renders each source link exactly once across the whole card', async () => {
+    const { container } = renderCard({
+      citations: [
+        citation(),
+        citation({
+          filename: 'https://www.reuters.com/b',
+          title: 'Reuters report',
+          excerpt: 'Police confirmed 6,000 arrests.',
+        }),
+      ],
+    })
+    // With both disclosures open -- the worst case for duplication.
+    await userEvent.click(screen.getByText('Sources (2)'))
+    await userEvent.click(screen.getByRole('button', { name: /show evidence/i }))
+
+    const hrefs = [...container.querySelectorAll('a[href]')].map((a) => a.getAttribute('href'))
+    const sourceHrefs = hrefs.filter((h) => h && h.startsWith('http'))
+    // The inline `[n]` markers are links too, so a URL may appear once in
+    // the prose and once in the Sources list -- but never twice in a list.
+    const listHrefs = [...container.querySelectorAll('li a[href]')].map((a) =>
+      a.getAttribute('href'),
+    )
+    expect(new Set(listHrefs).size).toBe(listHrefs.length)
+    expect(sourceHrefs.length).toBeGreaterThan(0)
+  })
+
+  it('does not offer an evidence control when no source carries an excerpt', () => {
+    // Nothing to reveal that `Sources (N)` does not already say, so the
+    // disclosure would open onto a restatement.
+    renderCard({
+      answer: 'Protests spread.',
+      citations: [citation({ excerpt: '' })],
+    })
+    expect(screen.getByText('Source-backed')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /show evidence/i })).not.toBeInTheDocument()
   })
 
   it('drops the standing explanation sentence the old panel always showed', () => {

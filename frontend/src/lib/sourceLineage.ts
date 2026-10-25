@@ -246,10 +246,14 @@ function buildSources(state: AskResponse): LineageSource[] {
   }
 
   if (state.web_result) {
-    const names = citationNames(state.web_result.citations)
     sources.push({
       kind: 'web',
-      name: names.length > 0 ? String(names.length) : null,
+      // No count. `SourcesSection` renders `Sources (N)` from the same
+      // citations a few lines above this panel, so repeating the number
+      // here produced "Web · 5" under "Sources (5)" -- and the two were
+      // derived differently, so they could disagree (this counted raw
+      // citations, that counts canonical de-duplicated pages).
+      name: null,
       retrieval: 'live_web_search',
       truthLevel: 'ai_inference',
       // No `pages` detail. The cited URLs are owned by the answer's own

@@ -36,9 +36,14 @@ import { SourcesSection } from './SourcesSection'
  * credibility of a source it is not allowed to show. What changed is only
  * how much room saying so takes.
  *
- * The source-type heading ("Web", "Documents") is gone from here because
- * `SourcesUsedChips` already states which sources answered, at the foot
- * of the turn -- CLAUDE.md §4.8, one owner per fact.
+ * The source-type heading ("Web", "Documents") is gone from here. It was
+ * originally dropped because `SourcesUsedChips` stated the same thing at
+ * the foot of the turn; that chip row has since been removed too, as a
+ * third copy of a fact already carried twice. What states it now is the
+ * `Sources (N)` list -- real pages with their domains -- and the
+ * provenance panel, which names the source kind and how it was retrieved.
+ * One owner per fact (CLAUDE.md §4.8), and the owner is no longer a
+ * label repeating a category.
  */
 export function SourceAnswerCard({ result }: { sourceKey?: string; result: SourceAnswer }) {
   const { t } = useTranslation()
@@ -50,6 +55,18 @@ export function SourceAnswerCard({ result }: { sourceKey?: string; result: Sourc
     (citation) => citation.has_pdf_bytes && !isUrl(citation.filename),
   )
   const status = sourceAnswerEvidenceStatus(result)
+
+  // Sources that have something to *show* as evidence, paired with the
+  // marker number the answer cites them by -- the same numbering
+  // `SourcesSection` and the inline `[n]` markers use, so all three agree.
+  const withExcerpts = sources
+    .map((citation, index) => ({ citation, number: index + 1 }))
+    .filter(({ citation }) => (citation.excerpt ?? '').trim().length > 0)
+  // The evidence control is offered only when opening it would show
+  // something. Without excerpts there is nothing to reveal that the
+  // Sources list above does not already say, and a disclosure that opens
+  // onto a restatement is how the duplication started.
+  const hasEvidence = withExcerpts.length > 0
 
   // Long inline publisher links become `[n]` markers pointing at the list
   // below. Skipped when the model wrote its own numeric markers, whose
@@ -79,10 +96,11 @@ export function SourceAnswerCard({ result }: { sourceKey?: string; result: Sourc
             ? t('evidence.sourceBacked')
             : t('evidence.notAvailable')}
         </span>
-        {sources.length > 0 && (
+        {/* No source count here. `Sources (N)` sits directly above and
+            already states it; a second count beside it was one of the
+            duplicated facts this card is meant to stop producing. */}
+        {hasEvidence && (
           <>
-            <span aria-hidden="true">·</span>
-            <span>{t('sources.countLabel', { count: sources.length })}</span>
             <span aria-hidden="true">·</span>
             <button
               type="button"
@@ -101,17 +119,37 @@ export function SourceAnswerCard({ result }: { sourceKey?: string; result: Sourc
         )}
       </div>
 
-      {/* Rendered only when asked for. Reuses the same canonical list
-          rather than printing a second one: what the disclosure adds is
-          the mapping -- which numbered source is which page -- not another
-          copy of the URLs. */}
-      {showEvidence && sources.length > 0 && (
+      {/* Supporting excerpts, not a second source list.
+
+          This deliberately renders no links and no URLs: `Sources (N)`
+          above is the one place a source is listed, and an earlier
+          version of this disclosure re-rendered that whole list, which
+          put the same five URLs on screen twice in one card. What the
+          disclosure adds is the thing the list cannot -- the source's
+          own words, next to the marker number the answer cites it by.
+
+          Only sources that actually carry an excerpt appear. A citation
+          without one contributes nothing here and is simply absent,
+          rather than printed as an empty row with its URL. */}
+      {showEvidence && hasEvidence && (
         <div
           id={evidenceId}
-          className="border-l-2 border-[var(--border)] pl-3 text-xs text-[var(--muted-foreground)]"
+          className="flex flex-col gap-2 border-l-2 border-[var(--border)] pl-3 text-xs text-[var(--muted-foreground)]"
         >
-          <p className="mb-1.5">{t('evidence.inlineMarkerHint')}</p>
-          <SourcesSection citations={result.citations} defaultOpen />
+          <p>{t('evidence.inlineMarkerHint')}</p>
+          {/* oxlint-disable-next-line jsx-a11y/no-redundant-roles */}
+          <ol role="list" className="flex flex-col gap-2">
+            {withExcerpts.map(({ citation, number }) => (
+              <li key={number} className="flex gap-2">
+                <span className="shrink-0 tabular-nums">[{number}]</span>
+                {/* Plain text, never the markdown renderer: this is
+                    retrieved third-party content, and rendering it as
+                    markup would let a poisoned page inject links or
+                    images into the answer area (CLAUDE.md §5.5). */}
+                <q className="min-w-0 break-words italic">{citation.excerpt}</q>
+              </li>
+            ))}
+          </ol>
         </div>
       )}
 
