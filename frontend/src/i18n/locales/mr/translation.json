@@ -63,8 +63,7 @@
   },
   "header": {
     "openHistory": "चॅट इतिहास उघडा",
-    "closeHistory": "चॅट इतिहास बंद करा",
-    "envIndicator": "AI SQL वर्कस्पेस"
+    "closeHistory": "चॅट इतिहास बंद करा"
   },
   "history": {
     "title": "चॅट इतिहास",
