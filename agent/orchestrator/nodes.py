@@ -1682,6 +1682,83 @@ def _build_web_excerpts(
     return "\n\n".join(kept_blocks), kept, len(results) - len(kept)
 
 
+#: Generic "where this came from" openers, stripped from the start of a
+#: source answer so the reader meets the answer itself.
+#:
+#: **Only ever generic.** Every alternative below names the retrieval
+#: mechanism ("web search", "the search results", "the sources") and
+#: nothing else. Attribution to a *named* publisher -- "According to
+#: Reuters, ..." -- is real provenance the answer should keep, and does
+#: not match: `according to` alone is not an alternative here, it is only
+#: ever followed by one of the generic phrases.
+#:
+#: The prompt already tells the model not to write these (see
+#: `web_search_node`). This is the belt-and-braces half, because a model
+#: that has produced a stock opener for years will still produce it
+#: occasionally against instruction, and one leaked preamble is exactly
+#: the duplication this is meant to remove.
+_SOURCE_PREAMBLE_RE = re.compile(
+    r"""^\s*
+    (?:
+        (?:according\s+to|based\s+on)\s+
+            (?:a\s+|the\s+|my\s+|our\s+)?(?:live\s+|recent\s+)?
+            (?:web\s+search(?:\s+results)?|search\s+results|sources(?:\s+provided)?)
+      | (?:the\s+)?(?:live\s+)?web\s+search(?:\s+results)?\s+
+            (?:indicates?|shows?|suggests?|says?|reveals?|found)(?:\s+that)?
+      | (?:the\s+)?search\s+results\s+
+            (?:indicate|show|suggest|say|reveal)s?(?:\s+that)?
+      | (?:the\s+)?sources\s+
+            (?:indicate|show|suggest|say|reveal)s?(?:\s+that)?
+      | here(?:'|’)?s\s+what\s+(?:the\s+)?(?:web\s+)?search\s+(?:found|shows|says)
+    )
+    \s*[:,.–—-]*\s*
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def strip_source_preamble(answer: str) -> str:
+    """Removes a leading generic "according to the web search" opener.
+
+    Returns `answer` unchanged when it does not start with one, when it is
+    blank, or when stripping would leave nothing -- a preamble that *is*
+    the whole answer is the model declining to answer, and silently
+    turning that into an empty string would present a non-answer as an
+    answer.
+
+    Applied up to twice, because a model that opens with one stock phrase
+    sometimes follows it with a second ("Based on the web search results,
+    here's what the search found: ...").
+
+    Named attribution is deliberately preserved -- see
+    `_SOURCE_PREAMBLE_RE`. "According to Reuters, ..." is provenance, not
+    boilerplate, and losing it would weaken exactly the thing CLAUDE.md
+    §4.4 asks a source answer to carry.
+    """
+    if not answer or not answer.strip():
+        return answer
+
+    stripped = answer
+    for _ in range(2):
+        candidate = _SOURCE_PREAMBLE_RE.sub("", stripped, count=1)
+        if candidate == stripped:
+            break
+        if not candidate.strip():
+            # The opener was the entire answer. Keep the original.
+            return answer
+        stripped = candidate
+
+    if stripped == answer:
+        return answer
+
+    # Re-capitalize only a plain lowercase letter left mid-sentence by the
+    # cut ("...indicate that narendra modi is" -> "Narendra Modi is").
+    # Markdown structure (#, *, -, >, `, digits) is left exactly as it is.
+    if stripped[:1].islower() and stripped[:1].isalpha():
+        stripped = stripped[0].upper() + stripped[1:]
+    return stripped
+
+
 def web_search_node(state: OrchestratorState) -> dict[str, Any]:
     """Runs a live web search and drafts a short, clearly-external-labeled answer.
 
@@ -1811,9 +1888,14 @@ def web_search_node(state: OrchestratorState) -> dict[str, Any]:
         "give.\n\n"
         "Write in plain, neutral language, in the same language the "
         "question is asked in. On a contested topic, report what each side "
-        "said rather than judging between them. Begin the response with "
-        "exactly 'According to a live web search:' on its own line, then "
-        "the summary."
+        "said rather than judging between them.\n\n"
+        "Open with the answer itself. Do not begin with a preamble about "
+        "where the information came from ('According to a live web "
+        "search', 'Based on the search results', 'The sources indicate'), "
+        "and do not restate the question. The interface already labels "
+        "this answer as web-sourced and lists the pages it rests on, so a "
+        "sentence saying so costs the reader a line and tells them nothing "
+        "the surrounding UI has not already said."
     )
     answer = call_ollama(
         system_prompt,
@@ -1821,6 +1903,9 @@ def web_search_node(state: OrchestratorState) -> dict[str, Any]:
         settings,
         max_tokens=settings.web_search_answer_max_tokens,
     )
+    # Before the omitted-results note is appended, so the note itself is
+    # never mistaken for a preamble and is never re-capitalized.
+    answer = strip_source_preamble(answer)
     if dropped_count:
         answer += _WEB_RESULTS_OMITTED_NOTE.format(kept=len(used_results), total=len(results))
     citations: list[Citation] = [
@@ -1830,6 +1915,16 @@ def web_search_node(state: OrchestratorState) -> dict[str, Any]:
         # never tries to render a download button for one of these).
         {
             "filename": r.url,
+            # The result's own title, which `search.web_search.WebResult`
+            # has had all along and this citation simply never carried.
+            # Real data being surfaced, never a title derived from the URL
+            # slug -- that would be inventing one. Falls back to "" when
+            # the provider sent none, and the UI then shows the domain.
+            "title": r.title,
+            # The provider's own snippet for this page -- the same text
+            # that went into the model's context. Shown as supporting
+            # evidence rather than repeating the URL a second time.
+            "excerpt": r.snippet,
             "chunk_index": 0,
             "page_number": None,
             "document_id": "",

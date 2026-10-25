@@ -495,7 +495,12 @@
     }
   },
   "evidence": {
-    "insightDetail": "Ceci est un résumé rédigé du résultat. Sa formulation est générée ; ses chiffres sont vérifiés par rapport aux données avant son affichage."
+    "insightDetail": "Ceci est un résumé rédigé du résultat. Sa formulation est générée ; ses chiffres sont vérifiés par rapport aux données avant son affichage.",
+    "sourceBacked": "Appuyé par des sources",
+    "notAvailable": "Non disponible",
+    "show": "Afficher les preuves",
+    "hide": "Masquer les preuves",
+    "inlineMarkerHint": "Les marqueurs numérotés de la réponse renvoient à ces sources."
   },
   "sources": {
     "pickerLabel": "Choisir les sources de données",
@@ -508,7 +513,10 @@
     "loadFailed": "Impossible de charger les sources.",
     "unavailableHeading": "Non disponible",
     "notConfigured": "non configurée",
-    "notPermitted": "pas d'accès"
+    "notPermitted": "pas d'accès",
+    "sectionTitle": "Sources ({{count}})",
+    "countLabel": "{{count}} source",
+    "countLabel_other": "{{count}} sources"
   },
   "shortcuts": {
     "title": "Raccourcis clavier",

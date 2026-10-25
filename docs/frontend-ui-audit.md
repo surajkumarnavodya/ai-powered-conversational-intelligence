@@ -163,6 +163,92 @@ at every viewport width.
   (see §7) — component-level spacing is ad hoc Tailwind utility values
   rather than drawn from a shared scale.
 
+- ~~**A web answer stated its sources three times.**~~ **Fixed
+  2026-10-25.** One turn rendered the same five URLs in three places: the
+  evidence disclosure inside `SourceAnswerCard` (full URLs, expanded),
+  a bare `Sources: 5` count beneath it, and again under *Pages cited* in
+  `SourceLineagePanel`. The answer itself opened with "According to a
+  live web search:" — a fourth statement of the same fact — and the
+  lineage panel's own header said `Sources (1)`, counting source *kinds*
+  while the answer counted *pages*, so two visible numbers disagreed
+  about one word.
+
+  The layout is now answer-first: the answer, then inline `[n]` markers,
+  then one collapsible `Sources (N)`, then a one-line evidence control
+  (`Source-backed · Show evidence`), with model name and duration in a
+  `Diagnostics` disclosure inside the provenance panel.
+
+  **A second pass was needed, because the first one left two of the three
+  copies in place.** The evidence disclosure re-rendered the whole
+  `SourcesSection`, so opening it put the same five URLs on screen twice
+  inside one card; and the provenance panel below still titled itself
+  `Sources (1)` with a `Web • 5` summary line, directly beneath the
+  answer's own `Sources (5)`. Both were deliberate choices and both were
+  wrong. What fixed them:
+
+  - The evidence disclosure now shows **supporting excerpts, no links and
+    no URLs** — each source's own words beside the `[n]` it is cited by.
+    That is real data newly surfaced, not invented: `ChunkResult
+    .chunk_text` and `WebResult.snippet` were already in hand (they are
+    what feeds the model's context) and are now carried on the citation,
+    bounded to 500 chars and redacted by
+    `api.main._citation_excerpt_out`. It is **rendered as plain text, never
+    through the markdown renderer** — it is untrusted retrieved content,
+    and markup would let a poisoned page inject links into the answer
+    area (CLAUDE.md §5.5). Safe to add because
+    `rag.graph._generate_node` returns `citations: []` *before* the list
+    is built when any chunk carries a `sensitivity_category`, so
+    restricted text cannot reach the field; pinned by
+    `tests/test_citation_excerpts.py`.
+  - The evidence control no longer repeats the source **count** — the
+    `Sources (N)` heading directly above owns it.
+  - When no source carries an excerpt the control is **not offered at
+    all**, because opening it would reveal nothing the Sources list has
+    not already said. That absence is what keeps the duplication from
+    coming back by a different route.
+  - `lineage.collapsedTitle` is now **"How this answer was produced"**,
+    not `Sources ({{count}})`. Two headings called Sources, counting
+    source *kinds* and cited *pages* respectively, disagreed on screen
+    for every multi-page web answer. The web lineage row also dropped its
+    citation count for the same reason.
+
+  Specifics worth not rediscovering:
+
+  - **`lib/citations.ts` is the single owner of "which sources back this
+    answer".** It canonicalises a URL (scheme-folded, `www.` and
+    fragment dropped, an explicit tracking-parameter list removed,
+    surviving parameters *kept and sorted*) and de-duplicates on that.
+    The tempting "drop every query parameter" rule is deliberately not
+    used: it merges `?id=1` with `?id=2`, which would attribute a claim
+    to a page that never supported it. Mutation-verified — applying that
+    rule fails three tests naming real distinct-article shapes.
+  - **`lib/inlineCitations.ts` rewrites the model's own markdown links
+    into `[n]`** by matching each href against the canonical list. A link
+    to a page that is *not* cited is left exactly as written rather than
+    being given a number — it can never invent a citation, and that is
+    mutation-verified too.
+  - **Source titles are real data, newly surfaced, not derived.**
+    `search.web_search.WebResult` always had a `title`; `CitationOut`
+    now carries it (optional, defaulted, so persisted turns stay valid).
+    A source with no reported title falls back to its **domain** —
+    turning a URL slug into a headline would be fabricating one.
+    Note `api.main._source_answer_out` maps `CitationOut`'s fields
+    explicitly, so a newly-added field is silently dropped unless listed
+    there; that is exactly what happened to `title` on its first outing
+    and is now pinned by `tests/test_chat_history_e2e.py`.
+  - **The stage chain is hidden for an answer that never ran a query.**
+    For a web or document answer every stage after Source is struck
+    through by definition, so it told the reader nothing. It remains on
+    the SQL path, where a missing stage is informative.
+  - **The preamble is removed at two layers**: the prompt now instructs
+    the model to open with the answer, and
+    `agent.orchestrator.nodes.strip_source_preamble` removes a stock
+    opener if it writes one anyway. The strip matches only *generic*
+    openers — "According to Reuters" is provenance and is preserved.
+    Provenance is not weakened by dropping the sentence: the answer is
+    still routed as `web`, still carries `ai_inference` truth level, and
+    still cites each page.
+
 ---
 
 ## 4. Existing Reusable Components

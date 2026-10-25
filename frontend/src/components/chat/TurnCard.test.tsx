@@ -214,3 +214,56 @@ describe('TurnCard -- copy controls', () => {
     expect(screen.queryByRole('button', { name: /copy answer/i })).toBeNull()
   })
 })
+
+describe('TurnCard -- internal detail kept out of the answer', () => {
+  /** A plain web answer: the shape that showed the most redundant chrome. */
+  function webEntry() {
+    return newHistoryEntry(
+      'Why are protests taking place in France?',
+      makeAskResponse({
+        sources_used: ['web'],
+        stage_timings: [{ stage: 'web_search', attempt: 1, duration_ms: 1 }],
+        web_result: {
+          answer: 'Protests spread to five cities.',
+          citations: [
+            {
+              filename: 'https://www.lemonde.fr/a',
+              title: 'Le Monde report',
+              excerpt: 'Clashes were reported overnight.',
+              chunk_index: 0,
+              page_number: null,
+              document_id: '',
+              has_pdf_bytes: false,
+            },
+          ],
+          status: 'succeeded',
+        },
+      } as never),
+      120,
+    )
+  }
+
+  it('does not restate the source type as "Answered using"', () => {
+    // The turn already names its sources twice -- `Sources (N)` lists the
+    // real pages, and the provenance panel names the kind and retrieval
+    // method. A third row naming only the category added no fact.
+    const { container } = renderTurnCard({ entry: webEntry(), isMultiDb: false })
+    expect(container.textContent).not.toMatch(/Answered using/i)
+  })
+
+  it('does not print the agent stage summary under the answer', () => {
+    // Reduced to "Agent completed • 1ms in 1 stage" on an ordinary
+    // answer: internal pipeline detail under every turn. The component
+    // and its own tests are retained; it is simply not rendered here.
+    const { container } = renderTurnCard({ entry: webEntry(), isMultiDb: false })
+    expect(container.textContent).not.toMatch(/Agent completed/i)
+    expect(container.textContent).not.toMatch(/in \d+ stage/i)
+  })
+
+  it('still renders the answer and its one source list', () => {
+    // The removals must not take the answer or its attribution with them.
+    renderTurnCard({ entry: webEntry(), isMultiDb: false })
+    expect(screen.getByText(/Protests spread to five cities/)).toBeInTheDocument()
+    expect(screen.getByText('Sources (1)')).toBeInTheDocument()
+  })
+})

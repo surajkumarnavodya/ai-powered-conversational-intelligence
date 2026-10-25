@@ -1480,8 +1480,16 @@ class TestWebSearchNode:
         )
         result = web_search_node({"question": "what's new today?"})
         assert result["web_result"]["status"] == "succeeded"
-        assert "web search" in result["web_result"]["answer"].lower()
+        # The stock opener is stripped even when the model writes it
+        # against instruction, so the reader meets the answer itself.
+        assert result["web_result"]["answer"] == "X."
+        # Provenance is not weakened by that: the answer is still
+        # attributed to this exact page, and still routed as "web", which
+        # is what tells a reader (and `synthesis_node`) that it came from
+        # outside the company's own systems.
         assert result["web_result"]["citations"][0]["filename"] == "https://x.test"
+        assert result["web_result"]["citations"][0]["title"] == "T"
+        assert result["sources_used"] == ["web"]
 
     def test_not_configured_degrades_gracefully(self, monkeypatch):
         settings = _settings()  # enable_web_search False, no key
@@ -1786,15 +1794,28 @@ class TestWebSearchAnswerPrompt:
 
         assert "Do not add a sources list at the end" in prompt
 
-    def test_still_begins_with_the_external_source_line(self, monkeypatch):
-        """Load-bearing beyond formatting: it is how a reader (and
-        `synthesis_node`'s attribution) can tell at a glance that the
-        answer came from outside the company's own systems. Asserted in
-        `tests/test_chat_history_e2e.py` too.
+    def test_instructs_the_model_to_open_with_the_answer_not_a_preamble(self, monkeypatch):
+        """Replaces an assertion that the prompt *required* the opener
+        'According to a live web search:'.
+
+        That sentence was how the answer announced it came from outside
+        the company's own systems. It is not how it does so any more, and
+        deliberately so: the interface labels the answer web-sourced,
+        lists the pages it rests on, and `sources_used == ["web"]` drives
+        both -- so the sentence repeated, in the most prominent position
+        available, something the surrounding UI had already said. The
+        external-provenance requirement itself is unchanged and is
+        asserted in `test_summarizes_results_and_labels_them_external`;
+        what changed is which layer carries it.
         """
         prompt = self._captured_system_prompt(monkeypatch)
 
-        assert "exactly 'According to a live web search:' on its own line" in prompt
+        assert "Open with the answer itself" in prompt
+        assert "Do not begin with a preamble" in prompt
+        # The named examples matter: a model follows a prohibition it can
+        # pattern-match far better than an abstract one.
+        assert "According to a live web search" in prompt
+        assert "Do not begin with a preamble about where the information came from" in prompt
 
 
 class TestGenerationNode:

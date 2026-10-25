@@ -136,6 +136,18 @@ export interface SchemaTable {
 
 export interface Citation {
   filename: string
+  /** Real title of the cited page, when the producer has one (a live web
+   * result does; a stored document cites its filename and does not).
+   * Optional because every turn persisted before `CitationOut.title`
+   * existed lacks it, and because it is never synthesised from a URL --
+   * absent means "no title was reported", and the UI shows the domain. */
+  title?: string
+  /** The source's own supporting text, bounded and redacted server-side.
+   *
+   * Untrusted retrieved content (CLAUDE.md §5.5): render as plain text,
+   * never through the markdown renderer, or a poisoned page could inject
+   * links and images into the answer area. */
+  excerpt?: string
   chunk_index: number
   page_number: number | null
   document_id: string

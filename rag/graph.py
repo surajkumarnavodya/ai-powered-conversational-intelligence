@@ -37,7 +37,7 @@ vector (see the original design note on this).
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, NotRequired
 
 from langgraph.graph import END, StateGraph
 
@@ -95,6 +95,25 @@ _INSUFFICIENT_MESSAGE = "I couldn't find any relevant information to answer that
 
 class Citation(TypedDict):
     filename: str
+    # Human-readable title of the cited source, when the producer has a
+    # real one. `NotRequired` rather than a required key on purpose: every
+    # existing construction site (document and policy RAG, which cite a
+    # stored filename and have no separate title) stays valid unchanged,
+    # and only `agent.orchestrator.nodes.web_search_node` -- whose results
+    # carry a genuine page title -- sets it. Never synthesised from a URL
+    # or a filename; absent means the UI shows what it does have.
+    title: NotRequired[str]
+    # The supporting text this citation rests on -- a retrieved chunk's
+    # own words, or a web result's snippet. Lets the UI show *why* a
+    # source backs a claim instead of listing the same URL a second time.
+    #
+    # `NotRequired` for the same reason as `title`: a producer that has no
+    # excerpt simply omits it. Always the source's own text, never a
+    # generated summary of it, and never reached for a restricted chunk --
+    # `_generate_node` returns `citations: []` before this list is built
+    # when any chunk carries a `sensitivity_category`, so a
+    # sensitivity-tagged document's text cannot arrive here.
+    excerpt: NotRequired[str]
     chunk_index: int
     page_number: int | None
     # Identifies which rag.documents row this citation came from, and
@@ -238,6 +257,10 @@ def _generate_node(state: RagState, *, settings: Settings) -> dict[str, Any]:
     citations: list[Citation] = [
         {
             "filename": c.filename,
+            # The chunk's own text, which this node already has in hand
+            # (it is what `excerpts` above feeds the model). Only reached
+            # for chunks that passed the sensitivity gate above.
+            "excerpt": c.chunk_text,
             "chunk_index": c.chunk_index,
             "page_number": c.page_number,
             "document_id": c.document_id,

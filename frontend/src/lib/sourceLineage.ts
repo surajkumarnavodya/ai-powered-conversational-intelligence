@@ -246,13 +246,22 @@ function buildSources(state: AskResponse): LineageSource[] {
   }
 
   if (state.web_result) {
-    const names = citationNames(state.web_result.citations)
     sources.push({
       kind: 'web',
-      name: names.length > 0 ? String(names.length) : null,
+      // No count. `SourcesSection` renders `Sources (N)` from the same
+      // citations a few lines above this panel, so repeating the number
+      // here produced "Web · 5" under "Sources (5)" -- and the two were
+      // derived differently, so they could disagree (this counted raw
+      // citations, that counts canonical de-duplicated pages).
+      name: null,
       retrieval: 'live_web_search',
       truthLevel: 'ai_inference',
-      details: names.length > 0 ? [{ label: 'pages', value: joinNames(names, 8) }] : [],
+      // No `pages` detail. The cited URLs are owned by the answer's own
+      // `SourcesSection`, which lists each one once with its real title
+      // and a working link. Repeating a truncated, unlinked copy of the
+      // same list here is how the same five URLs ended up on screen three
+      // times in one turn (CLAUDE.md §4.8: one owner per fact).
+      details: [],
     })
   }
 

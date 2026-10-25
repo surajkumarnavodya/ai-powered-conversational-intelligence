@@ -25,7 +25,7 @@ function renderPanel(overrides: Partial<AskResponse> = {}) {
 
 /** Opens the outer collapsed panel, exactly as a click would. */
 function expand() {
-  const summary = screen.getByText(/^Sources \(/)
+  const summary = screen.getByText(/How this answer was produced/)
   fireEvent.click(summary)
   return summary
 }
@@ -40,19 +40,23 @@ const sqlState: Partial<AskResponse> = {
 }
 
 describe('SourceLineagePanel -- collapsed state', () => {
-  it('is one line showing the source count, per the requested UX', () => {
+  it('is one line describing what the panel holds', () => {
     renderPanel(sqlState)
-    expect(screen.getByText('Sources (1)')).toBeInTheDocument()
+    expect(screen.getByText('How this answer was produced')).toBeInTheDocument()
   })
 
-  it('counts every contributing source', () => {
-    renderPanel({
+  it('never titles itself "Sources", which the answer’s own list owns', () => {
+    // Regression. This read "Sources (1)" directly beneath the answer's
+    // own "Sources (5)" -- two headings of the same name, counting
+    // different things (source *kinds* here, cited *pages* there), so the
+    // numbers disagreed on screen for every multi-page web answer.
+    const { container } = renderPanel({
       ...sqlState,
       sources_used: ['sql', 'documents', 'web'],
       document_result: sourceAnswer(),
       web_result: sourceAnswer({ citations: [citation({ filename: 'https://example.com', page_number: null })] }),
     })
-    expect(screen.getByText('Sources (3)')).toBeInTheDocument()
+    expect(container.textContent).not.toMatch(/Sources \(\d+\)/)
   })
 
   it('renders nothing at all when no source can honestly be attributed', () => {
@@ -106,7 +110,12 @@ describe('SourceLineagePanel -- expanded state', () => {
     }
   })
 
-  it('does not convey a skipped step by styling alone', () => {
+  it('omits the stage chain entirely for an answer that never ran a query', () => {
+    // A web or document answer has no Tables, Query, Result or Insight
+    // stage by definition, so the chain was four struck-through words
+    // telling the reader nothing about their own answer -- in the panel
+    // they opened to find out where it came from. The sources themselves
+    // are still listed; only the inapplicable pipeline is gone.
     const { container } = renderPanel({
       sources_used: ['web'],
       database: null,
@@ -115,10 +124,26 @@ describe('SourceLineagePanel -- expanded state', () => {
       web_result: sourceAnswer(),
     })
     expand()
-    const query = container.querySelector('[data-lineage-step="query"]')
-    expect(query).toHaveAttribute('data-lineage-state', 'not_applicable')
-    // A screen reader is told why, not left with a line-through it cannot see.
-    expect(screen.getAllByText(/not applicable to this answer/i).length).toBeGreaterThan(0)
+    expect(container.querySelector('[data-lineage-step]')).toBeNull()
+    expect(screen.queryByText(/not applicable to this answer/i)).not.toBeInTheDocument()
+    // The source itself is still attributed.
+    expect(screen.getByRole('button', { name: /Web/ })).toBeInTheDocument()
+  })
+
+  it('still shows the chain, and does not convey a skipped step by styling alone, on the SQL path', () => {
+    // Where a query did run, a missing later stage is genuinely
+    // informative, so the chain stays -- and a skipped step must still
+    // reach a reader who cannot see a line-through.
+    const { container } = renderPanel({ ...sqlState, insight: null })
+    expand()
+    expect(container.querySelector('[data-lineage-step="query"]')).toHaveAttribute(
+      'data-lineage-state',
+      'present',
+    )
+    const insight = container.querySelector('[data-lineage-step="insight"]')
+    expect(insight).not.toBeNull()
+    expect(insight).not.toHaveAttribute('data-lineage-state', 'present')
+    expect(screen.getAllByText(/not produced|not applicable to this answer/i).length).toBeGreaterThan(0)
   })
 })
 
