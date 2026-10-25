@@ -201,6 +201,7 @@ from security.audit_log import (
     get_correlation_id,
     log_security_event,
     reset_correlation_id,
+    sanitize_correlation_id,
     set_correlation_id,
 )
 from security.client_ip import resolve_client_ip
@@ -772,7 +773,13 @@ async def _correlation_id_middleware(request: Request, call_next):
     structured events (see that module's docstring) and echoes it back as a
     response header, so a caller can correlate their request with a
     specific audit-log line without this app needing per-user identity."""
-    correlation_id = request.headers.get("X-Correlation-ID") or str(uuid.uuid4())
+    # Sanitised, never taken on trust: this value is stamped onto every
+    # log record for the request and echoed back, so an unchecked header
+    # forges log fields (see `sanitize_correlation_id`). A rejected value
+    # falls back to a generated id, so correlation keeps working.
+    correlation_id = sanitize_correlation_id(request.headers.get("X-Correlation-ID")) or str(
+        uuid.uuid4()
+    )
     token = set_correlation_id(correlation_id)
     try:
         response = await call_next(request)
