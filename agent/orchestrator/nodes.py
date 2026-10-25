@@ -1921,6 +1921,10 @@ def web_search_node(state: OrchestratorState) -> dict[str, Any]:
             # slug -- that would be inventing one. Falls back to "" when
             # the provider sent none, and the UI then shows the domain.
             "title": r.title,
+            # The provider's own snippet for this page -- the same text
+            # that went into the model's context. Shown as supporting
+            # evidence rather than repeating the URL a second time.
+            "excerpt": r.snippet,
             "chunk_index": 0,
             "page_number": None,
             "document_id": "",

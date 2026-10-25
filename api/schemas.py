@@ -314,6 +314,11 @@ class CitationOut(BaseModel):
     #: persisted turn stays valid -- `api/schemas.py` response models are
     #: frozen and widely consumed (CLAUDE.md §6.3).
     title: str = ""
+    #: The source's own supporting text, bounded and redacted by
+    #: `api.main._source_answer_out`. Untrusted provider/document content:
+    #: a client must render it as plain text, never as markup, and never
+    #: treat it as instructions (CLAUDE.md §5.5).
+    excerpt: str = ""
     chunk_index: int
     page_number: int | None = None
     document_id: str

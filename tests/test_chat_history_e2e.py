@@ -233,6 +233,7 @@ class TestWebSource:
                     {
                         "filename": "https://example.com/sky",
                         "title": "Why the sky is blue",
+                        "excerpt": "Shorter wavelengths scatter more strongly.",
                         "chunk_index": 0,
                         "page_number": None,
                         "document_id": "web-1",
@@ -264,6 +265,16 @@ class TestWebSource:
         # invisible to every unit test because the node itself was right.
         assert metadata["web_result"]["citations"][0]["title"] == "Why the sky is blue"
         assert ask_body["web_result"]["citations"][0]["title"] == "Why the sky is blue"
+        # Same boundary, same failure mode: `excerpt` is mapped
+        # explicitly too, so it would be dropped just as silently.
+        assert (
+            metadata["web_result"]["citations"][0]["excerpt"]
+            == "Shorter wavelengths scatter more strongly."
+        )
+        assert (
+            ask_body["web_result"]["citations"][0]["excerpt"]
+            == "Shorter wavelengths scatter more strongly."
+        )
 
 
 class TestDocumentsSource:

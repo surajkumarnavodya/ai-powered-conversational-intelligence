@@ -924,6 +924,32 @@ def _redact_text(text: str | None, settings: Any) -> str | None:
     return redact_configured_secrets(text, settings)
 
 
+#: Longest supporting excerpt returned to a client. A retrieved chunk can
+#: be `RAG_CHUNK_SIZE` (1200) characters and a provider snippet longer
+#: still; the UI shows these as evidence under a disclosure, not as the
+#: answer, so a few sentences is what earns its place on screen and in the
+#: payload. Truncation is marked with an ellipsis rather than silent.
+_MAX_CITATION_EXCERPT_CHARS = 500
+
+
+def _citation_excerpt_out(excerpt: str, settings: Any) -> str:
+    """One citation's supporting text, redacted and bounded.
+
+    Redacted because this is content this application did not author -- a
+    retrieved document or a third-party page -- and
+    `security.redaction.redact_secrets` is applied to exactly that
+    category (CLAUDE.md §5.6). Whitespace is collapsed so a chunk's own
+    line breaks cannot reshape the panel it is rendered into.
+    """
+    if not excerpt:
+        return ""
+    cleaned = " ".join(str(excerpt).split())
+    cleaned = _redact_text(cleaned, settings) or ""
+    if len(cleaned) <= _MAX_CITATION_EXCERPT_CHARS:
+        return cleaned
+    return cleaned[:_MAX_CITATION_EXCERPT_CHARS].rstrip() + "…"
+
+
 def _source_answer_out(result: Mapping[str, Any] | None, settings: Any) -> SourceAnswerOut | None:
     """Converts one `agent.orchestrator.state.SourceAnswer` dict (document_result/
     policy_result/web_result) to its API shape -- None passes through as None."""
@@ -940,6 +966,7 @@ def _source_answer_out(result: Mapping[str, Any] | None, settings: Any) -> Sourc
                 # Redacted like the answer text, because it is provider
                 # text this app did not author.
                 title=_redact_text(citation.get("title", ""), settings) or "",
+                excerpt=_citation_excerpt_out(citation.get("excerpt", ""), settings),
                 chunk_index=citation["chunk_index"],
                 page_number=citation.get("page_number"),
                 document_id=citation["document_id"],
