@@ -35,6 +35,91 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
+
+#: One finding, reduced to what identifies it independently of where in the
+#: file it sits. `hashed_secret` is a content hash, so two findings sharing
+#: one are the *same* secret even at different line numbers.
+Finding = tuple[str, int, str]
+
+
+def _normalize(results: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """Canonicalizes a baseline's `results` keys to forward slashes.
+
+    2026-10-25, UAT-readiness Phase 2 (`OPS-005`). `detect-secrets` writes
+    **OS-native** path separators, so a scan run on Windows produces
+    `tests\\test_x.py` where the committed baseline (generated on Linux, as
+    CI's ubuntu-latest runner does) has `tests/test_x.py`. Comparing those
+    raw made every entry look new, which cost this audit a wrong conclusion
+    before the cause was found: the separator difference was initially read
+    as the reason the gate fails, when the real reason is staleness.
+
+    Normalizing cannot hide a real difference -- no filesystem holds both
+    `a/b.py` and `a\\b.py` -- so this only ever removes a false one, and it
+    makes a developer's local run agree with CI's verdict.
+    """
+    return {key.replace("\\", "/"): value for key, value in results.items()}
+
+
+def _signature(findings: list[dict[str, Any]]) -> set[Finding]:
+    return {(f["type"], f["line_number"], f["hashed_secret"]) for f in findings}
+
+
+def _describe_delta(
+    before: dict[str, list[dict[str, Any]]],
+    after: dict[str, list[dict[str, Any]]],
+) -> list[str]:
+    """Says exactly what changed, grouped by what it means.
+
+    The point is that the three groups need different responses, and the
+    bare "new finding(s) detected" this script used to print made them
+    indistinguishable:
+
+    * **a new secret hash** is the only one that might be a real leak;
+    * **a file newly carrying a finding** is usually a new test fixture or
+      a new Alembic revision, i.e. the already-triaged false-positive
+      classes;
+    * **the same hash at a new line** is pure code movement and needs
+      nothing but a baseline refresh.
+
+    A gate that fails without distinguishing these is a gate nobody can
+    act on, which is how this one came to be red without being noticed.
+    """
+    lines: list[str] = []
+
+    new_hashes: list[str] = []
+    moved: list[str] = []
+    for path in sorted(set(before) & set(after)):
+        sig_before, sig_after = _signature(before[path]), _signature(after[path])
+        if sig_before == sig_after:
+            continue
+        hashes_before = {h for _, _, h in sig_before}
+        hashes_after = {h for _, _, h in sig_after}
+        if hashes_before == hashes_after:
+            moved.append(path)
+        else:
+            added = sorted(h[:12] for h in hashes_after - hashes_before)
+            new_hashes.append(f"{path}: {added}")
+
+    added_files = sorted(set(after) - set(before))
+    removed_files = sorted(set(before) - set(after))
+
+    if new_hashes:
+        lines.append(f"  secret values not in the baseline ({len(new_hashes)} file(s)) -- REVIEW:")
+        lines.extend(f"    {entry}" for entry in new_hashes)
+    if added_files:
+        lines.append(f"  files newly carrying a finding ({len(added_files)}):")
+        lines.extend(
+            f"    {path}: {[(f['type'], f['line_number']) for f in after[path]]}"
+            for path in added_files
+        )
+    if removed_files:
+        lines.append(f"  files no longer carrying a finding ({len(removed_files)}):")
+        lines.extend(f"    {path}" for path in removed_files)
+    if moved:
+        lines.append(f"  same secret at a different line, i.e. code movement ({len(moved)}):")
+        lines.extend(f"    {path}" for path in moved)
+    return lines
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -56,12 +141,24 @@ def main(argv: list[str] | None = None) -> int:
     after = json.loads(args.baseline.read_text(encoding="utf-8"))
     before.pop("generated_at", None)
     after.pop("generated_at", None)
+    before["results"] = _normalize(before.get("results", {}))
+    after["results"] = _normalize(after.get("results", {}))
 
     if before != after:
         print(
             "New, un-baselined finding(s) detected -- review with "
             "`detect-secrets audit .secrets.baseline` and commit the result."
         )
+        for line in _describe_delta(before["results"], after["results"]):
+            print(line)
+        if before.keys() != after.keys() or any(
+            key != "results" and before[key] != after[key] for key in before
+        ):
+            # Everything outside `results` -- the plugin list, the filters,
+            # the detect-secrets version. A change here alters what the scan
+            # even looks for, so it is reported rather than folded in with
+            # the findings.
+            print("  baseline metadata outside `results` also differs (plugins/filters/version)")
         return 1
     return 0
 
