@@ -196,7 +196,21 @@ restriction as a boundary.** Full detail:
   statement type**, never a regex blocklist. It also rejects system
   catalog/data-dictionary references (`information_schema`, `pg_catalog`,
   mssql `sys`, Oracle `ALL_*`/`DBA_*`/`USER_*`/`V$`/`GV$`), nested
-  aggregates, and unsafe query hints.
+  aggregates, and unsafe query hints. **Two further refusals were added
+  2026-10-25** by the UAT-readiness Phase 2 attack sweep, both safety
+  violations (fail closed, never retried): `row_lock` (`FOR UPDATE`/`FOR
+  SHARE` and MSSQL `WITH (TABLOCKX)`-style hints — read-only in their
+  projection, blocking in effect) and `unparseable_depth`. The second
+  matters beyond its own payload: sqlglot parses *and walks and
+  regenerates* by recursive descent, so a 90-byte input made the
+  validator raise `RecursionError` — a `RuntimeError`, not a
+  `SqlglotError` — instead of returning a refusal. **A gate that crashes
+  has not failed closed.** The trigger depth is not a property of the
+  input: it moves with the dialect and with the caller's own stack depth,
+  so the guard is an exception catch around the whole check sequence, not
+  a length or depth cap. Any new sqlglot-parsing security helper needs
+  the same guard; `agent.sql_validator.projection_source_columns` carries
+  it. See [`docs/uat-readiness/phase-2-security.md`](docs/uat-readiness/phase-2-security.md) §3.1.
 - **Validation runs every time SQL is about to be shown or executed,
   including after a user hand-edits it.** An edit is exactly as untrusted as
   an LLM generation. A stored statement (a BI connector's, an artifact's) is
@@ -260,7 +274,24 @@ restriction as a boundary.** Full detail:
   insight step, recommendation engine, chart builder and response all receive
   protected rows.
 - The result gate classifies the **returned column names**, not the SQL text
-  — so an alias, a `UNION`, or `SELECT *` reaches the same protection.
+  — so a `UNION` or `SELECT *` reaches the same protection. **This entry
+  also said "an alias", and that was false in the dangerous direction
+  until 2026-10-25.** A rename does not keep the name the gate reads:
+  `SELECT salary AS region` came back as a column called `region`, which
+  classifies as ordinary business data, so the value was returned in the
+  clear — 13 of 14 measured rename and wrapper variants defeated the gate,
+  `SELECT password_hash AS note` among them, i.e. a `CREDENTIAL` column the
+  bullet above says *no* role unlocks. Closed by classifying each output by
+  the strictest of its own name and the base columns it was **computed
+  from**: `agent.sql_validator.projection_source_columns` resolves those
+  (through aliases, wrappers, arithmetic, CTE renames and every compound
+  branch) and the two governed callers that hold the executed SQL pass them
+  into `govern_result_for_domain`. Both parameters are optional, so a new
+  caller that forgets them silently gets the *old, weaker* behaviour —
+  pass them. One residual is deliberate and is a standing policy question,
+  not a bug: an aggregate over a restricted column is still returned, so
+  `MAX(salary) WHERE id = 7` discloses an individual value. See
+  [`docs/uat-readiness/phase-2-security.md`](docs/uat-readiness/phase-2-security.md) §4.1–§4.2.
 - **Small-group suppression applies to an authorized caller too** — it
   protects the individual in the group, not the column's sensitivity. The
   group label and count stay visible and **suppression never drops a row** (a
@@ -380,6 +411,34 @@ restriction as a boundary.** Full detail:
   an applied revision is the hand-edit §12 forbids. So as of 2026-10-22
   `black`, `bandit`, `pytest` and `pip-audit` all pass; the lone `I001`
   is the only blocking finding left.
+  **Re-measured 2026-10-25 (UAT-readiness Phase 2), and the picture
+  changed in three ways.** Read this paragraph rather than the one above,
+  and re-measure again before trusting either.
+  *Green:* `ruff check .` exits **0** — the `I001` above is fixed with
+  ruff's own import sort, not a `# noqa`, so there is no longer a standing
+  blocking lint finding. `black` clean over 1,670 files. `bandit` "No
+  issues identified" over 57,270 lines with **0** `# nosec` skipped.
+  `pytest` **9,066 passed / 0 failed**. `npm audit --omit=dev` 0
+  vulnerabilities.
+  *Was red, now green:* `pip-audit` had gone red again on three `pypdf`
+  advisories published after 2026-10-22 (CVE-2026-115572/115580/115585).
+  Bumped to `pypdf==6.21.2` rather than ignored, because
+  `rag/ingestion.py` and `attachments/processors/` point that parser at
+  caller-supplied bytes. **The lesson is that this list decays:** a green
+  `pip-audit` is a statement about a date, not about the repository.
+  *Still red, and it was not previously known to be:* **`detect-secrets`
+  is a fifth blocking gate, and it fails.** Neither this section nor §13
+  had ever counted it. It is **not** a leaked secret — the full-repo
+  triage found no un-baselined secret hash, only ~37 files of new
+  `tests/` fixtures and Alembic revision hex plus two i18n label strings
+  — the baseline is simply stale, and refreshing it must be done on
+  Linux because `detect-secrets` writes OS-native path separators.
+  `scripts/check_secrets_baseline.py` now normalises those and prints
+  *what* changed grouped by what it means, which it did not before; that
+  silence is why the gate's redness went unnoticed. Details and the exact
+  command:
+  [`docs/uat-readiness/phase-2-security.md`](docs/uat-readiness/phase-2-security.md)
+  §6.3–§6.5.
 
 ### 5.8 Domain privacy and safety — consult the policy before changing behavior
 
@@ -902,3 +961,45 @@ contract lists its specific limitations; these are the cross-cutting ones.
   describes the older measurement ("281 ... all in test files"); the figures
   above are the current ones.
   See [`docs/security/CVE_TRIAGE.md`](docs/security/CVE_TRIAGE.md).
+  **There are five blocking gates, not four, and this bullet and §5.7
+  both missed one until 2026-10-25:** `detect-secrets` (its own job, so
+  it runs even when `test` fails) blocks, and it was failing. Neither
+  list had ever named it, which is the more useful lesson here — a gate
+  nobody enumerates is a gate nobody measures. The blocking set is
+  `ruff`, `black`, `bandit`, `pytest`, `pip-audit` **and**
+  `detect-secrets`.
+
+- **An aggregate over a restricted column is still disclosed, and that is
+  a standing policy question rather than a bug.** `SEC-006` (§5.4) closed
+  the rename bypass by classifying each output column by the base columns
+  it was computed from; an **aggregated** projection deliberately
+  contributes none, because masking `AVG(salary) AS avg_pay` would reject
+  ordinary analytics and §5.8 names over-blocking as its own failure mode.
+  The residual is the narrow case: `SELECT MAX(salary) FROM employees
+  WHERE id = 7` returns one individual's salary. Deciding when an
+  aggregate is too narrow to count as one is what small-group suppression
+  already exists to decide, so extending it to this shape is a product
+  decision, not a defect fix. Pinned as *current* behaviour by
+  `tests/security/test_masking_survives_renaming.py::TestTheAggregateExclusionIsDeliberate`
+  — so when the decision is made, that test is the one to change, and its
+  failure will say so. Do not "fix" it silently in either direction.
+- **The `detect-secrets` baseline is stale, so that blocking gate is red**
+  (2026-10-25). No leaked secret: the triage found no un-baselined secret
+  hash, only new `tests/` fixtures, Alembic revision hex and two i18n
+  label strings. It cannot be refreshed from a Windows checkout --
+  `detect-secrets` writes OS-native path separators, so a locally
+  regenerated baseline has backslash keys CI's forward-slash scan can
+  never produce, and hand-normalising them would be the hand-edit §12
+  forbids for a tool-generated file. Run on Linux:
+  `detect-secrets scan $(git ls-files) --baseline .secrets.baseline`, then
+  `detect-secrets audit .secrets.baseline`. Full triage:
+  [`docs/uat-readiness/phase-2-security.md`](docs/uat-readiness/phase-2-security.md)
+  §6.4.
+- **The UAT-readiness audit is in progress and writes its own findings to
+  disk.** `docs/uat-readiness/FINDINGS_REGISTER.md` is the live register;
+  `phase-0-recon.md`, `phase-1-architecture.md` and
+  `phase-2-security.md` hold the method and evidence for what has been
+  done. Phases 3-12 are **not** started. Before re-investigating anything
+  security- or architecture-shaped, check the register: it records what
+  was measured, on what date, and which items are deliberately flagged
+  for an owner decision rather than open defects.
