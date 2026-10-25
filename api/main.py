@@ -2420,7 +2420,12 @@ if _frontend_dist.is_dir():
         last (after every API route above), so those always win first --
         FastAPI/Starlette matches routes in registration order.
         """
-        candidate = _frontend_dist / full_path
+        candidate = (_frontend_dist / full_path).resolve()
+        try:
+            candidate.relative_to(_frontend_dist)
+        except ValueError:
+            return FileResponse(_frontend_dist / "index.html")
+
         if full_path and candidate.is_file():
             return FileResponse(candidate)
         return FileResponse(_frontend_dist / "index.html")
