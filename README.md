@@ -24,12 +24,17 @@
 > **Entering UAT is not passing it, and this is still not
 > production-ready.** No business user has yet executed or signed off a
 > single acceptance journey; the 15-journey, 6-role script exists with
-> every result cell blank. Two blocking CI gates (`ruff`, `bandit`) were
-> re-measured red today on verified-benign findings awaiting a decision
-> and a third (`pip-audit`) could not be re-measured here at all;
-> capacity and container-CVE testing are unblocked but unrun, recovery
-> has never been drilled, and the measured answer-latency target is not
-> met. See [Project status](#-project-status).
+> every result cell blank. Re-measured 2026-10-25: the backend suite is
+> **8,297 passed / 0 failed**, `bandit` is **clean (0 findings)** and
+> `npm audit` reports **0** production vulnerabilities, leaving one
+> blocking gate red — a single `ruff` import-order finding — while
+> `pip-audit` still cannot be run in this environment at all. Capacity
+> and container-CVE testing remain unblocked but unrun, recovery has
+> never been drilled, and the measured answer-latency target is not met.
+> A first-pass readiness audit has begun
+> ([`docs/uat-readiness/`](docs/uat-readiness/)); it has completed
+> reconnaissance only, and found one open information-disclosure item
+> awaiting a decision. See [Project status](#-project-status).
 
 <a id="news-and-updates"></a>
 
@@ -656,14 +661,27 @@ row was re-measured on 2026-10-22 unless it says otherwise:
 | Question | Answer | Evidence |
 |---|---|---|
 | Does it build and deploy? | **Yes** | Production image verified 2026-10-17 running `python 3.11.16` with every module importing, incl. all five scipy-dependent ones. *Not re-measured since.* |
-| Do the automated tests pass? | **Yes, bar 5 known failures** | **7,673** backend passed with **5 known failures** — a pre-existing cross-file-state interaction (`tests/security` running before `test_agent_nodes.py`), unrelated to any 2026-10-22 change and recorded in [`CLAUDE.md`](CLAUDE.md) §13; 11 `tests/live/` deselected · **1,334** frontend across 95 files · `tsc` clean · `npm run lint` exit 0 · `black` clean over **1,661** files |
+| Do the automated tests pass? | **Yes** | Re-measured 2026-10-25: **8,297** backend passed, **0 failed**, 11 `tests/live/` deselected (521s) · **1,491** frontend across 103 files · `tsc` clean · `npm run lint` exit 0 · `black` clean over **1,665** files. The 5 cross-file-state failures this row previously reported were closed 2026-10-24 — cause attributed and mutation-verified, see [`CLAUDE.md`](CLAUDE.md) §13 |
 | Do the core workflows run for real? | **Yes** | 20 live end-to-end probes (2026-10-17) against 4 live SQL Server databases and local Ollama — auth, RBAC, chat history, SQL validation, row cap, restricted-column masking. Re-driven 2026-10-22 for the display-name, chart-axis and retrieval fixes |
-| Is CI green? | **No** | `ruff` exits non-zero on **one** import-order finding (`agent/multiagent/agents.py`); `bandit` on **4 Low, 0 Medium, 0 High**, all deliberate and annotated for `ruff` but not for `bandit`. **`pip-audit` could not be re-measured here** — it needs PyPI and this environment has no egress, so its 2026-10-17 red state stands as last known |
+| Is CI green? | **No — one gate** | Re-measured 2026-10-25: `ruff` exits non-zero on **one** import-order finding (`agent/multiagent/agents.py:23`, `I001`). **`bandit` now passes** — `0 Low / 0 Medium / 0 High` across 56,950 lines, run exactly as CI runs it (the 4 Low this row used to report are gone; the 14 `# nosec` annotations in those packages are line-scoped and individually justified). `npm audit --omit=dev` reports **0** vulnerabilities. **`pip-audit` still could not be re-measured here** — it needs PyPI and this environment has no egress (`ReadTimeout` to pypi.org), so its last known state stands and is recorded as *unverified*, not as passing |
 | Is capacity known? | **No** | Load testing is unblocked but **still not run**. No capacity claim is made anywhere |
 | Is answer latency acceptable? | **No** | Measured 2026-10-22: a SQL answer takes **~80s** on this hardware against a 3–5s target, because the 7B model fits only 41% into a 4 GB GPU. Progress *does* meet it — first stream event at **0.025s**. See [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) |
 | Is answer accuracy known? | **No** | The only full-corpus benchmark is self-disclaimed as stale, and now also predates a model change — see [Known limitations](#known-limitations) |
 | Has recovery been drilled? | **No** | RPO/RTO *proposed*, awaiting sign-off; no restore drill |
 | **Has UAT been completed?** | **NO — IN PROGRESS, NOTHING SIGNED OFF** | The project entered UAT on 2026-10-22. The 15-journey, 6-role script still has every result cell blank: **no business user has executed or signed off anything.** Automated tests are not UAT |
+
+**An independent UAT-readiness audit is underway** and is the place to
+look for what is actually verified rather than claimed:
+[`docs/uat-readiness/`](docs/uat-readiness/) — the
+[findings register](docs/uat-readiness/FINDINGS_REGISTER.md) and
+[Phase 0 reconnaissance](docs/uat-readiness/phase-0-recon.md). **It has
+completed reconnaissance only** (phases 1–12 are not started), and it
+records environment-blocked checks as *unverified* rather than as
+passing. Its two substantive results so far: deny-by-default holds
+across the whole static unauthenticated `GET` surface (52 of 54 routes
+return 401; `/health` is the one intentional exception), and `/health`
+itself discloses the configured database names, table counts and model
+names to an unauthenticated caller — open, flagged for a decision.
 
 **Read these two documents before forming a view**, in this order:
 [`docs/certification/2026-10-17_release_gate_v2.md`](docs/certification/2026-10-17_release_gate_v2.md)

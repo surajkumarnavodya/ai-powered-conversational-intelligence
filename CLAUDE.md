@@ -801,7 +801,7 @@ contract lists its specific limitations; these are the cross-cutting ones.
   is for.
 - **Lint/type findings — measure before claiming one is, or is not, yours.**
   Measured 2026-10-17: `mypy .` reported **631 errors across 115 files**
-  (**re-measured 2026-10-23: 700 across 124** — the growth is entirely in
+  (**re-measured 2026-10-25: 723 across 129** — the growth is entirely in
   `tests/`, tracking tests added since; the **7 production-code errors
   below are unchanged**), of
   which **616 are in `tests/`** and 8 in `eval/security_benchmark/` (largely
@@ -860,7 +860,7 @@ contract lists its specific limitations; these are the cross-cutting ones.
   one. **Mutation-verified**: removing the rollup clear fails 2 of the 9
   tests in `tests/test_no_real_llm_calls_in_tests.py`, one of them the
   exact `recommendations == []` assertion the five failures made. A full
-  run is now **0 failed** (8261 passed, measured 2026-10-24).
+  run is now **0 failed** (8261 passed, measured 2026-10-24; **8,297 passed / 0 failed re-measured 2026-10-25**).
 
 - **The local 7B model still refuses some answerable terse questions.**
   Measured 2026-10-22, after the retrieval fix in
