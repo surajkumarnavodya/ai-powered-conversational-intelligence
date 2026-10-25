@@ -81,7 +81,9 @@
     "searchError": "शोध अयशस्वी झाला. कृपया पुन्हा प्रयत्न करा.",
     "clearSearch": "शोध साफ करा",
     "loadingConversation": "लोड होत आहे…",
-    "untitled": "शीर्षकहीन संभाषण"
+    "untitled": "शीर्षकहीन संभाषण",
+    "collapseGroup": "{{group}} संक्षिप्त करा",
+    "expandGroup": "{{group}} विस्तृत करा"
   },
   "workspace": {
     "heading": "तुमच्या डेटाबद्दल काहीही विचारा",
@@ -165,7 +167,8 @@
     "scrollToLatest": "नवीनतम संदेशावर जा",
     "processing": "प्रक्रिया सुरू आहे…",
     "processingStage": "प्रक्रिया सुरू आहे — {{stage}}",
-    "spokenAnswerLabel": "बोललेले उत्तर"
+    "spokenAnswerLabel": "बोललेले उत्तर",
+    "wordLimitExceeded": "कमाल {{max}} शब्दांना परवानगी आहे"
   },
   "sql": {
     "title": "तयार केलेले SQL",

@@ -550,7 +550,11 @@ describe('QuestionNavigator', () => {
     // rail that keeps the whole flyout mounted; re-testing the reset here
     // would be testing that jsdom quirk, not this component.)
     fireEvent.mouseEnter(scrollingTextContainer)
-    expect(textSpan.style.transform).toBe('translateX(-400px)')
+    const track = scrollingTextContainer.querySelector(
+      '[data-testid="marquee-track"]',
+    ) as HTMLElement
+    expect(track).not.toBeNull()
+    expect(track.children).toHaveLength(2)
   })
 
   it('navigates duplicate questions to their own distinct message by stable id, not by text', () => {

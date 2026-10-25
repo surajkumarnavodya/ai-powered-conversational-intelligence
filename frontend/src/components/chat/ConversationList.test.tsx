@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { newHistoryEntry, type ConversationSummary } from '@/lib/history'
 import type { AskResponse } from '@/lib/types'
@@ -100,5 +101,77 @@ describe('ConversationList', () => {
     expect(screen.getByText('Today')).toBeInTheDocument()
     expect(screen.getByText('Revenue last quarter')).toBeInTheDocument()
     expect(screen.getByText('Top products')).toBeInTheDocument()
+  })
+
+  describe('collapsible recency groups', () => {
+    function renderWithTodayGroup() {
+      return render(
+        <ConversationList
+          {...baseProps}
+          conversations={[
+            makeConversation('c1', 'Revenue last quarter'),
+            makeConversation('c2', 'Top products'),
+          ]}
+        />,
+      )
+    }
+
+    it('renders each category heading as an expanded toggle by default', () => {
+      renderWithTodayGroup()
+      const heading = screen.getByRole('button', { name: /collapse today/i })
+      expect(heading).toHaveAttribute('aria-expanded', 'true')
+      // Names the region it controls, and that region really exists.
+      const controlled = document.getElementById(heading.getAttribute('aria-controls') as string)
+      expect(controlled).not.toBeNull()
+      expect(controlled).not.toHaveAttribute('hidden')
+    })
+
+    it('collapses the group and hides its conversations when clicked', async () => {
+      renderWithTodayGroup()
+      await userEvent.click(screen.getByRole('button', { name: /collapse today/i }))
+
+      const heading = screen.getByRole('button', { name: /expand today/i })
+      expect(heading).toHaveAttribute('aria-expanded', 'false')
+      const controlled = document.getElementById(heading.getAttribute('aria-controls') as string)
+      // `hidden` is `display:none`, so the rows leave the a11y tree and
+      // the tab order rather than merely looking gone.
+      expect(controlled).toHaveAttribute('hidden')
+    })
+
+    it('expands again on a second click', async () => {
+      renderWithTodayGroup()
+      await userEvent.click(screen.getByRole('button', { name: /collapse today/i }))
+      await userEvent.click(screen.getByRole('button', { name: /expand today/i }))
+
+      const heading = screen.getByRole('button', { name: /collapse today/i })
+      expect(heading).toHaveAttribute('aria-expanded', 'true')
+      const controlled = document.getElementById(heading.getAttribute('aria-controls') as string)
+      expect(controlled).not.toHaveAttribute('hidden')
+    })
+
+    it('swaps the plus/minus affordance with the state', async () => {
+      const { container } = renderWithTodayGroup()
+      const iconClass = () =>
+        (screen.getByRole('button', { name: /today/i }).querySelector('svg') as SVGElement).getAttribute(
+          'class',
+        ) ?? ''
+
+      expect(iconClass()).toMatch(/minus/)
+      await userEvent.click(screen.getByRole('button', { name: /collapse today/i }))
+      expect(iconClass()).toMatch(/plus/)
+      expect(container).toBeTruthy()
+    })
+
+    it('styles the category heading as bold primary text, not muted', () => {
+      // The requested black/bold treatment. Asserted as the theme token
+      // rather than a literal colour: `--chat-text-primary` is near-black
+      // in the light theme and near-white in the dark one, so a literal
+      // `#000` here would mean an unreadable heading on dark.
+      renderWithTodayGroup()
+      const heading = screen.getByRole('button', { name: /collapse today/i })
+      expect(heading.className).toMatch(/font-bold/)
+      expect(heading.className).toMatch(/text-\[var\(--chat-text-primary\)\]/)
+      expect(heading.className).not.toMatch(/muted-foreground/)
+    })
   })
 })

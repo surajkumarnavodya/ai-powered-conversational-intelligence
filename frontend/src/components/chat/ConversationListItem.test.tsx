@@ -181,6 +181,42 @@ describe('ConversationListItem', () => {
     fireEvent(window, new Event('resize'))
 
     fireEvent.mouseEnter(scrollingTextContainer)
-    expect(textSpan.style.transform).toBe('translateX(-400px)')
+    // Hovering starts the continuous two-copy marquee rather than a
+    // single-pass transform that would end with the row looking empty.
+    // `ScrollingText`'s own tests own the seam invariant in detail; this
+    // only pins that the history row still wires the treatment up.
+    const track = scrollingTextContainer.querySelector(
+      '[data-testid="marquee-track"]',
+    ) as HTMLElement
+    expect(track).not.toBeNull()
+    expect(track.children).toHaveLength(2)
+  })
+
+  it('keeps the compact row padding that fits more conversations in the panel', () => {
+    // The row's height is driven by its 24px `h-6` menu trigger, so the
+    // padding is the only slack. At `py-0` the row is exactly 24px --
+    // WCAG 2.2 SC 2.5.8's minimum target size, hit precisely rather than
+    // crossed, which is why this is the floor and not a step on the way
+    // to something tighter. Pinned because it is easy to "tidy" padding
+    // back on and silently cost a quarter of the visible history.
+    const { container } = render(
+      <ConversationListItem
+        conversation={makeConversation()}
+        isActive={false}
+        isLoading={false}
+        isRenaming={false}
+        renameValue=""
+        onRenameValueChange={noop}
+        onSelect={noop}
+        onStartRename={noop}
+        onCommitRename={noop}
+        onCancelRename={noop}
+        onDelete={noop}
+        onShare={noop}
+      />,
+    )
+    const row = container.firstElementChild as HTMLElement
+    // `(?![.\d])` so this cannot be satisfied by `py-0.5` creeping back.
+    expect(row.className).toMatch(/py-0(?![.\d])/)
   })
 })
