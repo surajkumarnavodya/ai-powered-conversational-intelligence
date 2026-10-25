@@ -77,8 +77,45 @@ _DISALLOWED_NESTED_TYPES: tuple[type[exp.Expression], ...] = (
 #     (filesystem I/O); utl_inaddr (DNS/hostname resolution, exfiltration-
 #     capable); dbms_lock (sleep-based DoS); dbms_scheduler/dbms_java
 #     (arbitrary job/code execution).
+#
+# 2026-10-25, UAT-readiness Phase 2 (SEC-004/SEC-005). Two further classes
+# were found accepted by an adversarial sweep over this validator:
+#   - **Nested-SQL evaluators.** `query_to_xml('<sql>', ...)` (postgres) and
+#     `DBMS_XMLGEN.GETXML('<sql>')` (oracle) take a *query string* and
+#     execute it. The inner string is never parsed by sqlglot, so every
+#     check in `validate_sql` -- the statement-type allowlist, the
+#     system-catalog gate, this very denylist -- applies to the outer call
+#     and not to what actually runs. Measured: `SELECT query_to_xml('SELECT
+#     * FROM pg_authid', true, true, '')` was accepted, while the plain
+#     `SELECT ... FROM pg_authid` it wraps is refused. These are the one
+#     entry class here that is a *gate bypass* rather than an extra
+#     capability, which is why they are listed first.
+#   - **Transaction-log, trace and audit readers.** mssql `fn_dblog` /
+#     `fn_dump_dblog` read the transaction log and so can surface column
+#     values from recent modifications -- including rows a restricted-column
+#     gate protects in a normal SELECT; `fn_trace_gettable` and
+#     `fn_get_audit_file` read trace/audit files from disk;
+#     `fn_virtualfilestats` discloses storage paths. `sys.fn_dump_dblog` was
+#     already refused, but only incidentally, by the `sys.` schema check --
+#     the bare, unqualified `fn_dblog(...)` form was accepted.
+#   - postgres `pg_logdir_ls` lists the log directory (filesystem
+#     disclosure), completing the `pg_ls_dir`/`pg_stat_file` set above.
 _DANGEROUS_FUNCTION_NAMES: frozenset[str] = frozenset(
     {
+        # nested-SQL evaluators -- see the note above; these bypass the
+        # statement allowlist and the system-catalog gate entirely
+        "query_to_xml",
+        "query_to_xmlschema",
+        "query_to_xml_and_xmlschema",
+        "dbms_xmlgen",
+        "dbms_sql",
+        # transaction-log / trace / audit / log-directory readers
+        "fn_dblog",
+        "fn_dump_dblog",
+        "fn_trace_gettable",
+        "fn_get_audit_file",
+        "fn_virtualfilestats",
+        "pg_logdir_ls",
         "pg_sleep",
         "pg_read_file",
         "pg_read_binary_file",
@@ -309,6 +346,8 @@ ViolationType = Literal[
     "system_catalog_access",
     "nested_aggregate",
     "unsafe_query_option",
+    "unparseable_depth",
+    "row_lock",
 ]
 
 SAFETY_VIOLATION_TYPES: frozenset[str] = frozenset(
@@ -320,6 +359,13 @@ SAFETY_VIOLATION_TYPES: frozenset[str] = frozenset(
         "dangerous_function",
         "system_catalog_access",
         "unsafe_query_option",
+        # "unparseable_depth" is a safety violation rather than a retryable
+        # parse mistake on purpose: it means no check in this module was
+        # able to run at all, so nothing is *known* about the statement.
+        # Fail closed (CLAUDE.md §4.2), and never retry -- the same text
+        # would exhaust the stack again.
+        "unparseable_depth",
+        "row_lock",
     }
 )
 
@@ -342,7 +388,48 @@ SAFETY_VIOLATION_TYPES: frozenset[str] = frozenset(
 # (`OPTION (...)`/`QueryOption`), but the check below matches by node type,
 # not by dialect, so it applies uniformly regardless of which dialect
 # `validate_sql` was called with.
-_UNSAFE_QUERY_OPTION_NAMES: frozenset[str] = frozenset({"maxrecursion"})
+#
+# 2026-10-25, UAT-readiness Phase 2 (SEC-005): the adversarial sweep found
+# two sibling options accepted by the same check. `QUERYTRACEON n` enables
+# an undocumented engine trace flag for the query, and `MAXDOP 0` lifts the
+# parallelism cap to every core on the server -- a resource-exhaustion
+# lever reachable from a statement that is read-only in every other
+# respect. Both are flat denials for the same reason MAXRECURSION is: no
+# business question this app answers needs to override the engine's own
+# limits. `RECOMPILE`, `FAST n` and the join/aggregation hints are left
+# alone deliberately -- they change plan selection, not a safety bound.
+_UNSAFE_QUERY_OPTION_NAMES: frozenset[str] = frozenset({"maxrecursion", "querytraceon", "maxdop"})
+
+# 2026-10-25, UAT-readiness Phase 2 (SEC-003). Lock-taking and
+# lock-escalating constructs, reachable from a statement whose root is an
+# ordinary `exp.Select` and which therefore passes every check above:
+#   - `SELECT ... FOR UPDATE` / `FOR SHARE` / `FOR NO KEY UPDATE` (all four
+#     supported engines) parse to `exp.Lock` and take real row locks that
+#     block other transactions for the life of this one.
+#   - MSSQL table hints `WITH (TABLOCKX)`, `WITH (UPDLOCK, HOLDLOCK)` and
+#     friends parse to `exp.WithTableHint` and escalate to table-level or
+#     held locks -- an availability attack on a shared database issued from
+#     a query this app calls read-only.
+# Both are refused regardless of the configured dialect, by node type.
+#
+# `NOLOCK` / `READUNCOMMITTED` are deliberately **not** here: they *reduce*
+# isolation rather than escalate locking, they are ordinary idiom in MSSQL
+# reporting queries, and refusing them would reject correct SQL. They are a
+# data-consistency trade-off, not a safety bound, which is the line this
+# module draws everywhere else.
+_LOCK_ESCALATING_TABLE_HINTS: frozenset[str] = frozenset(
+    {
+        "tablock",
+        "tablockx",
+        "updlock",
+        "xlock",
+        "holdlock",
+        "paglock",
+        "rowlock",
+        "serializable",
+        "repeatableread",
+    }
+)
 
 
 def _find_unsafe_query_option(statement: exp.Expression) -> exp.Expression | None:
@@ -351,6 +438,25 @@ def _find_unsafe_query_option(statement: exp.Expression) -> exp.Expression | Non
         name = (getattr(name_node, "this", None) or "").lower()
         if name in _UNSAFE_QUERY_OPTION_NAMES:
             return option
+    return None
+
+
+def _find_lock_construct(statement: exp.Expression) -> exp.Expression | None:
+    """Returns the first lock-taking/escalating node anywhere in the tree.
+
+    `find_all` rather than reading `statement.args["locks"]`, because a
+    `FOR UPDATE` inside a subquery or a CTE sits on that inner `Select` and
+    not on the root -- the same reason the write/DDL check above walks the
+    whole tree.
+    """
+    lock = next(statement.find_all(exp.Lock), None)
+    if lock is not None:
+        return lock
+    for hint in statement.find_all(exp.WithTableHint):
+        for item in hint.expressions:
+            name = (getattr(item, "name", "") or "").lower()
+            if name in _LOCK_ESCALATING_TABLE_HINTS:
+                return hint
     return None
 
 
@@ -511,6 +617,16 @@ def validate_sql(sql: str, dialect: str | None = DEFAULT_DIALECT) -> ValidationR
     Rejects:
         - Empty input.
         - SQL that fails to parse.
+        - SQL nested deeply enough to exhaust the interpreter stack inside
+          sqlglot's recursive-descent parser. Fails closed with
+          `violation_type="unparseable_depth"` (a *safety* violation, see
+          `SAFETY_VIOLATION_TYPES`) rather than letting the `RecursionError`
+          escape, because when the parse cannot complete, none of the checks
+          below have run and nothing at all is known about the statement.
+        - A lock-taking or lock-escalating construct -- `FOR UPDATE`,
+          `FOR SHARE`, or an MSSQL `WITH (TABLOCKX)`-style table hint --
+          which is read-only in its projection but still blocks other
+          transactions.
         - More than one statement (blocks `SELECT 1; DROP TABLE x`).
         - Any root statement type other than SELECT/UNION/EXCEPT/INTERSECT
           (blocks INSERT/UPDATE/DELETE/DROP/ALTER/TRUNCATE/ATTACH/COPY/etc.).
@@ -550,6 +666,64 @@ def validate_sql(sql: str, dialect: str | None = DEFAULT_DIALECT) -> ValidationR
 
     Returns:
         A `ValidationResult`.
+    """
+    try:
+        return _validate_sql_checks(sql, dialect)
+    except RecursionError:
+        # 2026-10-25, UAT-readiness Phase 2 (SEC-002). sqlglot parses by
+        # recursive descent, and walks/regenerates the tree the same way, so
+        # nesting depth in the *input* maps directly onto interpreter stack
+        # depth. `RecursionError` is a `RuntimeError`, not a `SqlglotError`,
+        # so the inner handler never saw it and it escaped this module --
+        # turning the security boundary into a crash instead of a refusal.
+        # Measured before this guard existed: a **90-byte** payload,
+        # `SELECT ` followed by 41 nested parentheses, raised; so did `ABS(`
+        # x37, `NOT ` x81, and `(SELECT * FROM ` x89. Reachable from every
+        # caller-supplied-SQL route, none of which caps the text length
+        # (`api/schemas.py::ExecuteRequest.sql` is `min_length=1` with no
+        # maximum).
+        #
+        # Wrapped around the whole check sequence, not just the parse: the
+        # tree walks (`statement.walk()`, `find_all`) and the final
+        # `statement.sql(dialect=...)` regeneration recurse over the same
+        # depth, so a payload that parses just under the limit can still
+        # raise further down.
+        #
+        # Caught rather than bounded by a pre-parse length/depth scan because
+        # the raising shapes share no one measurable feature: `NOT NOT ...
+        # 1=1` has no brackets at all, so a bracket-depth counter would miss
+        # it, while a length cap would reject legitimate long queries. The
+        # exception is the accurate signal, and catching it unwinds the
+        # frames it consumed.
+        #
+        # Classified as a safety violation, not a retryable parse error:
+        # when the analysis does not complete, the statement is *unanalyzed*
+        # rather than merely malformed, and re-running the same text would
+        # raise again.
+        logger.warning(
+            "[sql_validator] refused SQL that exhausted the parser's recursion "
+            "limit (%d characters) -- failing closed, nothing about the "
+            "statement could be checked",
+            len(sql),
+        )
+        return ValidationResult(
+            is_valid=False,
+            error=(
+                "The SQL is nested too deeply to be analyzed safely and is refused "
+                "for that reason -- not because of anything it was found to contain. "
+                "Rewrite it with less nesting (fewer parentheses, subqueries or "
+                "chained NOTs)."
+            ),
+            violation_type="unparseable_depth",
+        )
+
+
+def _validate_sql_checks(sql: str, dialect: str | None) -> ValidationResult:
+    """The check sequence itself. See `validate_sql`, which is its only caller.
+
+    Split out purely so one `except RecursionError` in `validate_sql` can
+    cover the parse, every tree walk, and the final regeneration -- all three
+    recurse over the input's nesting depth.
     """
     stripped = sql.strip().rstrip(";").strip()
     if not stripped:
@@ -682,6 +856,18 @@ def validate_sql(sql: str, dialect: str | None = DEFAULT_DIALECT) -> ValidationR
                 "recursion cap), regardless of what the query is trying to compute."
             ),
             violation_type="unsafe_query_option",
+        )
+
+    lock_construct = _find_lock_construct(statement)
+    if lock_construct is not None:
+        return ValidationResult(
+            is_valid=False,
+            error=(
+                f"'{lock_construct.sql(dialect=dialect)}' is not allowed -- it takes or "
+                "escalates database locks, which blocks other transactions even though "
+                "the query itself only reads. This app's queries never lock."
+            ),
+            violation_type="row_lock",
         )
 
     return ValidationResult(
