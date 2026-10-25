@@ -60,7 +60,13 @@ chromadb==1.5.9
 # `rag/ingestion.py` and `attachments/processors/` both parse
 # caller-supplied PDFs. Comment restored after a master merge kept the
 # version but dropped the reasoning.
-pypdf==6.21.1
+# 6.21.2 clears three further advisories published after the 2026-10-22
+# audit (CVE-2026-115572/115580/115585), which made the blocking pip-audit
+# gate red again -- measured 2026-10-25 running CI's own command, see
+# docs/uat-readiness/phase-2-security.md. Same reachability argument as
+# above, so same response: bump to the fixing release rather than add an
+# --ignore-vuln for a parser this app points at untrusted uploads.
+pypdf==6.21.2
 
 # XXE/billion-laughs-hardened XML parsing for db/query_cost.py's MSSQL
 # SHOWPLAN_XML parsing -- was already present transitively but pinned
