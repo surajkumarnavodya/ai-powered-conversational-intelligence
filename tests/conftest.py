@@ -185,7 +185,7 @@ def _clear_process_singleton_caches() -> None:
     from agent.orchestrator.graph import build_orchestrator_graph
     from api.main import _get_ask_executor
     from db.query_store import clear_query_store_cache
-    from embeddings.schema_indexer import _cached_chroma_client
+    from embeddings.schema_indexer import clear_chroma_client_cache
     from jobs.queue import reset_question_queue
     from model_routing.budget import reset_escalation_limiters
     from model_routing.evidence import reset_evidence_cache
@@ -195,7 +195,7 @@ def _clear_process_singleton_caches() -> None:
     build_graph.cache_clear()
     build_orchestrator_graph.cache_clear()
     _get_ollama_client.cache_clear()
-    _cached_chroma_client.cache_clear()
+    clear_chroma_client_cache()
     _cached_moderation_engine.cache_clear()
     _cached_identity_engine.cache_clear()
     _cached_session_factory.cache_clear()

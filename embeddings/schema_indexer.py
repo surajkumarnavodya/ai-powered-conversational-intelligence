@@ -267,11 +267,22 @@ def _cached_chroma_client(persist_dir: str) -> chromadb.ClientAPI:
         return _build_chroma_client(persist_dir)
 
 
-# `tests/conftest.py` clears this between tests, and
-# `scripts/build_embeddings.py` relies on the same name. Re-exported from
-# the inner builder so that interface is unchanged by the locking above.
-_cached_chroma_client.cache_clear = _build_chroma_client.cache_clear  # type: ignore[attr-defined]
-_cached_chroma_client.cache_info = _build_chroma_client.cache_info  # type: ignore[attr-defined]
+def clear_chroma_client_cache() -> None:
+    """Discards the cached client(s), so the next call builds a fresh one.
+
+    `tests/conftest.py` calls this between tests -- without it a test that
+    monkeypatches `chromadb.PersistentClient` silently keeps whatever the
+    previous test cached. A named function rather than a `cache_clear`
+    attribute forwarded off `_cached_chroma_client`, because that
+    forwarding could not be typed and needed two `type: ignore`s.
+
+    Nothing in the request path calls this. Dropping a live client while
+    another thread still holds a reference would put two clients on one
+    directory, which is the condition `_cached_chroma_client` exists to
+    prevent.
+    """
+    with _CHROMA_CLIENT_LOCK:
+        _build_chroma_client.cache_clear()
 
 
 def get_chroma_client(settings: Settings | None = None) -> chromadb.ClientAPI:

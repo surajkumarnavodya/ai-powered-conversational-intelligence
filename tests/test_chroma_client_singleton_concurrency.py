@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -46,7 +46,7 @@ _CONSTRUCTION_WINDOW_SECONDS = 0.05
 
 
 @pytest.fixture
-def construction_log(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+def construction_log(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
     """Replaces `chromadb.PersistentClient` with a counting stand-in."""
     calls: list[str] = []
     lock = threading.Lock()
@@ -58,9 +58,9 @@ def construction_log(monkeypatch: pytest.MonkeyPatch) -> list[str]:
             time.sleep(_CONSTRUCTION_WINDOW_SECONDS)
 
     monkeypatch.setattr(schema_indexer.chromadb, "PersistentClient", _FakeClient)
-    schema_indexer._cached_chroma_client.cache_clear()
+    schema_indexer.clear_chroma_client_cache()
     yield calls
-    schema_indexer._cached_chroma_client.cache_clear()
+    schema_indexer.clear_chroma_client_cache()
 
 
 def _call_concurrently(target: Callable[[str], object], persist_dir: str) -> list[object]:
@@ -158,11 +158,19 @@ def test_distinct_directories_still_get_distinct_clients(
     assert construction_log == [str(tmp_path / "a"), str(tmp_path / "b")]
 
 
-def test_cache_clear_remains_available_to_conftest() -> None:
+def test_clearing_the_cache_lets_the_next_call_rebuild(
+    construction_log: list[str], tmp_path: Path
+) -> None:
     """`tests/conftest.py` clears this cache between tests.
 
-    The locking wrapper must keep that interface, or every test that
-    monkeypatches Chroma silently shares the previous test's client.
+    Without a working clear, a test that monkeypatches Chroma silently
+    keeps whatever the previous test cached.
     """
-    assert callable(schema_indexer._cached_chroma_client.cache_clear)
-    assert callable(schema_indexer._cached_chroma_client.cache_info)
+    persist_dir = str(tmp_path / "chroma")
+
+    first = schema_indexer._cached_chroma_client(persist_dir)
+    schema_indexer.clear_chroma_client_cache()
+    second = schema_indexer._cached_chroma_client(persist_dir)
+
+    assert first is not second
+    assert construction_log == [persist_dir, persist_dir]
