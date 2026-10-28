@@ -151,8 +151,7 @@
     "toggleLabel": "Alternar lista de preguntas"
   },
   "chat": {
-    "placeholder": "Haz una pregunta sobre tus datos...",
-    "placeholderEmpty": "Haz una pregunta y envía un mensaje para recibir una respuesta...",
+    "placeholder": "Haz una pregunta y envía un mensaje para recibir una respuesta...",
     "view": "Ver",
     "rerun": "Volver a ejecutar",
     "editQuestion": "Editar",

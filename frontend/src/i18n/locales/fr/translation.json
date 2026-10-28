@@ -151,8 +151,7 @@
     "toggleLabel": "Afficher/masquer la liste des questions"
   },
   "chat": {
-    "placeholder": "Posez une question sur vos données...",
-    "placeholderEmpty": "Posez une question et envoyez un message pour recevoir une réponse...",
+    "placeholder": "Posez une question et envoyez un message pour recevoir une réponse...",
     "view": "Afficher",
     "rerun": "Relancer",
     "editQuestion": "Modifier",

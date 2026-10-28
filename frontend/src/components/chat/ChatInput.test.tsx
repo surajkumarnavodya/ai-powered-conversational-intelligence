@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ToastProvider } from '@/components/ui/toast'
+import i18n from '@/i18n'
 import * as api from '@/lib/api'
 import * as askStream from '@/lib/askStream'
 import type { AskResponse, HealthResponse } from '@/lib/types'
@@ -327,41 +328,100 @@ describe('ChatInput -- first-question placeholder', () => {
     vi.restoreAllMocks()
   })
 
-  /** The composer is the only thing on an empty conversation's screen, so
-   * its placeholder has to carry the instruction; once a turn exists the
-   * short prompt is enough. */
+  /** The composer carries the full instruction in every conversation
+   * state. It used to switch to a shorter prompt once a turn existed,
+   * which is why this block was originally written one test per state;
+   * the product decision is now a single placeholder, served by one
+   * `chat.placeholder` key with no branch left in the component.
+   *
+   * So these tests assert *invariance* rather than a per-state string.
+   * That distinction is the whole point: asserting the same literal in
+   * three separate states passes whichever branch the component takes,
+   * which is what made the previous version of this block vacuous for
+   * the fallback it was named after. The expected value is read from the
+   * translation bundle (the test setup runs a real i18next init) rather
+   * than hard-coded, so a copy change needs no edit here. */
+  const PLACEHOLDER = i18n.t('chat.placeholder')
+
   function placeholderOf() {
     const textarea = screen.getByRole('textbox', { name: /ask a question/i }) as HTMLTextAreaElement
     return textarea.placeholder
   }
 
-  it('tells the user what to do while the conversation is empty', () => {
-    renderChatInput()
-    expect(placeholderOf()).toBe('Ask a question and send a message to receive a reply...')
+  function placeholderInState(state: Record<string, unknown>) {
+    useChatStore.setState(state as never)
+    const { unmount } = renderChatInput()
+    const value = placeholderOf()
+    unmount()
+    return value
+  }
+
+  it('resolves a real instruction, not a bare translation key', () => {
+    // Guards the fixture every other test here compares against: if
+    // `chat.placeholder` went missing, i18next would hand back the key
+    // itself and each comparison below would still "pass" by matching it
+    // on both sides.
+    expect(PLACEHOLDER).not.toBe('chat.placeholder')
+    expect(PLACEHOLDER).toMatch(/ask a question/i)
   })
 
-  it('falls back to the short prompt once a turn exists', () => {
-    useChatStore.setState({ queryHistory: [{ entryId: 'e1', question: 'first' }] } as never)
-    renderChatInput()
-    expect(placeholderOf()).toBe('Ask a question and send a message to receive a reply...')
-  })
+  it('shows the same placeholder in every conversation state', () => {
+    const seen = {
+      empty: placeholderInState({ queryHistory: [], pendingQuestion: null }),
+      firstAnswerPending: placeholderInState({
+        queryHistory: [],
+        pendingQuestion: { question: 'first', startedAt: Date.now() },
+      }),
+      oneTurnDone: placeholderInState({
+        queryHistory: [{ entryId: 'e1', question: 'first' }],
+        pendingQuestion: null,
+      }),
+      laterTurnPending: placeholderInState({
+        queryHistory: [{ entryId: 'e1', question: 'first' }],
+        pendingQuestion: { question: 'second', startedAt: Date.now() },
+      }),
+    }
 
-  it('does not re-show the instruction while the very first answer is still pending', () => {
-    useChatStore.setState({
-      queryHistory: [],
-      pendingQuestion: { question: 'first', startedAt: Date.now() },
-    } as never)
-    renderChatInput()
-    expect(placeholderOf()).toBe('Ask a question and send a message to receive a reply...')
+    // One assertion over all four states, so a reintroduced branch names
+    // the state it diverged in rather than just failing somewhere.
+    expect(seen).toEqual({
+      empty: PLACEHOLDER,
+      firstAnswerPending: PLACEHOLDER,
+      oneTurnDone: PLACEHOLDER,
+      laterTurnPending: PLACEHOLDER,
+    })
   })
 
   it('keeps one stable accessible name whatever the conversation holds', () => {
     const { unmount } = renderChatInput()
-    expect(screen.getByLabelText('Ask a question and send a message to receive a reply...')).toBeInTheDocument()
+    expect(screen.getByLabelText(PLACEHOLDER)).toBeInTheDocument()
     unmount()
 
     useChatStore.setState({ queryHistory: [{ entryId: 'e1', question: 'first' }] } as never)
     renderChatInput()
-    expect(screen.getByLabelText('Ask a question and send a message to receive a reply...')).toBeInTheDocument()
+    expect(screen.getByLabelText(PLACEHOLDER)).toBeInTheDocument()
+  })
+
+  it('still renders the placeholder from the translation bundle, not a fixed attribute', () => {
+    // Non-vacuity guard for the invariance test above. "Always
+    // PLACEHOLDER" would also hold if the component hard-coded the
+    // string, or if `placeholder` were dropped and the name came only
+    // from `aria-label`. Switching the active language has to move the
+    // rendered placeholder with it.
+    const original = i18n.language
+    try {
+      i18n.changeLanguage('fr')
+      const french = i18n.t('chat.placeholder')
+      expect(french).not.toBe(PLACEHOLDER)
+
+      useChatStore.setState({ queryHistory: [], pendingQuestion: null } as never)
+      renderChatInput()
+      const textarea = screen.getByRole('textbox', {
+        name: french,
+      }) as HTMLTextAreaElement
+      expect(textarea.placeholder).toBe(french)
+    } finally {
+      i18n.changeLanguage(original)
+    }
   })
 })
