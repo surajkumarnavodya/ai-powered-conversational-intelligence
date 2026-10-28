@@ -584,7 +584,60 @@ following.
 
 ---
 
-## 8. Session summary
+---
+
+## 8. Gate re-measurement after Phases 3 and 4
+
+Run at the branch tip on 2026-10-28, each with the command CI uses. The
+Phase 0 baseline (2026-10-25) is shown for comparison.
+
+| Gate | Command | Phase 0 | Now | Blocking? |
+|---|---|---|---|---|
+| Backend tests | `pytest -q` | 8,297 passed / 0 failed | **9,375 passed, 16 skipped, 11 deselected, 3 xfailed, 0 failed** (666s) | yes |
+| Lint | `ruff check .` | 1 finding (`I001`) | **All checks passed** | yes |
+| Format | `black --check .` | clean, 1,665 files | **clean, 1,673 files** | yes |
+| SAST | `bandit -r agent api config db security media_gen moderation rag search voice media embeddings -f txt` | 0/0/0, exit 0 | **0 Low / 0 Medium / 0 High, exit 0** | yes |
+| Python deps | `pip-audit -r requirements-dev.txt --desc --ignore-vuln …` (CI's 6 ignores) | could not run (no egress) | **No known vulnerabilities found, 7 ignored**, exit 0 | yes |
+| Secret scan | `detect-secrets scan $(git ls-files) --baseline .secrets.baseline` then `scripts/check_secrets_baseline.py` | not measured | **exit 1 — still red** (`OPS-006`, unchanged cause) | yes |
+| Types | `mypy` over the 6 changed production files | 723 errors / 129 files overall, 7 in production | **0 in the changed files**; 9 reported transitively, in 4 other modules | no (report-only) |
+
+The test count rose by 1,078 against Phase 0: ~321 from Phases 3-4 (62
+authentication + 240/16/3 authorization) and the remainder from Phase 2's
+SQL-validator attack matrix.
+
+**The secret-scan gate is still red, and Phases 3-4 add 6 findings of the
+same already-triaged benign class.** `OPS-006`'s cause is unchanged: the
+`.secrets.baseline` is stale and can only be refreshed on Linux, because
+`detect-secrets` writes OS-native path separators and the file is
+tool-generated (CLAUDE.md §12 forbids hand-editing it). The six new
+findings are all throwaway fixtures that register accounts in an
+in-memory SQLite database — `"correcthorsebattery1"` ×2,
+`"brandnewpassword987"`, `"Alice@Example.COM"` and
+`"tangerine-walrus-9134"` (both deliberate password-policy inputs), and
+`"1234560abcde"` (the `AUN-004` bypass shape, mis-detected as a hex
+high-entropy string). They are enumerated in the finding register so
+whoever refreshes the baseline can audit them by name.
+
+**Three of the nine transitive `mypy` errors are new since CLAUDE.md §13's
+recorded set** and are in `agent/sql_validator.py` at lines 1068, 1549
+and 1554 rather than the `:839` pair §13 names — they arrived with Phase
+2's `projection_source_columns` work, not with this branch. One of them
+reads alarmingly (`"frozenset[str]" has no attribute "add"`) and was
+checked: it is a false positive, because the `Union`/`Except`/`Intersect`
+branch binding `sources` as a `frozenset` returns at line 1533 before the
+`exp.Select` path rebinds it as a `set` at 1548. Recorded for Phase 8;
+editing the security boundary for type hygiene is out of scope here.
+
+**Frontend: not run, and not claimed.** This branch touches no frontend
+file. The working tree does carry three *pre-existing, unrelated*
+frontend modifications (`ChatInput.test.tsx`, `Chat.test.tsx`, and an
+`en/translation.json` placeholder string) that were present when this
+session began; they are deliberately left uncommitted and are not part of
+any commit in this branch.
+
+---
+
+## 9. Session summary
 
 - **Open S1:** 1 — `AUZ-002`, cross-tenant document read *and* delete,
   confirmed at runtime. Needs a migration, so flagged for an owner.

@@ -517,7 +517,10 @@ probes returned real table names from `hr` — those probes ran outside
 - **Open S2:** 1 from this phase (`AUZ-003`, flagged for an owner
   decision), plus Phase 1's `OPS-003`.
 - **Fixed this session:** `AUN-001` (S2), `AUN-002` (S2), `AUN-003` (S2),
-  `AUN-004` (S4) — each with a mutation-verified test.
+  `AUN-004` (S4) and `BP-003` (S3) — each with a mutation-verified test.
+  Full suite after: **9,375 passed / 0 failed**, `ruff` and `black`
+  clean, `bandit` 0 findings, `pip-audit` 0 vulnerabilities. Gate table
+  in `phase-4-authorization.md` §8.
 - **Flagged for decision:** `AUZ-003` (where to enforce live suspension
   on the token-only surface).
 - **Next phase:** Phase 4 is complete in `phase-4-authorization.md`;
