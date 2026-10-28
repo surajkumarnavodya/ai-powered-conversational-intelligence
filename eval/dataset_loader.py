@@ -94,6 +94,8 @@ def _parse_case(raw: dict, source_file: Path) -> BenchmarkCase:
         expect_grounded_insight=bool(raw.get("expect_grounded_insight", False)),
         expected_intent=raw.get("expected_intent"),
         expect_ambiguity=bool(raw.get("expect_ambiguity", False)),
+        journey=raw.get("journey", ""),
+        dialect=raw.get("dialect", ""),
         notes=raw.get("notes", ""),
     )
 
@@ -136,6 +138,8 @@ def _parse_followup_case(raw: dict, source_file: Path) -> FollowUpCase:
         turns=turns,
         difficulty=raw.get("difficulty", "real_world"),
         category=raw.get("category", "follow_up"),
+        journey=raw.get("journey", ""),
+        dialect=raw.get("dialect", ""),
         notes=raw.get("notes", ""),
     )
 
