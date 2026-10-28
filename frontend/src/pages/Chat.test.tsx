@@ -494,7 +494,7 @@ describe('Chat page', () => {
       // is empty, so no request starts and the ring must stay away.
       useChatStore.setState({ queryHistory: [makeEntry('First')], pendingQuestion: null } as never)
       const { container } = renderChat()
-      const box = screen.getByLabelText('Ask a question about your data...')
+      const box = screen.getByLabelText('Ask a question and send a message to receive a reply...')
 
       await userEvent.type(box, '   ')
       await userEvent.keyboard('{Enter}')

@@ -343,7 +343,7 @@ describe('ChatInput -- first-question placeholder', () => {
   it('falls back to the short prompt once a turn exists', () => {
     useChatStore.setState({ queryHistory: [{ entryId: 'e1', question: 'first' }] } as never)
     renderChatInput()
-    expect(placeholderOf()).toBe('Ask a question about your data...')
+    expect(placeholderOf()).toBe('Ask a question and send a message to receive a reply...')
   })
 
   it('does not re-show the instruction while the very first answer is still pending', () => {
@@ -352,16 +352,16 @@ describe('ChatInput -- first-question placeholder', () => {
       pendingQuestion: { question: 'first', startedAt: Date.now() },
     } as never)
     renderChatInput()
-    expect(placeholderOf()).toBe('Ask a question about your data...')
+    expect(placeholderOf()).toBe('Ask a question and send a message to receive a reply...')
   })
 
   it('keeps one stable accessible name whatever the conversation holds', () => {
     const { unmount } = renderChatInput()
-    expect(screen.getByLabelText('Ask a question about your data...')).toBeInTheDocument()
+    expect(screen.getByLabelText('Ask a question and send a message to receive a reply...')).toBeInTheDocument()
     unmount()
 
     useChatStore.setState({ queryHistory: [{ entryId: 'e1', question: 'first' }] } as never)
     renderChatInput()
-    expect(screen.getByLabelText('Ask a question about your data...')).toBeInTheDocument()
+    expect(screen.getByLabelText('Ask a question and send a message to receive a reply...')).toBeInTheDocument()
   })
 })

@@ -168,7 +168,7 @@
     "toggleLabel": "Toggle question list"
   },
   "chat": {
-    "placeholder": "Ask a question about your data...",
+    "placeholder": "Ask a question and send a message to receive a reply...",
     "placeholderEmpty": "Ask a question and send a message to receive a reply...",
     "send": "Send message",
     "liveThinking": "The assistant is thinking about your question.",
