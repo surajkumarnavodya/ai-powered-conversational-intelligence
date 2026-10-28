@@ -232,8 +232,33 @@ def record_login_failure(
 
 
 def change_password(session: Session, user: User, new_password: str) -> None:
+    """Sets a new password hash and clears any failed-attempt lockout.
+
+    Clearing the lockout is the point of the second half, and it was
+    missing (finding `AUN-002`): `locked_until`/`failed_login_count` were
+    left exactly as the failed attempts had set them, so an account locked
+    by someone else's wrong guesses stayed unusable for the whole
+    `login_lockout_minutes` window *even after its owner completed a
+    password reset from their email*. Measured 2026-10-28 before this
+    change: 3 wrong guesses, then `POST /auth/reset-password` -> 200,
+    then `POST /auth/login` with the brand-new password -> **401**. That
+    made the documented recovery journey unusable and turned the lockout
+    into a cheap denial-of-service against any account whose email address
+    is known.
+
+    This does not weaken the lockout. Reaching here requires either the
+    current password (`POST /auth/change-password`) or a single-use token
+    sent to the account's own mailbox (`POST /auth/reset-password`) --
+    both strictly stronger proofs of ownership than the password guessing
+    the lockout exists to slow down. `record_login_success` already clears
+    the same two fields for the same reason.
+    """
     user.password_hash = hash_password(new_password)
     user.password_changed_at = datetime.now(UTC)
+    user.failed_login_count = 0
+    # See `record_login_success` above for why this assignment needs the
+    # ignore comment despite the column being genuinely nullable.
+    user.locked_until = None  # type: ignore[assignment]
     session.commit()
 
 
