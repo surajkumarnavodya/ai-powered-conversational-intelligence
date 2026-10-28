@@ -569,9 +569,7 @@ class TestTheRepairPreservesTheMeasure:
         assert self._total(as_inner) == 1250.0
         assert self._total(as_inner) != self._total(original)
 
-    def test_the_unmatched_rows_become_one_unlabelled_group_not_nothing(
-        self, display_map
-    ) -> None:
+    def test_the_unmatched_rows_become_one_unlabelled_group_not_nothing(self, display_map) -> None:
         """The NULL-key and orphan rows must still be *in* the answer.
 
         They collect into a single group whose label is NULL, because the
