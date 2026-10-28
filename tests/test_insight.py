@@ -15,6 +15,7 @@ import pytest
 from agent.insight import (
     ResultSummary,
     extract_numbers,
+    insight_grounding_failure,
     is_insight_grounded,
     should_skip_insight,
     summarize_result,
@@ -371,3 +372,216 @@ class TestIsInsightGrounded:
 
     def test_empty_text_is_trivially_grounded(self):
         assert is_insight_grounded("", self._summary()) is True
+
+
+class TestNonNumericContradictionsAreRejected:
+    """UAT-readiness `HAL-002`: the gate used to check numbers only, so a
+    fabrication carrying no digits was presented as an interpretation of
+    the user's own data.
+
+    Every case below is a *contradiction* of something `summarize_result`
+    computed in Python from the real rows -- not merely an unverifiable
+    claim. The "must still pass" cases matter as much as the rejections:
+    over-blocking correct prose is its own failure mode (CLAUDE.md 5.8)
+    and the cost of a false rejection is a user who sees no insight at
+    all.
+    """
+
+    _COLUMNS = ["Region", "TotalSales"]
+    _ROWS = [("East", 600_000.0), ("West", 400_000.0), ("North", 250_000.0)]
+
+    @pytest.fixture()
+    def summary(self):
+        return summarize_result(self._COLUMNS, self._ROWS)
+
+    @pytest.fixture()
+    def labels(self):
+        return [row[0] for row in self._ROWS]
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            pytest.param("West was the strongest region.", id="wrong_label_is_strongest"),
+            pytest.param("North had the highest sales of any region.", id="wrong_label_is_highest"),
+            pytest.param("The top region was North.", id="wrong_label_is_top"),
+            pytest.param("West and North are the best performers.", id="two_wrong_labels"),
+            pytest.param("Sales were lowest in West.", id="superlative_after_the_label"),
+        ],
+    )
+    def test_a_superlative_about_a_label_that_is_not_the_top_one_is_rejected(
+        self, text, summary, labels
+    ):
+        reason = insight_grounding_failure(text, summary, result_labels=labels)
+        assert reason is not None
+        assert "superlative" in reason
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            pytest.param("East was the strongest region.", id="names_the_real_top"),
+            pytest.param("East led, well ahead of West and North.", id="names_top_plus_others"),
+            pytest.param("The highest total was 600,000.", id="superlative_names_no_label"),
+            pytest.param("West trails the leader East.", id="other_label_in_a_losing_clause"),
+            pytest.param("Sales are concentrated in East.", id="no_superlative_at_all"),
+        ],
+    )
+    def test_correct_superlative_prose_still_passes(self, text, summary, labels):
+        assert insight_grounding_failure(text, summary, result_labels=labels) is None
+
+    def test_a_comparative_is_deliberately_not_treated_as_a_superlative(self, summary, labels):
+        """ "East grew faster than West" is a claim this module has no
+        ground truth for -- `summarize_result` knows the totals, not the
+        growth of either. Rejecting it would be guessing."""
+        text = "East grew faster than West."
+        assert insight_grounding_failure(text, summary, result_labels=labels) is None
+
+    def test_an_entity_absent_from_the_result_is_a_disclosed_residual(self, summary, labels):
+        """Pins current behaviour, deliberately.
+
+        "South" is not in the result, but the result may be a TOP-N, so
+        this module cannot know South is not a real region -- only that
+        it is not among the rows returned. Deciding that is a product
+        question, recorded in
+        `docs/uat-readiness/phase-5-hallucination.md`. When it is
+        decided, this test is the one to change, and its failure will say
+        so.
+        """
+        text = "South was the strongest region."
+        assert insight_grounding_failure(text, summary, result_labels=labels) is None
+
+    def test_omitting_the_labels_silently_gets_the_weaker_gate(self, summary):
+        """The trap named in `insight_grounding_failure`'s own docstring,
+        asserted rather than only described -- so the next person to add
+        a caller finds it in a test name."""
+        text = "West was the strongest region."
+        assert insight_grounding_failure(text, summary, result_labels=None) is None
+        assert (
+            insight_grounding_failure(text, summary, result_labels=[row[0] for row in self._ROWS])
+            is not None
+        )
+
+    def test_a_one_character_label_is_never_matched_in_prose(self):
+        """A label of "A" matched on a word boundary collides with the
+        English article, so a mention of it is not evidence of anything --
+        and treating it as one would reject nearly every sentence."""
+        summary = summarize_result(["Grade", "Total"], [("A", 10.0), ("B", 90.0)])
+        assert summary.top_label == "B"
+        assert (
+            insight_grounding_failure(
+                "A clear majority of the total is in the highest grade.",
+                summary,
+                result_labels=["A", "B"],
+            )
+            is None
+        )
+
+    def test_a_label_that_is_a_prefix_of_a_longer_word_is_not_a_mention(self):
+        """Whole-word matching: "Eastern" is not a mention of "East"."""
+        summary = summarize_result(["Region", "Total"], [("East", 10.0), ("West", 90.0)])
+        assert summary.top_label == "West"
+        # Mentions no label at all, so the superlative check abstains.
+        assert (
+            insight_grounding_failure(
+                "The Eastern business is the smallest.", summary, result_labels=["East", "West"]
+            )
+            is None
+        )
+
+
+class TestADirectionOppositeToTheComputedChangeIsRejected:
+    """UAT-readiness `HAL-002`, second check. Scoped to a two-period
+    chronology on purpose -- see `_direction_contradiction`'s docstring.
+    """
+
+    _DOWN_ROWS = [("2023", 200_000.0), ("2024", 100_000.0)]
+
+    @pytest.fixture()
+    def down(self):
+        return summarize_result(["Year", "Revenue"], self._DOWN_ROWS)
+
+    def test_the_fixture_really_is_a_two_period_down_trend(self, down):
+        """Sanity, so a later change to `summarize_result` cannot make
+        every test in this class vacuously pass."""
+        assert down.trend is not None
+        assert down.trend.direction == "down"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            pytest.param("Revenue increased over the period.", id="increased"),
+            pytest.param("Revenue rose from 2023 to 2024.", id="rose"),
+            pytest.param("Growth was strong.", id="growth_as_a_noun"),
+        ],
+    )
+    def test_an_upward_claim_about_a_downward_change_is_rejected(self, text, down):
+        reason = insight_grounding_failure(text, down, result_labels=["2023", "2024"])
+        assert reason is not None
+        assert "direction" in reason
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            pytest.param("Revenue fell from 2023 to 2024.", id="correct_direction"),
+            pytest.param(
+                "Revenue declined, having risen in earlier years.",
+                id="both_directions_named",
+            ),
+            pytest.param("Revenue halved.", id="no_direction_word"),
+        ],
+    )
+    def test_correct_direction_prose_still_passes(self, text, down):
+        assert insight_grounding_failure(text, down, result_labels=["2023", "2024"]) is None
+
+    def test_three_or_more_periods_are_left_alone(self):
+        """With a middle to narrate, "fell in 2022 before recovering" is
+        correct prose naming the opposite of the overall direction, and
+        no word-level check can tell that from a reversal."""
+        summary = summarize_result(
+            ["Year", "Revenue"], [("2022", 100.0), ("2023", 60.0), ("2024", 150.0)]
+        )
+        assert summary.trend is not None and summary.trend.direction == "up"
+        assert (
+            insight_grounding_failure(
+                "Revenue fell in 2023 before recovering.",
+                summary,
+                result_labels=["2022", "2023", "2024"],
+            )
+            is None
+        )
+
+    def test_a_flat_change_has_no_opinion_about_direction(self):
+        """With a flat overall change both directions read as opposite,
+        so the check would have an opinion about every sentence."""
+        summary = summarize_result(["Year", "Revenue"], [("2023", 100.0), ("2024", 100.0)])
+        assert summary.trend is not None and summary.trend.direction == "flat"
+        for text in ("Revenue grew.", "Revenue fell.", "Revenue was unchanged."):
+            assert (
+                insight_grounding_failure(text, summary, result_labels=["2023", "2024"]) is None
+            ), text
+
+    def test_a_category_column_has_no_direction_check_at_all(self):
+        """Since `HAL-001` there is no trend for a category column, so
+        there is nothing for this check to contradict -- which is the
+        correct outcome, not a gap."""
+        summary = summarize_result(["Region", "Sales"], [("East", 600.0), ("West", 400.0)])
+        assert summary.trend is None
+        assert (
+            insight_grounding_failure("Sales increased.", summary, result_labels=["East", "West"])
+            is None
+        )
+
+
+class TestTheBooleanWrapperStillBehaves:
+    def test_is_insight_grounded_is_the_negation_of_a_failure_reason(self):
+        summary = summarize_result(
+            ["Region", "TotalSales"], [("East", 600_000.0), ("West", 400_000.0)]
+        )
+        labels = ["East", "West"]
+        for text in (
+            "East was the strongest region.",
+            "West was the strongest region.",
+            "Total sales were 1,000,000.",
+            "Total sales were 9,999,999.",
+        ):
+            reason = insight_grounding_failure(text, summary, result_labels=labels)
+            assert is_insight_grounded(text, summary, result_labels=labels) == (reason is None)

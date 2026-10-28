@@ -67,7 +67,7 @@ from agent.input_guard import (
 )
 from agent.insight import (
     extract_numbers,
-    is_insight_grounded,
+    insight_grounding_failure,
     should_skip_insight,
     summarize_result,
 )
@@ -3174,10 +3174,17 @@ def generate_insight_node(state: AgentState) -> dict[str, Any]:
         restating it adds nothing.
 
     After a real LLM call, the response is graded against
-    `agent.insight.is_insight_grounded` before it's ever stored -- an
-    insight that mentions a number not supported by the result summary (or
-    a literal value from the question/SQL) is logged and dropped rather than
-    shown, since a wrong "AI interpretation" is worse than none at all.
+    `agent.insight.insight_grounding_failure` before it's ever stored --
+    an insight that contradicts the result it was built from is logged
+    and dropped rather than shown, since a wrong "AI interpretation" is
+    worse than none at all. Three contradictions are detected: a number
+    the result does not support (or a literal value from the
+    question/SQL), a superlative attached to a label that is not the
+    computed top one, and a direction of change opposite to the computed
+    one. The label-column values are passed in because the superlative
+    check needs them and `ResultSummary` deliberately does not carry
+    them -- see that function's docstring on why omitting them silently
+    weakens the gate.
     """
     if not state.get("enable_insight", True):
         logger.info("[generate_insight] disabled via enable_insight -- skipping")
@@ -3222,17 +3229,32 @@ def generate_insight_node(state: AgentState) -> dict[str, Any]:
         logger.info("[generate_insight] model declined to produce an insight")
         return {"insight": None, "insight_summary": summary, "insight_numbers_checked": None}
 
-    if not is_insight_grounded(insight_text, summary, question=question, sql=sql):
+    # The label column's own values, which `_superlative_contradiction`
+    # compares against the text. Taken from `rows`, which the result gate
+    # in `execute_sql_node` has already governed, so a restricted value
+    # is `[restricted]` here too and nothing unmasked reaches this check.
+    label_index = next(
+        (index for index, name in enumerate(columns) if name == summary.top_label_column),
+        None,
+    )
+    result_labels = [str(row[label_index]) for row in rows] if label_index is not None else None
+
+    grounding_failure = insight_grounding_failure(
+        insight_text, summary, question=question, sql=sql, result_labels=result_labels
+    )
+    if grounding_failure is not None:
+        # The reason is a fixed phrase naming which check failed -- never
+        # the insight text and never a result value (CLAUDE.md 5.6).
         logger.warning(
-            "[generate_insight] dropped ungrounded insight (contains a number not "
-            "supported by the result): %d chars",
+            "[generate_insight] dropped ungrounded insight (%s): %d chars",
+            grounding_failure,
             len(insight_text),
         )
         return {"insight": None, "insight_summary": summary, "insight_numbers_checked": None}
 
     # Every number in `insight_text` has just been checked against the
-    # result summary by `is_insight_grounded` above -- an insight with an
-    # unsupported number returned earlier and is never stored. So the count
+    # result summary by `insight_grounding_failure` above -- an insight
+    # with an unsupported number returned earlier and is never stored. So the count
     # of numbers in the stored text *is* the count that was verified, which
     # is what lets the UI state the evidence for this claim as a fact
     # rather than inferring it from this node's drop behaviour.

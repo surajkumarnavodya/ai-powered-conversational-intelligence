@@ -456,24 +456,234 @@ def _isclose(a: float, b: float, *, abs_tol: float) -> bool:
     return abs(a - b) <= max(abs_tol, abs(b) * 0.01)
 
 
-def is_insight_grounded(
-    insight_text: str, summary: ResultSummary, question: str = "", sql: str = ""
-) -> bool:
-    """True if every number in `insight_text` is supported by the result data.
+#: Words that assert "this one is the extreme of the set". Only
+#: unambiguous superlatives, deliberately: a *comparative* ("East grew
+#: faster than West") makes a claim this module has no ground truth to
+#: contradict, while a superlative is checkable against `top_label`,
+#: which `summarize_result` computed in Python from the real rows.
+#:
+#: `"top"` is included because "the top region" is the commonest phrasing
+#: of all here. `"more"`/`"better"` are deliberately absent -- they are
+#: comparatives, and treating them as superlatives would reject ordinary
+#: correct prose.
+_SUPERLATIVE_MARKERS = frozenset(
+    """highest lowest largest smallest biggest greatest most least best worst top
+    leading strongest weakest maximum minimum""".split()
+)
 
-    "Supported" means it matches (within a small rounding tolerance) either
-    a number derivable from `summary` (row count, a column's min/max/sum/
-    distinct count, the top value, or its share as a percentage) or a
-    number that literally appears in the question or SQL -- a filter value
-    like a year the user themselves typed is not a fabricated claim, even
-    though it isn't part of the result data itself.
+#: Words asserting a direction of change, mapped to the
+#: `TrendStat.direction` value each one means.
+_DIRECTION_WORDS: dict[str, str] = {
+    "increased": "up",
+    "increase": "up",
+    "increasing": "up",
+    "rose": "up",
+    "rising": "up",
+    "grew": "up",
+    "growing": "up",
+    "growth": "up",
+    "climbed": "up",
+    "improved": "up",
+    "gained": "up",
+    "higher": "up",
+    "decreased": "down",
+    "decrease": "down",
+    "decreasing": "down",
+    "declined": "down",
+    "decline": "down",
+    "declining": "down",
+    "fell": "down",
+    "falling": "down",
+    "dropped": "down",
+    "shrank": "down",
+    "worsened": "down",
+    "lower": "down",
+}
 
-    This is deliberately a *basic* check (see CLAUDE.md's testing section):
-    it catches invented statistics, not subtler issues like a technically-
-    present-but-misleading number. Used both as this module's own runtime
-    safety net (an insight that fails this is dropped, never shown -- see
-    `agent.nodes.generate_insight_node`) and by `scripts/run_eval.py`'s
-    eval-set checks.
+#: Shortest label this will look for in prose. A one-character label
+#: ("A", "M") matched on a word boundary collides with ordinary English
+#: ("a") and with a column initial, so a mention of it is not evidence of
+#: anything. Two-character labels ("US", "UK") are kept, minus the
+#: function words below.
+_MIN_MATCHABLE_LABEL_LENGTH = 2
+
+#: Short labels that are also ordinary English words. Finding one of
+#: these in prose says nothing about whether the label was mentioned.
+_UNMATCHABLE_LABELS = frozenset(
+    """a an as at be by do go he if in is it me my no of on or so to up we the and for
+    not but you all one two""".split()
+)
+
+_WORD_TOKEN_RE = re.compile(r"[A-Za-z]+")
+
+
+def _words(text: str) -> set[str]:
+    """Lowercase word tokens in `text`, for marker lookups."""
+    return {match.group(0).lower() for match in _WORD_TOKEN_RE.finditer(text)}
+
+
+def _mentions_label(text: str, label: str) -> bool:
+    """Whether `label` appears in `text` as a whole word, case-insensitively.
+
+    Whole-word rather than plain substring, so a label that is a prefix
+    of a longer word ("East" inside "Eastern") is not counted as a
+    mention of the label itself.
+    """
+    pattern = r"(?<!\w)" + re.escape(label) + r"(?!\w)"
+    return re.search(pattern, text, re.IGNORECASE) is not None
+
+
+def _matchable_labels(result_labels: list[str] | None) -> list[str]:
+    """The subset of `result_labels` worth looking for in prose."""
+    if not result_labels:
+        return []
+    seen: dict[str, str] = {}
+    for raw in result_labels:
+        label = str(raw).strip()
+        if len(label) < _MIN_MATCHABLE_LABEL_LENGTH:
+            continue
+        if label.casefold() in _UNMATCHABLE_LABELS:
+            continue
+        seen.setdefault(label.casefold(), label)
+    return list(seen.values())
+
+
+def _superlative_contradiction(
+    insight_text: str, summary: ResultSummary, result_labels: list[str] | None
+) -> str | None:
+    """The insight calls some label the extreme, and it is not the one.
+
+    Fires only when all three of these hold, which is what keeps it from
+    rejecting correct prose:
+
+      1. `summary.top_label` exists -- there is a computed answer to
+         "which one is the extreme" to compare against.
+      2. The text contains a superlative marker.
+      3. The text mentions at least one of the result's own labels, and
+         `top_label` is **not** among the ones it mentions.
+
+    An insight that states a superlative without naming any label ("the
+    highest total was 600000") mentions none and passes -- the numeric
+    check already covers that sentence. An insight that names the real
+    top label passes whatever else it also names.
+
+    Returns the log-safe reason, or `None` when there is no
+    contradiction.
+    """
+    if summary.top_label is None:
+        return None
+    labels = _matchable_labels(result_labels)
+    if not labels:
+        return None
+    if not (_words(insight_text) & _SUPERLATIVE_MARKERS):
+        return None
+    mentioned = [label for label in labels if _mentions_label(insight_text, label)]
+    if not mentioned:
+        return None
+    top = str(summary.top_label).casefold()
+    if any(label.casefold() == top for label in mentioned):
+        return None
+    return (
+        f"states a superlative about {len(mentioned)} label(s) that do not include "
+        f"the computed top {summary.top_label_column or 'label'}"
+    )
+
+
+def _direction_contradiction(insight_text: str, summary: ResultSummary) -> str | None:
+    """The insight asserts the opposite of the computed change.
+
+    Deliberately narrow in three ways, because over-blocking a correct
+    narrative is its own failure mode (CLAUDE.md 5.8):
+
+      1. Only when `summary.trend` exists at all -- which, since
+         `HAL-001`, means the label column is a real chronology.
+      2. Only when that chronology has **exactly two** periods. Over
+         three or more, "revenue fell in 2022 before recovering" is
+         correct prose naming a direction opposite to the overall one,
+         and no word-level check can tell that from a reversal. With two
+         periods there is no middle to narrate, so any direction stated
+         is a claim about that one change.
+      3. Only for an `up`/`down` trend, never `flat`: with a flat overall
+         change both directions read as "opposite", so the check would
+         have an opinion about every sentence.
+
+    A text naming both directions passes -- the correct one is present,
+    so the sentence is a narrative rather than a reversal.
+
+    Returns the log-safe reason, or `None`.
+    """
+    trend = summary.trend
+    if trend is None or trend.direction == "flat":
+        return None
+    label_stat = next(
+        (stat for stat in summary.column_stats if stat.name == trend.label_column), None
+    )
+    if label_stat is None or label_stat.distinct_count != 2:
+        return None
+    stated = {_DIRECTION_WORDS[word] for word in _words(insight_text) if word in _DIRECTION_WORDS}
+    if not stated or trend.direction in stated:
+        return None
+    return (
+        f"asserts the direction {'/'.join(sorted(stated))} where the "
+        f"computed direction is {trend.direction}"
+    )
+
+
+def insight_grounding_failure(
+    insight_text: str,
+    summary: ResultSummary,
+    question: str = "",
+    sql: str = "",
+    *,
+    result_labels: list[str] | None = None,
+) -> str | None:
+    """Why `insight_text` may not be shown, or `None` if it may.
+
+    Three independent checks, each of which only ever fires on a
+    **contradiction of something this module computed in Python from the
+    real rows** -- never on a claim that is merely unverifiable. That
+    distinction is the whole design: an insight nobody can check is
+    labelled rather than suppressed (`guardrails.grounding` makes the
+    same argument for retrieval answers), while an insight that disagrees
+    with the result it was built from is simply wrong and is dropped.
+
+    1. **Numbers.** Every number in the text must match, within a small
+       rounding tolerance, a number derivable from `summary` (row count,
+       a column's min/max/sum/distinct count, the top value, or its share
+       as a percentage) or one that literally appears in the question or
+       SQL -- a filter value like a year the user themselves typed is not
+       a fabricated claim, even though it isn't part of the result data.
+    2. **Superlatives** -- see `_superlative_contradiction`.
+    3. **Direction of change** -- see `_direction_contradiction`.
+
+    **What is deliberately still not checked**, because no local
+    deterministic check can decide it and guessing would reject correct
+    answers: a comparative between two labels ("East grew faster than
+    West"), an entity name that is not in the result at all ("South was
+    strongest" -- the result may be a TOP-N, so this module cannot know
+    "South" is not a real region), a causal claim, and a date that the
+    result does not contain. These are recorded as a residual in
+    `docs/uat-readiness/phase-5-hallucination.md` rather than papered
+    over here.
+
+    Args:
+        insight_text: The model's narrative. Untrusted output.
+        summary: The result summary the narrative was built from.
+        question: The user's question, for literal filter values.
+        sql: The executed SQL, likewise.
+        result_labels: The label-column values from the executed result,
+            which check 2 needs and the other two do not. **Optional, and
+            a caller that omits it silently gets the weaker two-check
+            behaviour** -- the same trap CLAUDE.md 5.4 records for
+            `projection_source_columns`, named here for the same reason.
+            `agent.nodes.generate_insight_node` passes them; the offline
+            eval callers deliberately do not, because the eval set
+            measures the numeric property.
+
+    Returns:
+        A short, log-safe reason naming which check failed, or `None`.
+        Never contains the insight text or a result value, so it is safe
+        to log (CLAUDE.md 5.6).
     """
     allowed_values = summary.allowed_values()
     allowed_percents = summary.allowed_percents()
@@ -485,5 +695,33 @@ def is_insight_grounded(
         if not any(
             _isclose(value, allowed, abs_tol=1.0 if is_percent else 0.5) for allowed in pool
         ):
-            return False
-    return True
+            return "states a number the result does not support"
+
+    return _superlative_contradiction(insight_text, summary, result_labels) or (
+        _direction_contradiction(insight_text, summary)
+    )
+
+
+def is_insight_grounded(
+    insight_text: str,
+    summary: ResultSummary,
+    question: str = "",
+    sql: str = "",
+    *,
+    result_labels: list[str] | None = None,
+) -> bool:
+    """True if `insight_text` contradicts nothing in the result data.
+
+    A thin boolean wrapper over `insight_grounding_failure`, which is the
+    function to call when the reason matters (the runtime node logs it).
+    This shape is kept because `scripts/run_eval.py` and
+    `eval/component_benchmark/cases_groundedness.py` are pass/fail
+    harnesses that want exactly a boolean.
+
+    See `insight_grounding_failure` for what is and is not checked, and
+    for why `result_labels` being optional matters.
+    """
+    return (
+        insight_grounding_failure(insight_text, summary, question, sql, result_labels=result_labels)
+        is None
+    )
