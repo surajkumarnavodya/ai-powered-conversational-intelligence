@@ -145,13 +145,27 @@ def _has_common_base_word(stripped: str) -> bool:
 def _has_sequential_digit_run(stripped: str, min_run: int = _MIN_SEQUENTIAL_DIGIT_RUN) -> bool:
     """True if `stripped` contains an ascending or descending run of
     consecutive digits at least `min_run` long anywhere in it (e.g.
-    "abc123456xyz" -> True for the embedded "123456")."""
+    "abc123456xyz" -> True for the embedded "123456").
+
+    "Anywhere" is checked over every `min_run`-wide *window* inside each
+    digit group, not over the group as a whole. The whole-group form was
+    the original implementation and it did not match this docstring
+    (finding `AUN-004`): appending any single digit that broke the
+    monotonic step defeated it outright, so `"123456"` was rejected while
+    `"1234560"` -- which still contains `"123456"` -- was accepted, as was
+    `"12345678901234567890"`. Only a run delimited by non-digits was ever
+    caught, which is why the example above happened to work.
+    """
     for run in _DIGIT_RUN_RE.findall(stripped):
         if len(run) < min_run:
             continue
         deltas = [int(run[i + 1]) - int(run[i]) for i in range(len(run) - 1)]
-        if all(d == 1 for d in deltas) or all(d == -1 for d in deltas):
-            return True
+        # Each window of `min_run` digits spans `min_run - 1` deltas.
+        span = min_run - 1
+        for start in range(len(deltas) - span + 1):
+            window = deltas[start : start + span]
+            if all(d == 1 for d in window) or all(d == -1 for d in window):
+                return True
     return False
 
 
