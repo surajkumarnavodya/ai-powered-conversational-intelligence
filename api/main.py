@@ -45,6 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from analytics.engine import compute_analytics_result
 from analytics.visualization import build_chart_spec
+from identity.security import warm_password_hasher
 
 from agent.authz import Permission
 from agent.exceptions import AgentError
@@ -459,6 +460,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # warnings only, never a refusal, for the same reason
     # `_warn_on_ask_concurrency_pool_mismatch` just above is a warning.
     run_question_queue_startup_checks(settings)
+
+    if settings.local_auth_enabled:
+        # One Argon2id hash, so the decoy verification that keeps
+        # `POST /auth/login` constant-ish across "account exists" and
+        # "account does not exist" (finding AUN-001) is already built
+        # before the first login attempt -- otherwise the very first
+        # unmatched attempt in a process pays ~150 ms instead of ~60 ms.
+        warm_password_hasher()
 
     app.state.ollama_client = get_ollama_client(settings)
     app.state.compiled_graph = build_graph()
