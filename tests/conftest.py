@@ -51,6 +51,34 @@ module-level `Settings(...)` call does. The fixture below remains
 necessary on top of this: it also undoes whatever a test's own
 `monkeypatch.setenv` call did, between tests within a session, which a
 one-time strip at collection can't.
+
+**A third gap, found 2026-10-28 by the Phase 4 authorization audit
+(finding `BP-003`).** Both strips above iterate `Settings.model_fields`,
+so they only ever remove env vars whose names *are* field names. But
+`config/settings.py` deliberately reads several **open-ended** families
+straight from `os.environ`, because each names a dynamic set of variables
+no Pydantic field can declare -- `DB_CONNECTIONS` plus a `DB_<NAME>_*`
+block per entry (`_parse_named_connections`), and `MCP_SERVERS` plus
+`MCP_<NAME>_*` likewise. None of those are field names, so none of them
+were ever stripped, and `load_dotenv()` had already put them in
+`os.environ`.
+
+Measured with this fixture active: 24 `DB_*` variables visible inside a
+test, two of them `DB_<NAME>_PASSWORD`, and `get_settings().databases`
+returning this developer's **four real SQL Server connections**. That
+makes CLAUDE.md 7's claim -- "Every pytest test is fully mocked -- no
+real database" -- false in exactly the way it was already found false for
+Ollama: silently. `tests/security/test_authorization_matrix.py` swept
+`GET /health`, which connected to a real server and logged
+`SAWarning: Unrecognized server version info '17.0.4025.3'` -- the only
+visible trace.
+
+Closed by stripping the prefix families too, and pinned by
+`tests/test_settings_env_isolation.py` so it cannot regress silently a
+second time. The prefixes are a superset of the scalar `DB_*` fields
+already covered, which is harmless: a test that wants to exercise real
+parsing sets what it needs with `monkeypatch.setenv` after the slate is
+clear, exactly as the `DB_CONNECTIONS` tests already do.
 """
 
 from __future__ import annotations
@@ -62,15 +90,33 @@ import pytest
 
 from config.settings import Settings
 
-for _field_name in Settings.model_fields:
-    os.environ.pop(_field_name.upper(), None)
-del _field_name
+#: Env-var name prefixes `config/settings.py` reads directly from
+#: `os.environ` rather than through a declared `Settings` field, because
+#: each names an open-ended family whose members depend on the values of
+#: `DB_CONNECTIONS`/`MCP_SERVERS` themselves. Iterating
+#: `Settings.model_fields` can never reach them -- see this module's
+#: docstring, third gap (`BP-003`).
+_DYNAMIC_ENV_PREFIXES = ("DB_", "MCP_")
+
+
+def _env_names_to_strip() -> list[str]:
+    """Every env var that could steer a `Settings` built inside a test:
+    the declared field names, plus everything currently present in the
+    dynamic families."""
+    names = {field_name.upper() for field_name in Settings.model_fields}
+    names.update(name for name in os.environ if name.upper().startswith(_DYNAMIC_ENV_PREFIXES))
+    return sorted(names)
+
+
+for _env_name in _env_names_to_strip():
+    os.environ.pop(_env_name, None)
+del _env_name
 
 
 @pytest.fixture(autouse=True)
 def _isolate_settings_from_real_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    for field_name in Settings.model_fields:
-        monkeypatch.delenv(field_name.upper(), raising=False)
+    for env_name in _env_names_to_strip():
+        monkeypatch.delenv(env_name, raising=False)
 
 
 class RealOllamaCallInTest(AssertionError):
