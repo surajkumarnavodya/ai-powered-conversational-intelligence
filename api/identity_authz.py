@@ -12,6 +12,7 @@ from collections.abc import Iterator
 
 from fastapi import Depends, HTTPException, Request, status
 from identity.db import get_identity_session
+from identity.exceptions import AccountNotActiveError
 from identity.models import User
 from identity.rbac import Permission as IdentityPermission
 from identity.repositories.users import get_user_by_id, get_user_permissions
@@ -100,6 +101,34 @@ def require_local_user(
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Account no longer exists."
+        )
+    # Checked on every request for the same reason the tenant status just
+    # below is, and it was missing (finding `AUN-003`). `POST /auth/login`
+    # and `POST /auth/refresh` both refuse a non-`active` account, so the
+    # intent is unambiguous -- but nothing re-read `users.status` per
+    # request, which meant suspending an account did *nothing* until its
+    # access token expired. Measured 2026-10-28 before this change: with
+    # `status` flipped to `suspended` and the token untouched,
+    # `GET /auth/me`, `GET /conversations`, `GET /auth/sessions` and
+    # `GET /navigation` all still returned **200**.
+    #
+    # This closes the gap on the 149 routes that depend on this function.
+    # It does *not* reach `api.authz.require_permission`, which
+    # authorizes from the JWT alone and touches no database -- so
+    # `POST /ask` still serves a suspended account for up to one
+    # access-token lifetime. That is finding `AUZ-003`, open and flagged
+    # for an owner decision; see
+    # `docs/uat-readiness/phase-4-authorization.md` 4.2.
+    #
+    # The same generic 401 every other failure here returns -- a caller
+    # must not be able to tell "suspended" from "deleted" from "wrong
+    # tenant" (`security.tenancy.TenantResolutionError`'s own
+    # anti-enumeration reasoning, and `identity.exceptions
+    # .AccountNotActiveError`'s).
+    if user.status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=AccountNotActiveError().safe_message,
         )
     # Checked on every request, not only at login/refresh: a suspended or
     # deleted tenant must lose access on its very next request, not when
