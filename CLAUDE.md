@@ -1006,6 +1006,85 @@ contract lists its specific limitations; these are the cross-cutting ones.
   these terse questions is uneven even when they succeed -- one phrasing
   returned a bare product list with no measure column, another a single
   row -- which is the same model-capacity limitation, not a pipeline bug.
+  **Re-measured 2026-10-28 (UAT-readiness Phase 5) and this entry is now
+  stale in both directions -- read the new numbers, not the ones above.**
+  On `llama3.1:8b`, live, against `adventureworks`: **none of the three
+  phrasings was refused**, so the false-refusal half of this entry no
+  longer reproduces. What replaced it is worse and is why the entry is
+  being corrected rather than deleted. "Most popular products" returned
+  the ten most **expensive** products (`SELECT TOP 10
+  EnglishProductName, StandardCost ... ORDER BY StandardCost DESC`) --
+  a confident, plausible-looking answer to a *different question*.
+  "Top selling products", the phrasing this entry calls working,
+  returned **334 rows** from a `ROW_NUMBER() OVER (PARTITION BY
+  d.ProductKey ORDER BY COUNT(d.ProductKey))` that ranks nothing,
+  because partitioning by the column being ranked gives every row
+  `rn = 1`. "Worst selling products" returned **0 rows** from the same
+  degenerate shape -- a *false empty*, where the reader concludes the
+  data has no answer. So "uneven quality" understates it: the failure
+  mode is answering the wrong question, and one phrasing's failure is
+  indistinguishable from "no data".
+  **No grounding check can catch this, and that is the point worth
+  keeping.** The insight for the expensive-products answer was correct
+  about what had been *computed* -- it said "by standard cost", not
+  "most popular" -- so provenance held and the gate behaved as designed.
+  Deterministic grounding verifies an answer against *the result*; it
+  cannot verify the result against the *question*. Only the eval suite
+  measures that. All five phrasings are now a standing dataset
+  (`eval/uat_golden/sql_accuracy.yaml`, `uat_j15_*`) so the next model
+  change re-measures them instead of rediscovering them. Evidence and
+  the open decision: `HAL-007` / `DOC-011` in
+  [`docs/uat-readiness/FINDINGS_REGISTER.md`](docs/uat-readiness/FINDINGS_REGISTER.md).
+
+- **A fail-closed layer does not run on one live route, and it is the
+  input guard** (2026-10-28, `HAL-006`, open and flagged).
+  `guardrails/__init__.py` lists input validation
+  (`agent.input_guard.check_input`) as fail-closed. It is wired into
+  `agent.nodes.sanitize_input_node`, which lives **inside the SQL
+  subgraph**, plus `agent.orchestrator.general_knowledge` (reached only
+  when `ENABLE_GENERAL_KNOWLEDGE_ANSWERS` is on) and `api.jobs`. The
+  orchestrator's `route_after_router` can send a question straight to
+  `synthesis` -> END when it matches no source, and on that route no
+  guard runs. Measured: five structurally different inputs -- a direct
+  prompt injection, an off-topic request, a DELETE request, a DROP TABLE
+  request and an unanswerable forecast question -- all returned 200 /
+  `succeeded` / `rejection_reason: null` in ~2.4s with one identical
+  no-match message, while `check_input` on the injection returns
+  `passed=False, reason=injection_detected`.
+  **It is not a data-safety bypass**: that route does no retrieval, no
+  generation and no execution, and the validator and RBAC gates are
+  untouched; the message being byte-identical for every input even
+  satisfies §5.5's no-oracle rule perfectly. What is lost is
+  **detection and the audit record**, so the UAT script's J12.3
+  ("trigger a refused action, then find it in the audit") cannot pass
+  there, and the documented `injection_detected` / `off_topic` reasons
+  are unreachable through `/ask` for an unmatched question. Pinned as
+  *current* behaviour by two `xfail(strict=True)` tests in
+  `tests/security/test_input_guard_reaches_every_route.py`, so the fix
+  cannot land without those marks coming off.
+
+- **The insight gate checks three kinds of contradiction, not one**
+  (2026-10-28, `HAL-001`/`HAL-002`, both fixed). It used to check
+  numbers only, so `"West was the strongest region."` against a result
+  whose computed top label is `East` was stored and shown. It now also
+  refuses a superlative attached to a label that is not the computed top
+  one, and a direction opposite to a computed two-period trend. Both
+  fire **only on a contradiction of something `agent.insight
+  .summarize_result` computed in Python from the real rows** -- never on
+  a merely unverifiable claim, which stays labelled rather than
+  suppressed. A comparative, a causal claim, a date the result does not
+  contain, and an entity absent from the result are **deliberate
+  residuals**, each pinned by a test that says so.
+  Two traps for a new caller. `agent.insight.insight_grounding_failure`
+  takes `result_labels` **optionally**, and omitting it silently gets
+  the weaker two-check gate -- the same shape §5.4 records for
+  `projection_source_columns`. And `_compute_trend` now only produces a
+  trend for a label column `analytics.period_labels
+  .classify_period_column` recognises as chronological: before that
+  gate, a `Region, TotalSales` result produced a -58.3%
+  "period-over-period" change between two region names, and because
+  `ResultSummary.allowed_percents()` feeds the gate, it *licensed* an
+  insight stating a decline that never happened.
 
 - **Four CI steps are non-blocking** by deliberate, dated decision:
   `gitleaks`, `mypy` (§5.7), the Trivy container scan — report-only because
@@ -1053,9 +1132,10 @@ contract lists its specific limitations; these are the cross-cutting ones.
 - **The UAT-readiness audit is in progress and writes its own findings to
   disk.** `docs/uat-readiness/FINDINGS_REGISTER.md` is the live register;
   `phase-0-recon.md`, `phase-1-architecture.md`,
-  `phase-2-security.md`, `phase-3-authentication.md` and
-  `phase-4-authorization.md` hold the method and evidence for what has
-  been done. **Phases 0-4 are complete; phases 5-12 are not started.**
+  `phase-2-security.md`, `phase-3-authentication.md`,
+  `phase-4-authorization.md` and `phase-5-hallucination.md` hold the
+  method and evidence for what has been done. **Phases 0-5 are
+  complete; phases 6-12 are not started.**
   Before re-investigating anything security- or architecture-shaped,
   check the register: it records what was measured, on what date, and
   which items are deliberately flagged for an owner decision rather than
@@ -1073,6 +1153,23 @@ contract lists its specific limitations; these are the cross-cutting ones.
   that steers their whole tenant; cannot escalate privilege, since the
   validator and result gate still apply, so the exposure is to answer
   *accuracy*).
+  Phase 5 (2026-10-28) fixed three S2 grounding defects -- `HAL-003`
+  (an INNER join in the display-name repair that halved a measured
+  total), `HAL-001` (a fabricated period-over-period trend that the
+  insight gate then licensed) and `HAL-002` (the gate checking numbers
+  only) -- and flagged four: `HAL-004` (**S2**, the web-search path has
+  no grounding gate at all, so an invented URL and publication date
+  reach the reader while the Sources panel disagrees), `HAL-006`
+  (**S2**, the input guard above), `HAL-007` (**S2**, terse questions
+  answered wrongly -- model capacity, see the entry above) and
+  `OPS-008` (**S2**, `.env` names an `OLLAMA_MODEL` that is not
+  installed, so every question on the default fails; the app starts
+  anyway although `GET /models` already reports `installed: false`).
+  It also delivered the UAT golden question set (`eval/uat_golden/`,
+  57 questions, 11 journeys, both dialects, gated by
+  `tests/test_uat_golden_set.py`) -- a **behaviour and structure** gate,
+  not an accuracy gate, until a human authors `expected_sql` for every
+  case marked `GOLD SQL REQUIRED`.
   Two positive results worth not re-deriving: **all 213 operations deny
   an anonymous caller** (401, never 403, with an exact public allowlist
   of 16), and **no IDOR** across two users on conversations, messages,
