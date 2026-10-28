@@ -357,6 +357,38 @@ set `OLLAMA_MODEL=llama3.1:8b`.
 `ENVIRONMENT=production`) and is the same decision — which startup checks
 refuse to boot, and in which environments. One decision, not two.
 
+### 5.1b `OPS-003` — the read-only layer is absent on every database here
+
+Not a Phase 5 finding, but Phase 5 is where the condition it guards was
+measured as **actually true**. Starting the app logged, for each of the
+four configured connections:
+
+```
+event=db_write_privileges_detected severity=critical
+detail="The connected database role for database 'adventureworks' appears to
+  have write privileges (INSERT/UPDATE/DELETE) -- this app only ever validates
+  and executes read-only SELECT statements, but the database role is the real
+  safety boundary if that validation were ever bypassed."
+```
+
+`adventureworks`, `employee_management_database`, `hr` and `test_db` —
+all four — and **the app started anyway**, because that refusal is gated
+on `ENVIRONMENT=production` and this environment is `development`
+(`OPS-003`, open **S2** since Phase 1).
+
+CLAUDE.md §5.1 says read-only is "layered, not code-only: the validator,
+plus a genuinely read-only `DB_USER`". On this environment the second
+layer is absent for every database, so `agent/sql_validator.py` is the
+only thing between a question and a write.
+
+**Why this belongs in a hallucination phase.** Journey J7 is
+authorised negative testing, and its own note says "If any write
+succeeds, **stop all UAT and escalate**". §6.2 records that a write
+request is refused in effect today — but it is refused by *one* layer,
+not two, and that is a materially different risk posture from the one
+CLAUDE.md describes. A UAT environment should be given a read-only role
+before J7 is attempted.
+
 ### 5.2 Refusals: the five-phrasing sweep
 
 `llama3.1:8b`, the `adventureworks` connection, one run each.
@@ -690,15 +722,27 @@ vacuously. Both xfails were verified to fail on the intended assertion
 
 | Gate | Result | Date |
 |---|---|---|
-| `pytest -q` | **9,435 passed, 16 skipped, 11 deselected, 3 xfailed, 0 failed** (616s) | 2026-10-28 |
+| `pytest -q` | **9,437 passed, 16 skipped, 11 deselected, 5 xfailed, 0 failed** (628s) | 2026-10-28, final tree |
 | `ruff check .` | clean | 2026-10-28 |
-| `black --check .` | clean | 2026-10-28 |
-| Backend test count vs Phase 2 (8,297 → 9,435) | +1,138, tracking work since 2026-10-25 | — |
+| `black --check .` | clean, 1,676 files | 2026-10-28 |
+| `bandit` (CI's exact scope) | **exit 0, no issues** | 2026-10-28 |
+| `npm run lint` (frontend) | exit 0 (warnings only, all pre-existing) | 2026-10-28 |
+| `npm run test` (frontend) | **1,507 passed, 104 files** | 2026-10-28 |
+| `tsc --noEmit -p tsconfig.app.json` | exit 0 | 2026-10-28 |
+| Backend test count vs Phase 2 (8,297 → 9,437) | +1,140; +52 of those are this phase's | — |
 
-`mypy`, `bandit`, `pip-audit`, `detect-secrets` and the frontend suites
-were not re-run in this phase — Phase 2 and the register carry the last
-measurement, and `detect-secrets` was red there and needs a Linux run
-(`OPS-006`).
+Two notes on honesty here. The mid-phase run of the suite reported
+**9,435 passed / 3 xfailed**; the figure above is the *final* tree,
+after `HAL-005`'s and `HAL-006`'s tests landed — hence +2 passed and the
+two new `xfail`s. And `bandit` over the wider set
+`guardrails analytics eval` reports 2 Low + 1 Medium, all three in
+`eval/load/mock_ollama_server.py` and `eval/security_benchmark/runner.py`
+— manual-only harnesses outside CI's bandit scope, in files this phase
+never touched.
+
+`mypy`, `pip-audit` and `detect-secrets` were **not** re-run in this
+phase — Phase 2 and the register carry the last measurement, and
+`detect-secrets` was red there and needs a Linux run (`OPS-006`).
 
 ---
 
@@ -706,16 +750,21 @@ measurement, and `detect-secrets` was red there and needs a Linux run
 
 1. **`ollama pull qwen2.5-coder:7b`** (or change `OLLAMA_MODEL`) —
    `OPS-008`. Nothing else in UAT works until this is done.
-2. **Author `expected_sql`** for every `GOLD SQL REQUIRED` case in
+2. **Give the UAT databases a genuinely read-only role** before J7 is
+   attempted — all four connections here have write privileges and the
+   app said so at `severity=critical` and started anyway (`OPS-003`,
+   §5.1b). The DBA grants a Phase 10 deliverable should document are
+   for exactly this.
+3. **Author `expected_sql`** for every `GOLD SQL REQUIRED` case in
    `eval/uat_golden/`, against the real UAT databases, then
    `python -m scripts.run_benchmark --dataset-dir eval/uat_golden`.
    This is what turns §7 from a behaviour gate into an accuracy gate.
-3. **Re-run `docs/EVALUATION_CURRENT.md`'s benchmark** on the current
+4. **Re-run `docs/EVALUATION_CURRENT.md`'s benchmark** on the current
    default model. The existing figures were measured on `llama3.1:8b`
    and the default is now `qwen2.5-coder:7b` (`DOC-003`, still open).
-4. **The PostgreSQL leg** — the 5 `postgres_uat` cases, and the whole
+5. **The PostgreSQL leg** — the 5 `postgres_uat` cases, and the whole
    SQL-safety suite, on a real Postgres connection. Never run here.
-5. **Decide `HAL-004`, `HAL-006`, `HAL-007` and `HAL-008`** — §4, §8,
+6. **Decide `HAL-004`, `HAL-006`, `HAL-007` and `HAL-008`** — §4, §8,
    §5.3, §5.4.
 
 ---
@@ -726,7 +775,11 @@ measurement, and `detect-secrets` was red there and needs a Linux run
 - **Open S2 from this phase:** 4 flagged — `HAL-004` (web answers
   ungated), `HAL-006` (no-source route skips input validation),
   `HAL-007` (terse questions answered wrongly, model capacity),
-  `OPS-008` (configured default model not installed).
+  `OPS-008` (configured default model not installed). Plus new live
+  evidence that `OPS-003`'s gated condition is **actually true**: all
+  four databases here have write privileges, so the read-only layer
+  CLAUDE.md §5.1 describes is absent and the validator is the only one
+  standing (§5.1b).
 - **Fixed this session:** `HAL-001`, `HAL-002`, `HAL-003` (all S2),
   `HAL-005` (S4), plus two corrections to this audit's own work
   (`UAT-002`, and the `HAL-005` test premise).
