@@ -253,8 +253,44 @@ restriction as a boundary.** Full detail:
   suspended tenant fails closed, and every failure reports one generic
   message — a caller must not be able to tell "no such tenant" from
   "suspended" from "not yours".
+  **"Fails closed" is true of one of the two authorization surfaces, and
+  measuring which is worth your time before you rely on it (2026-10-28,
+  `AUZ-003`).** `resolve_tenant_context` — the only function that reads
+  tenant *status* live — has exactly two non-test callers, both on the
+  `identity.rbac` path (`require_local_user`, and login/refresh). The
+  `agent.authz` path (`api.authz.require_permission`) authorizes from the
+  signature-verified JWT alone and touches no database, so it never sees
+  a suspension. Measured with an untouched access token, user **and**
+  tenant suspended: `/auth/me`, `/conversations` and `/navigation` → 401,
+  but `GET /models`, `GET /sources`, `GET /schema/tables` and
+  **`POST /ask`** → 200, with the question actually answered. The bound
+  is one access-token lifetime (`access_token_expire_minutes`, default
+  15, and its `Field(...)` sets **no upper bound**); refresh does refuse,
+  so it self-heals. Open and flagged for an owner decision — four options
+  weighed in [`docs/uat-readiness/phase-4-authorization.md`](docs/uat-readiness/phase-4-authorization.md)
+  §4.2 — and pinned as *current* behaviour by
+  `tests/security/test_authorization_matrix.py::TestSuspensionDoesNotReachTheTokenOnlySurface`,
+  so the fix cannot land without that test changing.
+  A related trap cost this audit one void measurement: `api/main.py`
+  serves the frontend from a catch-all `GET /{full_path:path}`, so **any
+  nonexistent path returns 200** with `<!doctype html>`. `GET /config`
+  and `GET /schema` are not routes. On this app a 200 is never on its own
+  evidence that a route authorized you.
 - Cross-tenant access to a resource returns the **same 404 a nonexistent
   resource gets** (anti-enumeration), never a distinguishable 403.
+  Verified across 11 cross-user attempts on a real conversation and its
+  share, 2026-10-28, with the body byte-identical to a random UUID's —
+  but **two stores have no tenant to compare at all.** `rag/store.py`
+  and `media/store.py` have no `tenant_id` column and not one entry
+  point that accepts a tenant, and `api/documents.py`,
+  `api/media*.py` and `api/attachments.py` contain the string "tenant"
+  **zero** times each. Reproduced at runtime: a `tenant_b` admin
+  listed, downloaded and **deleted** a `default`-tenant document
+  (200/200/204). That is `AUZ-002`, an open **S1** needing a migration;
+  three `xfail(strict=True)` tests in
+  `tests/security/test_authorization_matrix.py::TestCrossTenantDocumentAccess`
+  hold the line. Do not add a new caller of either store without
+  threading a tenant through it.
 - Tenant scoping is folded into the query's own `WHERE` clause, never applied
   as a post-hoc filter.
 
@@ -574,6 +610,25 @@ WSL/macOS/Linux. Frontend: `npm run test` / `npm run lint` /
 - `tests/conftest.py` strips every env var a `Settings` field could read, so a
   test never silently inherits the developer's real `.env`. It also clears the
   three process-lifetime caches between tests.
+  **That sentence was true and insufficient until 2026-10-28.** It strips
+  names that *are* `Settings` field names, but `config/settings.py`
+  deliberately reads two **open-ended** families straight from
+  `os.environ` — `DB_CONNECTIONS` plus a `DB_<NAME>_*` block per entry
+  (`_parse_named_connections`), and `MCP_SERVERS` plus `MCP_<NAME>_*`.
+  Neither family's members are field names, so none of them was stripped,
+  and `load_dotenv()` had already loaded them. Measured with the autouse
+  fixture active: **24 `DB_*` vars visible inside a test**, two of them
+  `DB_<NAME>_PASSWORD`, and `get_settings().databases` returning this
+  machine's **four real SQL Server connections** — so the bullet above
+  ("no real database") was false in exactly the way it had already been
+  found false for Ollama: silently. The only trace was an `SAWarning`
+  about a real server version, printed after pytest's summary.
+  Now closed by stripping the prefix families, and pinned by
+  `tests/test_settings_env_isolation.py` (7 tests, mutation-verified) so
+  it cannot regress unnoticed again. The lesson generalises past this
+  one fix: **any new config read that bypasses a `Settings` field also
+  bypasses test isolation**, so it needs a matching entry in
+  `conftest._DYNAMIC_ENV_PREFIXES`.
 - `tests/security/` is for adversarial-scenario regressions that do not fit a
   single module's test file. Check whether a scenario is already covered
   before adding one.
@@ -997,9 +1052,38 @@ contract lists its specific limitations; these are the cross-cutting ones.
   §6.4.
 - **The UAT-readiness audit is in progress and writes its own findings to
   disk.** `docs/uat-readiness/FINDINGS_REGISTER.md` is the live register;
-  `phase-0-recon.md`, `phase-1-architecture.md` and
-  `phase-2-security.md` hold the method and evidence for what has been
-  done. Phases 3-12 are **not** started. Before re-investigating anything
-  security- or architecture-shaped, check the register: it records what
-  was measured, on what date, and which items are deliberately flagged
-  for an owner decision rather than open defects.
+  `phase-0-recon.md`, `phase-1-architecture.md`,
+  `phase-2-security.md`, `phase-3-authentication.md` and
+  `phase-4-authorization.md` hold the method and evidence for what has
+  been done. **Phases 0-4 are complete; phases 5-12 are not started.**
+  Before re-investigating anything security- or architecture-shaped,
+  check the register: it records what was measured, on what date, and
+  which items are deliberately flagged for an owner decision rather than
+  open defects.
+  Phases 3-4 (2026-10-28) fixed five findings — a login timing oracle
+  (`AUN-001`), a lockout that outlived a password reset (`AUN-002`), a
+  suspended account keeping access on the identity surface (`AUN-003`),
+  a defeatable password-policy check (`AUN-004`) and the test-isolation
+  leak in §7 (`BP-003`) — and left four flagged for an owner: `AUZ-002`
+  (**S1**, cross-tenant document read *and delete*), `AUZ-003` (**S2**,
+  §5.3), `AUZ-004` (`platform_admin` grants nothing on the
+  `agent.authz` surface, because it is not in
+  `agent.authz.ROLE_PERMISSIONS` — fail-closed, but it reads as a broken
+  admin account) and `AUZ-005` (any `user` can write a golden example
+  that steers their whole tenant; cannot escalate privilege, since the
+  validator and result gate still apply, so the exposure is to answer
+  *accuracy*).
+  Two positive results worth not re-deriving: **all 213 operations deny
+  an anonymous caller** (401, never 403, with an exact public allowlist
+  of 16), and **no IDOR** across two users on conversations, messages,
+  shares or sessions. Mass assignment is blocked everywhere by
+  `extra="forbid"`. The authorization matrix is derived from the live
+  app rather than a list, because this codebase authorizes in **three**
+  structurally different places — a dependency reading the JWT
+  (`agent.authz`), a dependency re-reading the database
+  (`identity.rbac`), and a call *inside the handler*
+  (`api.governance._authorize` and its siblings). Any audit technique
+  that sees only one of the three reaches a wrong conclusion in both
+  directions: a dependency scan called 117 routes ungated when they are
+  not, and a minimal-body probe returns 422 before an in-handler check
+  ever runs.
