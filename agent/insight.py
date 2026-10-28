@@ -17,6 +17,7 @@ import statistics as _statistics
 from decimal import Decimal
 from typing import Literal
 
+from analytics.period_labels import classify_period_column
 from pydantic import BaseModel, ConfigDict
 
 from security.sanitization import normalize_text
@@ -87,6 +88,23 @@ class TrendStat(BaseModel):
     BY month`, ...) as part of answering the question correctly in the
     first place; re-deriving that ordering here would risk silently
     disagreeing with what the SQL itself expresses.
+
+    **Only ever computed for a label column that is actually
+    chronological**, as judged by `analytics.period_labels
+    .classify_period_column` -- the same classification
+    `analytics.engine` uses to decide a result is a time series. Trusting
+    the SQL's ordering is reasonable; assuming the ordering *means*
+    something chronological is not. Without that gate this reported a
+    "period-over-period" change between two region names, which is not a
+    finding about anything (UAT-readiness Phase 5, `HAL-001`): a
+    `Region, TotalSales` result ordered East, West, North produced
+    `first_period="East"`, `last_period="North"`,
+    `change_percent=-58.3`, `direction="down"`. That number then entered
+    `ResultSummary.allowed_percents`, so the grounding gate *licensed*
+    an insight stating a 58.3% decline that had never happened -- and
+    `analytics.provider._trend_finding` renders the same value as a
+    `DataTruthLevel.DATABASE_FACT` sentence, which CLAUDE.md 4.4 forbids
+    for anything that is not an observed fact.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -333,14 +351,19 @@ def _compute_trend(
     own docstring for why this deliberately trusts the SQL's own ordering
     rather than re-deriving a chronology.
 
-    Returns `None` when there are fewer than two distinct labels (nothing
-    to compare) or the first period's value is exactly zero (a percentage
-    change from zero is undefined, not a real "infinite growth" finding
-    worth stating).
+    Returns `None` when the label column is not chronological (see
+    `TrendStat`'s own docstring -- a first-versus-last comparison of two
+    *categories* is not a trend and must not be reported as one), when
+    there are fewer than two distinct labels (nothing to compare), or
+    when the first period's value is exactly zero (a percentage change
+    from zero is undefined, not a real "infinite growth" finding worth
+    stating).
     """
     if len(totals_by_label) < 2:
         return None
     labels = list(totals_by_label)
+    if classify_period_column(labels) is None:
+        return None
     first_period, last_period = labels[0], labels[-1]
     first_value, last_value = totals_by_label[first_period], totals_by_label[last_period]
     if first_value == 0:

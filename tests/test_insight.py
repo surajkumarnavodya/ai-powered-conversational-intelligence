@@ -10,6 +10,8 @@ from __future__ import annotations
 from decimal import Decimal
 from statistics import pstdev as _pstdev
 
+import pytest
+
 from agent.insight import (
     ResultSummary,
     extract_numbers,
@@ -168,6 +170,69 @@ class TestTrend:
         assert 100.0 in summary.allowed_values()
         assert 150.0 in summary.allowed_values()
         assert 50.0 in summary.allowed_percents()
+
+
+class TestTrendIsOnlyEverReportedForAChronology:
+    """UAT-readiness `HAL-001`: a first-versus-last comparison of two
+    *categories* is not a period-over-period trend, and reporting one is
+    a fabricated statistic that the grounding gate then licenses.
+    """
+
+    def test_a_category_label_column_gets_no_trend(self):
+        summary = summarize_result(
+            ["Region", "TotalSales"],
+            [("East", 600_000.0), ("West", 400_000.0), ("North", 250_000.0)],
+        )
+        assert summary.trend is None
+
+    def test_the_fabricated_percent_no_longer_reaches_allowed_percents(self):
+        """The reason this matters, not just that `trend` is None.
+
+        Before the fix the East->North "change" was -58.3%, which entered
+        `allowed_percents()` and so made an insight claiming a 58.3%
+        decline pass the grounding gate -- a number describing nothing.
+        `top_share_percent` is a real statistic and must still be there.
+        """
+        summary = summarize_result(
+            ["Region", "TotalSales"],
+            [("East", 600_000.0), ("West", 400_000.0), ("North", 250_000.0)],
+        )
+        assert summary.allowed_percents() == {48.0}
+        assert not is_insight_grounded("Sales fell 58.3% over the period.", summary)
+
+    @pytest.mark.parametrize(
+        "labels",
+        [
+            pytest.param(["2023", "2024"], id="year"),
+            pytest.param(["2024-01", "2024-02"], id="year_month"),
+            pytest.param(["2024-01-01", "2024-02-01"], id="iso_date"),
+        ],
+    )
+    def test_every_recognised_period_shape_still_trends(self, labels):
+        """The gate must not cost a real trend. One case per shape
+        `analytics.period_labels.classify_period_column` recognises.
+        """
+        summary = summarize_result(["Period", "Revenue"], [(labels[0], 100.0), (labels[1], 150.0)])
+        assert summary.trend is not None
+        assert summary.trend.change_percent == 50.0
+        assert 50.0 in summary.allowed_percents()
+
+    def test_one_stray_non_period_label_does_not_disqualify_the_column(self):
+        """A majority rule, not unanimity -- a trailing "Total" row is
+        common and must not cost the trend."""
+        summary = summarize_result(
+            ["Year", "Revenue"], [("2023", 100.0), ("2024", 150.0), ("Total", 250.0)]
+        )
+        assert summary.trend is not None
+
+    def test_a_quarter_label_is_deliberately_not_recognised(self):
+        """The classifier's scope is three shapes and no natural-language
+        date parsing. `Q1 2024` is chronological to a reader and not to
+        this code, so no trend is reported -- the safe direction, and the
+        same answer `analytics.engine` has always given for it.
+        """
+        summary = summarize_result(["Quarter", "Revenue"], [("Q1 2024", 100.0), ("Q2 2024", 150.0)])
+        assert summary.trend is None
 
 
 class TestOutliers:
