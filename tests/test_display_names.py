@@ -20,6 +20,8 @@ involved.
 
 from __future__ import annotations
 
+import sqlite3
+
 import pandas as pd
 import pytest
 
@@ -299,7 +301,7 @@ class TestGeneratedSqlIsRepaired:
         )
         assert result.status == "repaired"
         assert "EnglishProductName" in result.sql
-        assert "INNER JOIN DimProduct" in result.sql
+        assert "LEFT JOIN DimProduct" in result.sql
         assert "GROUP BY" in result.sql and "ProductKey" not in result.sql.split("GROUP BY")[1]
         assert "SUM(f.SalesAmount)" in result.sql
 
@@ -313,7 +315,7 @@ class TestGeneratedSqlIsRepaired:
         )
         assert result.status == "repaired"
         assert "FirstName" in result.sql and "LastName" in result.sql
-        assert "INNER JOIN DimCustomer" in result.sql
+        assert "LEFT JOIN DimCustomer" in result.sql
         assert "COUNT(DISTINCT f.SalesOrderNumber)" in result.sql
         assert "SUM(f.SalesAmount)" in result.sql
 
@@ -346,7 +348,7 @@ class TestGeneratedSqlIsRepaired:
             display_map,
         )
         assert result.status == "repaired"
-        assert "INNER JOIN DimEmployee" in result.sql
+        assert "LEFT JOIN DimEmployee" in result.sql
         assert "FirstName" in result.sql and "LastName" in result.sql
 
     def test_sales_by_territory(self, display_map) -> None:
@@ -357,7 +359,7 @@ class TestGeneratedSqlIsRepaired:
         )
         assert result.status == "repaired"
         assert "SalesTerritoryRegion" in result.sql
-        assert "INNER JOIN DimSalesTerritory" in result.sql
+        assert "LEFT JOIN DimSalesTerritory" in result.sql
 
     def test_sales_by_category_and_subcategory(self, display_map) -> None:
         """Two entities in one query -- BOTH get a readable name."""
@@ -389,7 +391,7 @@ class TestGeneratedSqlIsRepaired:
         assert result.status == "repaired"
         assert "d.CalendarYear" in result.sql
         assert "FirstName" in result.sql
-        assert "INNER JOIN DimCustomer" in result.sql
+        assert "LEFT JOIN DimCustomer" in result.sql
 
     def test_a_question_with_no_matching_dimension_name(self, display_map) -> None:
         """The brief's ninth case: explain, never fabricate."""
@@ -496,6 +498,125 @@ class TestNeverGuesses:
         )
         assert "SUM(f.SalesAmount) AS TotalSales" in result.sql
         assert "AVG(f.OrderQuantity) AS AvgQty" in result.sql
+
+
+class TestTheRepairPreservesTheMeasure:
+    """UAT-readiness `HAL-003`: the join a repair writes must not change
+    what the query computes.
+
+    These are not "assert the SQL contains LEFT JOIN" tests -- a string
+    assertion cannot tell you whether the *answer* changed. Each one
+    executes the original and the repaired statement against the same
+    rows in an in-memory SQLite database and compares the measure, which
+    is the property a reader of the dashboard actually depends on.
+
+    SQLite is used deliberately rather than the target dialect: the
+    question here is plain SQL join semantics (does an unmatched row
+    survive), which is identical on every engine this app supports, and
+    it needs no infrastructure.
+    """
+
+    #: Four fact rows: two that match a dimension row, one with a NULL
+    #: foreign key (which a foreign-key constraint permits) and one
+    #: orphan (which a staged load, a removed dimension member or a
+    #: constraint created `WITH NOCHECK` all produce).
+    _SEED = """
+        CREATE TABLE DimProduct (
+            ProductKey INTEGER PRIMARY KEY, EnglishProductName TEXT);
+        INSERT INTO DimProduct VALUES (1, 'Road Bike'), (2, 'Helmet');
+        CREATE TABLE FactInternetSales (ProductKey INTEGER, SalesAmount REAL);
+        INSERT INTO FactInternetSales VALUES
+            (1, 1000.0), (2, 250.0), (NULL, 777.0), (99, 500.0);
+    """
+
+    @staticmethod
+    def _total(sql: str) -> float:
+        connection = sqlite3.connect(":memory:")
+        try:
+            connection.executescript(TestTheRepairPreservesTheMeasure._SEED)
+            # The repair writes T-SQL-shaped identifiers; this strips the
+            # bracket quoting SQLite does not accept. Nothing about the
+            # join structure under test is touched.
+            runnable = sql.replace("[", "").replace("]", "")
+            return sum(row[1] for row in connection.execute(runnable).fetchall())
+        finally:
+            connection.close()
+
+    def test_the_grand_total_survives_the_repair(self, display_map) -> None:
+        original = (
+            "SELECT ProductKey, SUM(SalesAmount) AS TotalSales "
+            "FROM FactInternetSales GROUP BY ProductKey"
+        )
+        result = _repair(original, display_map)
+        assert result.status == "repaired"
+        assert self._total(result.sql) == self._total(original) == 2527.0
+
+    def test_an_inner_join_would_have_lost_half_the_total(self, display_map) -> None:
+        """Proves the guard above is not vacuous.
+
+        The same repaired statement with LEFT swapped back to INNER --
+        the behaviour this app shipped before `HAL-003` -- returns 1250.0
+        of a real 2527.0. If the repair ever regresses to an INNER join,
+        the test above fails and this one explains why.
+        """
+        original = (
+            "SELECT ProductKey, SUM(SalesAmount) AS TotalSales "
+            "FROM FactInternetSales GROUP BY ProductKey"
+        )
+        repaired = _repair(original, display_map).sql
+        assert "LEFT JOIN" in repaired.upper()
+        as_inner = repaired.upper().replace("LEFT JOIN", "INNER JOIN")
+        assert self._total(as_inner) == 1250.0
+        assert self._total(as_inner) != self._total(original)
+
+    def test_the_unmatched_rows_become_one_unlabelled_group_not_nothing(
+        self, display_map
+    ) -> None:
+        """The NULL-key and orphan rows must still be *in* the answer.
+
+        They collect into a single group whose label is NULL, because the
+        database genuinely has no name for them -- the case
+        `NO_DISPLAY_NAME_NOTICE` already exists to describe. Dropping them
+        instead is what made the total wrong.
+        """
+        original = (
+            "SELECT ProductKey, SUM(SalesAmount) AS TotalSales "
+            "FROM FactInternetSales GROUP BY ProductKey"
+        )
+        repaired = _repair(original, display_map).sql.replace("[", "").replace("]", "")
+        connection = sqlite3.connect(":memory:")
+        try:
+            connection.executescript(self._SEED)
+            rows = dict(connection.execute(repaired).fetchall())
+        finally:
+            connection.close()
+        assert rows[None] == 777.0 + 500.0
+        assert rows["Road Bike"] == 1000.0
+        assert rows["Helmet"] == 250.0
+
+    def test_a_repair_can_never_multiply_rows(self, display_map) -> None:
+        """No fan-out: a declared foreign key's target is a primary key or
+        a unique constraint, so the dimension side matches at most once.
+
+        Asserted on a per-key measure rather than the grand total, since a
+        duplicated dimension row would double a key's own SUM while a
+        sharp-eyed grand-total assertion could be satisfied by two
+        offsetting errors.
+        """
+        original = (
+            "SELECT ProductKey, SUM(SalesAmount) AS TotalSales "
+            "FROM FactInternetSales GROUP BY ProductKey"
+        )
+        repaired = _repair(original, display_map).sql.replace("[", "").replace("]", "")
+        connection = sqlite3.connect(":memory:")
+        try:
+            connection.executescript(self._SEED)
+            rows = dict(connection.execute(repaired).fetchall())
+            baseline = dict(connection.execute(original).fetchall())
+        finally:
+            connection.close()
+        assert rows["Road Bike"] == baseline[1] == 1000.0
+        assert rows["Helmet"] == baseline[2] == 250.0
 
 
 class TestSafetyIsPreserved:
