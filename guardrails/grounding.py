@@ -236,6 +236,19 @@ def assess_grounding(
         retrieved_sources: Identifiers of the sources genuinely retrieved
             for this question. A citation outside this list is a
             fabrication -- this is the list that makes that detectable.
+            **An empty list (or one whose every entry is empty) disables
+            the fabrication check**, because there is nothing to compare
+            a citation against; the answer can then still be refused by
+            the other conditions, but a fabricated citation will not be
+            what refuses it. Measured 2026-10-28 (`HAL-005`): with
+            `retrieved_sources=[]` an answer citing a document that was
+            never retrieved comes back `grounded`. Named here because a
+            caller that passes an empty list silently gets the weaker
+            gate -- the same trap CLAUDE.md 5.4 records for
+            `projection_source_columns`. The one live caller
+            (`agent.orchestrator.nodes._run_rag_node`) builds this from
+            the retrieved chunks' own filenames, so it is only empty if
+            every chunk has an empty filename.
         config: The resolved guardrail configuration.
         source_confidence: The retrieval confidence for this source, when
             known. Compared against `MIN_SOURCE_CONFIDENCE`.
@@ -318,6 +331,18 @@ def assess_grounding(
         # formatting artefact, and calling that a fabrication would raise
         # a serious alert for a whitespace difference.
         retrieved = {s.strip().casefold() for s in retrieved_sources if s}
+        if not retrieved:
+            # Not a refusal: there is genuinely nothing to compare
+            # against, and refusing here would fail closed on a missing
+            # integration detail rather than on a finding. Logged
+            # because the caller has silently lost one of the five
+            # conditions and would otherwise have no way to know
+            # (`HAL-005`).
+            logger.warning(
+                "[grounding] %d citation(s) could not be checked for fabrication: "
+                "no retrieved source identifiers were supplied",
+                len(identifiers),
+            )
         valid = [i for i in identifiers if i.strip().casefold() in retrieved]
         if retrieved and len(valid) != len(identifiers):
             fabricated = len(identifiers) - len(valid)
