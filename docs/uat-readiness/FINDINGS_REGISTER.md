@@ -206,7 +206,10 @@ reasonable for UAT; it should be a recorded choice rather than a default.
 
 Method and evidence: [`phase-7-context.md`](phase-7-context.md).
 **0 S1, 1 S2, 5 S3, 4 S4, 1 unverified.** Five fixed, two flagged.
-Full suite **9,532 passed / 0 failed** after the fixes.
+Full suite **9,543 passed / 0 failed** after the fixes. Verified
+end-to-end against the running app: two questions answered correctly on
+all four live SQL Server databases, with zero false-positive truncation
+warnings and nothing over budget.
 
 ### The one theme worth carrying forward
 

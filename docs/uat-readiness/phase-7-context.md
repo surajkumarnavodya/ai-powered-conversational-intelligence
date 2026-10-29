@@ -7,7 +7,7 @@ prompt ordering and fencing, conversation memory, few-shot hygiene,
 model routing.
 
 Seven findings: **0 S1, 1 S2, 5 S3, 1 S4.** Five fixed, two flagged for
-an owner decision. Full suite **9,532 passed / 0 failed** after the
+an owner decision. Full suite **9,543 passed / 0 failed** after the
 fixes (559.8s), up from 9,485 on 2026-10-28.
 
 ---
@@ -186,6 +186,26 @@ The router is by far the better target and is worth stating plainly:
 question, runs on every question when the multi-source router is on, and
 sits in the user's latency path before any real work starts.** That is
 ~14% of the whole question's prompt budget spent on choosing a source.
+
+**Two corrections to the table's arithmetic, measured rather than
+estimated.** The `~tok` column divides by `CHARS_PER_TOKEN = 4`; the two
+largest prompts were then tokenized directly against Ollama and come in
+slightly *under* that estimate — the router at **1,627 tokens for 6,997
+chars (4.30 chars/token)** and `generate_sql`'s system prompt at
+**1,758 for 8,105 (4.61)**. Both sit inside the 3.8–5.7 range §2.4
+records, so the table is sound as an upper bound and the ~14% share
+holds.
+
+The second correction runs the other way and makes `CTX-008` worse than
+the table shows. `prompts/router.md` is a **template**, formatted at
+runtime with the live table catalog, so the prompt actually served is
+larger than the 6,997 chars measured here. The live `/ask` run in §11
+logged a 2,747-token prompt_eval on one call — if that is the router, as
+the node sequence suggests, its real share is closer to a quarter of the
+question's prompt cost than a seventh. Not asserted as fact, because
+three `[timing]` lines cannot be mapped to four-plus calls with
+certainty; `CTX-010` (the model and the call are absent from that log
+line) is precisely why that mapping is guesswork.
 `generate_sql`'s prompt is larger but is benchmark-pinned (CLAUDE.md
 §12), so cutting it invalidates the only accuracy numbers this project
 has; the router's is not pinned — but it has no accuracy measurement
@@ -559,13 +579,62 @@ metrics, but three things need a human:
 
 ---
 
-## 10. Baseline after this phase
+## 10. End-to-end verification against the running application
+
+The fixes in this phase sit on the live request path, so they were run
+there and not only under pytest. `uvicorn api.main:app` started from
+this branch's worktree on port 8077, `.env` unchanged except
+`CHROMA_PERSIST_DIR` pointed at the existing index.
+
+`GET /health` — all four configured SQL Server databases connected and
+indexed (`hr` 11 tables, `adventureworks` 36, `employee_management_database`
+3, `test_db` 2), Ollama reachable, vision model available.
+
+Two questions through `POST /ask` as a freshly registered local account,
+with `model="llama3.1:8b"` because of `OPS-008`:
+
+| question | result |
+|---|---|
+| `How many products are there?` | `succeeded`, 1 row, `SELECT TOP 1000 COUNT(ProductKey) FROM DimProduct` → **606** |
+| `total sales by product category` | `succeeded`, 3 rows, `FactInternetSales` joined through `DimProduct`/`DimProductSubcategory` to `DimProductCategory` → **Bikes 28,318,144.65** |
+
+Both answers are correct for this dataset, and the second picked the
+right fact table and the full three-hop category join unaided.
+
+**What this confirms about the changes, which is the point of running
+it:**
+
+* **Zero `TRUNCATED` warnings.** `CTX-006`'s detector is silent on real
+  traffic — the false-positive half, which matters more than the
+  detection half. A detector that warned on ordinary questions would be
+  switched off, and the loose ratio in §2.4 is what buys this.
+* **Zero `[context_budget]` lines.** Nothing was over budget on either
+  question, matching §2.1's measurement that real schema contexts
+  (6,429–9,003 chars) sit comfortably inside the window. `CTX-002`'s fix
+  is inert in the common case, as intended.
+* Prompt sizes actually evaluated: 2,747 / 5,819 / 560 tokens, all far
+  below the measured cliff.
+
+**One incidental finding, recorded not fixed.** Only **three**
+`stage=llm_call` log lines were emitted across two questions, while the
+node sequence shows `router`, `plan_query` and `generate_sql` firing on
+each — so some model calls produce no timing line at all. Most likely
+`log_ollama_timing`'s early return when `total_duration` is absent. This
+is `CTX-010`'s neighbour and the reason the token-to-node mapping in
+§2.1 had to be measured by building prompts rather than read from the
+log. Not chased further: it is an observability gap in a phase that
+already fixed the one that mattered, and it needs its own measurement
+rather than a guess.
+
+---
+
+## 11. Baseline after this phase
 
 | gate | result | note |
 |---|---|---|
-| `pytest` | **9,532 passed, 0 failed** | 16 skipped, 11 deselected, 8 xfailed, 559.8s |
+| `pytest` | **9,543 passed, 0 failed** | 15 skipped, 11 deselected, 8 xfailed, 1172.7s in the worktree |
 | `ruff check .` | **0** | |
-| `black --check .` | **clean**, 1,679 files | |
+| `black --check .` | **clean**, 881 files in the worktree (1,679 in the main checkout, which also scans two local venvs) | |
 | `mypy` | not re-measured | report-only; Phase 8 owns it |
 | `bandit` / `pip-audit` / `detect-secrets` | not re-measured | Phase 2's figures stand; `detect-secrets` still red per CLAUDE.md §13 |
 
@@ -573,7 +642,7 @@ xfailed rose from 5 to 8: the three new `CTX-007` pins.
 
 ---
 
-## 11. Five-line summary
+## 12. Five-line summary
 
 * **Open S1: 0. Open S2: 1** — `OPS-008`, inherited from Phase 5.
 * **Fixed this session: 5** — `CTX-001`, `CTX-002`, `CTX-004`, `CTX-005`,
