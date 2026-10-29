@@ -114,9 +114,7 @@ def _reject_embedded_newline(line: str) -> None:
     remove cannot promise that.
     """
     if "\n" in line or "\r" in line:
-        raise ProtocolFramingError(
-            "a JSON-RPC line must never contain an embedded newline"
-        )
+        raise ProtocolFramingError("a JSON-RPC line must never contain an embedded newline")
 
 
 def encode_notification(method: str, params: dict[str, Any] | None = None) -> str:

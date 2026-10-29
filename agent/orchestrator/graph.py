@@ -90,6 +90,7 @@ from agent.harness import (
     terminal_state_for,
 )
 from agent.harness.context import reset_current_envelope, set_current_envelope
+from agent.harness.envelope import ExecutionEnvelope
 from agent.orchestrator.nodes import (
     attachment_node,
     document_rag_node,
@@ -219,7 +220,7 @@ def run_orchestrated(
     tenant_id: str | None = None,
     forecast_horizon: int | None = None,
     model_explicitly_selected: bool = False,
-    envelope: object | None = None,
+    envelope: ExecutionEnvelope | None = None,
 ) -> AgentState | OrchestratorState:
     """Routes a question to one or more sources and returns the combined result.
 
@@ -334,7 +335,7 @@ def run_orchestrated(
             tenant_id,
             forecast_horizon,
             model_explicitly_selected,
-            envelope=envelope,  # type: ignore[arg-type]
+            envelope=envelope,
         )
 
     logger.info(
@@ -421,7 +422,7 @@ def run_orchestrated(
     # answer) ran with no deadline clamp and counted against no
     # per-execution model-call budget -- `LOP-004`. Nested binding is
     # safe: `run_agent` sets and resets its own token inside this one.
-    envelope_token = set_current_envelope(envelope)  # type: ignore[arg-type]
+    envelope_token = set_current_envelope(envelope)
     try:
         final_state = compiled_graph.invoke(initial_state)
     except HarnessTerminated as exc:

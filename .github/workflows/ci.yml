@@ -43,7 +43,8 @@ jobs:
   secret-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-006`). v7.0.1 exists.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
           # 2026 security remediation pass: this job never pushes a commit
@@ -64,10 +65,21 @@ jobs:
         # baselined. NOT a substitute for the detect-secrets step below,
         # which *was* fully run and triaged this pass and covers the exact
         # same tracked-file set with a checked-in baseline.
-        uses: gitleaks/gitleaks-action@v2
+        #
+        # Pinned to a commit SHA 2026-10-29 (UAT-readiness Phase 8,
+        # `BP-006`). This was the one remaining floating third-party
+        # action tag in this file, which is precisely the shape of pin
+        # the `trivy-action` comment further down explains was force-
+        # pushed to malicious commits across 76 of 77 tags. A
+        # report-only step still executes on the runner with this job's
+        # token, so "it cannot fail the build" is not the same as "it
+        # cannot do harm". v3.0.0 exists and is deliberately not taken
+        # here: it is a major bump this audit cannot verify.
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
         continue-on-error: true
 
-      - uses: actions/setup-python@v5
+      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-006`). v7.1.0 exists.
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11"
 
@@ -116,11 +128,13 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-006`). v7.0.1 exists.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-006`). v7.1.0 exists.
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11"
 
@@ -147,9 +161,26 @@ jobs:
         # for the full run output. Nothing to triage, so nothing justifies
         # staying report-only; a future finding should block, not silently
         # join an ignored backlog.
+        #
+        # **The path list this step used to carry was a blind spot, and it
+        # was measured 2026-10-29 (UAT-readiness Phase 8, `BP-004`).** It
+        # named twelve packages, so it never looked at `identity/`,
+        # `governance/`, `governance_center/`, `guardrails/`, `jobs/`,
+        # `attachments/`, `mcp_client/`, `onboarding/`, `semantic/`,
+        # `analytics/`, `scripts/` or roughly twenty others -- about
+        # 60,000 lines, including the whole authentication package.
+        # Running bandit over the full tree found **24** findings living in
+        # that gap, six of them in `identity/`. None was exploitable, but
+        # "the gate is green" had been a statement about 48% of the code.
+        #
+        # The fix is a config file rather than a longer list: `[tool.bandit]`
+        # in pyproject.toml excludes `tests/` (where pytest's own `assert`
+        # makes B101 pure noise) and the local-only directories, so a new
+        # package is covered the day it is created instead of the day
+        # somebody remembers to add it here. Same command locally.
         run: |
-          pip install bandit
-          bandit -r agent api config db security media_gen moderation rag search voice media embeddings -f txt
+          pip install 'bandit[toml]'
+          bandit -c pyproject.toml -r . -f txt
 
       # Only the mocked unit test suite runs in CI -- scripts/run_eval.py and
       # scripts/integration_test.py both require a live database + a running
@@ -267,17 +298,59 @@ jobs:
         continue-on-error: true
         run: mypy .
 
+      - name: Type check, production code (mypy)
+        # **Blocking, and deliberately the last step in this job.**
+        #
+        # Added 2026-10-29 (UAT-readiness Phase 8, `BP-001`). The
+        # report-only step above stays exactly as it is, for the reason
+        # its own comment gives: the steps in this job run sequentially,
+        # so a blocking type gate placed above `bandit`/`pytest`/
+        # `pip-audit` once stopped all three from running at all. That
+        # argument is about *position*, though, not about whether a type
+        # error should be allowed to land -- and it was being used to
+        # excuse both.
+        #
+        # So this runs after everything else, where it can block without
+        # hiding another gate's result, and it is scoped to the code that
+        # ships. Measured on the same day: `mypy` over all 41 production
+        # packages reports **0 errors in 482 source files**, while
+        # `mypy .` reports 755 across 136 files -- 736 of them in
+        # `tests/`, one bounded hygiene backlog that is a separate piece
+        # of work (CLAUDE.md 13). Production code was at 10 errors before
+        # this phase fixed them, including two in `agent/sql_validator.py`
+        # that read like a real defect in the security boundary.
+        #
+        # A new production package must be added to this list. That is a
+        # worse property than bandit's config-file exclusion above, and
+        # it is accepted here only because mypy's own `files`/`packages`
+        # config would also have to enumerate them, and because
+        # `tests/__init__.py` does not exist, so a `mypy .`-shaped
+        # invocation cannot be narrowed by exclusion alone without
+        # silently dropping real modules. `tests/test_mypy_gate_covers_every_production_package.py`
+        # fails when a tracked top-level package is missing from it, so
+        # the list cannot silently fall behind.
+        run: >
+          mypy
+          agent analytics api artifacts attachments bi_integration briefing config
+          data_quality db decision_center domain_skills embeddings eval_platform
+          feedback governance governance_center guardrails identity jobs
+          kpi_monitoring lineage mcp_client media media_gen model_routing moderation
+          observability onboarding optimization rag recommendation rest retrieval
+          schema_drift search security semantic sources voice workflow
+
   frontend:
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
+      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-006`). v7.0.1 exists.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-006`). v7.1.0 exists.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           cache: "npm"
@@ -291,6 +364,26 @@ jobs:
 
       - name: Type check (tsc)
         run: npx tsc -b --noEmit
+
+      - name: Test (vitest)
+        # **This step did not exist until 2026-10-29 (UAT-readiness Phase
+        # 8, `BP-007`).** `frontend/` ships 1,508 vitest tests across 104
+        # files and CI ran none of them: this job did lint, tsc, build and
+        # the bundle secret-scan, and `npm run test` was simply absent, so
+        # a frontend regression could only be caught by somebody running
+        # it locally. The suite passes in 44s, which is a fraction of this
+        # job's npm-install time, so there was never a cost argument for
+        # leaving it out.
+        run: npm run test
+
+      - name: Dependency vulnerability scan (npm audit)
+        # Blocking, and scoped to what actually ships with `--omit=dev`
+        # -- the same posture as `pip-audit` in the `test` job, which had
+        # no frontend counterpart at all until 2026-10-29 (`BP-007`).
+        # Measured 0 vulnerabilities on this checkout. No ignore list is
+        # carried on purpose: if a new advisory lands in a production
+        # dependency, this step should be the thing that says so.
+        run: npm audit --omit=dev
 
       # Also verifies api/main.py's StaticFiles mount has something real to
       # find -- see the Dockerfile's frontend-build stage, which runs the
@@ -321,7 +414,8 @@ jobs:
   docker-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-006`). v7.0.1 exists.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
@@ -389,7 +483,8 @@ jobs:
   load-test-smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-006`). v7.0.1 exists.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
@@ -416,11 +511,13 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-006`). v7.0.1 exists.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-006`). v7.1.0 exists.
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11"
 

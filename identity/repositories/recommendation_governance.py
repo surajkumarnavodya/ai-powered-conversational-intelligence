@@ -399,7 +399,7 @@ def assign_owner(
 
     session.refresh(record)
     previous_owner = record.owner_user_id
-    record.owner_user_id = owner_user_id
+    record.owner_user_id = owner_user_id  # type: ignore[assignment]  # BP-009: nullable column, see identity/models.py docstring
     record.updated_at = datetime.now(UTC)
     event = RecommendationFeedbackEvent(
         recommendation_id=record.id,

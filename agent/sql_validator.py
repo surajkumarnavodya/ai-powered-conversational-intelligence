@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterable
 from typing import Literal
 
 import sqlglot
@@ -1057,7 +1058,7 @@ class SqlShape(BaseModel):
     is_distinct: bool = False
 
 
-def _render_shape_items(nodes: object) -> tuple[str, ...]:
+def _render_shape_items(nodes: Iterable[exp.Expression] | None) -> tuple[str, ...]:
     """Renders AST nodes back to SQL text, de-duplicated and bounded.
 
     De-duplication matters: an aggregate repeated in `SELECT` and
@@ -1065,7 +1066,7 @@ def _render_shape_items(nodes: object) -> tuple[str, ...]:
     Order is preserved so the rendering follows the statement.
     """
     seen: list[str] = []
-    for node in nodes or ():  # type: ignore[union-attr]
+    for node in nodes or ():
         try:
             text = node.sql().strip()
         # nosec B112 - `describe_sql` is a presentation aid (CLAUDE.md 4.2: an
@@ -1528,8 +1529,10 @@ def _select_output_sources(
         for side in (select.left, select.right):
             if side is None:
                 continue
-            for name, sources in _select_output_sources(side, cte_outputs, depth + 1).items():
-                merged[name] = merged.get(name, frozenset()) | sources
+            for name, branch_sources in _select_output_sources(
+                side, cte_outputs, depth + 1
+            ).items():
+                merged[name] = merged.get(name, frozenset()) | branch_sources
         return merged
 
     if not isinstance(select, exp.Select):

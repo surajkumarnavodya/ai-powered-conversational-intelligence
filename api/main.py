@@ -54,6 +54,7 @@ from agent.harness import budgets_from_settings as harness_budgets_from_settings
 from agent.harness import create_envelope
 from agent.harness.breakers import breaker_states as harness_breaker_states
 from agent.harness.context import publish_envelope
+from agent.harness.envelope import ExecutionEnvelope
 from agent.harness.telemetry import get_harness_telemetry
 from agent.inference_fingerprint import fingerprint_summary as inference_fingerprint_summary
 from agent.llm_client import get_ollama_client
@@ -1428,7 +1429,7 @@ def _run_orchestrated_with_timeout(
     tenant_id: str | None = None,
     forecast_horizon: int | None = None,
     model_explicitly_selected: bool = False,
-    envelope: object | None = None,
+    envelope: ExecutionEnvelope | None = None,
 ) -> Mapping[str, Any]:
     """Runs `run_orchestrated` on `_get_ask_executor`'s bounded pool and
     gives up *waiting* past `timeout_seconds`, raising `_AskRequestTimedOut`

@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import logging
 import subprocess  # nosec B404 - a stdio MCP server *is* a child process; see
+
 # `StdioTransport` below and CLAUDE.md 3 on this package being
 # administrator-controlled trust only (BP-004).
 import threading
