@@ -144,6 +144,25 @@ pass.
    `tests/test_sql_agent_integration.py::test_existing_nodes_are_all_still_present`
    (an exhaustive equality check) **and**
    `frontend/src/components/sql/QueryLifecycle.tsx`'s stage map.
+   **A node added anywhere inside a retry cycle also changes the bound on
+   the whole run, and getting that wrong is an HTTP 500, not a slow
+   query.** LangGraph's `recursion_limit` is computed by
+   `agent.graph.recursion_limit_for` from three structural constants —
+   `LONGEST_RETRY_CYCLE_NODES` (13: the `execute_sql → retrieve_schema`
+   missing-reference cycle), `PRE_CYCLE_NODES` and
+   `POST_EXECUTION_NODES`. This went wrong once, silently:
+   `enforce_display_names` was inserted into that cycle, the arithmetic
+   was never updated, and at the default `MAX_RETRIES=3` the worst case
+   needed 54 node executions against a limit of 50, so a question whose
+   every attempt hit a missing column raised `GraphRecursionError` and
+   `POST /ask` answered **500** instead of its own "gave up after 4
+   attempts" (2026-10-28, `LOP-001`).
+   `tests/test_agent_loop_bounds.py::TestTheStructuralBoundMatchesTheGraph`
+   now recomputes all three from the compiled graph's edge set and fails
+   with the new number, so this cannot drift unnoticed again — and
+   `run_agent` catches `GraphRecursionError` regardless, because a
+   constant can drift and a catch cannot. Never remove that catch to
+   "let the real error surface".
 2. **An accuracy aid fails open; a safety control fails closed.** Planning,
    golden examples, business-context retrieval, insight, analytics,
    recommendations, and persistence all degrade to "no extra help" on error
@@ -976,7 +995,9 @@ contract lists its specific limitations; these are the cross-cutting ones.
   one. **Mutation-verified**: removing the rollup clear fails 2 of the 9
   tests in `tests/test_no_real_llm_calls_in_tests.py`, one of them the
   exact `recommendations == []` assertion the five failures made. A full
-  run is now **0 failed** (8261 passed, measured 2026-10-24; **8,297 passed / 0 failed re-measured 2026-10-25**).
+  run is now **0 failed** (8261 passed, measured 2026-10-24; 8,297 passed
+  / 0 failed re-measured 2026-10-25; **9,485 passed / 0 failed
+  re-measured 2026-10-28**, 16 skipped, 11 deselected, 5 xfailed, 514s).
 
 - **The local 7B model still refuses some answerable terse questions.**
   Measured 2026-10-22, after the retrieval fix in
@@ -1133,9 +1154,10 @@ contract lists its specific limitations; these are the cross-cutting ones.
   disk.** `docs/uat-readiness/FINDINGS_REGISTER.md` is the live register;
   `phase-0-recon.md`, `phase-1-architecture.md`,
   `phase-2-security.md`, `phase-3-authentication.md`,
-  `phase-4-authorization.md` and `phase-5-hallucination.md` hold the
-  method and evidence for what has been done. **Phases 0-5 are
-  complete; phases 6-12 are not started.**
+  `phase-4-authorization.md`, `phase-5-hallucination.md` and
+  `phase-6-loops.md` hold the
+  method and evidence for what has been done. **Phases 0-6 are
+  complete; phases 7-12 are not started.**
   Before re-investigating anything security- or architecture-shaped,
   check the register: it records what was measured, on what date, and
   which items are deliberately flagged for an owner decision rather than
@@ -1170,6 +1192,56 @@ contract lists its specific limitations; these are the cross-cutting ones.
   `tests/test_uat_golden_set.py`) -- a **behaviour and structure** gate,
   not an accuracy gate, until a human authors `expected_sql` for every
   case marked `GOLD SQL REQUIRED`.
+  Phase 6 (2026-10-28) fixed seven findings and flagged one. **Two were
+  S2 and both were the same shape — a *designed* terminal condition
+  escaping `run_agent` as an unhandled exception, so `POST /ask`
+  answered HTTP 500 instead of the refusal the pipeline had already
+  composed.** `LOP-001` is the recursion-limit drift §4.1 now records.
+  `LOP-004` is `ProviderUnavailable`: the Ollama circuit breaker opens,
+  `harness_ollama_client` raises it a layer below the
+  `OllamaUnavailableError` that `generate_sql_node` handles, and
+  **nothing in the repository caught it** — so the breaker working
+  exactly as designed produced a 500 at the moment graceful degradation
+  mattered most. Both graphs now convert it to a terminal `failed`
+  carrying the breaker's own safe message. The generalisable lesson:
+  when adding a control that raises to stop a run, check that something
+  on the path turns it into a response.
+  The other five: `LOP-002` (no no-progress detection — a stub model
+  repeating one statement spent 4 generation calls and 4 database
+  executions on it; `generate_sql_node` now ends the run when an
+  attempt reproduces the previous query, compared on
+  `agent.sql_validator.canonical_sql_form` so a reformat does not count
+  as progress. **Do not "fix" an unexpectedly short retry run by
+  removing it** — check `attempt_history[-1]["outcome"] ==
+  "no_progress"` first), `LOP-003` (all ten `agent/orchestrator/`
+  nodes were registered without `guard_node`, so every non-SQL route
+  had no step budget, no deadline check and no cancellation
+  checkpoint), `LOP-005` (the dashboard's Stop button aborted the fetch
+  and the server ran to completion; `/ask/stream` now cancels the
+  execution on disconnect, via a new envelope *observer* in
+  `agent/harness/context.py`), `LOP-006`
+  (`agent.harness.resolve_timeout` had **zero** non-test callers, so
+  the database query was the one operation not clamped to the request
+  deadline) and `LOP-007` (retry error context was unbounded, and the
+  retry block is `SectionPriority.CRITICAL`, which `context_budget`
+  never drops *and never truncates* — so one verbose driver error could
+  push the prompt over and make Ollama truncate from the start, where
+  the system prompt lives).
+  Flagged: `LOP-008` (**S3**) — a driver error reaching the retry
+  prompt and `AskResponse.error_history` can contain row values, since
+  `redact_secrets` redacts connection secrets and not data. Not a
+  cross-privilege disclosure, but a path by which a value the *result*
+  gate would have masked appears in an error message. Fixing it is a
+  product decision: the error text is what makes self-correction work.
+  **One standing rule came out of `LOP-004`: only
+  `agent/llm_client.py` may construct an `ollama.Client`.** Anything
+  else escapes the circuit breaker, the per-execution model-call budget
+  and the deadline clamp all at once — which is what
+  `rag.llm.call_ollama` was doing for the router, both RAG subgraphs,
+  web search, media search, the general-knowledge answer and the
+  analyst planner. It now calls `harness_ollama_client`, and
+  `tests/test_llm_client_usage_rollup.py` asserts the one-module rule
+  over the whole application.
   Two positive results worth not re-deriving: **all 213 operations deny
   an anonymous caller** (401, never 403, with an exact public allowlist
   of 16), and **no IDOR** across two users on conversations, messages,

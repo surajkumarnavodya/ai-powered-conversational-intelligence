@@ -40,13 +40,16 @@ flowchart TD
     GS -->|off-topic sentinel| ENDREJ2(["END — rejected"])
     GS -->|LLM/Ollama error| ENDFAIL1(["END — failed"])
     GS -->|LLM-call rate limit tripped| ENDRATE(["END — rate_limited"])
+    GS -->|same query as the last attempt, no retry| ENDFAIL9(["END — failed"])
     GS --> RV["review_sql<br/>plan-conformance check, only if planned"]
     RV -->|plan not satisfied, retries left| GS
     RV -->|plan not satisfied, budget exhausted| ENDFAIL6(["END — failed"])
     RV --> RMC["review_metric_conformance<br/>governed-metric enforcement, only if governed"]
     RMC -->|metric not honored, retries left| GS
     RMC -->|metric not honored, budget exhausted| ENDFAIL7(["END — failed"])
-    RMC --> VS["validate_sql<br/>sqlglot AST allowlist"]
+    RMC --> EDN["enforce_display_names<br/>readable label guard, may rewrite the SQL"]
+    EDN -->|unreadable label, retries left| GS
+    EDN --> VS["validate_sql<br/>sqlglot AST allowlist"]
     VS -->|safety violation, no retry| ENDFAIL2(["END — failed"])
     VS -->|retryable parse error| GS
     VS --> CE["estimate_cost<br/>non-executing EXPLAIN / SHOWPLAN"]
@@ -66,8 +69,9 @@ flowchart TD
 ```
 
 `classify_analytical_intent`, `build_analytical_plan`,
-`review_metric_conformance`, `compute_analytics`, `generate_forecast`,
-and `generate_recommendations` are the six nodes added since this
+`review_metric_conformance`, `enforce_display_names`,
+`compute_analytics`, `generate_forecast`,
+and `generate_recommendations` are the seven nodes added since this
 document's diagram was first written — see their own paragraphs below,
 and CLAUDE.md's per-prompt sections (9-18) for the full design history
 each one came from. `estimate_cost` here is both the graph's own node *key*
@@ -91,14 +95,35 @@ cannot drift apart again. Historical stage-timing figures in
 [`docs/DEEP_FEATURE_PERFORMANCE_ASSESSMENT.md`](DEEP_FEATURE_PERFORMANCE_ASSESSMENT.md)
 still carry the old label, which is accurate for the runs they measured.
 
-Three failure shapes go straight to `END (failed)`/`END (rejected)` and
+Four failure shapes go straight to `END (failed)`/`END (rejected)` and
 never loop back at all: a validator **safety violation** (non-SELECT,
 stacked query, `SELECT ... INTO`, an embedded write inside a CTE, a
-dangerous function call), a `generate_sql` **LLM/Ollama error**, and a
-query **timeout**. All three are deliberate "don't retry" decisions — see
-§2. `needs_clarification` (an ambiguous follow-up) and `rate_limited` (the
-process-wide LLM-call limiter tripped) are likewise terminal, but aren't
-failures in the same sense — they're clean, expected stops, not errors.
+dangerous function call), a `generate_sql` **LLM/Ollama error**, a
+query **timeout**, and **no progress** — an attempt that handed back the
+previous attempt's query unchanged. All four are deliberate "don't
+retry" decisions — see §2. `needs_clarification` (an ambiguous
+follow-up) and `rate_limited` (the process-wide LLM-call limiter
+tripped) are likewise terminal, but aren't failures in the same sense —
+they're clean, expected stops, not errors.
+
+The no-progress stop (`outcome="no_progress"`, added 2026-10-28 by the
+UAT-readiness Phase 6 audit) is the one of the four that is about cost
+rather than safety. Every call in this application runs at
+`temperature=0.0`, so a model that did not act on its error feedback
+once will produce the same statement again from the same prompt —
+measured, before the check existed, as four generation calls and four
+database executions for one distinct statement. It compares
+`agent.sql_validator.canonical_sql_form`, not raw text, so re-indenting
+or re-casing the keywords does not read as progress while a changed
+string literal does. It ends the run; it does not shrink the budget, so
+a run that *is* changing its answer still gets every attempt.
+
+**Every one of these loops has a hard ceiling above the retry budget**,
+and they are independent of each other: `agent.graph.recursion_limit_for`
+(the structural stop, derived from the graph's own longest cycle),
+`HARNESS_MAX_STEPS`, `HARNESS_MAX_LLM_CALLS` and
+`REQUEST_TIMEOUT_SECONDS`. `docs/uat-readiness/phase-6-loops.md` §10 has
+the full table and the state diagram annotated with each bound.
 
 `plan_query` and `review_sql` are the two newest nodes, and both are a
 **pure pass-through — zero LLM calls — for an ordinary question**: they
