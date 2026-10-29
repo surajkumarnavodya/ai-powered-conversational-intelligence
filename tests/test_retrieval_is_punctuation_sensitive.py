@@ -114,9 +114,7 @@ class TestTheEmbeddedQueryIsNotNormalised:
     def test_the_question_is_embedded_verbatim(self, monkeypatch):
         # Establishes the baseline the xfails below rest on: whatever the
         # caller typed is what gets embedded.
-        assert (
-            self._captured_query(monkeypatch, "top selling products") == "top selling products"
-        )
+        assert self._captured_query(monkeypatch, "top selling products") == "top selling products"
 
     @pytest.mark.xfail(
         strict=True,
@@ -126,9 +124,7 @@ class TestTheEmbeddedQueryIsNotNormalised:
         "benchmark re-run. See this module's docstring.",
     )
     def test_a_trailing_period_is_stripped_before_embedding(self, monkeypatch):
-        assert (
-            self._captured_query(monkeypatch, "top selling products.") == "top selling products"
-        )
+        assert self._captured_query(monkeypatch, "top selling products.") == "top selling products"
 
     @pytest.mark.xfail(
         strict=True,
@@ -136,9 +132,7 @@ class TestTheEmbeddedQueryIsNotNormalised:
         "DimPromotion to adventureworks retrieval on 2026-10-29. Same owner decision.",
     )
     def test_a_question_mark_is_stripped_before_embedding(self, monkeypatch):
-        assert (
-            self._captured_query(monkeypatch, "top selling products?") == "top selling products"
-        )
+        assert self._captured_query(monkeypatch, "top selling products?") == "top selling products"
 
     @pytest.mark.xfail(
         strict=True,
@@ -148,6 +142,5 @@ class TestTheEmbeddedQueryIsNotNormalised:
     )
     def test_surrounding_whitespace_is_stripped_before_embedding(self, monkeypatch):
         assert (
-            self._captured_query(monkeypatch, "  top selling products  ")
-            == "top selling products"
+            self._captured_query(monkeypatch, "  top selling products  ") == "top selling products"
         )

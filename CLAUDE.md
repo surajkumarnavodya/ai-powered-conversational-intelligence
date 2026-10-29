@@ -1154,10 +1154,10 @@ contract lists its specific limitations; these are the cross-cutting ones.
   disk.** `docs/uat-readiness/FINDINGS_REGISTER.md` is the live register;
   `phase-0-recon.md`, `phase-1-architecture.md`,
   `phase-2-security.md`, `phase-3-authentication.md`,
-  `phase-4-authorization.md`, `phase-5-hallucination.md` and
-  `phase-6-loops.md` hold the
-  method and evidence for what has been done. **Phases 0-6 are
-  complete; phases 7-12 are not started.**
+  `phase-4-authorization.md`, `phase-5-hallucination.md`,
+  `phase-6-loops.md` and `phase-7-context.md` hold the
+  method and evidence for what has been done. **Phases 0-7 are
+  complete; phases 8-12 are not started.**
   Before re-investigating anything security- or architecture-shaped,
   check the register: it records what was measured, on what date, and
   which items are deliberately flagged for an owner decision rather than
@@ -1256,3 +1256,77 @@ contract lists its specific limitations; these are the cross-cutting ones.
   directions: a dependency scan called 117 routes ungated when they are
   not, and a minimal-body probe returns 422 before an in-handler check
   ever runs.
+
+  Phase 7 (2026-10-29) fixed five findings and flagged two, and
+  **corrected a measurement every context budget in this repo is sized
+  against.** `config/settings.py` said the usable window is
+  `num_ctx / OLLAMA_NUM_PARALLEL` and to budget against half. Measured
+  on `llama3.1:8b` at `num_ctx=16384`, `/api/ps` confirming the served
+  length: a ~22,065-token prompt was processed **whole** at 15,442 real
+  tokens, and a ~50,065-token one came back at **8,194 with the system
+  prompt gone** (the probe put a codeword in the system prompt; the
+  model answered "There is no codeword"). So **the shape is a cliff, not
+  a taper** — a prompt is processed whole up to roughly the full
+  `num_ctx` and past that is cut to `num_ctx/2`, losing the *start*.
+  "Exactly half" is the post-truncation floor, not the admission limit.
+  `context_budget_max_chars` (32,000) and `web_search_context_max_chars`
+  (18,000) are therefore sized against half the real window and leave
+  ~50% of context unused — conservative in the safe direction, and
+  **deliberately not changed**, because raising them changes which
+  blocks reach the model and moves `docs/EVALUATION_CURRENT.md`'s
+  numbers. Also measured, and the reason the detector below uses a loose
+  ratio rather than trusting `CHARS_PER_TOKEN = 4`: real text here runs
+  **3.8–5.7 characters per token**, dense DDL to prose.
+  **The generalisable lesson is the one `CTX-006` fixes.** This codebase
+  already understood this failure precisely — `agent/context_budget.py`
+  and `rag/llm.py` both document it in their docstrings — and had no way
+  to tell whether either defence was working: `prompt_eval_count` was
+  logged on every call and never compared to what was *sent*. So every
+  Phase 7 finding had to be measured by hand, and any could have been
+  live for months silently. `agent.llm_client.report_prompt_truncation`
+  now warns on every one of the eleven Ollama call sites, each with its
+  own `label`. **Only `agent/llm_client.py`'s seven `client.chat` calls
+  and `rag.llm.call_ollama` may reach Ollama** (the standing rule
+  `LOP-004` established), which is what makes that coverage complete.
+  Three fixes were the same shape as `LOP-003` — a correct control
+  covering only some of the places it should, with nothing measuring the
+  gap. `CTX-002`: the context budget covered `generate_sql` but not
+  `plan_query` or `build_analytical_plan`, which embed the *same*
+  `schema_context`; both now assemble through one `_assemble_budgeted`
+  helper, so a future schema-bearing prompt is budgeted by construction.
+  `CTX-001`: the prompt registry's drift suite pinned "exactly the live
+  prompt set", but that set was a hand-maintained tuple in
+  `governance_center/inventory.py` and nothing compared it to the
+  repository — **eleven live prompts were outside it**, including all
+  three read from `prompts/*.md` at runtime (retunable with no code
+  change at all) and two assembled *inside a function*, where no
+  module-level inventory can see them. The inventory now holds 25, and
+  `tests/security/test_prompt_registry_covers_every_live_prompt.py`
+  scans the source tree with `ast` to close the other direction.
+  **Do not build a system prompt inside a function** — a test now fails
+  if you do. `CTX-005`: the attachment OCR fallback was appended *after*
+  `max_attachment_text_chars` was applied, so the ceiling was advisory
+  on the one path whose content is a user-uploaded file.
+  Flagged for an owner: `CTX-003` (**neither routing prompt states any
+  safety invariant** — `prompts/router.md` and the fallback classifier
+  both receive the question and the transcript and carry no
+  untrusted-data framing, which falsifies `governance_center/safety.py`'s
+  own docstring claim that every such prompt carries it; bounded by
+  `router_node`'s RBAC filter, and not fixed because editing a live
+  routing prompt changes routing behaviour that nothing measures) and
+  `CTX-007` (**schema retrieval is punctuation-sensitive** — "top
+  selling products" retrieves 5 tables, "top selling products."
+  retrieves 8 and "...?" 6. Case and whitespace do not matter because
+  `_extract_keywords` already normalises the lexical path; it is the
+  *embedding* query that is raw, and `_select_by_relevance` sizes its
+  result from the gap between consecutive scores, so a small vector
+  shift changes the *count*. **Do not "just add a `.strip()`"**: the
+  trailing-period variant retrieves `FactInternetSales`, arguably the
+  more correct table, and the entry above records that this exact
+  question is answered badly today — so normalising toward the base
+  behaviour may make retrieval worse. Decide with
+  `scripts/run_benchmark`, not from the code. Pinned by three
+  `xfail(strict=True)` tests).
+  One deliverable is explicitly **UNVERIFIED, not passed**: retrieval
+  recall/precision has no labelled fixture set, and
+  `docs/retrieval-evaluation.md` says so in its own opening.
