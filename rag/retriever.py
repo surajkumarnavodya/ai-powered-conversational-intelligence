@@ -58,7 +58,9 @@ def grade_relevance(question: str, chunks: list[ChunkResult], settings: Settings
         return False
     excerpts = "\n\n".join(f"[{c.filename}] {c.chunk_text[:500]}" for c in chunks)
     user_prompt = f"Question: {question}\n\nRetrieved excerpts:\n{excerpts}\n\nDo these excerpts answer the question?"
-    response = call_ollama(_GRADE_SYSTEM_PROMPT, user_prompt, settings, max_tokens=5)
+    response = call_ollama(
+        _GRADE_SYSTEM_PROMPT, user_prompt, settings, max_tokens=5, label="rag_relevance_grade"
+    )
     return response.strip().upper().startswith("Y")
 
 
@@ -76,5 +78,7 @@ def rewrite_query(question: str, prior_chunks: list[ChunkResult], settings: Sett
         f"Previous search retrieved excerpts from: {prior_titles}, which did not "
         "answer the question. Rewrite the search query to find more relevant content."
     )
-    rewritten = call_ollama(_REWRITE_SYSTEM_PROMPT, user_prompt, settings, max_tokens=100)
+    rewritten = call_ollama(
+        _REWRITE_SYSTEM_PROMPT, user_prompt, settings, max_tokens=100, label="rag_query_rewrite"
+    )
     return rewritten or question

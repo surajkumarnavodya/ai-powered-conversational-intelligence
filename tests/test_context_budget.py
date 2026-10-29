@@ -671,3 +671,74 @@ class TestTruncationIsDetectedAndReported:
             "by a `report_prompt_truncation(...)` (the -1 is the function's own def). "
             "rag/llm.py has its own, covering the other eight call sites."
         )
+
+
+class TestEveryCallOllamaSiteNamesItself:
+    """`CTX-006`'s warning is only useful if it says which call truncated.
+
+    `rag.llm.call_ollama` is the chokepoint for eight of this
+    application's eleven Ollama calls, and its `label` defaults to
+    `"rag_llm"` -- so without an explicit label at each site every one of
+    the eight would report under the same name, and the warning would
+    tell an operator that *something* truncated. Caught by a peer review
+    of the first draft of this fix.
+    """
+
+    def _call_sites(self):
+        import pathlib
+        import re
+
+        root = pathlib.Path(__file__).resolve().parents[1]
+        pattern = re.compile(r"call_ollama\(", re.MULTILINE)
+        sites = []
+        for package in ("agent", "rag", "attachments", "media_gen"):
+            for path in sorted((root / package).rglob("*.py")):
+                text = path.read_text(encoding="utf-8")
+                for match in pattern.finditer(text):
+                    # Skip the definition itself. Compared exactly,
+                    # because `"def ".strip()` is `"def"` -- a
+                    # `startswith("def ")` here matches nothing, and the
+                    # first draft of this test duly reported `rag/llm.py`
+                    # as an unlabelled call site.
+                    line_start = text.rfind("\n", 0, match.start()) + 1
+                    if text[line_start : match.start()].strip() == "def":
+                        continue
+                    # The call's own argument list, to the matching paren.
+                    depth, i = 0, match.end() - 1
+                    while i < len(text):
+                        if text[i] == "(":
+                            depth += 1
+                        elif text[i] == ")":
+                            depth -= 1
+                            if depth == 0:
+                                break
+                        i += 1
+                    sites.append((path.relative_to(root).as_posix(), text[match.start() : i]))
+        return sites
+
+    def test_the_scan_finds_every_known_call_site(self):
+        # Vacuity guard: eleven today across four packages.
+        sites = self._call_sites()
+
+        assert len(sites) >= 11, f"only found {len(sites)} call_ollama sites: {sites}"
+
+    def test_every_site_passes_an_explicit_label(self):
+        unlabelled = [path for path, source in self._call_sites() if "label=" not in source]
+
+        assert not unlabelled, (
+            "These `call_ollama` sites do not pass `label=`, so a truncation warning "
+            "from them would report the default `rag_llm` and not name the real "
+            f"caller: {unlabelled}"
+        )
+
+    def test_the_labels_are_distinct(self):
+        import re
+
+        labels = [
+            match.group(1)
+            for _path, source in self._call_sites()
+            for match in [re.search(r'label="([^"]+)"', source)]
+            if match
+        ]
+
+        assert len(labels) == len(set(labels)), f"duplicate call labels: {labels}"

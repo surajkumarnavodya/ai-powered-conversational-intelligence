@@ -680,6 +680,7 @@ def _context_resolution_llm() -> Callable[[str, str], str] | None:
             settings,
             settings.context_resolution_max_tokens,
             model=model,
+            label="context_resolution",
         )
 
     return _call

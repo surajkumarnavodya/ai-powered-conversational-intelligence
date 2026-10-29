@@ -253,6 +253,7 @@ def _generate_node(state: RagState, *, settings: Settings) -> dict[str, Any]:
         settings,
         max_tokens=400,
         model=resolve_task_model(ModelTask.RAG_ANSWER, settings),
+        label="rag_answer",
     )
     citations: list[Citation] = [
         {

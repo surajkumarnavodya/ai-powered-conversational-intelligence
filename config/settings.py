@@ -1891,6 +1891,33 @@ class Settings(BaseSettings):
     # `/api/ps` confirming the model was loaded at the requested length.
     # So budget against half of this value unless you have pinned
     # OLLAMA_NUM_PARALLEL=1 on the server.
+    #
+    # **Re-measured 2026-10-29 (UAT-readiness Phase 7, `CTX-004`) and the
+    # shape is a cliff, not a ceiling at half.** On `llama3.1:8b` at
+    # num_ctx=16384, `/api/ps` reporting context_length=16384:
+    #
+    #   sent ~8,065 tok  -> prompt_eval_count  5,664  (whole)
+    #   sent ~22,065 tok -> prompt_eval_count 15,442  (whole)
+    #   sent ~50,065 tok -> prompt_eval_count  8,194  (TRUNCATED)
+    #
+    # So a prompt is processed whole up to roughly the full num_ctx, and
+    # only past that is it cut -- to 8,194, which is where the "exactly
+    # half" figure above comes from. Half is the *post-truncation floor*,
+    # not the admission limit. The 15,442-token prompt confirms it
+    # directly: that is nearly twice the supposed usable window and
+    # nothing was dropped.
+    #
+    # Two consequences, neither of them urgent. The budgets below are
+    # sized against half the real window, so they leave roughly 50% of
+    # available context unused -- conservative in the safe direction, and
+    # deliberately left alone here because raising them changes which
+    # blocks reach the model and so moves `docs/EVALUATION_CURRENT.md`'s
+    # accuracy numbers. And because the cliff is sharp rather than
+    # gradual, there is no partial-degradation band to aim for: a prompt
+    # either fits or loses half its content from the start. Since
+    # 2026-10-29 `agent.llm_client.report_prompt_truncation` warns when
+    # that happens (`CTX-006`), so this no longer has to be measured by
+    # hand.
     ollama_num_ctx: int = Field(default=16384, gt=0)
     # Pins Ollama's sampler RNG so a repeated question produces a
     # byte-identical prompt *and* a byte-identical completion. Every call

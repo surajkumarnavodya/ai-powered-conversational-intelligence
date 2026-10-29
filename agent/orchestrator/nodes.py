@@ -646,6 +646,7 @@ def classify_sources(
         settings,
         max_tokens=30,
         model=resolve_task_model(ModelTask.ROUTER, settings),
+        label="source_classifier_fallback",
     )
 
     picked = [name.strip().lower() for name in response.split(",")]
@@ -1947,6 +1948,7 @@ def web_search_node(state: OrchestratorState) -> dict[str, Any]:
         f"Question: {state['question']}\n\nResults:\n{excerpts}",
         settings,
         max_tokens=settings.web_search_answer_max_tokens,
+        label="web_search_answer",
     )
     # Before the omitted-results note is appended, so the note itself is
     # never mistaken for a preamble and is never re-capitalized.
@@ -2312,6 +2314,7 @@ def media_search_node(state: OrchestratorState) -> dict[str, Any]:
         f"Question: {state['question']}\n\nHits:\n{excerpts}",
         settings,
         max_tokens=300,
+        label="media_search_answer",
     )
     result_hits: list[MediaSearchHit] = [
         MediaSearchHit(
@@ -2454,6 +2457,7 @@ def _no_retrieval_llm(settings: Settings, state: OrchestratorState):
             settings,
             settings.general_knowledge_max_tokens,
             model=model,
+            label="general_knowledge_answer",
         )
 
     return _call

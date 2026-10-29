@@ -290,6 +290,7 @@ def call_model_node(state: AttachmentQAState) -> dict[str, Any]:
             f"Question: {question}\n\n{context}",
             settings,
             max_tokens=900,
+            label="attachment_qa",
         )
     except OllamaUnavailableError:
         # Caught here rather than left to propagate -- an Ollama outage must

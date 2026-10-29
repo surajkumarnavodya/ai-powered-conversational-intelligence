@@ -135,6 +135,7 @@ class SvgLlmImageProvider:
                 self._settings,
                 max_tokens=_MAX_TOKENS,
                 temperature=0.2,
+                label="svg_generation",
             )
         except Exception as exc:  # noqa: BLE001 - a provider reports failure, never raises out
             logger.warning("[svg] model call failed: %s", type(exc).__name__)
