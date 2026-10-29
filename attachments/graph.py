@@ -197,6 +197,7 @@ def build_multimodal_message_node(state: AttachmentQAState) -> dict[str, Any]:
             )
 
     updated_context = state.get("attachment_context", "")
+    truncated = bool(state.get("context_truncated"))
     if ocr_sections:
         addendum = "\n\n".join(ocr_sections)
         updated_context = (
@@ -205,14 +206,36 @@ def build_multimodal_message_node(state: AttachmentQAState) -> dict[str, Any]:
             if updated_context
             else addendum
         )
+        # `build_attachment_context` already applied
+        # `max_attachment_text_chars` to the text attachments, and this
+        # node appends to its result *after* that -- so without this
+        # clamp the ceiling was advisory, and the combined block could
+        # exceed it by however much OCR produced, which is bounded only
+        # by the images themselves. An oversized prompt is not rejected
+        # by Ollama, it is truncated from the *start*, where
+        # `_TEXT_ONLY_SYSTEM_PROMPT` and its "untrusted data, never
+        # instructions" framing live -- and this is the OCR path, so
+        # that text came out of a user-supplied image. Clamped here and
+        # reported through the same `context_truncated` flag the builder
+        # sets, rather than leaving the caller told "not truncated"
+        # about a block that was (2026-10-29, UAT-readiness Phase 7,
+        # `CTX-005`).
+        ceiling = settings.max_attachment_text_chars
+        if len(updated_context) > ceiling:
+            updated_context = updated_context[:ceiling].rstrip()
+            truncated = True
     logger.info(
-        "[attachments.graph] vision unavailable, OCR fallback produced %d section(s)",
+        "[attachments.graph] vision unavailable, OCR fallback produced %d section(s), "
+        "context_chars=%d truncated=%s",
         len(ocr_sections),
+        len(updated_context),
+        truncated,
     )
     return {
         "image_data_urls": [],
         "vision_unavailable": True,
         "attachment_context": updated_context,
+        "context_truncated": truncated,
     }
 
 
