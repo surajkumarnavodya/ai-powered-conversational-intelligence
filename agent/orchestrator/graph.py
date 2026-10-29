@@ -79,9 +79,17 @@ from __future__ import annotations
 import logging
 from functools import lru_cache
 
+from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, StateGraph
 
-from agent.graph import run_agent
+from agent.graph import RECURSION_LIMIT_MESSAGE, run_agent
+from agent.harness import (
+    HarnessTerminated,
+    ProviderUnavailable,
+    guard_node,
+    terminal_state_for,
+)
+from agent.harness.context import reset_current_envelope, set_current_envelope
 from agent.orchestrator.nodes import (
     attachment_node,
     document_rag_node,
@@ -117,16 +125,32 @@ def build_orchestrator_graph():
     """
     graph = StateGraph(OrchestratorState)
 
-    graph.add_node("resolve_context", resolve_context_node)
-    graph.add_node("router", router_node)
-    graph.add_node("sql_subgraph", sql_subgraph_node)
-    graph.add_node("document_rag", document_rag_node)
-    graph.add_node("policy_rag", policy_rag_node)
-    graph.add_node("web_search", web_search_node)
-    graph.add_node("generation", generation_node)
-    graph.add_node("media_search", media_search_node)
-    graph.add_node("attachments", attachment_node)
-    graph.add_node("synthesis", synthesis_node)
+    # Every node goes through `guard_node`, for the reason
+    # `agent.harness.control` gives for wrapping at the registration
+    # site rather than decorating each function: the guard becomes the
+    # default, and an unguarded node cannot be added by accident.
+    #
+    # 2026-10-28 (UAT-readiness Phase 6, `LOP-003`): these ten were the
+    # unguarded ones. `agent/graph.py` wrapped its nineteen from the
+    # start, but the orchestrator -- the graph that runs *first*, and
+    # the only graph that runs at all for a document, policy, web,
+    # media or attachment question -- registered its nodes bare. So on
+    # every non-SQL route there was no step budget, no deadline check
+    # and, most visibly, no cancellation checkpoint: a cancelled or
+    # timed-out request kept retrieving and answering to completion
+    # because nothing between the router and synthesis ever looked at
+    # the envelope. Wrapping them puts those three checks on every
+    # route, at the same node boundaries the SQL path has always had.
+    graph.add_node("resolve_context", guard_node("resolve_context", resolve_context_node))
+    graph.add_node("router", guard_node("router", router_node))
+    graph.add_node("sql_subgraph", guard_node("sql_subgraph", sql_subgraph_node))
+    graph.add_node("document_rag", guard_node("document_rag", document_rag_node))
+    graph.add_node("policy_rag", guard_node("policy_rag", policy_rag_node))
+    graph.add_node("web_search", guard_node("web_search", web_search_node))
+    graph.add_node("generation", guard_node("generation", generation_node))
+    graph.add_node("media_search", guard_node("media_search", media_search_node))
+    graph.add_node("attachments", guard_node("attachments", attachment_node))
+    graph.add_node("synthesis", guard_node("synthesis", synthesis_node))
 
     # `resolve_context` is the entry point, not `router`: the router picks
     # sources from the question's text, and so do web search, both RAG
@@ -387,9 +411,61 @@ def run_orchestrated(
     # `agent.graph.run_agent` binds for itself). Nested binding is safe:
     # `run_agent` sets and resets its own token inside this one.
     audit_token = set_audit_tenant_id(tenant_id)
+    # Binds this run's envelope on the worker thread, for the same reason
+    # and with the same reset discipline as `agent.graph.run_agent`: the
+    # `/ask` pool is a raw `ThreadPoolExecutor`, which does not copy
+    # `contextvars` across `submit`. Until this existed, only the SQL
+    # subgraph bound it, so every LLM call a *non-SQL* route made
+    # (`rag.llm.call_ollama`, reached from the router, both RAG
+    # subgraphs, web search, media search and the general-knowledge
+    # answer) ran with no deadline clamp and counted against no
+    # per-execution model-call budget -- `LOP-004`. Nested binding is
+    # safe: `run_agent` sets and resets its own token inside this one.
+    envelope_token = set_current_envelope(envelope)  # type: ignore[arg-type]
     try:
         final_state = compiled_graph.invoke(initial_state)
+    except HarnessTerminated as exc:
+        # An orderly stop the harness demanded -- a budget ran out, the
+        # deadline passed, or the caller cancelled. Converted into the
+        # same terminal shape a normally-failed run returns, exactly as
+        # `agent.graph.run_agent` does, because letting it escape would
+        # turn a designed termination into an unhandled 500. Before
+        # `LOP-003` wrapped the nodes above there was nothing here to
+        # catch; now there is, so this is not optional.
+        if envelope is None:  # pragma: no cover - guard_node only raises with one
+            raise
+        final_state = {**initial_state, **terminal_state_for(envelope, exc)}
+    except ProviderUnavailable as exc:
+        # Same designed terminal condition `agent.graph.run_agent`
+        # handles, caught here too because a non-SQL route never reaches
+        # that function -- a document, policy, web or media question
+        # that trips the breaker would otherwise still be an HTTP 500
+        # (`LOP-004`).
+        logger.error("Orchestrated run refused: the %s circuit breaker is open", exc.provider)
+        final_state = {
+            **initial_state,
+            "status": "failed",
+            "failure_explanation": exc.safe_message,
+        }
+    except GraphRecursionError:
+        # This graph is acyclic -- `resolve_context -> router ->` a
+        # parallel fan-out `-> synthesis -> END` -- so this is
+        # unreachable today. Caught for the same reason
+        # `agent.graph.run_agent` catches it: a future re-routing edge
+        # would otherwise make the failure an HTTP 500 rather than a
+        # refusal, and `LOP-001` is this repo's evidence that the
+        # difference is worth a few lines.
+        logger.error(
+            "Orchestrated run hit LangGraph's recursion_limit -- the orchestrator "
+            "graph has grown a cycle; failing the run cleanly rather than raising"
+        )
+        final_state = {
+            **initial_state,
+            "status": "failed",
+            "failure_explanation": RECURSION_LIMIT_MESSAGE,
+        }
     finally:
+        reset_current_envelope(envelope_token)
         reset_audit_tenant_id(audit_token)
     logger.info(
         "Orchestrated run finished: status=%s sources_used=%s",

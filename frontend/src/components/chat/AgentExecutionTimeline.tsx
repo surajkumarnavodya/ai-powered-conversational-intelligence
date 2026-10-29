@@ -142,6 +142,11 @@ const REASON_KEYS: Record<string, string> = {
   aggregate_nesting: 'lifecycle.reason.sqlError',
   nested_aggregate: 'lifecycle.reason.sqlError',
   parse_error: 'lifecycle.reason.sqlError',
+  // The agent stopping itself rather than the database rejecting
+  // anything: `generate_sql_node` returned the previous attempt's
+  // query unchanged, so the run ends instead of repeating it
+  // (UAT-readiness Phase 6, LOP-002).
+  no_progress: 'lifecycle.reason.noProgress',
   missing_reference: 'lifecycle.reason.missingReference',
   timeout: 'lifecycle.reason.timeout',
   // The agent's own review steps not being satisfied.

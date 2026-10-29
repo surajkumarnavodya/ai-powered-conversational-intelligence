@@ -488,6 +488,7 @@
       "timeout": "La requête a dépassé le temps autorisé.",
       "missingReference": "La requête faisait référence à une table ou une colonne inexistante.",
       "sqlError": "La base de données a rejeté la requête.",
+      "noProgress": "L'agent a repete la meme requete au lieu de la corriger, il s'est donc arrete.",
       "unknown": "L’agent n’a pas pu produire une requête fonctionnelle.",
       "executionFailed": "La requête que vous avez confirmée n’a pas abouti."
     }

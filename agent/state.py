@@ -191,7 +191,11 @@ class AttemptRecord(TypedDict):
             "off_topic", "rate_limited", "database_busy" (Prompt 22 --
             the per-database execution concurrency limiter rejected this
             attempt before any query was sent; see
-            `agent.rate_limit.get_database_execution_limiter`).
+            `agent.rate_limit.get_database_execution_limiter`),
+            "no_progress" (UAT-readiness Phase 6, `LOP-002` -- this
+            attempt reproduced the previous attempt's query unchanged, so
+            the run ended rather than spending the rest of the budget
+            regenerating it; see `agent.nodes.generate_sql_node`).
         error: The raw error message (validator or database), None on success.
         will_retry: Whether the graph will attempt another generation cycle.
     """
@@ -602,6 +606,25 @@ class AgentState(TypedDict, total=False):
 
     # Set by generate_sql
     sql: str | None
+
+    # Set by generate_sql: the exact text that attempt's model call
+    # returned, before any node rewrote it.
+    #
+    # `sql` above is not that text for long. `validate_sql` replaces it
+    # with the row-limited form, `enforce_display_names` may replace it
+    # with a repaired join, and `execute_sql` schema-qualifies a copy. So
+    # comparing `sql` across attempts answers "did the executable
+    # statement change", which is a different question from "did the
+    # model change its answer" -- and the second is the one the
+    # no-progress check in `generate_sql_node` needs (`LOP-002`).
+    # Measured 2026-10-28: the row limit alone made every attempt look
+    # different, so comparing `sql` detected nothing at all.
+    #
+    # Deliberately not surfaced in `api.schemas.AskResponse`: a client
+    # that wants the model's raw output for an attempt already has it in
+    # `attempt_history[].sql`, and a second owner of that fact is what
+    # CLAUDE.md 4.8 rules out.
+    last_generated_sql: str | None
 
     # Set by validate_sql -- table names the generated SQL referenced that
     # were never part of the retrieved schema context for this attempt (see

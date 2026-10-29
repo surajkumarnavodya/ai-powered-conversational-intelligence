@@ -186,10 +186,21 @@ class TestSelfCorrectionRetryJourney:
     `tests/test_agent_nodes.py`)."""
 
     def test_missing_reference_error_triggers_a_real_retry_that_then_succeeds(self, monkeypatch):
-        monkeypatch.setattr(
-            "agent.nodes.generate_sql_from_llm",
-            lambda *a, **k: "SELECT CustName FROM orders",
-        )
+        # The second attempt returns *corrected* SQL, which is what
+        # self-correction means. It used to return the identical
+        # statement, and that stopped being a retry at all once
+        # `generate_sql_node` gained its no-progress check
+        # (UAT-readiness Phase 6, `LOP-002`): a model handing back the
+        # query it was just told was wrong ends the run instead of
+        # spending the rest of the budget on it. See
+        # `tests/test_agent_loop_bounds.py` for that guard's own tests.
+        generated = {"n": 0}
+
+        def _generate_sql(*args, **kwargs):
+            generated["n"] += 1
+            return "SELECT CustName FROM orders" if generated["n"] == 1 else "SELECT id FROM orders"
+
+        monkeypatch.setattr("agent.nodes.generate_sql_from_llm", _generate_sql)
         monkeypatch.setattr("agent.nodes.generate_insight_from_llm", lambda *a, **k: "Looks good.")
 
         call_count = {"n": 0}

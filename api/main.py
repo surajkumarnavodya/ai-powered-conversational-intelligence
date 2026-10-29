@@ -53,6 +53,7 @@ from agent.graph import build_graph
 from agent.harness import budgets_from_settings as harness_budgets_from_settings
 from agent.harness import create_envelope
 from agent.harness.breakers import breaker_states as harness_breaker_states
+from agent.harness.context import publish_envelope
 from agent.harness.telemetry import get_harness_telemetry
 from agent.inference_fingerprint import fingerprint_summary as inference_fingerprint_summary
 from agent.llm_client import get_ollama_client
@@ -1670,6 +1671,11 @@ def ask(
             budgets=harness_budgets_from_settings(settings),
         )
     )
+    # Hands this execution's envelope to a wrapping caller that
+    # registered for it -- today only `api/streaming.py`, which needs it
+    # to cancel the run when the SSE client disconnects (`LOP-005`). A
+    # no-op on every other path, including a direct `POST /ask`.
+    publish_envelope(harness_envelope)
 
     try:
         final_state = _run_orchestrated_with_timeout(

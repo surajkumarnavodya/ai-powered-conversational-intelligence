@@ -277,7 +277,7 @@ class CaseRunResult:
     cost_estimate_rows: float | None = None
     complexity_score: int | None = None
     # Ollama's own reported token counts (see agent/llm_client.py's
-    # `_log_ollama_timing`), captured by `eval.runner` via a temporary log
+    # `log_ollama_timing`), captured by `eval.runner` via a temporary log
     # handler on the `agent.llm_client` logger -- "where available" per the
     # benchmark request, since this is the only channel that currently
     # exposes them (AgentState itself doesn't carry token counts). None if

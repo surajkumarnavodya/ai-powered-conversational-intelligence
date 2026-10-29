@@ -82,7 +82,7 @@ def get_ollama_client(settings: Settings, timeout: int | None = None) -> ollama.
 _TIMEOUT_BUCKET_SECONDS = 10
 
 
-def _harness_client(settings: Settings) -> ollama.Client:
+def harness_ollama_client(settings: Settings) -> ollama.Client:
     """The Ollama client for one call, fast-failing and deadline-aware.
 
     Three things happen here that a bare `_get_ollama_client` cannot do:
@@ -100,6 +100,16 @@ def _harness_client(settings: Settings) -> ollama.Client:
 
     All three are no-ops when no envelope is bound -- a direct caller,
     a script, or `ENABLE_AGENT_HARNESS=false` behaves exactly as before.
+
+    Public, for the same reason `decoding_options` below is:
+    `rag/llm.py::call_ollama` -- the shared helper behind the RAG
+    subgraph, the orchestrator's router/web-search/media-search answer
+    steps, the general-knowledge answer and the analyst planner -- built
+    its own `ollama.Client` and so got none of the three. Measured
+    2026-10-28 (UAT-readiness Phase 6, `LOP-004`): those calls counted
+    against no per-execution model-call budget, were not clamped to the
+    request deadline, and did not consult the breaker. It calls this
+    instead rather than growing a second, drifting copy.
     """
     check_provider("ollama")
 
@@ -124,6 +134,52 @@ def _harness_client(settings: Settings) -> ollama.Client:
 #: system prompt happens to be shorter and then leave no headroom when
 #: the dialect changes.
 _SYSTEM_PROMPT_RESERVE_CHARS = 8_500
+
+#: Hard cap on the driver/validator error text carried into a retry
+#: prompt. Generous on purpose: every error this pipeline has been
+#: measured producing -- a sqlglot parse message, a `pyodbc` invalid
+#: column name, a `psycopg2` syntax error, plus the column suggestion
+#: `agent.nodes._suggest_correct_column` appends -- is comfortably under
+#: it, so a realistic retry prompt stays byte-identical to the unbounded
+#: one and `docs/EVALUATION_CURRENT.md`'s numbers are unaffected
+#: (CLAUDE.md 12).
+#:
+#: It exists because the retry block is `SectionPriority.CRITICAL`,
+#: which `agent.context_budget` never drops *and never truncates*. A
+#: driver can render a very large message -- some include the full
+#: statement, the parameter list and server context -- and an oversized
+#: CRITICAL section does not fail the budget: it is reported
+#: `over_budget` and handed to Ollama anyway, which truncates from the
+#: **start**, where the system prompt lives. So one unusually verbose
+#: database error could silently remove the safety and dialect rules
+#: from the prompt, which is the exact failure `agent/context_budget.py`
+#: was written to stop. 2026-10-28, UAT-readiness Phase 6 (`LOP-007`).
+MAX_ERROR_FEEDBACK_CHARS = 2_000
+
+
+def _bounded_error_feedback(error_feedback: str) -> str:
+    """Caps retry error text, keeping both ends.
+
+    The head carries the error class and the offending identifier; the
+    tail carries whatever was appended after it (the column suggestion,
+    for one). Dropping the middle keeps both, which a plain `[:n]` would
+    not, and the elision is stated in the text rather than silent -- the
+    model is told the truth about what it is reading.
+    """
+    if len(error_feedback) <= MAX_ERROR_FEEDBACK_CHARS:
+        return error_feedback
+    keep = MAX_ERROR_FEEDBACK_CHARS // 2
+    logger.info(
+        "[context_budget] retry error feedback truncated: %d -> ~%d chars",
+        len(error_feedback),
+        MAX_ERROR_FEEDBACK_CHARS,
+    )
+    return (
+        f"{error_feedback[:keep].rstrip()}\n"
+        "[... the database error was longer than this prompt carries; "
+        "the middle is omitted ...]\n"
+        f"{error_feedback[-keep:].lstrip()}"
+    )
 
 
 def _context_budget_chars(settings: Settings | None) -> int:
@@ -251,7 +307,7 @@ def ollama_unavailable_error(
     if isinstance(exc, httpx.TimeoutException | TimeoutError):
         # Reached, pulled, and simply slow. Naming the configured ceiling
         # rather than the elapsed time: the harness envelope may clamp an
-        # individual call *below* this (`_harness_client`), so this is the
+        # individual call *below* this (`harness_ollama_client`), so this is the
         # upper bound on what the call was allowed, which is the number an
         # operator would change.
         return OllamaUnavailableError(
@@ -787,7 +843,7 @@ def _build_user_prompt(
         retry_block = (
             "Your previous attempt failed. Fix it and return corrected SQL only.\n"
             f"Previous SQL:\n{previous_sql}\n"
-            f"Error:\n{error_feedback}"
+            f"Error:\n{_bounded_error_feedback(error_feedback)}"
         )
         hint = _ERROR_CATEGORY_HINTS.get(error_category or "", "")
         if hint:
@@ -898,7 +954,7 @@ def generate_insight_from_llm(
     """
     effective_model = model or settings.ollama_model
     user_prompt = _build_insight_prompt(question, sql, summary)
-    client = _harness_client(settings)
+    client = harness_ollama_client(settings)
 
     logger.debug("Calling Ollama (insight) model=%s prompt=%r", effective_model, user_prompt)
     try:
@@ -923,7 +979,7 @@ def generate_insight_from_llm(
         # graph run instead of degrading to the intended "failed" status.
         raise ollama_unavailable_error(settings, effective_model, exc) from exc
 
-    _log_ollama_timing(response)
+    log_ollama_timing(response)
 
     content = (
         response.get("message", {}).get("content", "")
@@ -1089,7 +1145,7 @@ def generate_sql_from_llm(
     )
 
     effective_model = model or settings.ollama_model
-    client = _harness_client(settings)
+    client = harness_ollama_client(settings)
 
     logger.debug("Calling Ollama model=%s prompt=%r", effective_model, user_prompt)
     try:
@@ -1111,7 +1167,7 @@ def generate_sql_from_llm(
         # broken) Ollama response would otherwise crash the whole graph run.
         raise ollama_unavailable_error(settings, effective_model, exc) from exc
 
-    _log_ollama_timing(response)
+    log_ollama_timing(response)
 
     content = (
         response.get("message", {}).get("content", "")
@@ -1137,7 +1193,7 @@ def _get_model_name(response: object) -> str | None:
 
     Separate from `_get_field` above purely because that one is typed for
     the integer counter/duration fields. Read from the *response* rather
-    than threaded in from each call site so that `_log_ollama_timing`
+    than threaded in from each call site so that `log_ollama_timing`
     needs no new argument at any of its seven callers, and so the name
     recorded is the one the server actually served -- not the one this app
     asked for, which can differ (an alias, or a per-request override from
@@ -1155,7 +1211,7 @@ def _get_model_name(response: object) -> str | None:
     return None
 
 
-def _log_ollama_timing(response: object) -> None:
+def log_ollama_timing(response: object) -> None:
     """Logs Ollama's own reported call breakdown, and reports provider health.
 
     Called immediately after every successful `client.chat` in this
@@ -1164,6 +1220,12 @@ def _log_ollama_timing(response: object) -> None:
     rather than at each call site means a *new* call site gets the
     success signal for free; forgetting it would leave a breaker that
     opens and never recovers, which is strictly worse than no breaker.
+
+    Public since 2026-10-28 because `rag/llm.py::call_ollama` is the
+    eighth `client.chat` in this application and was missing both halves
+    (`LOP-004`): the breaker it could open on failure it could never
+    close on success, and its calls were absent from
+    `GET /metrics/performance` entirely. It calls this now.
 
     Logs Ollama's own reported call breakdown (all fields are nanoseconds).
 
@@ -1459,7 +1521,7 @@ def generate_query_plan_from_llm(
     user_prompt = _build_plan_user_prompt(
         question, schema_context, retrieved_context, analytical_intent
     )
-    client = _harness_client(settings)
+    client = harness_ollama_client(settings)
 
     logger.debug("Calling Ollama (query_plan) model=%s prompt=%r", effective_model, user_prompt)
     try:
@@ -1477,7 +1539,7 @@ def generate_query_plan_from_llm(
         record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
         raise ollama_unavailable_error(settings, effective_model, exc) from exc
 
-    _log_ollama_timing(response)
+    log_ollama_timing(response)
 
     content = (
         response.get("message", {}).get("content", "")
@@ -1580,7 +1642,7 @@ def review_sql_against_plan_from_llm(
     """
     effective_model = model or settings.ollama_model
     user_prompt = _build_review_user_prompt(query_plan, sql)
-    client = _harness_client(settings)
+    client = harness_ollama_client(settings)
 
     logger.debug("Calling Ollama (sql_review) model=%s prompt=%r", effective_model, user_prompt)
     try:
@@ -1598,7 +1660,7 @@ def review_sql_against_plan_from_llm(
         record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
         raise ollama_unavailable_error(settings, effective_model, exc) from exc
 
-    _log_ollama_timing(response)
+    log_ollama_timing(response)
 
     content = (
         response.get("message", {}).get("content", "")
@@ -1688,7 +1750,7 @@ def review_sql_against_metrics_from_llm(
     """
     effective_model = model or settings.ollama_model
     user_prompt = _build_metric_conformance_user_prompt(governing_metrics, sql)
-    client = _harness_client(settings)
+    client = harness_ollama_client(settings)
 
     logger.debug(
         "Calling Ollama (metric_conformance) model=%s prompt=%r", effective_model, user_prompt
@@ -1708,7 +1770,7 @@ def review_sql_against_metrics_from_llm(
         record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
         raise ollama_unavailable_error(settings, effective_model, exc) from exc
 
-    _log_ollama_timing(response)
+    log_ollama_timing(response)
 
     content = (
         response.get("message", {}).get("content", "")
@@ -1887,7 +1949,7 @@ def generate_analytical_intent_from_llm(
     """
     effective_model = model or settings.ollama_model
     user_prompt = _build_intent_user_prompt(question, retrieved_context, governing_metrics)
-    client = _harness_client(settings)
+    client = harness_ollama_client(settings)
 
     logger.debug(
         "Calling Ollama (analytical_intent) model=%s prompt=%r", effective_model, user_prompt
@@ -1907,7 +1969,7 @@ def generate_analytical_intent_from_llm(
         record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
         raise ollama_unavailable_error(settings, effective_model, exc) from exc
 
-    _log_ollama_timing(response)
+    log_ollama_timing(response)
 
     content = (
         response.get("message", {}).get("content", "")
@@ -2107,7 +2169,7 @@ def generate_analytical_plan_from_llm(
     user_prompt = _build_analytical_plan_user_prompt(
         question, schema_context, retrieved_context, analytical_intent, governing_metrics
     )
-    client = _harness_client(settings)
+    client = harness_ollama_client(settings)
 
     logger.debug(
         "Calling Ollama (analytical_plan) model=%s prompt=%r", effective_model, user_prompt
@@ -2127,7 +2189,7 @@ def generate_analytical_plan_from_llm(
         record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
         raise ollama_unavailable_error(settings, effective_model, exc) from exc
 
-    _log_ollama_timing(response)
+    log_ollama_timing(response)
 
     content = (
         response.get("message", {}).get("content", "")

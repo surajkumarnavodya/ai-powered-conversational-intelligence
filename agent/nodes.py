@@ -59,6 +59,7 @@ from agent.exceptions import (
     SchemaRetrievalError,
 )
 from agent.followup import classify_followup
+from agent.harness.control import envelope_from_state, resolve_timeout
 from agent.input_guard import (
     NO_RELEVANT_DATA_MESSAGE,
     check_input,
@@ -90,6 +91,7 @@ from agent.rate_limit import (
 )
 from agent.sql_validator import (
     SAFETY_VIOLATION_TYPES,
+    canonical_sql_form,
     enforce_row_limit,
     find_restricted_column_references,
     find_unexpected_table_references,
@@ -161,6 +163,16 @@ def _query_fingerprint(sql: str | None) -> str | None:
     if not sql:
         return None
     return hashlib.sha256(sql.encode()).hexdigest()[:16]
+
+
+#: `failure_explanation` for a run stopped because an attempt reproduced
+#: the previous attempt's query verbatim. A fixed module constant, never
+#: built from the question or the SQL (CLAUDE.md 5.5).
+NO_PROGRESS_MESSAGE = (
+    "I could not produce a working query for that question: the same query came back "
+    "unchanged after being told what was wrong with it, so further attempts would "
+    "repeat it. Try rephrasing the question, or naming the table or column you mean."
+)
 
 
 # A `status` value that means this run is over -- `agent.state.AgentStatus`
@@ -1618,6 +1630,44 @@ def plan_query_node(state: AgentState) -> dict[str, Any]:
     return {"query_plan": plan, "status": "generating"}
 
 
+def _reproduces_previous_attempt(state: AgentState, raw_sql: str, settings) -> bool:
+    """Whether this attempt's SQL is the previous attempt's, unchanged.
+
+    The no-progress check behind `generate_sql_node`'s early stop
+    (UAT-readiness Phase 6, `LOP-002`). Compared on
+    `agent.sql_validator.canonical_sql_form`, so re-indenting the
+    statement or re-casing its keywords does not count as progress --
+    a local model does both often -- while a changed string literal
+    does, because that is a different query.
+
+    Compares `state["last_generated_sql"]`, the raw text the previous
+    model call returned, rather than `state["sql"]`: `validate_sql`
+    replaces `sql` with the row-limited form and
+    `enforce_display_names` may replace it with a repaired join, so
+    `sql` differs between attempts even when the model's own output did
+    not. The first version of this check compared `sql` and detected
+    nothing at all.
+
+    **Fails open**, like every other efficiency aid here (CLAUDE.md
+    4.2): resolving the dialect reads the selected connection, and a
+    missing `selected_database` or an unconfigured connection must cost
+    this one optimisation, never the answer. On any error the run
+    proceeds with its full retry budget, exactly as it did before this
+    check existed.
+    """
+    previous = state.get("last_generated_sql")
+    if not previous:
+        return False
+    try:
+        dialect = get_sqlglot_dialect(get_connection(settings, _selected_db_name(state)).db_type)
+    except Exception:  # noqa: BLE001 - see the docstring; never a blocker
+        logger.debug("[generate_sql] no-progress check skipped: dialect unavailable", exc_info=True)
+        return False
+    return canonical_sql_form(raw_sql, dialect=dialect) == canonical_sql_form(
+        previous, dialect=dialect
+    )
+
+
 @_timed_node("generate_sql")
 def generate_sql_node(state: AgentState) -> dict[str, Any]:
     """Calls the LLM to produce a candidate SQL statement.
@@ -1786,7 +1836,56 @@ def generate_sql_node(state: AgentState) -> dict[str, Any]:
         }
 
     logger.info("[generate_sql] attempt %d: generated SQL: %s", attempt_number, raw_sql)
-    return {"sql": raw_sql, "status": "reviewing"}
+
+    # No-progress detection (UAT-readiness Phase 6, `LOP-002`). A retry
+    # that hands back the query it was just told was wrong is not an
+    # attempt: every remaining cycle will produce the same statement, the
+    # same validator or driver error, and the same feedback. Measured
+    # before this check existed: a model returning one statement
+    # unchanged spent all four generation calls *and* re-executed the
+    # failing query four times against the database.
+    #
+    # This is not a corner case at temperature 0, which is what
+    # `agent.llm_client.decoding_options` sets for every call in this
+    # application: identical prompt plus identical seed is *expected* to
+    # give identical output, so "the model did not act on the feedback"
+    # and "the model will never act on the feedback" are the same event
+    # here.
+    #
+    # Compared on `canonical_sql_form`, not raw text, so re-indenting or
+    # re-casing the keywords does not read as progress -- a local model
+    # does that often. It stops the run rather than consuming the
+    # remaining budget; the budget itself is unchanged, so a run that
+    # *is* changing its answer still gets every attempt it had before.
+    if attempt_number > 1 and _reproduces_previous_attempt(state, raw_sql, settings):
+        logger.warning(
+            "[generate_sql] attempt %d reproduced the previous query unchanged "
+            "(last_error_category=%s) -- stopping rather than spending the "
+            "remaining %d retry(ies) on it",
+            attempt_number,
+            last_error_category,
+            max(0, _effective_max_retries(state, settings) - (attempt_number - 1)),
+        )
+        no_progress: AttemptRecord = {
+            "attempt": attempt_number,
+            "sql": raw_sql,
+            "outcome": "no_progress",
+            "error": (
+                "The model returned the previous attempt's query unchanged after "
+                "being given its error."
+            ),
+            "will_retry": False,
+        }
+        return {
+            "sql": raw_sql,
+            "last_generated_sql": raw_sql,
+            "status": "failed",
+            "attempt_history": [no_progress],
+            "last_error_category": "no_progress",
+            "failure_explanation": NO_PROGRESS_MESSAGE,
+        }
+
+    return {"sql": raw_sql, "last_generated_sql": raw_sql, "status": "reviewing"}
 
 
 @_timed_node("review_sql")
@@ -2556,10 +2655,30 @@ def execute_sql_node(state: AgentState) -> dict[str, Any]:
                 ),
             }
 
+    # Clamped to whatever time this execution has left, never extended
+    # past it (`ExecutionEnvelope.timeout_for`). Returns the configured
+    # value unchanged when no envelope is bound, so a direct caller and
+    # `ENABLE_AGENT_HARNESS=false` behave exactly as before.
+    #
+    # 2026-10-28 (UAT-readiness Phase 6, `LOP-006`): this was the one
+    # operation on the request path still using its full per-call
+    # timeout. The Ollama calls were clamped from the start, so the
+    # deadline bounded the model but not the database -- a query could
+    # start with two seconds of the request budget left and still run
+    # for `QUERY_TIMEOUT_SECONDS`. `agent.harness.resolve_timeout` had
+    # no production caller at all until this one.
+    query_timeout = resolve_timeout(
+        envelope_from_state(state), float(settings.query_timeout_seconds)
+    )
     try:
         columns, rows = execute_readonly_sql(
             execution_sql,
-            settings.query_timeout_seconds,
+            # `execute_readonly_sql` takes whole seconds (it feeds a
+            # driver-level `SET statement_timeout`), and rounding *up*
+            # here would hand back time the deadline does not have, so
+            # the floor is taken -- with a 1s minimum, because 0 reads
+            # as "no timeout" to more than one driver.
+            max(1, int(query_timeout)),
             settings.max_result_rows,
             engine=get_read_only_engine(db_config),
         )
@@ -2596,7 +2715,7 @@ def execute_sql_node(state: AgentState) -> dict[str, Any]:
                 "retry_count": attempt_number,
                 "status": "failed",
                 "failure_explanation": (
-                    f"The query timed out after {settings.query_timeout_seconds}s on attempt "
+                    f"The query timed out after {max(1, int(query_timeout))}s on attempt "
                     f"{attempt_number}. This looks like an expensive query -- try narrowing your "
                     "question (a smaller date range, an added filter, fewer joined tables) rather "
                     "than retrying the same broad request."

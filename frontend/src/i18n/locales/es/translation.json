@@ -488,6 +488,7 @@
       "timeout": "La consulta tardó más del tiempo permitido.",
       "missingReference": "La consulta hacía referencia a una tabla o columna que no existe.",
       "sqlError": "La base de datos rechazó la consulta.",
+      "noProgress": "El agente repitio la misma consulta en lugar de corregirla, por lo que se detuvo.",
       "unknown": "El agente no pudo producir una consulta funcional.",
       "executionFailed": "La consulta que confirmaste no se ejecutó correctamente."
     }

@@ -743,6 +743,7 @@
       "timeout": "The query took longer than the allowed time.",
       "missingReference": "The query referenced a table or column that does not exist.",
       "sqlError": "The database rejected the query.",
+      "noProgress": "The agent repeated the same query instead of correcting it, so it stopped.",
       "unknown": "The agent could not produce a working query.",
       "executionFailed": "The query you confirmed did not run successfully."
     }

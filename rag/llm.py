@@ -19,7 +19,14 @@ import logging
 import httpx
 import ollama
 
-from agent.llm_client import decoding_options, ollama_unavailable_error
+from agent.harness.breakers import record_outcome
+from agent.harness.failures import FailureClass
+from agent.llm_client import (
+    decoding_options,
+    harness_ollama_client,
+    log_ollama_timing,
+    ollama_unavailable_error,
+)
 from config.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -67,9 +74,7 @@ def call_ollama(
             callers (the RAG subgraph nodes) handle it identically to the
             SQL pipeline's own LLM-call failures.
     """
-    client = ollama.Client(
-        host=settings.ollama_host, timeout=settings.ollama_request_timeout_seconds
-    )
+    client = harness_ollama_client(settings)
     try:
         response = client.chat(
             model=model or settings.ollama_model,
@@ -84,7 +89,17 @@ def call_ollama(
             options={**decoding_options(settings, max_tokens), "temperature": temperature},
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
+        record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
         raise ollama_unavailable_error(settings, model or settings.ollama_model, exc) from exc
+
+    # Closes the breaker on success and records this call in the
+    # performance rollup -- the same one line every `client.chat` in
+    # `agent/llm_client.py` makes. Without it a breaker opened by a
+    # failure here would never recover from a success here, and
+    # `GET /metrics/performance` would under-count every model call the
+    # router, both RAG subgraphs, web search, media search and the
+    # analyst planner make.
+    log_ollama_timing(response)
 
     return (
         response.get("message", {}).get("content", "")

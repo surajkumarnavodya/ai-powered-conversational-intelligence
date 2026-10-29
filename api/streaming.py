@@ -48,6 +48,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from agent.authz import Permission
+from agent.harness.context import reset_envelope_observer, set_envelope_observer
 from agent.progress import (
     ProgressSink,
     reset_progress_sink,
@@ -117,20 +118,28 @@ async def ask_stream(
 
     sink = ProgressSink()
     loop = asyncio.get_running_loop()
+    # Filled in by `ask` through the harness's envelope observer, so the
+    # disconnect handler below can cancel the run it started. A plain
+    # list because it is written on the worker thread and read on the
+    # event loop, and a single append/read of one element needs no more
+    # than that.
+    envelopes: list[Any] = []
 
     def _run() -> Any:
-        """Runs the governed handler with progress bound.
+        """Runs the governed handler with progress and the envelope hook bound.
 
-        The sink is bound *on this worker thread*, which is the thread the
+        Both are bound *on this worker thread*, which is the thread the
         graph actually runs on -- a `ContextVar` set at the request
         boundary would not be visible here. Same reason, same pattern as
         `agent.graph.run_agent` binding its execution envelope and audit
         tenant id inside the call rather than outside it.
         """
         token = set_progress_sink(sink)
+        observer_token = set_envelope_observer(envelopes.append)
         try:
             return ask(payload, request, identity)
         finally:
+            reset_envelope_observer(observer_token)
             reset_progress_sink(token)
             sink.close()
 
@@ -166,13 +175,34 @@ async def ask_stream(
                     yield ": keepalive\n\n"
 
                 if await request.is_disconnected():
-                    # Stop forwarding. The run itself is left to finish and
-                    # release its own admission slots through `ask`'s own
-                    # `on_done` callback -- abandoning it mid-flight would
-                    # leak those slots, which is worse than finishing work
-                    # nobody reads.
+                    # Stop forwarding, and tell the run to stop too.
+                    #
+                    # This used to only stop forwarding, on the reasoning
+                    # that abandoning the run would leak its admission
+                    # slots. That reasoning was wrong about what
+                    # cancelling does: `ExecutionEnvelope.cancel` is
+                    # cooperative, so the run still finishes -- at its
+                    # next node boundary rather than at the end of the
+                    # graph -- and still releases its slots through
+                    # `ask`'s own `on_done` callback. Nothing is
+                    # abandoned; the work is just not continued for a
+                    # reader who has gone.
+                    #
+                    # It matters because this is the dashboard's Stop
+                    # button. `frontend/src/store/chatStore.ts`'s
+                    # `cancelPendingQuestion` aborts the fetch, which is
+                    # this disconnect, and before this line a press of
+                    # Stop left the server generating and querying to
+                    # completion -- measured 2026-10-28 (UAT-readiness
+                    # Phase 6, `LOP-005`). "Stop" now stops something.
+                    for envelope in envelopes:
+                        envelope.cancel("client_disconnected")
                     sink.close()
-                    logger.info("[api] /ask/stream: client disconnected; stopped streaming")
+                    logger.info(
+                        "[api] /ask/stream: client disconnected; stopped streaming and "
+                        "signalled cancellation for %d execution(s)",
+                        len(envelopes),
+                    )
                     return
 
             # Anything emitted between the last poll and completion.

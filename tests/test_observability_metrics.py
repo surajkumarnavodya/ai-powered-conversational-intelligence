@@ -193,7 +193,7 @@ class TestDefaultSingleton:
 class TestLlmUsageRollup:
     """Catalogue row 45 -- cumulative per-model token consumption.
 
-    `record_llm_call` is fed from `agent.llm_client._log_ollama_timing`;
+    `record_llm_call` is fed from `agent.llm_client.log_ollama_timing`;
     the wiring from that funnel (and the "no model name means no bucket"
     guard) is covered in
     `tests/test_llm_client_usage_rollup.py`.

@@ -216,6 +216,7 @@ import logging
 import time
 from functools import lru_cache
 
+from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, StateGraph
 
 from agent.complexity import compute_max_retries
@@ -223,6 +224,7 @@ from agent.harness import (
     ExecutionEnvelope,
     ExecutionState,
     HarnessTerminated,
+    ProviderUnavailable,
     guard_node,
     terminal_state_for,
 )
@@ -264,6 +266,85 @@ from observability.metrics import get_default_metrics
 from security.audit_log import reset_audit_tenant_id, set_audit_tenant_id
 
 logger = logging.getLogger(__name__)
+
+
+# --- The structural bound on one run's node executions -----------------
+#
+# These three numbers are measured properties of the graph wired in
+# `build_graph()` below, not estimates, and
+# `tests/test_agent_loop_bounds.py` recomputes each of them from the
+# compiled graph's own edge set -- so adding a node to a retry cycle
+# fails a test that names the new number rather than silently shrinking
+# the safety margin.
+#
+# 2026-10-28 (UAT-readiness Phase 6, `LOP-001`): the margin had already
+# silently shrunk. The previous formula was `20 + max_retries * 10`, and
+# its comment described the longest retry cycle as 12 nodes. The cycle is
+# **13** -- `enforce_display_names` was inserted into it later and
+# neither the comment nor the arithmetic was updated -- and 10 was always
+# below even the figure the comment claimed. Measured consequence at the
+# default `MAX_RETRIES=3`: a question whose every attempt fails with a
+# missing-reference error needs 2 + 4*13 + 4 = 58 node executions and got
+# a limit of 50, so LangGraph raised `GraphRecursionError` and `POST /ask`
+# answered **HTTP 500** instead of the designed "gave up after 4 attempts"
+# response. See `docs/uat-readiness/phase-6-loops.md` §2.
+
+#: Node executions in the longest cycle in the graph: the
+#: missing-reference re-retrieval loop `execute_sql -> retrieve_schema ->
+#: retrieve_golden_examples -> retrieve_business_context ->
+#: classify_analytical_intent -> build_analytical_plan -> plan_query ->
+#: generate_sql -> review_sql -> review_metric_conformance ->
+#: enforce_display_names -> validate_sql -> estimate_cost -> execute_sql`.
+LONGEST_RETRY_CYCLE_NODES = 13
+
+#: Nodes a run executes before it can first enter that cycle
+#: (`sanitize_input`, `classify_followup`).
+PRE_CYCLE_NODES = 2
+
+#: Nodes after a successful `execute_sql` (`compute_analytics`,
+#: `generate_forecast`, `generate_recommendations`, `generate_insight`).
+POST_EXECUTION_NODES = 4
+
+#: Slack above the worst case. Exists so a *small* future addition
+#: degrades to "less headroom" rather than straight back to a 500 --
+#: never as a substitute for keeping the three numbers above correct.
+RECURSION_LIMIT_HEADROOM = 10
+
+
+#: `failure_explanation` for a run stopped by the structural limit. A
+#: fixed module constant, never built from the question or the error
+#: (CLAUDE.md 5.5), and deliberately worded as the same thing a
+#: budget-exhausted run reports -- from the reader's side that is exactly
+#: what happened, and naming the internal limit would be noise.
+RECURSION_LIMIT_MESSAGE = (
+    "I could not produce a working query for that question after several attempts. "
+    "Try rephrasing it, or narrowing it to fewer tables or metrics."
+)
+
+
+def recursion_limit_for(max_retries: int) -> int:
+    """LangGraph's `recursion_limit` for a run with this retry budget.
+
+    The worst case is every one of the `max_retries + 1` attempts taking
+    the longest cycle, then succeeding on the last one and running the
+    post-execution tail. Derived rather than hardcoded so a change to
+    `Settings.max_retries` (or to `agent.complexity`'s adaptive bonus,
+    which raises the effective budget per question) cannot outgrow it.
+
+    Note the interaction with `Settings.harness_max_steps` (120 by
+    default), which is the harness's own ceiling on total node
+    executions: it is deliberately *above* this limit for the default
+    retry budget, so the structural stop is what fires. Past roughly
+    `MAX_RETRIES=7` the ordering inverts and the harness budget fires
+    first instead -- which is still an orderly terminal state, just a
+    differently-worded one.
+    """
+    return (
+        PRE_CYCLE_NODES
+        + (max_retries + 1) * LONGEST_RETRY_CYCLE_NODES
+        + POST_EXECUTION_NODES
+        + RECURSION_LIMIT_HEADROOM
+    )
 
 
 @lru_cache(maxsize=1)
@@ -650,25 +731,11 @@ def run_agent(
     }
     # LangGraph's own default recursion_limit (25 total node executions) is
     # not automatically related to this graph's *own* retry budget
-    # (effective_max_retries above) -- a real, reproduced bug: a worst-case
-    # retry sequence (an execute_sql "missing_reference" retry loops all the
-    # way back to retrieve_schema -- a 12-node cycle: retrieve_schema,
-    # retrieve_golden_examples, retrieve_business_context,
-    # classify_analytical_intent, build_analytical_plan, plan_query,
-    # generate_sql, review_sql, review_metric_conformance, validate_sql,
-    # estimate_cost, execute_sql)
-    # can exceed 25 total steps well before
-    # effective_max_retries is exhausted -- e.g. the ~15-step initial pass
-    # plus just two such retries already exceeds that. When that happened,
-    # LangGraph raised an uncaught GraphRecursionError instead of the
-    # graph reaching its own intended terminal "failed" state, which
-    # surfaced to callers as an unhandled 500 rather than a normal failure
-    # response. Sized generously for the worst-case (every retry being the
-    # 10-node missing_reference cycle) plus headroom, scaled to this
-    # question's actual effective_max_retries (which can itself be raised
-    # above the base Settings.max_retries by agent.complexity's adaptive
-    # bonus) so a future config change can't reintroduce this.
-    recursion_limit = 20 + effective_max_retries * 10
+    # (effective_max_retries above), so it is computed from the graph's
+    # real shape -- see `recursion_limit_for` and the three structural
+    # constants above it for the arithmetic, the measurement, and the
+    # 2026-10-28 regression that made this an HTTP 500.
+    recursion_limit = recursion_limit_for(effective_max_retries)
     run_start = time.perf_counter()
     # Prompt 20: binds this run's tenant so every `security.audit_log
     # .log_security_event` emitted by a node below (input rejections, SQL
@@ -705,6 +772,55 @@ def run_agent(
         if envelope is None:  # pragma: no cover - structurally unreachable
             raise
         final_state = {**initial_state, **terminal_state_for(envelope, exc)}
+    except ProviderUnavailable as exc:
+        # The Ollama circuit breaker is open, so this call was refused
+        # without being attempted (`agent/harness/breakers.py`). That is
+        # a designed terminal condition, and it fires exactly when
+        # Ollama is down -- the moment graceful degradation matters most.
+        #
+        # 2026-10-28 (UAT-readiness Phase 6, `LOP-004`): nothing in this
+        # codebase caught it. `generate_sql_node` handles
+        # `OllamaUnavailableError` and `MalformedLLMOutputError`, but
+        # `ProviderUnavailable` is a plain `RuntimeError` raised a layer
+        # below them, inside `harness_ollama_client`, so it propagated out of
+        # the node, out of the graph, out of here, and `POST /ask`
+        # answered HTTP 500 with "An unexpected error occurred" instead
+        # of the breaker's own message. Reproduced by tripping the
+        # breaker and calling `run_agent`.
+        #
+        # `exc.safe_message` is the breaker's own operator-safe wording;
+        # it names no host, model or internal error (CLAUDE.md 5.6).
+        logger.error("Agent run refused: the %s circuit breaker is open", exc.provider)
+        final_state = {
+            **initial_state,
+            "status": "failed",
+            "failure_explanation": exc.safe_message,
+        }
+    except GraphRecursionError:
+        # The structural stop fired. `recursion_limit_for` is sized so
+        # this cannot happen for any reachable retry sequence, so getting
+        # here means the graph grew a cycle those constants no longer
+        # describe -- a defect to fix, logged as one.
+        #
+        # It is caught all the same, and that is the load-bearing half of
+        # `LOP-001`: the arithmetic above is a number that can drift, while
+        # this catch is a guarantee that drift costs a *refusal* rather
+        # than an HTTP 500. Converted into the same terminal shape a
+        # normally-failed run returns, so the caller gets the honest
+        # "could not produce a working query" response it would have got
+        # one attempt earlier.
+        logger.error(
+            "Agent run hit LangGraph's recursion_limit=%d (max_retries=%d) -- "
+            "the graph's retry cycles have outgrown agent.graph's structural "
+            "constants; failing the run cleanly rather than raising",
+            recursion_limit,
+            effective_max_retries,
+        )
+        final_state = {
+            **initial_state,
+            "status": "failed",
+            "failure_explanation": RECURSION_LIMIT_MESSAGE,
+        }
     finally:
         reset_current_envelope(envelope_token)
         reset_audit_tenant_id(audit_token)

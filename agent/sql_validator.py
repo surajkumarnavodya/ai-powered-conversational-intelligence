@@ -1665,3 +1665,54 @@ def _ordered_projection_sources(
                 sources |= cte_map.get(column_name, frozenset())
         ordered.append(frozenset(sources))
     return tuple(ordered)
+
+
+#: Collapses every run of whitespace, for the text fallback in
+#: `canonical_sql_form` below.
+_COLLAPSE_WHITESPACE = re.compile(r"\s+")
+
+
+def canonical_sql_form(sql: str, dialect: str | None = DEFAULT_DIALECT) -> str:
+    """A canonical rendering of `sql`, for "is this the same query?".
+
+    2026-10-28, UAT-readiness Phase 6 (`LOP-002`). The agent's retry loop
+    needs to tell a genuinely new attempt from the model handing back the
+    statement it was just told was wrong, and it needs that answer for
+    text that may not parse at all -- the `parse_error` retry path is one
+    of the loops being bounded.
+
+    So: parsed and regenerated through sqlglot wherever the statement
+    parses, which canonicalizes keyword case, quoting and layout
+    **without** touching string literals. That distinction is the point.
+    `WHERE name = 'bob'` and `WHERE name = 'BOB'` stay different queries,
+    because they are, and collapsing them would stop a run that was
+    making progress. Where it does not parse, the fallback is
+    whitespace-collapsed, upper-cased raw text -- cruder, but it still
+    catches the exact repeat, which is the case that matters there.
+
+    Lives here, beside `validate_sql` and `projection_source_columns`,
+    because this module is the one owner of sqlglot parsing in the agent
+    (CLAUDE.md 4.8), and it already carries the `RecursionError` guard
+    that every sqlglot call site in this codebase needs: sqlglot parses by
+    recursive descent, so a deeply-nested input raises a `RuntimeError`
+    rather than a `SqlglotError` (CLAUDE.md 5.1). This is an efficiency
+    aid rather than a gate, so it degrades to the text form instead of
+    refusing -- an unparseable statement is already refused by
+    `validate_sql`, which is the control.
+
+    Args:
+        sql: Any SQL text, parseable or not.
+        dialect: sqlglot dialect to parse with.
+
+    Returns:
+        A string that is equal for two statements differing only in
+        layout or keyword case, and unequal whenever anything the
+        database would read differently changed.
+    """
+    try:
+        statement = sqlglot.parse_one(sql, read=dialect)
+        if statement is not None:
+            return statement.sql(dialect=dialect)
+    except (SqlglotError, RecursionError):
+        logger.debug("[sql_validator] canonical form fell back to the text comparison")
+    return _COLLAPSE_WHITESPACE.sub(" ", sql).strip().upper()

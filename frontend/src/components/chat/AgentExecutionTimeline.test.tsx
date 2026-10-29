@@ -188,6 +188,9 @@ describe('reasonKeyFor', () => {
       'timeout',
       'plan_not_satisfied',
       'metric_definition_not_used',
+      // The agent stopping itself rather than a gate refusing: an
+      // attempt returned the previous query unchanged (LOP-002).
+      'no_progress',
     ]) {
       expect(reasonKeyFor(category)).toMatch(/^lifecycle\.reason\./)
       expect(reasonKeyFor(category)).not.toBe('lifecycle.reason.unknown')
