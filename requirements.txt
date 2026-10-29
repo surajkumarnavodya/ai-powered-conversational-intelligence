@@ -334,6 +334,47 @@ python-pptx==1.0.2
 # set_key()/unset_key() -- but a same-minor-line, low-risk bump.
 python-dotenv==1.2.2
 pyyaml==6.0.3   # config/table_descriptions.py -- was only a transitive dep before
+# The two HTTP clients this application imports *directly*, neither of
+# which was declared until 2026-10-29 (UAT-readiness Phase 8, `BP-009`).
+# Both were present only because something else pulled them in:
+# `requests` via CacheControl/detect-secrets/kubernetes/langsmith/
+# pip_audit/requests-oauthlib/requests-toolbelt, and `httpx` via
+# chromadb/huggingface_hub/langchain-core/langgraph-sdk/ollama. An
+# unrelated bump that drops one of those is an ImportError on a module
+# this application cannot start without -- the same failure the `pyyaml`
+# line above was added to prevent, after it happened once.
+#
+# `requests` is imported by `security/outbound_url.py` (the SSRF
+# validator), `media_gen/client.py`, `media_gen/download.py` and
+# `media_gen/upload.py`. `httpx` is imported by eleven more, including
+# `agent/llm_client.py`, `rag/llm.py`, `search/web_search.py` and
+# `security/oidc.py`. Pinned to the versions this checkout resolves, so
+# declaring them changes nothing that is installed today.
+requests==2.34.2
+httpx==0.27.2
+# Four more of the same shape, found by the repository-wide scan rather
+# than by inspection (`BP-009`). Each is imported directly by production
+# code and was present only through another package's dependency tree:
+#
+#   av              voice/stt.py                          <- faster-whisper
+#   huggingface_hub media_gen/providers/huggingface.py     <- faster-whisper,
+#                                                             sentence-transformers,
+#                                                             tokenizers, transformers
+#   numpy           attachments/inpaint.py                <- chromadb, pandas,
+#                                                             scikit-learn and 8 more
+#   starlette       security/client_ip.py                 <- fastapi
+#
+# `starlette` is the most load-bearing of the four and the least obvious:
+# `security/client_ip.py` is what decides whether `X-Forwarded-For` is
+# trusted, so it is on the rate-limiting path (CLAUDE.md 5.7). Relying on
+# FastAPI to keep re-exporting a compatible Starlette is a reasonable bet
+# and still an undeclared one.
+av==18.1.0
+huggingface-hub==1.31.0
+numpy==2.5.3
+starlette==1.6.0
+
+
 
 # Dev/test/lint/docs-build tooling (pytest, black, ruff, mypy, reportlab, ...)
 # lives in requirements-dev.txt, not here (2026 security remediation pass).
