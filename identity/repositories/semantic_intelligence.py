@@ -196,8 +196,8 @@ def decide_finding(
     if row.status != "open":
         raise InvalidFindingTransitionError(f"A {row.status} finding cannot be decided again.")
     row.status = "accepted" if decision == "accept" else "dismissed"
-    row.decided_by_user_id = user_id  # type: ignore[assignment]  # BP-009: nullable column, see identity/models.py docstring
-    row.decision_note = note  # type: ignore[assignment]  # BP-009: nullable column, see identity/models.py docstring
+    row.decided_by_user_id = user_id  # type: ignore[assignment]  # BP-001: nullable column, see identity/models.py docstring
+    row.decision_note = note  # type: ignore[assignment]  # BP-001: nullable column, see identity/models.py docstring
     row.decided_at = now
     session.commit()
     return row
@@ -239,7 +239,7 @@ def rollback_finding(
     row.risk_score = content["risk_score"]
     row.risk_tier = content["risk_tier"]
     row.status = "open"
-    row.decided_by_user_id = user_id  # type: ignore[assignment]  # BP-009: nullable column, see identity/models.py docstring
+    row.decided_by_user_id = user_id  # type: ignore[assignment]  # BP-001: nullable column, see identity/models.py docstring
     row.decision_note = f"Rolled back to version {to_version}."
     row.decided_at = now
     session.commit()

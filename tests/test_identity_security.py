@@ -132,7 +132,7 @@ class TestRefreshTokens:
 
 
 class TestTheJwtKeyChecksSurviveOptimisedBytecode:
-    """UAT-readiness Phase 8, `BP-006`.
+    """UAT-readiness Phase 8, `BP-007`.
 
     `_signing_key` and `_verification_key` guarded their required key
     with four bare `assert` statements. `Settings`' own validator does

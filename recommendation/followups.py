@@ -364,7 +364,7 @@ def _available_dimension_columns(
                 )
                 continue
             # nosec B101 - narrowing only; `_is_dimension_shaped` already rejected
-            # None on the line above (BP-004).
+            # None on the line above (BP-005).
             assert raw_type is not None  # nosec B101
             seen.add(lowered)
             available.append((table.table_name, column, raw_type))

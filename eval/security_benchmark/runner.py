@@ -291,7 +291,7 @@ def run_security_benchmark(
 def _category_stats(results: list[SecurityCaseResult]) -> dict[str, float]:
     if not results:
         # nosec B105 - `pass_rate` is a benchmark statistic; the matched
-        # "pass" is part of that field name, not a credential (BP-004).
+        # "pass" is part of that field name, not a credential (BP-005).
         return {"count": 0, "pass_rate": 0.0, "avg_latency_seconds": 0.0}  # nosec B105
     passed = sum(1 for r in results if r.overall_pass)
     return {

@@ -69,7 +69,7 @@ extend-immutable-calls = [
 [tool.bandit]
 # Single-sourced so a local run and the CI gate scan the same files -- the
 # reason this block exists at all (2026-10-29, UAT-readiness Phase 8,
-# `BP-004`). The gate used to name twelve packages on the command line
+# `BP-005`). The gate used to name twelve packages on the command line
 # (`bandit -r agent api config db security media_gen moderation rag search
 # voice media embeddings`) and therefore never looked at `identity/`,
 # `governance/`, `governance_center/`, `guardrails/`, `jobs/`,

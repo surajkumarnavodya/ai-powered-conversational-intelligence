@@ -96,14 +96,14 @@ def _run_for_connection(settings: Settings, config: DatabaseConnectionConfig) ->
     # read back from live introspection of the operator's own database, in a
     # manual CLI with no request surface; the statement is then put through
     # `validate_sql` and `enforce_row_limit` on the next lines, which is the
-    # same governed path `agent.nodes.execute_sql_node` uses (BP-004).
+    # same governed path `agent.nodes.execute_sql_node` uses (BP-005).
     sample_sql = f"SELECT * FROM {tables[0].table_name}"  # nosec B608
     validation = validate_sql(sample_sql, dialect=dialect)
     if not validation.is_valid:
         print(f"FAIL: sample query rejected by validator: {validation.error}")
         return None
     # nosec B101 - narrowing only; `is_valid` was checked on the line above
-    # (BP-004).
+    # (BP-005).
     assert validation.normalized_sql is not None  # nosec B101
     safe_sql = enforce_row_limit(validation.normalized_sql, max_rows=5, dialect=dialect)
     # The governed execution path, in full:

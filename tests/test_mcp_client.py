@@ -514,7 +514,7 @@ class TestNoAutoRegistration:
                 return [FakeTool()]
 
         # `RemoteToolRegistrationError`, not `AssertionError`, since
-        # 2026-10-29 (`BP-006`): this is a trust boundary and `python -O`
+        # 2026-10-29 (`BP-007`): this is a trust boundary and `python -O`
         # deletes an `assert` outright. Asserted on the specific type
         # rather than `Exception` so a future change back to a bare
         # `assert` fails here.
@@ -522,7 +522,7 @@ class TestNoAutoRegistration:
             assert_no_remote_tool_is_registered(FakeRegistry())
 
     def test_the_boundary_does_not_depend_on_assertions_being_enabled(self):
-        # The point of `BP-006`: the refusal must survive optimised
+        # The point of `BP-007`: the refusal must survive optimised
         # bytecode, where every `assert` in the module is removed. A
         # subprocess is the only honest way to test that -- `-O` is
         # interpreter start-up state.

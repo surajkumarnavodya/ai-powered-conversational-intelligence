@@ -123,7 +123,7 @@ def _require_configured_key(value: _KeyT | None, *, kind: str, algorithm: str) -
     """Returns a required JWT key, refusing loudly when it is missing.
 
     These four checks were `assert` statements until 2026-10-29
-    (UAT-readiness Phase 8, `BP-005`). `Settings`' own validator does
+    (UAT-readiness Phase 8, `BP-006`). `Settings`' own validator does
     guarantee both branches, so the checks never fire in practice -- but
     an `assert` is removed entirely by `python -O`/`PYTHONOPTIMIZE`, and
     what replaces it here is not "nothing happens": the next line calls
@@ -216,7 +216,7 @@ def create_access_token(
         "roles": list(roles),
         "tid": tenant_id,
         # nosec B105 - a JWT claim *value* naming the token kind, not a
-        # credential; the signing key is `_signing_key` above (BP-004).
+        # credential; the signing key is `_signing_key` above (BP-005).
         "token_type": "access",  # nosec B105
         "iat": now,
         "exp": now + timedelta(minutes=settings.access_token_expire_minutes),
@@ -359,7 +359,7 @@ def hash_refresh_token(raw_token: str) -> str:
 # nosec B105 - deliberately a fixed, public, never-accepted string: its whole
 # purpose is to spend Argon2id work on a login with no stored hash, so that a
 # missing account cannot be told from a wrong password by timing (`AUN-001`).
-# Treating it as a secret would defeat the point (BP-004).
+# Treating it as a secret would defeat the point (BP-005).
 _DECOY_PASSWORD = "decoy-password-never-accepted-anywhere"  # nosec B105
 
 

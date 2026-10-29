@@ -58,7 +58,7 @@ class AttachmentErrorCode(str, Enum):
     CORRUPTED_IMAGE = "CORRUPTED_IMAGE"
     CORRUPTED_DOCUMENT = "CORRUPTED_DOCUMENT"
     PASSWORD_PROTECTED = "PASSWORD_PROTECTED"  # nosec B105 - a rejection-reason
-    # enum member, not a credential (BP-004).
+    # enum member, not a credential (BP-005).
     OCR_UNAVAILABLE = "OCR_UNAVAILABLE"
     INVALID_OFFICE_DOCUMENT = "INVALID_OFFICE_DOCUMENT"
     MODEL_NO_IMAGE_SUPPORT = "MODEL_NO_IMAGE_SUPPORT"

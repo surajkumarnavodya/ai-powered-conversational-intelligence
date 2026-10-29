@@ -10,7 +10,7 @@ quietly fallen 29 packages behind the repository:
   `mcp_client/` or roughly twenty-five others -- about 60,000 lines,
   including the whole authentication package. Running it over the full
   tree found 24 findings in that gap, six of them in `identity/`
-  (`BP-004`). That gate now reads its exclusions from `[tool.bandit]` in
+  (`BP-005`). That gate now reads its exclusions from `[tool.bandit]` in
   `pyproject.toml`, so a new package is covered the day it is created;
   the test below pins that the config keeps it that way.
 * `mypy` had no blocking gate at all. It does now, scoped to production
@@ -130,7 +130,7 @@ class TestTheSastGateIsScopedByExclusion:
         assert "-c pyproject.toml" in run, (
             "The bandit step must read [tool.bandit] from pyproject.toml. A "
             "package list on the command line is what left 29 packages "
-            "unscanned (BP-004)."
+            "unscanned (BP-005)."
         )
         assert "-r ." in run, "bandit must walk the whole tree, not named packages."
 
@@ -159,7 +159,7 @@ class TestTheSastGateIsScopedByExclusion:
 
 
 class TestTheFrontendSuiteRuns:
-    """`frontend/` ships 1,508 tests; CI ran none of them until `BP-007`."""
+    """`frontend/` ships 1,508 tests; CI ran none of them until `BP-008`."""
 
     def test_the_frontend_job_runs_vitest(self) -> None:
         step = _step("frontend", "Test (vitest)")

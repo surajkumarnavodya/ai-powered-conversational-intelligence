@@ -182,7 +182,7 @@ def assert_no_remote_tool_is_registered(registry: object) -> None:
         return
     for tool in lister():
         # Was an `assert` until 2026-10-29 (UAT-readiness Phase 8,
-        # `BP-005`). This is the check that keeps a remote server's tools
+        # `BP-006`). This is the check that keeps a remote server's tools
         # out of the local registry -- a trust boundary, not a developer
         # note -- and `python -O` deletes an `assert` entirely, so the
         # boundary would vanish with it.

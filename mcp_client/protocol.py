@@ -106,7 +106,7 @@ def _reject_embedded_newline(line: str) -> None:
     encoded line is message smuggling: the far side reads one line as
     two messages. `json.dumps` escapes newlines inside strings, so this
     never fires on well-formed input -- which is exactly why it was an
-    `assert` until 2026-10-29 (UAT-readiness Phase 8, `BP-005`), and
+    `assert` until 2026-10-29 (UAT-readiness Phase 8, `BP-006`), and
     exactly why it must not be one. `python -O` deletes an `assert`
     outright, and this is a framing control on data that reaches a
     remote process, not a developer note. CLAUDE.md 4.2 asks a safety

@@ -152,5 +152,5 @@ class ReleaseGateVerdict(str, Enum):
     yes/no decision, not a graded one."""
 
     PASS = "pass"  # nosec B105 - a gate verdict ("pass"/"block"), not a
-    # credential (BP-004).
+    # credential (BP-005).
     BLOCK = "block"

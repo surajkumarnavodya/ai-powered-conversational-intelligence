@@ -39,7 +39,7 @@ import logging
 import subprocess  # nosec B404 - a stdio MCP server *is* a child process; see
 
 # `StdioTransport` below and CLAUDE.md 3 on this package being
-# administrator-controlled trust only (BP-004).
+# administrator-controlled trust only (BP-005).
 import threading
 from typing import IO
 
@@ -89,7 +89,7 @@ class StdioTransport:
             # below, and `env` is a complete replacement rather than an overlay. No
             # part of argv comes from a request, a model, or a database value; see
             # the module docstring and CLAUDE.md 3 on this package being
-            # administrator-controlled trust only (BP-004).
+            # administrator-controlled trust only (BP-005).
             self._process = subprocess.Popen(  # noqa: S603  # nosec B603
                 argv,
                 stdin=subprocess.PIPE,

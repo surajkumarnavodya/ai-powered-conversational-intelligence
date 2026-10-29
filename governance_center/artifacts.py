@@ -306,7 +306,7 @@ def parse_artifact_spec(asset_type: GovernedAssetType, config: dict[str, Any]) -
     # classes, which is exactly what `ArtifactSpec` unions.
     # nosec B101 - narrowing only; `_SPEC_MODELS` is a module constant holding
     # exactly these three classes, and `model_validate` above has already
-    # refused anything else (BP-004).
+    # refused anything else (BP-005).
     assert isinstance(  # nosec B101
         parsed, PromptArtifactSpec | AgentArtifactSpec | AnalyticalPolicyArtifactSpec
     )

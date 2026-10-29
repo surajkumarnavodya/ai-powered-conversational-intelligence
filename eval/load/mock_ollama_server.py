@@ -64,7 +64,7 @@ _REVIEW_MARKER = "SQL reviewer"
 
 def _artificial_latency_seconds() -> float:
     # nosec B311 - artificial latency jitter for a load-test double. Nothing
-    # here is a token, a key, or a decision (BP-004).
+    # here is a token, a key, or a decision (BP-005).
     jitter = random.uniform(-LATENCY_JITTER_MS, LATENCY_JITTER_MS)  # nosec B311
     return max(0.0, (LATENCY_MS + jitter)) / 1000.0
 
@@ -164,7 +164,7 @@ class MockOllamaHandler(BaseHTTPRequestHandler):
 def main() -> None:
     # nosec B104 - intentional: a container-internal test double that stands in
     # for Ollama inside the load-test compose network, never exposed to a real
-    # network and never run by the application (BP-004).
+    # network and never run by the application (BP-005).
     server = ThreadingHTTPServer(
         ("0.0.0.0", PORT),  # noqa: S104  # nosec B104
         MockOllamaHandler,

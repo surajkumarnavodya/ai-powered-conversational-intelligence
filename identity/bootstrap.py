@@ -143,7 +143,7 @@ def bootstrap_admin_user(session: Session, settings: Settings) -> User | None:
     # guarantees both are set whenever bootstrap_admin_enabled is True.
     # nosec B101 - narrowing only, for the type checker; the validator named
     # above is the real guarantee, and neither value reaches a security
-    # decision from here (BP-004).
+    # decision from here (BP-005).
     assert settings.bootstrap_admin_email is not None  # nosec B101
     assert settings.bootstrap_admin_password is not None  # nosec B101
 

@@ -43,7 +43,7 @@ jobs:
   secret-scan:
     runs-on: ubuntu-latest
     steps:
-      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-006`). v7.0.1 exists.
+      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-007`). v7.0.1 exists.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
@@ -67,7 +67,7 @@ jobs:
         # same tracked-file set with a checked-in baseline.
         #
         # Pinned to a commit SHA 2026-10-29 (UAT-readiness Phase 8,
-        # `BP-006`). This was the one remaining floating third-party
+        # `BP-007`). This was the one remaining floating third-party
         # action tag in this file, which is precisely the shape of pin
         # the `trivy-action` comment further down explains was force-
         # pushed to malicious commits across 76 of 77 tags. A
@@ -78,7 +78,7 @@ jobs:
         uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
         continue-on-error: true
 
-      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-006`). v7.1.0 exists.
+      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-007`). v7.1.0 exists.
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11"
@@ -128,12 +128,12 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-006`). v7.0.1 exists.
+      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-007`). v7.0.1 exists.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
-      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-006`). v7.1.0 exists.
+      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-007`). v7.1.0 exists.
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11"
@@ -163,7 +163,7 @@ jobs:
         # join an ignored backlog.
         #
         # **The path list this step used to carry was a blind spot, and it
-        # was measured 2026-10-29 (UAT-readiness Phase 8, `BP-004`).** It
+        # was measured 2026-10-29 (UAT-readiness Phase 8, `BP-005`).** It
         # named twelve packages, so it never looked at `identity/`,
         # `governance/`, `governance_center/`, `guardrails/`, `jobs/`,
         # `attachments/`, `mcp_client/`, `onboarding/`, `semantic/`,
@@ -344,12 +344,12 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-006`). v7.0.1 exists.
+      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-007`). v7.0.1 exists.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
-      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-006`). v7.1.0 exists.
+      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-007`). v7.1.0 exists.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
@@ -367,7 +367,7 @@ jobs:
 
       - name: Test (vitest)
         # **This step did not exist until 2026-10-29 (UAT-readiness Phase
-        # 8, `BP-007`).** `frontend/` ships 1,508 vitest tests across 104
+        # 8, `BP-008`).** `frontend/` ships 1,508 vitest tests across 104
         # files and CI ran none of them: this job did lint, tsc, build and
         # the bundle secret-scan, and `npm run test` was simply absent, so
         # a frontend regression could only be caught by somebody running
@@ -379,7 +379,7 @@ jobs:
       - name: Dependency vulnerability scan (npm audit)
         # Blocking, and scoped to what actually ships with `--omit=dev`
         # -- the same posture as `pip-audit` in the `test` job, which had
-        # no frontend counterpart at all until 2026-10-29 (`BP-007`).
+        # no frontend counterpart at all until 2026-10-29 (`BP-008`).
         # Measured 0 vulnerabilities on this checkout. No ignore list is
         # carried on purpose: if a new advisory lands in a production
         # dependency, this step should be the thing that says so.
@@ -414,7 +414,7 @@ jobs:
   docker-scan:
     runs-on: ubuntu-latest
     steps:
-      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-006`). v7.0.1 exists.
+      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-007`). v7.0.1 exists.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
@@ -483,7 +483,7 @@ jobs:
   load-test-smoke:
     runs-on: ubuntu-latest
     steps:
-      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-006`). v7.0.1 exists.
+      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-007`). v7.0.1 exists.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
@@ -511,12 +511,12 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-006`). v7.0.1 exists.
+      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-007`). v7.0.1 exists.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
-      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-006`). v7.1.0 exists.
+      # Pinned 2026-10-29 (UAT-readiness Phase 8, `BP-007`). v7.1.0 exists.
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11"

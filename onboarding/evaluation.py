@@ -99,7 +99,7 @@ def evaluate_candidates(
         # ValidationResult's own model_validator.
         # nosec B101 - narrowing only; `ValidationResult`'s own model_validator
         # guarantees it whenever `is_valid` is True, checked just above. The SQL
-        # that follows is validated and row-limited regardless (BP-004).
+        # that follows is validated and row-limited regardless (BP-005).
         assert validation.normalized_sql is not None  # nosec B101
         limited_sql = enforce_row_limit(validation.normalized_sql, max_rows, dialect=dialect)
         try:
