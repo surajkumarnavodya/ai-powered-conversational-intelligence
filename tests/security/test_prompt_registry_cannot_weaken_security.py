@@ -159,6 +159,45 @@ EXPECTED_LIVE_INVARIANTS: dict[str, set[SafetyInvariant]] = {
         SafetyInvariant.NO_FABRICATION,
         SafetyInvariant.CITATION_REQUIRED,
     },
+    # --- Added 2026-10-29, UAT-readiness Phase 7 (`CTX-001`) ---
+    #
+    # Eleven prompts that were live and outside the inventory, so this
+    # suite had never seen them. Each set below is what the live text was
+    # *measured* to carry on that date, not an aspiration: declaring an
+    # invariant a prompt does not have would fail
+    # `test_each_live_prompt_still_carries_its_required_invariants`
+    # immediately, and declaring fewer than it has is what
+    # `TestSuccessorVersionsInheritTheirPredecessorsControls` already
+    # guards against being used to weaken a successor.
+    "web_search_answer": {
+        SafetyInvariant.UNTRUSTED_DATA_FRAMING,
+        SafetyInvariant.NO_FABRICATION,
+        SafetyInvariant.CITATION_REQUIRED,
+    },
+    "context_resolution": {
+        SafetyInvariant.UNTRUSTED_DATA_FRAMING,
+        SafetyInvariant.NO_FABRICATION,
+    },
+    "context_resolution_template": {SafetyInvariant.UNTRUSTED_DATA_FRAMING},
+    "general_knowledge_answer": {
+        SafetyInvariant.UNTRUSTED_DATA_FRAMING,
+        SafetyInvariant.NO_FABRICATION,
+    },
+    "general_knowledge_template": {
+        SafetyInvariant.UNTRUSTED_DATA_FRAMING,
+        SafetyInvariant.NO_FABRICATION,
+    },
+    "answer_translation": {SafetyInvariant.UNTRUSTED_DATA_FRAMING},
+    "profile_picture_review": {SafetyInvariant.UNTRUSTED_DATA_FRAMING},
+    "svg_generation": {SafetyInvariant.UNTRUSTED_DATA_FRAMING},
+    "voice_transcript_correction": {SafetyInvariant.UNTRUSTED_DATA_FRAMING},
+    # Both routing prompts carry no stated invariant, which is a recorded
+    # Phase 7 finding (`CTX-003`) rather than an oversight here -- see
+    # their notes in `governance_center.inventory`. Empty for the same
+    # reason `rag_relevance_grade` is: this suite reports live text, it
+    # does not rewrite it.
+    "source_router": set(),
+    "source_classifier_fallback": set(),
 }
 
 #: A candidate template that carries every security invariant, used as

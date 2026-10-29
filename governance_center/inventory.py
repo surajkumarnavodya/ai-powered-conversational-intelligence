@@ -72,6 +72,27 @@ logger = logging.getLogger(__name__)
 #: is the only part that varies, and no safety invariant depends on it.
 FINGERPRINT_DB_TYPE = "mssql"
 
+#: The timestamp used when fingerprinting the web-answer prompt, which
+#: interpolates the current date and time so the model can judge
+#: "today"/"latest" at all. Fixed here for the same reason
+#: `FINGERPRINT_DB_TYPE` is: a fingerprint that moved every minute would
+#: report drift continuously and so report nothing. The timestamp is the
+#: only part that varies and no safety invariant depends on it.
+FINGERPRINT_NOW_TEXT = "2026-01-01 00:00 UTC"
+
+#: The source set used when fingerprinting the fallback source-classifier
+#: prompt, which appends a guidance block per pair of sources it must
+#: disambiguate. Every branch is enabled here deliberately: the
+#: fingerprint should cover the longest form of the prompt, so a drift in
+#: any guidance block is visible rather than only the ones a given
+#: deployment happens to have switched on.
+FINGERPRINT_ROUTER_SOURCES: tuple[str, ...] = (
+    "sql",
+    "attachments",
+    "generation",
+    "media_search",
+)
+
 
 class InventoryEntry(BaseModel):
     """One live, in-code artifact, described as a governed spec.
@@ -275,6 +296,150 @@ _PROMPT_SOURCES: tuple[tuple[str, str, str, str, Callable[[], str], str], ...] =
         "_MEDIA_SEARCH_ANSWER_SYSTEM_PROMPT",
         lambda: _resolve("agent.orchestrator.nodes", "_MEDIA_SEARCH_ANSWER_SYSTEM_PROMPT"),
         "",
+    ),
+    # --- Added 2026-10-29, UAT-readiness Phase 7 (`CTX-001`) ---
+    #
+    # These nine were live and outside the inventory, so the drift suite
+    # could not see them: it pins "the expected table covers exactly the
+    # live prompt set", but "live prompt set" meant *this tuple*, and
+    # nothing checked this tuple against the repository. Every one was
+    # inspected and already carried its untrusted-data framing, so this
+    # is a coverage fix, not a prompt rewrite -- no live text was edited.
+    #
+    # The three read from `prompts/*.md` are the ones the gap mattered
+    # most for: a markdown file can be retuned with no code change at
+    # all, which is exactly the drift this registry exists to detect.
+    # Each resolves through the *runtime's own* loader rather than
+    # re-reading the path here, so the inventory cannot describe a file
+    # the application does not actually load.
+    (
+        "source_router",
+        "Multi-source routing decision",
+        "agent.orchestrator.nodes",
+        "_router_prompt_template",
+        lambda: _resolve("agent.orchestrator.nodes", "_router_prompt_template")(),
+        "Read from prompts/router.md at runtime, so it is tunable without a code "
+        "change -- the strongest reason to fingerprint it. The routing decision it "
+        "produces is filtered through RBAC by `router_node` before any subgraph "
+        "runs, so this prompt can request access and never grant it. "
+        "Inventory finding (`CTX-003`, 2026-10-29): it carries NO stated safety "
+        "invariant -- no untrusted-data framing at all -- although the question and "
+        "the conversation transcript both reach it. Bounded: the content is the "
+        "caller's own, the RBAC filter above is the real control, and a rewritten "
+        "source_query still passes the SQL validator and result gate. Reported "
+        "rather than silently reworded, exactly as rag_relevance_grade is: "
+        "editing a live prompt changes routing behaviour and is an owner decision.",
+    ),
+    (
+        "context_resolution",
+        "Follow-up context resolution",
+        "agent.context_resolution",
+        "_LLM_SYSTEM_PROMPT",
+        lambda: _resolve("agent.context_resolution", "_LLM_SYSTEM_PROMPT"),
+        "Live only when ENABLE_CONTEXT_RESOLUTION_LLM is on (off by default -- one "
+        "escalation measured 11.1s on this hardware).",
+    ),
+    (
+        "context_resolution_template",
+        "Follow-up context resolution user template",
+        "agent.context_resolution",
+        "_prompt_template",
+        lambda: _resolve("agent.context_resolution", "_prompt_template")(),
+        "Read from prompts/context_resolution.md at runtime. The user-turn template "
+        "for the prompt above; carries the transcript, which is framed as data by "
+        "its system prompt rather than here.",
+    ),
+    (
+        "general_knowledge_answer",
+        "General-knowledge answer (no retrieval)",
+        "agent.orchestrator.general_knowledge",
+        "_SYSTEM_PROMPT",
+        lambda: _resolve("agent.orchestrator.general_knowledge", "_SYSTEM_PROMPT"),
+        "Live only when ENABLE_GENERAL_KNOWLEDGE_ANSWERS is on (off by default). "
+        "Carries the load-bearing rule that it must never claim a fact came from "
+        "the user's databases, documents or policies.",
+    ),
+    (
+        "general_knowledge_template",
+        "General-knowledge answer user template",
+        "agent.orchestrator.general_knowledge",
+        "_prompt_template",
+        lambda: _resolve("agent.orchestrator.general_knowledge", "_prompt_template")(),
+        "Read from prompts/general_knowledge.md at runtime.",
+    ),
+    (
+        "answer_translation",
+        "Answer translation",
+        "agent.translation",
+        "_SYSTEM_PROMPT",
+        lambda: _resolve("agent.translation", "_SYSTEM_PROMPT"),
+        "Inventory finding: built, not wired (CLAUDE.md 1) -- no route, node or "
+        "setting calls `translate_answer` today. Registered anyway, so the day it "
+        "is wired it is already under drift detection rather than newly invisible. "
+        "Its placeholder-preservation rule is what stops a translation altering a "
+        "figure, so it is a correctness control, not only a style one.",
+    ),
+    (
+        "profile_picture_review",
+        "Profile-picture suitability review",
+        "identity.profile_picture",
+        "_VISION_SYSTEM_PROMPT",
+        lambda: _resolve("identity.profile_picture", "_VISION_SYSTEM_PROMPT"),
+        "Judges a user-supplied image. Its model-authored reason is shown to a "
+        "person, and `identity.profile_picture` bounds and strips that text "
+        "separately -- the prompt is not the only control on what it can emit.",
+    ),
+    (
+        "svg_generation",
+        "Free SVG diagram generation",
+        "media_gen.providers.svg_llm",
+        "_SYSTEM_PROMPT",
+        lambda: _resolve("media_gen.providers.svg_llm", "_SYSTEM_PROMPT"),
+        "Live only when ENABLE_SVG_GENERATION is on. Its element/attribute "
+        "allowlist is an accuracy aid, not the boundary -- `media_gen` sanitises "
+        "the returned SVG and caps its size regardless of what the model emits.",
+    ),
+    (
+        "source_classifier_fallback",
+        "Fallback source classification",
+        "agent.orchestrator.nodes",
+        "_classify_sources_system_prompt",
+        lambda: _resolve("agent.orchestrator.nodes", "_classify_sources_system_prompt")(
+            FINGERPRINT_ROUTER_SOURCES
+        ),
+        "The second routing prompt (prompts/router.md is the primary one), used when "
+        "the structured router is unavailable or unparseable. Built by a function "
+        "because it appends a guidance block per disambiguation it must make, so the "
+        "fingerprint covers every branch -- see FINGERPRINT_ROUTER_SOURCES. Was "
+        "function-local, and so invisible to this registry, until 2026-10-29; "
+        "hoisted with no wording change. Inventory finding (`CTX-003`): like "
+        "source_router it carries no stated safety invariant, and is bounded the "
+        "same way -- `router_node` filters its output through RBAC.",
+    ),
+    (
+        "web_search_answer",
+        "Web-search answer composition",
+        "agent.orchestrator.nodes",
+        "_web_search_answer_system_prompt",
+        lambda: _resolve("agent.orchestrator.nodes", "_web_search_answer_system_prompt")(
+            FINGERPRINT_NOW_TEXT
+        ),
+        "The only live prompt that puts *third-party* untrusted content (live web "
+        "results) in front of a model, so the highest-value entry here. Was a "
+        "function-local string until 2026-10-29 and therefore invisible to this "
+        "registry; hoisted to a module-level template with no wording change. Its "
+        "no-publication-date rule is load-bearing -- see `HAL-004`, which records "
+        "that this path has no grounding gate behind the prompt.",
+    ),
+    (
+        "voice_transcript_correction",
+        "Voice transcript correction",
+        "voice.correction",
+        "_CORRECTION_SYSTEM_PROMPT",
+        lambda: _resolve("voice.correction", "_CORRECTION_SYSTEM_PROMPT"),
+        "Live only when voice mode is on. Rewrites a user's own transcribed "
+        "question before it reaches the pipeline, so a drift here changes what "
+        "the platform believes it was asked.",
     ),
 )
 
