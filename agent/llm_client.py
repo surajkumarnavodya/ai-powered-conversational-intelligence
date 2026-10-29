@@ -19,7 +19,7 @@ import ollama
 from pydantic import ValidationError
 
 from agent.analytical_plan import AnalyticalPlan, render_plan_as_steps
-from agent.context_budget import Section, SectionPriority, apply_budget
+from agent.context_budget import CHARS_PER_TOKEN, Section, SectionPriority, apply_budget
 from agent.exceptions import MalformedLLMOutputError, OffTopicQuestionError, OllamaUnavailableError
 from agent.harness.breakers import check_provider, record_outcome
 from agent.harness.context import get_current_envelope
@@ -134,6 +134,16 @@ def harness_ollama_client(settings: Settings) -> ollama.Client:
 #: system prompt happens to be shorter and then leave no headroom when
 #: the dialect changes.
 _SYSTEM_PROMPT_RESERVE_CHARS = 8_500
+
+#: How far below the estimated token count `prompt_eval_count` must fall
+#: before `report_prompt_truncation` calls it truncation. Loose on
+#: purpose: `CHARS_PER_TOKEN` is an estimate and real text in this
+#: application measures 3.8-5.7 characters per token (dense DDL at the
+#: low end, prose at the high end), so a tight ratio would report every
+#: schema-heavy prompt. At 0.5 only a count below half the low estimate
+#: is reported, which no tokenizer variation accounts for -- the
+#: measured truncation cliff drops the count to num_ctx/2, far past it.
+_TRUNCATION_DETECTION_RATIO = 0.5
 
 #: Hard cap on the driver/validator error text carried into a retry
 #: prompt. Generous on purpose: every error this pipeline has been
@@ -1011,6 +1021,9 @@ def generate_insight_from_llm(
         raise ollama_unavailable_error(settings, effective_model, exc) from exc
 
     log_ollama_timing(response)
+    report_prompt_truncation(
+        len(_INSIGHT_SYSTEM_PROMPT) + len(user_prompt), response, settings, "insight"
+    )
 
     content = (
         response.get("message", {}).get("content", "")
@@ -1199,6 +1212,9 @@ def generate_sql_from_llm(
         raise ollama_unavailable_error(settings, effective_model, exc) from exc
 
     log_ollama_timing(response)
+    report_prompt_truncation(
+        len(_system_prompt(settings.db_type)) + len(user_prompt), response, settings, "generate_sql"
+    )
 
     content = (
         response.get("message", {}).get("content", "")
@@ -1240,6 +1256,69 @@ def _get_model_name(response: object) -> str | None:
     if isinstance(value, str) and value.strip():
         return value.strip()
     return None
+
+
+def report_prompt_truncation(
+    prompt_chars: int, response: object, settings: Settings, label: str
+) -> bool:
+    """Warns when Ollama truncated the prompt, and says by how much.
+
+    The gap this closes (2026-10-29, UAT-readiness Phase 7, `CTX-006`):
+    `log_ollama_timing` has always logged `prompt_eval_count`, but
+    nothing compared it to what was *sent*, so the one failure this
+    codebase most cares about -- Ollama silently truncating a prompt
+    from the start, where the system prompt lives -- left no trace
+    anywhere. Both `agent/context_budget.py` and
+    `Settings.web_search_context_max_chars` exist to prevent it, and
+    neither could tell anyone it had happened anyway.
+
+    The signal is `prompt_eval_count` against the characters sent.
+    Measured here on `llama3.1:8b` at `num_ctx=16384` (2026-10-29):
+    a prompt is processed whole up to ~16,384 tokens and past that is
+    cut to exactly 8,194 -- a cliff, not a taper. So a count far below
+    what was sent is the symptom, and it is reported rather than
+    inferred from the character count alone.
+
+    `_TRUNCATION_DETECTION_RATIO` is deliberately loose because
+    `CHARS_PER_TOKEN` is an estimate: real text runs 3.8-5.7 characters
+    per token in this application's own prompts (DDL at the low end,
+    prose at the high end), so a strict comparison would cry wolf on
+    every dense-DDL prompt. Only a count below *half* the low estimate
+    is reported, which no tokenizer variation explains.
+
+    Returns:
+        True when truncation was detected and warned about. Returned
+        rather than only logged so a caller or test can assert on it;
+        this function never raises and never changes the response -- it
+        is an observability control, not a gate. The prompt has already
+        been sent by the time it runs.
+    """
+    evaluated = _get_field(response, "prompt_eval_count")
+    # `_get_field` is annotated `int | None` but reads an untyped dict or
+    # a server object, so the type is a hope rather than a guarantee --
+    # and this function runs *after* a successful call, where a
+    # TypeError would turn a working answer into an HTTP 500. An
+    # unreadable count is unknown, not truncated.
+    if not isinstance(evaluated, int) or isinstance(evaluated, bool) or evaluated <= 0:
+        return False
+    if prompt_chars <= 0:
+        return False
+    estimated = prompt_chars // CHARS_PER_TOKEN
+    if evaluated >= estimated * _TRUNCATION_DETECTION_RATIO:
+        return False
+    logger.warning(
+        "[context_budget] %s prompt was TRUNCATED by the model server: sent %d chars "
+        "(~%d tokens) but only %d tokens were evaluated against num_ctx=%d. Ollama "
+        "truncates from the START, so the system prompt and its safety framing may "
+        "not have reached the model. Lower the budget for this call or raise "
+        "OLLAMA_NUM_CTX.",
+        label,
+        prompt_chars,
+        estimated,
+        evaluated,
+        settings.ollama_num_ctx,
+    )
+    return True
 
 
 def log_ollama_timing(response: object) -> None:
@@ -1595,6 +1674,9 @@ def generate_query_plan_from_llm(
         raise ollama_unavailable_error(settings, effective_model, exc) from exc
 
     log_ollama_timing(response)
+    report_prompt_truncation(
+        len(_PLAN_SYSTEM_PROMPT) + len(user_prompt), response, settings, "plan"
+    )
 
     content = (
         response.get("message", {}).get("content", "")
@@ -1716,6 +1798,9 @@ def review_sql_against_plan_from_llm(
         raise ollama_unavailable_error(settings, effective_model, exc) from exc
 
     log_ollama_timing(response)
+    report_prompt_truncation(
+        len(_REVIEW_SYSTEM_PROMPT) + len(user_prompt), response, settings, "review"
+    )
 
     content = (
         response.get("message", {}).get("content", "")
@@ -1826,6 +1911,12 @@ def review_sql_against_metrics_from_llm(
         raise ollama_unavailable_error(settings, effective_model, exc) from exc
 
     log_ollama_timing(response)
+    report_prompt_truncation(
+        len(_METRIC_CONFORMANCE_SYSTEM_PROMPT) + len(user_prompt),
+        response,
+        settings,
+        "metric_conformance",
+    )
 
     content = (
         response.get("message", {}).get("content", "")
@@ -2025,6 +2116,9 @@ def generate_analytical_intent_from_llm(
         raise ollama_unavailable_error(settings, effective_model, exc) from exc
 
     log_ollama_timing(response)
+    report_prompt_truncation(
+        len(_INTENT_SYSTEM_PROMPT) + len(user_prompt), response, settings, "analytical_intent"
+    )
 
     content = (
         response.get("message", {}).get("content", "")
@@ -2263,6 +2357,12 @@ def generate_analytical_plan_from_llm(
         raise ollama_unavailable_error(settings, effective_model, exc) from exc
 
     log_ollama_timing(response)
+    report_prompt_truncation(
+        len(_ANALYTICAL_PLAN_SYSTEM_PROMPT) + len(user_prompt),
+        response,
+        settings,
+        "analytical_plan",
+    )
 
     content = (
         response.get("message", {}).get("content", "")

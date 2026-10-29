@@ -557,3 +557,117 @@ class TestEveryPromptCarryingTheSchemaIsBudgeted:
 
         assert len(_PLAN_SYSTEM_PROMPT) < _SYSTEM_PROMPT_RESERVE_CHARS
         assert len(_ANALYTICAL_PLAN_SYSTEM_PROMPT) < _SYSTEM_PROMPT_RESERVE_CHARS
+
+
+class TestTruncationIsDetectedAndReported:
+    """UAT-readiness Phase 7, `CTX-006`.
+
+    `log_ollama_timing` always logged `prompt_eval_count`, but nothing
+    compared it to what was *sent* -- so the failure this whole module
+    exists to prevent left no trace when it happened anyway. These pin
+    both directions: a truncated call is reported, and a normal one is
+    not (a detector that warns on every dense-DDL prompt would be turned
+    off within a week, which is worse than no detector).
+    """
+
+    def _response(self, prompt_eval_count):
+        return {
+            "message": {"content": "ok"},
+            "prompt_eval_count": prompt_eval_count,
+            "total_duration": 1_000_000,
+        }
+
+    def test_the_measured_truncation_cliff_is_reported(self):
+        # The real shape, measured on llama3.1:8b at num_ctx=16384 on
+        # 2026-10-29: a 352,981-char prompt came back with
+        # prompt_eval_count=8194, exactly num_ctx/2.
+        from agent.llm_client import report_prompt_truncation
+
+        detected = report_prompt_truncation(
+            352_981, self._response(8_194), Settings(ollama_num_ctx=16_384), "plan"
+        )
+
+        assert detected is True
+
+    def test_a_prompt_that_fitted_is_not_reported(self):
+        # Also measured the same day: 37,279 chars -> 9,266 tokens
+        # evaluated, i.e. ~4.0 chars per token and nothing lost.
+        from agent.llm_client import report_prompt_truncation
+
+        detected = report_prompt_truncation(
+            37_279, self._response(9_266), Settings(ollama_num_ctx=16_384), "plan"
+        )
+
+        assert detected is False
+
+    def test_dense_ddl_does_not_trip_the_detector(self):
+        # DDL tokenizes at ~3.8 chars/token, so prompt_eval_count comes
+        # in *above* the 4-chars-per-token estimate. The detector must
+        # not read a denser tokenizer as data loss.
+        from agent.llm_client import report_prompt_truncation
+
+        assert (
+            report_prompt_truncation(20_000, self._response(5_263), Settings(), "generate_sql")
+            is False
+        )
+
+    def test_sparse_prose_does_not_trip_the_detector(self):
+        # The other end of the measured range: prose ran 5.7 chars/token,
+        # so prompt_eval_count is ~30% *below* the estimate legitimately.
+        from agent.llm_client import report_prompt_truncation
+
+        assert report_prompt_truncation(88_000, self._response(15_442), Settings(), "web") is False
+
+    def test_a_missing_token_count_is_not_a_detection(self):
+        # An older Ollama server, or a mocked response in a test, reports
+        # no counts. That is unknown, not truncated.
+        from agent.llm_client import report_prompt_truncation
+
+        assert report_prompt_truncation(100_000, {"message": {}}, Settings(), "plan") is False
+        assert report_prompt_truncation(100_000, self._response(None), Settings(), "plan") is False
+
+    def test_it_never_raises_on_an_odd_response_shape(self):
+        # It runs after every successful call, so a crash here would turn
+        # a working answer into a 500. Observability is never a gate.
+        from agent.llm_client import report_prompt_truncation
+
+        for response in (None, object(), {}, {"prompt_eval_count": "not a number"}):
+            assert report_prompt_truncation(1_000, response, Settings(), "x") in (True, False)
+
+    def test_a_zero_or_negative_char_count_is_ignored(self):
+        from agent.llm_client import report_prompt_truncation
+
+        assert report_prompt_truncation(0, self._response(10), Settings(), "x") is False
+
+    def test_the_warning_names_the_call_and_never_carries_prompt_text(self, caplog):
+        # CLAUDE.md 5.6: sizes and names, never content.
+        import logging
+
+        from agent.llm_client import report_prompt_truncation
+
+        with caplog.at_level(logging.WARNING, logger="agent.llm_client"):
+            report_prompt_truncation(200_000, self._response(8_194), Settings(), "analytical_plan")
+
+        assert len(caplog.records) == 1
+        message = caplog.records[0].getMessage()
+        assert "analytical_plan" in message
+        assert "200000" in message.replace(",", "")
+        assert "8194" in message.replace(",", "")
+        assert "CREATE TABLE" not in message
+
+    def test_every_ollama_call_site_reports_truncation(self):
+        # The detector is worth nothing on a path that does not call it.
+        # Counted rather than named so a new call site shows up as a
+        # mismatch here instead of silently opting out.
+        import pathlib
+
+        source = pathlib.Path(__file__).resolve().parents[1] / "agent" / "llm_client.py"
+        text = source.read_text(encoding="utf-8")
+
+        assert (
+            text.count("log_ollama_timing(response)") == text.count("report_prompt_truncation(") - 1
+        ), (
+            "Every `log_ollama_timing(response)` in agent/llm_client.py must be followed "
+            "by a `report_prompt_truncation(...)` (the -1 is the function's own def). "
+            "rag/llm.py has its own, covering the other eight call sites."
+        )

@@ -26,6 +26,7 @@ from agent.llm_client import (
     harness_ollama_client,
     log_ollama_timing,
     ollama_unavailable_error,
+    report_prompt_truncation,
 )
 from config.settings import Settings
 
@@ -39,6 +40,7 @@ def call_ollama(
     max_tokens: int,
     temperature: float = 0.0,
     model: str | None = None,
+    label: str = "rag_llm",
 ) -> str:
     """Runs one Ollama chat call and returns the response text.
 
@@ -100,6 +102,14 @@ def call_ollama(
     # router, both RAG subgraphs, web search, media search and the
     # analyst planner make.
     log_ollama_timing(response)
+    # The one chokepoint for eight of this application's eleven Ollama
+    # call sites -- the router, both RAG subgraphs, web search, media
+    # search, the general-knowledge answer, attachment QA and the
+    # analyst planner all arrive here -- so checking once covers every
+    # prompt in the application that is assembled from retrieved or
+    # uploaded content. `label` names which, since they share this
+    # function (2026-10-29, UAT-readiness Phase 7, `CTX-006`).
+    report_prompt_truncation(len(system_prompt) + len(user_prompt), response, settings, label)
 
     return (
         response.get("message", {}).get("content", "")
