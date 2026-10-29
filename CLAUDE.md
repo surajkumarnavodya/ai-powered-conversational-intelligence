@@ -1123,6 +1123,22 @@ contract lists its specific limitations; these are the cross-cutting ones.
   nobody enumerates is a gate nobody measures. The blocking set is
   `ruff`, `black`, `bandit`, `pytest`, `pip-audit` **and**
   `detect-secrets`.
+  **Nine blocking gates as of 2026-10-29 (Phase 8), not six.** Three
+  were added: a **second, blocking `mypy` step** scoped to the 41
+  production packages (0 errors in 482 files; the report-only `mypy .`
+  stays as it is and still reports 746, 736 of them in `tests/`), the
+  frontend's **`vitest`** suite (1,508 tests that CI had never run),
+  and **`npm audit --omit=dev`**. The blocking set is now `ruff`,
+  `black`, `bandit`, `pytest`, `pip-audit`, `detect-secrets`,
+  `mypy` (production), frontend `vitest` and `npm audit`.
+  `bandit`'s scope also changed and the old number was misleading: it
+  named twelve packages on the command line, so it had **never scanned
+  `identity/`** or ~25 other packages — 58,041 of 119,384 lines, i.e.
+  "green" meant 48.6% of the code, and the whole tree reported **24**
+  findings, six in `identity/security.py`. It is now scoped by
+  exclusion from `[tool.bandit]` in `pyproject.toml`, so a new package
+  is covered the day it is created. `tests/test_ci_gate_coverage.py`
+  fails when any of these falls behind the repository.
 
 - **An aggregate over a restricted column is still disclosed, and that is
   a standing policy question rather than a bug.** `SEC-006` (§5.4) closed
@@ -1155,9 +1171,10 @@ contract lists its specific limitations; these are the cross-cutting ones.
   `phase-0-recon.md`, `phase-1-architecture.md`,
   `phase-2-security.md`, `phase-3-authentication.md`,
   `phase-4-authorization.md`, `phase-5-hallucination.md`,
-  `phase-6-loops.md` and `phase-7-context.md` hold the
-  method and evidence for what has been done. **Phases 0-7 are
-  complete; phases 8-12 are not started.**
+  `phase-6-loops.md`, `phase-7-context.md` and
+  `phase-8-best-practices.md` hold the
+  method and evidence for what has been done. **Phases 0-8 are
+  complete; phases 9-12 are not started.**
   Before re-investigating anything security- or architecture-shaped,
   check the register: it records what was measured, on what date, and
   which items are deliberately flagged for an owner decision rather than
@@ -1330,3 +1347,83 @@ contract lists its specific limitations; these are the cross-cutting ones.
   One deliverable is explicitly **UNVERIFIED, not passed**: retrieval
   recall/precision has no labelled fixture set, and
   `docs/retrieval-evaluation.md` says so in its own opening.
+
+  Phase 8 (2026-10-29) fixed eight findings and flagged three, and
+  **two of its lessons are standing traps worth not rediscovering.**
+  *First:* **`assert` is not a control.** `python -O` and
+  `PYTHONOPTIMIZE=1` delete every `assert` from the bytecode, and three
+  boundaries were relying on one — the four JWT key checks in
+  `identity/security.py` (where removal turns a configuration failure
+  into an opaque **HTTP 500 on every login**, because the next line
+  calls `.get_secret_value()` on `None`),
+  `mcp_client/trust.py::assert_no_remote_tool_is_registered` (the trust
+  boundary keeping a remote MCP server's tools out of the local
+  registry) and `mcp_client/protocol.py`'s JSON-RPC newline-framing
+  check. All three raise now. **Narrowing-only asserts are deliberately
+  kept**, with a `# nosec B101` naming the real guarantee: the
+  distinction is whether removing the statement removes a control, not
+  whether the statement is an `assert`. Tested in a subprocess, since
+  `-O` is interpreter start-up state, with a test that proves asserts
+  really are stripped first so the rest cannot pass vacuously.
+  *Second, and this one has already cost one broken application:*
+  **`identity/models.py`'s module docstring is right and `mypy` is
+  wrong there, on purpose.** Do **not** close the four SQLAlchemy
+  `SQLCoreOperations[...]`-vs-`None` errors in
+  `identity/repositories/` by widening a column to `Mapped[X | None]`
+  or `Mapped[Optional[X]]`. SQLAlchemy's declarative resolution crashes
+  on a union annotation under this project's Python 3.14, and the
+  docstring states that mypy seeing those attributes as non-Optional is
+  the accepted cost of the workaround. A session did it anyway and
+  `import api.main` raised `TypeError: descriptor '__getitem__'
+  requires a 'typing.Union' object but received a 'tuple'` — the whole
+  application stopped importing. They are closed with line-scoped
+  `# type: ignore[assignment]` citing that docstring (`BP-015`).
+  Also measured and not to be re-derived. **Coverage had never been
+  measured in this project** — no coverage tooling was declared
+  anywhere and CI has no coverage step. `pytest-cov==7.0.0` is now in
+  `requirements-dev.txt`, and over the whole mocked suite:
+  `governance/` 98.7%, `identity/` 97.0%, `security/` 96.0%, `api/`
+  94.5%, `guardrails/` 93.3% (**95.4%** across the five), plus
+  `agent/sql_validator.py` **94%** and `agent/input_guard.py` 98%. Every
+  security-critical package clears 90%; **13 individual files do not**,
+  worst `identity/db.py` 69.6%, `api/jobs.py` 69.9%,
+  `identity/email.py` 71.4%, `api/chat_persistence.py` 76.1%. **No
+  coverage gate was added to CI on purpose** — picking a threshold is a
+  product decision, not an auditor's ratchet.
+  **Six packages were imported directly by production code and never
+  declared**, each present only through another package's dependency
+  tree: `requests` (which is what `security/outbound_url.py`, the SSRF
+  validator, makes its requests with), `httpx`, `av`,
+  `huggingface_hub`, `numpy` and `starlette` (imported by
+  `security/client_ip.py`, on the rate-limiting path). Same shape as the
+  `pyyaml` line already in `requirements.txt`.
+  `tests/test_declared_dependencies.py` derives this from the source
+  tree with `ast`, which is how it found four of the six that
+  inspection had missed — **a new direct import of a third-party
+  package must be declared, or that test fails.**
+  Flagged for an owner: **`BP-012` (S2) — `pymupdf` is AGPL-3.0**
+  (`License: Dual Licensed - GNU AFFERO GPL 3.0 or Artifex Commercial
+  License`), imported by `attachments/processors/pdf_processor.py` and
+  `rag/ingestion.py`, and `enable_chat_attachments` defaults to
+  **`True`**, so it is not behind an off-by-default flag;
+  `piper-tts` is GPL-3.0-or-later on the voice path. `LICENSE` here is
+  MIT and both ship in the single Docker image. AGPL's network clause
+  is the problem: serving software that uses AGPL code obliges you to
+  offer the whole work's source under AGPL, and this is a network-served
+  application. `pypdf` (BSD-3-Clause) is already a declared dependency
+  used elsewhere in `attachments/`, so a replacement path plausibly
+  exists. A legal decision, not an engineering one. Also flagged:
+  `BP-010` (`ai_generator_client.py` — 593 lines, zero importers, zero
+  tests, and importing it would bypass `security/outbound_url.py`,
+  bypass `Settings` for credentials, and call `logging.basicConfig()` at
+  import time, hijacking the root logger; pinned unwired by a guard
+  test) and `BP-013` (`LICENSE` still reads `Copyright (c) 2026 <Your
+  Name>`).
+  Verified clean rather than assumed, so a later phase need not recheck:
+  zero bare `except:` in production and no swallowed errors across 135
+  broad handlers (all log with `exc_info=True` or re-raise); **zero**
+  blocking calls and zero synchronous `run_agent`/`session.*` calls
+  lexically inside an `async def`; 0.85% of 6,713 tests carry no
+  assertion and all of those test code that raises on violation; and
+  repo hygiene clean, with the only absolute paths in tracked code being
+  two `/home/app/.cache` container paths.
