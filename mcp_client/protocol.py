@@ -91,8 +91,32 @@ def encode_request(request_id: int, method: str, params: dict[str, Any] | None =
     if params is not None:
         payload["params"] = params
     line = json.dumps(payload, separators=(",", ":"))
-    assert "\n" not in line, "a JSON-RPC line must never contain an embedded newline"
+    _reject_embedded_newline(line)
     return line + "\n"
+
+
+class ProtocolFramingError(RuntimeError):
+    """A line this client was about to write would break JSON-RPC framing."""
+
+
+def _reject_embedded_newline(line: str) -> None:
+    """Refuses a payload that would split into two JSON-RPC messages.
+
+    The transport is newline-delimited, so an embedded newline in an
+    encoded line is message smuggling: the far side reads one line as
+    two messages. `json.dumps` escapes newlines inside strings, so this
+    never fires on well-formed input -- which is exactly why it was an
+    `assert` until 2026-10-29 (UAT-readiness Phase 8, `BP-005`), and
+    exactly why it must not be one. `python -O` deletes an `assert`
+    outright, and this is a framing control on data that reaches a
+    remote process, not a developer note. CLAUDE.md 4.2 asks a safety
+    control to fail closed; a statement the interpreter is free to
+    remove cannot promise that.
+    """
+    if "\n" in line or "\r" in line:
+        raise ProtocolFramingError(
+            "a JSON-RPC line must never contain an embedded newline"
+        )
 
 
 def encode_notification(method: str, params: dict[str, Any] | None = None) -> str:
@@ -105,7 +129,7 @@ def encode_notification(method: str, params: dict[str, Any] | None = None) -> st
     if params is not None:
         payload["params"] = params
     line = json.dumps(payload, separators=(",", ":"))
-    assert "\n" not in line, "a JSON-RPC line must never contain an embedded newline"
+    _reject_embedded_newline(line)
     return line + "\n"
 
 

@@ -129,3 +129,107 @@ class TestRefreshTokens:
     def test_hash_is_not_the_raw_token(self):
         token = generate_refresh_token()
         assert hash_refresh_token(token) != token
+
+
+class TestTheJwtKeyChecksSurviveOptimisedBytecode:
+    """UAT-readiness Phase 8, `BP-006`.
+
+    `_signing_key` and `_verification_key` guarded their required key
+    with four bare `assert` statements. `Settings`' own validator does
+    guarantee both branches, so they never fired -- but `python -O` and
+    `PYTHONOPTIMIZE` remove an `assert` from the bytecode entirely, and
+    what follows is not "nothing happens": the next line called
+    `.get_secret_value()` on `None`, turning a clear configuration
+    failure into an `AttributeError` surfacing as an opaque HTTP 500 on
+    every login.
+
+    A subprocess is the only honest way to test this, because `-O` is
+    interpreter start-up state and cannot be toggled from inside a
+    running test.
+    """
+
+    def _probe(self, body: str) -> str:
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        result = subprocess.run(
+            [sys.executable, "-O", "-c", body],
+            capture_output=True,
+            text=True,
+            cwd=str(Path(__file__).resolve().parent.parent),
+        )
+        assert (
+            result.returncode == 0
+        ), f"probe crashed: stdout={result.stdout!r} stderr={result.stderr[-600:]!r}"
+        return result.stdout
+
+    def test_asserts_really_are_stripped_under_dash_o(self):
+        # The premise the rest of this class rests on. Without it, a
+        # passing test below would prove nothing about `-O`.
+        out = self._probe(
+            "try:\n"
+            "    assert False, 'should have been stripped'\n"
+            "except AssertionError:\n"
+            "    print('ASSERT STILL LIVE')\n"
+            "else:\n"
+            "    print('ASSERT STRIPPED')\n"
+        )
+
+        assert "ASSERT STRIPPED" in out
+
+    def test_a_missing_signing_key_is_a_clear_refusal_not_an_attribute_error(self):
+        out = self._probe(
+            "from identity.security import _signing_key\n"
+            "from config.settings import Settings\n"
+            "s = Settings(_env_file=None, local_auth_enabled=True, jwt_algorithm='HS256')\n"
+            "s = s.model_copy(update={'jwt_secret_key': None})\n"
+            "try:\n"
+            "    _signing_key(s)\n"
+            "except RuntimeError as exc:\n"
+            "    print('REFUSED:' + ('not configured' in str(exc) and 'CLEAR' or 'VAGUE'))\n"
+            "except AttributeError:\n"
+            "    print('ATTRIBUTE_ERROR')\n"
+            "else:\n"
+            "    print('RETURNED_SOMETHING')\n"
+        )
+
+        assert "REFUSED:CLEAR" in out, out
+
+    def test_a_missing_verification_key_is_a_clear_refusal(self):
+        out = self._probe(
+            "from identity.security import _verification_key\n"
+            "from config.settings import Settings\n"
+            "s = Settings(_env_file=None, local_auth_enabled=True, jwt_algorithm='HS256')\n"
+            "s = s.model_copy(update={'jwt_secret_key': None})\n"
+            "try:\n"
+            "    _verification_key(s)\n"
+            "except RuntimeError as exc:\n"
+            "    print('REFUSED')\n"
+            "except AttributeError:\n"
+            "    print('ATTRIBUTE_ERROR')\n"
+            "else:\n"
+            "    print('RETURNED_SOMETHING')\n"
+        )
+
+        assert "REFUSED" in out, out
+
+    def test_the_refusal_never_echoes_the_key_itself(self):
+        # The message names the *kind* of key and the algorithm, never a
+        # value -- CLAUDE.md 5.6 forbids logging a secret, and an
+        # exception message reaches logs and error handlers.
+        from identity.security import _MISSING_KEY_MESSAGE
+
+        rendered = _MISSING_KEY_MESSAGE.format(kind="secret key", algorithm="HS256")
+
+        assert "secret key" in rendered
+        assert "HS256" in rendered
+        assert "get_secret_value" not in rendered
+
+    def test_a_configured_key_is_returned_unchanged(self):
+        # The compatibility half: the guard must not alter the normal path.
+        from identity.security import _signing_key
+
+        settings = _hs256_settings()
+
+        assert _signing_key(settings) == settings.jwt_secret_key.get_secret_value()

@@ -159,6 +159,10 @@ def call_allowlisted_tool(
         return session.call_tool(tool_name, arguments)
 
 
+class RemoteToolRegistrationError(RuntimeError):
+    """A remote MCP tool was found in the local tool registry."""
+
+
 def assert_no_remote_tool_is_registered(registry: object) -> None:
     """Asserts no remote tool has leaked into a local `ToolRegistry`.
 
@@ -171,14 +175,20 @@ def assert_no_remote_tool_is_registered(registry: object) -> None:
     tool name containing `/` is the signature of exactly that mistake.
 
     Raises:
-        AssertionError: a registered tool name looks remote.
+        RemoteToolRegistrationError: a registered tool name looks remote.
     """
     lister = getattr(registry, "list_tools", None)
     if not callable(lister):
         return
     for tool in lister():
-        assert "/" not in getattr(tool, "name", ""), (
-            f"Tool {getattr(tool, 'name', '?')!r} looks like a bridged remote MCP tool. "
-            "Remote tools must never be registered in the local ToolRegistry -- see "
-            "mcp_client/trust.py."
-        )
+        # Was an `assert` until 2026-10-29 (UAT-readiness Phase 8,
+        # `BP-005`). This is the check that keeps a remote server's tools
+        # out of the local registry -- a trust boundary, not a developer
+        # note -- and `python -O` deletes an `assert` entirely, so the
+        # boundary would vanish with it.
+        if "/" in getattr(tool, "name", ""):
+            raise RemoteToolRegistrationError(
+                f"Tool {getattr(tool, 'name', '?')!r} looks like a bridged remote MCP "
+                "tool. Remote tools must never be registered in the local ToolRegistry "
+                "-- see mcp_client/trust.py."
+            )

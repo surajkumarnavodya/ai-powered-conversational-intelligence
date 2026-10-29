@@ -16,12 +16,14 @@ the only part that needs to know about processes at all.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from mcp_client import protocol
 from mcp_client.client import McpClient
 from mcp_client.transport import StdioTransport
 from mcp_client.trust import (
+    RemoteToolRegistrationError,
     assert_no_remote_tool_is_registered,
     call_allowlisted_tool,
     is_tool_allowlisted,
@@ -511,8 +513,45 @@ class TestNoAutoRegistration:
             def list_tools(self):
                 return [FakeTool()]
 
-        with pytest.raises(AssertionError, match="bridged remote MCP tool"):
+        # `RemoteToolRegistrationError`, not `AssertionError`, since
+        # 2026-10-29 (`BP-006`): this is a trust boundary and `python -O`
+        # deletes an `assert` outright. Asserted on the specific type
+        # rather than `Exception` so a future change back to a bare
+        # `assert` fails here.
+        with pytest.raises(RemoteToolRegistrationError, match="bridged remote MCP tool"):
             assert_no_remote_tool_is_registered(FakeRegistry())
+
+    def test_the_boundary_does_not_depend_on_assertions_being_enabled(self):
+        # The point of `BP-006`: the refusal must survive optimised
+        # bytecode, where every `assert` in the module is removed. A
+        # subprocess is the only honest way to test that -- `-O` is
+        # interpreter start-up state.
+        import subprocess
+        import sys
+
+        probe = (
+            "from mcp_client.trust import assert_no_remote_tool_is_registered as check, "
+            "RemoteToolRegistrationError\n"
+            "class T:\n    name = 'docs/search'\n"
+            "class R:\n    def list_tools(self):\n        return [T()]\n"
+            "try:\n"
+            "    check(R())\n"
+            "except RemoteToolRegistrationError:\n"
+            "    print('REFUSED')\n"
+            "else:\n"
+            "    print('LEAKED')\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-O", "-c", probe],
+            capture_output=True,
+            text=True,
+            cwd=str(Path(__file__).resolve().parent.parent),
+        )
+
+        assert "REFUSED" in result.stdout, (
+            f"the remote-tool boundary did not hold under python -O: "
+            f"stdout={result.stdout!r} stderr={result.stderr[-400:]!r}"
+        )
 
 
 # --- transport safety ---------------------------------------------------
