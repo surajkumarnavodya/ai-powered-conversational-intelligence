@@ -92,12 +92,19 @@ def _run_for_connection(settings: Settings, config: DatabaseConnectionConfig) ->
 
     _step(f"5. End-to-end read-only query execution ({config.name})")
     dialect = get_sqlglot_dialect(config.db_type)
-    sample_sql = f"SELECT * FROM {tables[0].table_name}"
+    # nosec B608 - the only interpolated value is a table name this script just
+    # read back from live introspection of the operator's own database, in a
+    # manual CLI with no request surface; the statement is then put through
+    # `validate_sql` and `enforce_row_limit` on the next lines, which is the
+    # same governed path `agent.nodes.execute_sql_node` uses (BP-004).
+    sample_sql = f"SELECT * FROM {tables[0].table_name}"  # nosec B608
     validation = validate_sql(sample_sql, dialect=dialect)
     if not validation.is_valid:
         print(f"FAIL: sample query rejected by validator: {validation.error}")
         return None
-    assert validation.normalized_sql is not None
+    # nosec B101 - narrowing only; `is_valid` was checked on the line above
+    # (BP-004).
+    assert validation.normalized_sql is not None  # nosec B101
     safe_sql = enforce_row_limit(validation.normalized_sql, max_rows=5, dialect=dialect)
     # The governed execution path, in full:
     #   validate_sql -> enforce_row_limit -> qualify_table_schema ->

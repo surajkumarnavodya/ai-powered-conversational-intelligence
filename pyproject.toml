@@ -66,6 +66,34 @@ extend-immutable-calls = [
     "api.authz.require_permission",
 ]
 
+[tool.bandit]
+# Single-sourced so a local run and the CI gate scan the same files -- the
+# reason this block exists at all (2026-10-29, UAT-readiness Phase 8,
+# `BP-004`). The gate used to name twelve packages on the command line
+# (`bandit -r agent api config db security media_gen moderation rag search
+# voice media embeddings`) and therefore never looked at `identity/`,
+# `governance/`, `governance_center/`, `guardrails/`, `jobs/`,
+# `attachments/`, `mcp_client/`, `onboarding/`, `semantic/`, `analytics/`
+# or twenty-odd others. Measured: 24 findings lived in that blind spot,
+# six of them in `identity/` -- the authentication package. A path list
+# on a command line is a list somebody has to remember to extend; an
+# exclude list is not.
+#
+# `tests/` is excluded because pytest's own `assert` is the point of a
+# test file, so B101 there is noise rather than signal -- the standard
+# exclusion, and the only one that drops first-party code.
+exclude_dirs = [
+    "tests",
+    ".venv",
+    "env",
+    "node_modules",
+    "frontend",
+    ".claude",
+    ".git",
+    "media_library",
+    "embeddings/.chroma",
+]
+
 [tool.mypy]
 # Deliberately not pinned to 3.11 (the project's nominal target, see
 # requires-python above): this machine's venv runs 3.14 (see CLAUDE.md's

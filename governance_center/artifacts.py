@@ -304,7 +304,12 @@ def parse_artifact_spec(asset_type: GovernedAssetType, config: dict[str, Any]) -
         raise ArtifactSpecError(_format_validation_error(asset_type, exc)) from exc
     # Narrowing for mypy: `_SPEC_MODELS` only ever holds the three spec
     # classes, which is exactly what `ArtifactSpec` unions.
-    assert isinstance(parsed, PromptArtifactSpec | AgentArtifactSpec | AnalyticalPolicyArtifactSpec)
+    # nosec B101 - narrowing only; `_SPEC_MODELS` is a module constant holding
+    # exactly these three classes, and `model_validate` above has already
+    # refused anything else (BP-004).
+    assert isinstance(  # nosec B101
+        parsed, PromptArtifactSpec | AgentArtifactSpec | AnalyticalPolicyArtifactSpec
+    )
     return parsed
 
 

@@ -151,5 +151,6 @@ class ReleaseGateVerdict(str, Enum):
     own acceptance criterion is "critical regressions block it," a
     yes/no decision, not a graded one."""
 
-    PASS = "pass"
+    PASS = "pass"  # nosec B105 - a gate verdict ("pass"/"block"), not a
+    # credential (BP-004).
     BLOCK = "block"

@@ -141,8 +141,11 @@ def bootstrap_admin_user(session: Session, settings: Settings) -> User | None:
         return None
     # Settings._validate_bootstrap_admin_requires_credentials already
     # guarantees both are set whenever bootstrap_admin_enabled is True.
-    assert settings.bootstrap_admin_email is not None
-    assert settings.bootstrap_admin_password is not None
+    # nosec B101 - narrowing only, for the type checker; the validator named
+    # above is the real guarantee, and neither value reaches a security
+    # decision from here (BP-004).
+    assert settings.bootstrap_admin_email is not None  # nosec B101
+    assert settings.bootstrap_admin_password is not None  # nosec B101
 
     existing = get_user_by_email(session, settings.bootstrap_admin_email)
     if existing is not None:

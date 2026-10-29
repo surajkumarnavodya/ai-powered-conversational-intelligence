@@ -159,7 +159,10 @@ def main() -> None:
                 logger.warning("[%s] ingestion failed: %s", path, error, exc_info=error)
                 failed += 1
             else:  # "indexed"
-                assert result is not None
+                # nosec B101 - narrowing only; the `else` branch is reached
+                # exactly when `outcome == "indexed"`, which carries a result
+                # (BP-004).
+                assert result is not None  # nosec B101
                 indexed += 1
                 segments_total += result.segments_indexed if result.media_type == "video" else 0
                 logger.info(

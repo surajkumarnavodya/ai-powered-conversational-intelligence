@@ -363,7 +363,9 @@ def _available_dimension_columns(
                     SUGGESTION_CLASSIFICATION_CEILING.name,
                 )
                 continue
-            assert raw_type is not None  # _is_dimension_shaped rejects None
+            # nosec B101 - narrowing only; `_is_dimension_shaped` already rejected
+            # None on the line above (BP-004).
+            assert raw_type is not None  # nosec B101
             seen.add(lowered)
             available.append((table.table_name, column, raw_type))
     return available
