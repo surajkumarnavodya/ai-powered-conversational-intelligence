@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { getHealth } from '@/lib/api'
+import { ApiError, getHealth } from '@/lib/api'
 import {
   getCurrentUser,
   googleSignIn,
@@ -23,8 +23,18 @@ import type { LocalUser, MessageResponse, TokenResponse } from '@/lib/types'
  *   (the `HttpOnly` refresh-token cookie, if still valid) before ever
  *   falling back to `"unauthenticated"`.
  * - `"authenticated"` / `"unauthenticated"`: self-explanatory.
+ * - `"unavailable"`: the silent refresh could not be *answered* -- a 429
+ *   from the refresh route's own rate limiter, a 5xx, or no network at
+ *   all. Deliberately **not** `"unauthenticated"`: see
+ *   `isSessionEndedError` below for why conflating the two signed a user
+ *   out of a session that was still perfectly valid.
  */
-export type LocalAuthStatus = 'unconfigured' | 'loading' | 'authenticated' | 'unauthenticated'
+export type LocalAuthStatus =
+  | 'unconfigured'
+  | 'loading'
+  | 'authenticated'
+  | 'unauthenticated'
+  | 'unavailable'
 
 /** Which of the two forms `AuthGate.tsx` shows while `status ===
  * "unauthenticated"`. Lives here (not as local component state in
@@ -32,6 +42,33 @@ export type LocalAuthStatus = 'unconfigured' | 'loading' | 'authenticated' | 'un
  * `"signIn"` -- otherwise a user who clicked through to the sign-up form
  * earlier in the session, then later signs out, would land back on the
  * sign-up form instead of a sign-in prompt. */
+/** True only when a failed `/auth/refresh` actually means "this caller has
+ * no session": the route answers **401** when the `HttpOnly` cookie is
+ * missing, expired, already rotated or replayed, and **404** when local
+ * auth is not enabled at all. Everything else -- `429` from the refresh
+ * route's own per-IP rate limiter, any `5xx`, a `TypeError` from `fetch`
+ * with no network -- means the question could not be answered, which is
+ * not the same answer as "no".
+ *
+ * Measured 2026-10-29 (Phase 9, `UI-002`): `POST /auth/refresh` shares the
+ * `login_rate_limit_per_minute` budget (default **10 per minute, keyed by
+ * client IP**), and one full page load spends one refresh. Eleven direct
+ * URL entries in roughly forty seconds returned `429`, and because both
+ * refresh call sites treated *any* rejection as "not signed in", the live
+ * session was discarded and the sign-in form appeared -- with no message,
+ * and with the refresh cookie still valid. The same shape hit
+ * `handleUnauthorized`, where it is worse: an access token expires every
+ * `access_token_expire_minutes` (default 15), so an ordinary session
+ * refreshes repeatedly, and a rate-limited moment would sign the user out
+ * mid-question.
+ *
+ * Deliberately a narrow allowlist of "ended" statuses rather than a
+ * blocklist of transient ones: a status this function has never heard of
+ * must not end a session. */
+export function isSessionEndedError(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 401 || error.status === 404)
+}
+
 export type LocalAuthView = 'signIn' | 'register'
 
 interface LocalAuthState {
@@ -74,6 +111,10 @@ export const useLocalAuthStore = create<LocalAuthState>((set) => ({
   setAuthView: (view) => set({ authView: view }),
 
   initialize: async () => {
+    // Re-entrant: `AuthGate`'s "Try again" on the `"unavailable"` state
+    // calls this again, and that retry must show the spinner rather than
+    // leave the error panel up while the request is in flight.
+    set({ status: 'loading' })
     let enabled = false
     try {
       const health = await getHealth()
@@ -99,10 +140,17 @@ export const useLocalAuthStore = create<LocalAuthState>((set) => ({
         accessToken: token.access_token,
         error: null,
       })
-    } catch {
-      // No live refresh-token cookie (never signed in, or it expired) --
-      // not an error state, just "not signed in yet."
-      set({ status: 'unauthenticated', user: null, accessToken: null })
+    } catch (error) {
+      if (isSessionEndedError(error)) {
+        // No live refresh-token cookie (never signed in, or it expired) --
+        // not an error state, just "not signed in yet."
+        set({ status: 'unauthenticated', user: null, accessToken: null })
+      } else {
+        // The refresh could not be answered. Showing the sign-in form here
+        // would be a lie: the session may be entirely valid and the server
+        // merely rate-limited or briefly down.
+        set({ status: 'unavailable', user: null, accessToken: null })
+      }
     }
   },
 
@@ -191,8 +239,14 @@ export async function handleUnauthorized(): Promise<string | null> {
       error: null,
     })
     return token.access_token
-  } catch {
-    useLocalAuthStore.setState({ status: 'unauthenticated', user: null, accessToken: null })
+  } catch (error) {
+    if (isSessionEndedError(error)) {
+      useLocalAuthStore.setState({ status: 'unauthenticated', user: null, accessToken: null })
+    }
+    // Otherwise the session is left exactly as it was. The one request that
+    // provoked this still fails with its own error, and the next 401 tries
+    // the refresh again -- which is what makes a rate-limit window recover
+    // by itself instead of ending the session.
     return null
   }
 }

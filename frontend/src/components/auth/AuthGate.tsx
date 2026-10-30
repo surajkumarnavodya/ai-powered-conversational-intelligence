@@ -1,4 +1,4 @@
-import { Loader2, LogIn } from 'lucide-react'
+import { Loader2, LogIn, RefreshCw } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
@@ -104,6 +104,25 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         {localUser?.needs_profile_completion && <ProfileCompletionBanner />}
         {children}
       </>
+    )
+  }
+
+  // Distinct from `"unauthenticated"` on purpose: the server could not tell
+  // us whether this caller has a session (a 429 from `/auth/refresh`'s own
+  // per-IP rate limiter, a 5xx, or no network). Showing the sign-in form
+  // here used to discard a session that was still valid -- see
+  // `localAuthStore.isSessionEndedError` for the measurement.
+  if (localStatus === 'unavailable') {
+    return (
+      <div className="flex h-screen w-screen flex-col items-center justify-center gap-4 bg-[var(--background)] px-4 text-center text-[var(--foreground)]">
+        <p role="alert" className="max-w-sm text-sm text-[var(--muted-foreground)]">
+          {t('auth.sessionCheckUnavailable')}
+        </p>
+        <Button variant="primary" onClick={() => void localInitialize()} className="gap-2">
+          <RefreshCw className="h-4 w-4" />
+          {t('auth.sessionCheckRetry')}
+        </Button>
+      </div>
     )
   }
 
