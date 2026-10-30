@@ -18,9 +18,20 @@
  * **What it still does not prove.** It checks *declared tokens*, not
  * rendered pixels. It cannot see a component that hardcodes a colour
  * instead of using a token, text over an image or gradient, a translucent
- * surface stacked more than one deep, or anything a browser composites at
- * paint time. Real-browser verification remains necessary and remains
- * open; this must not be cited as proof that the rendered UI meets AA.
+ * surface stacked more than two deep, or anything a browser composites at
+ * paint time. Real-browser verification remains necessary; this must not
+ * be cited as proof that the rendered UI meets AA.
+ *
+ * **One sentence of that list was wrong and cost a real finding.** It
+ * said a translucent surface was out of reach, and the whole class of
+ * `bg-[var(--token)]/15 text-[var(--token)]` status badges was left
+ * unchecked on that basis. Phase 9 drove real Chrome over the live app
+ * and found ten of those pairings below AA -- then reproduced every one
+ * of Chrome's ratios here, to the second decimal, with nothing but the
+ * arithmetic already in this file (`#15803d` on `#dcece2`: Chrome 4.09,
+ * computed 4.09). `tintedSurface` below is that case, and the lesson
+ * generalises: before recording a pairing as browser-only, check whether
+ * the composite is actually computable.
  */
 
 export interface Rgb {
@@ -76,6 +87,40 @@ export function contrastRatio(foreground: string, background: string, base?: str
   const bg = compositeOver(parseColor(background), pageColor)
   const fg = compositeOver(parseColor(foreground), bg)
   const [lighter, darker] = [relativeLuminance(fg), relativeLuminance(bg)].sort((a, b) => b - a)
+  return (lighter + 0.05) / (darker + 0.05)
+}
+
+/** A Tailwind alpha tint (`bg-[var(--token)]/15`) composited onto the
+ * surface it sits on, which may itself be translucent over the opaque page.
+ *
+ * This is the pairing a status badge actually renders: the same token as
+ * both text and a faint fill. Worth having as a named helper because the
+ * two-step composite is exactly what was skipped -- `index.contrast.test.ts`
+ * asserted the token on the *opaque* surface and reasoned that the tint
+ * was too faint to matter. It is not: 15% of `--success` over a white card
+ * lifts the backdrop enough to drop the pairing from 5.33 to 4.09, under
+ * AA. Verified against Chrome's own computed values, Phase 9 `UI-008`.
+ */
+export function tintedSurface(
+  token: string,
+  surface: string,
+  base: string,
+  alphaPercent: number,
+): Rgb {
+  const page = parseColor(base)
+  const opaqueSurface = compositeOver(parseColor(surface), page)
+  const tint = { ...parseColor(token), a: alphaPercent / 100 }
+  return compositeOver(tint, opaqueSurface)
+}
+
+/** Contrast ratio of a foreground token against an already-composited
+ * backdrop, for the cases where the backdrop was built by `tintedSurface`
+ * rather than read from a token. */
+export function contrastAgainst(foreground: string, backdrop: Rgb): number {
+  const fg = compositeOver(parseColor(foreground), backdrop)
+  const [lighter, darker] = [relativeLuminance(fg), relativeLuminance(backdrop)].sort(
+    (a, b) => b - a,
+  )
   return (lighter + 0.05) / (darker + 0.05)
 }
 
