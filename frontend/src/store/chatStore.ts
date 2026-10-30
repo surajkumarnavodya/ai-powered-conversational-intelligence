@@ -55,12 +55,19 @@ import { useSettingsStore } from './settingsStore'
 export interface PendingQuestion {
   question: string
   startedAt: number
-  /** The graph node currently running, from `POST /ask/stream`'s progress
-   * events -- the first genuinely observable "where is this up to" signal
-   * this app has had. `null` until the first event arrives, and whenever
-   * streaming is unavailable (an older server, or a proxy that buffers),
-   * in which case the UI falls back to the plain "Thinking Ns…" badge
-   * exactly as before.
+  /** The graph node most recently *completed*, from `POST /ask/stream`'s
+   * progress events -- the first genuinely observable "where is this up
+   * to" signal this app has had.
+   *
+   * **Not the node currently running**, though this said so until
+   * 2026-10-30: `agent/nodes.py` emits after a node returns, so every
+   * event is a completion. See `TimingBadge.tsx` for what that costs a
+   * reader (Phase 9, `UI-010`).
+   *
+   * `null` until the first event arrives, and whenever streaming is
+   * unavailable (an older server, or a proxy that buffers), in which case
+   * the UI falls back to the plain "Thinking Ns…" badge exactly as
+   * before.
    *
    * A fixed node name from this app's own graph wiring -- never server
    * prose, never a model's words. See `agent/progress.py` on why a
