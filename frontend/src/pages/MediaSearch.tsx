@@ -73,6 +73,7 @@ export function MediaSearch() {
             className="flex-1 rounded-md border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
           />
           <select
+            aria-label="Media type"
             value={mediaType}
             onChange={(event) => setMediaType(event.target.value as 'image' | 'video' | 'any')}
             className="rounded-md border border-[var(--border)] bg-[var(--card)] px-2 py-2 text-sm"

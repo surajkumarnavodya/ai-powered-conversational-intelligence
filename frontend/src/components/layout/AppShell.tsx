@@ -205,8 +205,11 @@ export function AppShell({ children }: { children?: ReactNode } = {}) {
             <MobileNav />
             <SidebarToggle controls={SIDEBAR_ID} className="hidden lg:inline-flex" />
             {/* min-w-0 so the long product title can truncate instead of
-                pushing the nav and avatar off a phone-width header. */}
-            <div className="flex min-w-0 items-center gap-2">
+                pushing the nav and avatar off a phone-width header, and
+                `flex-1` so *this* is what gives up width first. The screen
+                menu beside it is a fixed 36px icon button and has nothing
+                to give. */}
+            <div className="flex min-w-0 flex-1 items-center gap-2">
               {/* A real <button>, not a <div onClick> or an <a href="/">:
                   it must be reachable by Tab and activatable by Enter and
                   Space, and a full-page navigation would discard the
@@ -214,7 +217,14 @@ export function AppShell({ children }: { children?: ReactNode } = {}) {
               <button
                 type="button"
                 onClick={handleHome}
-                aria-label={t('app.homeLabel')}
+                /* WCAG 2.5.3 (Label in Name): the visible label is the
+                   product title, so it must appear in the accessible
+                   name -- otherwise a speech-input user saying the words
+                   they can see does not match this control. Measured in
+                   Chrome 2026-10-29 (Phase 9, `UI-006`). The action stays
+                   in the name, after the visible text, so the name still
+                   says what the button does. */
+                aria-label={`${t('app.title')} - ${t('app.homeLabel')}`}
                 title={t('app.homeLabel')}
                 className="flex min-w-0 items-center gap-2 rounded-md px-1 py-0.5 transition-colors hover:bg-[var(--muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
               >
@@ -236,7 +246,17 @@ export function AppShell({ children }: { children?: ReactNode } = {}) {
                   left, so nothing is left unsaid by dropping it. */}
             </div>
 
-              <nav aria-label="Primary navigation" className="flex min-w-0 shrink-0 flex-1 items-center gap-1">
+              {/* `flex-1` was here, together with `shrink-0`. The two
+                  combine to "flex-basis: 0, may grow, must not shrink
+                  below basis" -- which is zero. Measured in Chrome
+                  2026-10-29 (Phase 9, `UI-009`): at 414px and below this
+                  landmark was **0px wide** while its 36px button still
+                  rendered inside it, so the button overlapped the account
+                  block and axe reported a 6px-by-32px tappable sliver.
+                  The screens menu is the only way to reach another screen
+                  on a phone -- the drawer beside it holds chat history,
+                  not navigation -- so losing it is losing navigation. */}
+              <nav aria-label={t('nav.primaryLandmark')} className="flex shrink-0 items-center gap-1">
                 {menuGroups.length > 0 && <ScreenMenu groups={menuGroups} />}
               </nav>
 

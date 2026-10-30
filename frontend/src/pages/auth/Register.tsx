@@ -164,7 +164,14 @@ export function Register({ onSwitchToSignIn }: { onSwitchToSignIn: () => void })
                 type="button"
                 onClick={() => setShowPassword((current) => !current)}
                 aria-label={showPassword ? t('auth.hidePassword') : t('auth.showPassword')}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                /* WCAG 2.2 AA 2.5.8 (Target Size, Minimum): the icon is
+                   16px, so without an explicit box the whole control was a
+                   16x16 target. Measured in Chrome 2026-10-29 (Phase 9,
+                   `UI-005`) -- axe reported "16px by 16px, should be at
+                   least 24px by 24px" on both auth screens. The inset
+                   keeps it visually where it was while giving it a real
+                   24x24 hit area. */
+                className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-[var(--muted-foreground)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
               >
                 {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>

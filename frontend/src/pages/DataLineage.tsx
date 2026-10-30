@@ -137,7 +137,11 @@ export function DataLineage() {
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-3">
-            <Select value={effectiveDatabaseId} onChange={(e) => setDatabaseId(e.target.value)}>
+            <Select
+              aria-label="Database"
+              value={effectiveDatabaseId}
+              onChange={(e) => setDatabaseId(e.target.value)}
+            >
               {databases.length === 0 && <option value="">No database configured</option>}
               {databases.map((name) => (
                 <option key={name} value={name}>
@@ -227,6 +231,7 @@ export function DataLineage() {
                   </strong>
                 </span>
                 <Select
+                  aria-label="Trace direction"
                   value={direction}
                   onChange={(e) => setDirection(e.target.value as 'upstream' | 'downstream')}
                 >
