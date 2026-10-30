@@ -135,8 +135,8 @@ admin does 3–4).**
 1. Apply the identity migrations and seed the roles, once:
 
    ```powershell
-   alembic -c identitylembic.ini upgrade head
-   python scriptsootstrap_admin.py
+   alembic -c identity\alembic.ini upgrade head
+   python scripts\bootstrap_admin.py
    ```
 
    `bootstrap_admin.py` is idempotent — re-running never resets an
