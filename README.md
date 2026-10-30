@@ -108,8 +108,20 @@ belong to someone. See [`docs/CONCURRENCY.md`](docs/CONCURRENCY.md).
 
 </div>
 
-_An animated diagram, not a screen recording — a real screenshot of the
-chat + generated-SQL view is still TODO._
+_An animated diagram, not a screen recording._
+
+<div align="center">
+
+<img width="920" alt="The dashboard after a question has been answered: the stage rail shows Understanding, Schema, SQL, Validation and Cost check complete and Ready to run reached, with Execution not started, above the message &quot;Nothing has run for you yet. Review the SQL below, then choose Confirm and Run.&quot;" src="docs/images/dashboard-sql-review.png" />
+
+</div>
+
+_A real capture, not a mock-up: real Chrome at 1440×950 against a live
+deployment, `llama3.1:8b` over a real SQL Server database, 2026-10-30.
+It is the moment this project exists for — the question is answered in
+76.3s, every pre-execution stage has passed, and **`Execution` has not
+started**. Nothing touches the database until you choose Confirm and
+Run. The follow-up chips say on their face that each is an AI estimate._
 
 Ready to try it? Jump to [Getting Started](#-getting-started) below.
 

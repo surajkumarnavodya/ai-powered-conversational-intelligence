@@ -1173,13 +1173,47 @@ contract lists its specific limitations; these are the cross-cutting ones.
   `phase-2-security.md`, `phase-3-authentication.md`,
   `phase-4-authorization.md`, `phase-5-hallucination.md`,
   `phase-6-loops.md`, `phase-7-context.md`,
-  `phase-8-best-practices.md` and `phase-9-ui.md` hold the
-  method and evidence for what has been done. **Phases 0-9 are
-  complete; phases 10-12 are not started.**
+  `phase-8-best-practices.md`, `phase-9-ui.md` and
+  `phase-10-documentation.md` hold the
+  method and evidence for what has been done. **Phases 0-10 are
+  complete; phases 11-12 are not started.**
   Before re-investigating anything security- or architecture-shaped,
   check the register: it records what was measured, on what date, and
   which items are deliberately flagged for an owner decision rather than
   open defects.
+  Phase 10 (2026-10-30) fixed nine documentation findings and flagged
+  four, and **two of its lessons generalise past documentation.**
+  *First:* **a doc that claims completeness is a claim to measure, not
+  to read.** `docs/CONFIGURATION.md` opened with "every environment
+  variable this project reads"; a scripted diff found **110 of 447**
+  settings in neither it nor `.env.example`, **26 of them `ENABLE_*`
+  flags, most on by default** -- the very flags
+  `docs/DEPLOYMENT.md`'s rollback procedure tells an operator to set
+  back. The 26 are documented now and the remaining 77 are a
+  **no-growth baseline** in `tests/test_configuration_doc_coverage.py`
+  that fails in *both* directions, so it cannot decay into an
+  allowlist the way a plain exemption list would. Same shape in
+  `docs/API.md`, which never named **`synthesized_answer`** -- the
+  field carrying the prose answer on every non-SQL route, where the
+  documented `insight` is `None`. A client written from that page
+  renders a web, document, policy or no-match answer **blank**, which
+  reads as a server fault and is not one.
+  *Second:* **understating a control is the dangerous direction, and
+  it happened here.** `SECURITY.md` called
+  `check_write_privileges` "best-effort, warning-only" and said it
+  "never blocks" long after
+  `api.main._enforce_database_write_privileges` began refusing to
+  start under `ENVIRONMENT=production` -- a behaviour an existing test
+  already pinned. Also measured, and worth not re-deriving: **449
+  documented command lines across ten user-facing docs all run as
+  written, and all 864 relative links across 202 markdown files
+  resolve**; there are **zero** phantom endpoints in `docs/API.md` and
+  **zero** genuine default mismatches between `.env.example` and
+  `Settings`. What was wrong was never a broken command -- it was
+  fourteen stale numbers and three things that were simply absent, the
+  sharpest being that "use a dedicated read-only database account" is
+  instructed in eleven places and had **no procedure anywhere**
+  (now `docs/DBA_READONLY_ACCOUNTS.md`).
   Phases 3-4 (2026-10-28) fixed five findings — a login timing oracle
   (`AUN-001`), a lockout that outlived a password reset (`AUN-002`), a
   suspended account keeping access on the identity surface (`AUN-003`),
