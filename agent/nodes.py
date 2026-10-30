@@ -2723,6 +2723,34 @@ def execute_sql_node(state: AgentState) -> dict[str, Any]:
                 ),
             }
 
+        if category is ExecutionErrorCategory.CONNECTIVITY:
+            # Terminal for the same reason TIMEOUT above is: no rewrite of
+            # the SQL can make an unreachable database answer. Retrying
+            # spends a full `generate_sql` model call per attempt and then
+            # reports the no-progress message, which tells the user to
+            # rephrase a question that was never the problem (`OPS-019`).
+            record = {
+                "attempt": attempt_number,
+                "sql": sql,
+                "outcome": "connectivity",
+                "error": redacted_detail,
+                "will_retry": False,
+            }
+            return {
+                "execution_error": redacted_detail,
+                "error_history": [f"SQL execution error (connectivity): {redacted_detail}"],
+                "attempt_history": [record],
+                "last_error_category": "connectivity",
+                "retry_count": attempt_number,
+                "status": "failed",
+                "failure_explanation": (
+                    "I could not reach the database to run the query. This is not a problem "
+                    "with your question -- the query was generated and checked, but the "
+                    "database did not answer. Ask whoever runs this deployment to check that "
+                    "the database is reachable, then try the same question again."
+                ),
+            }
+
         can_retry = retry_count < _effective_max_retries(state, settings)
         outcome = (
             "missing_reference"
