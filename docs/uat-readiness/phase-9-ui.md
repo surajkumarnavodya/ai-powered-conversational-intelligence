@@ -911,6 +911,86 @@ linter.
 
 ---
 
+## 17b. Post-audit end-to-end run (2026-10-30)
+
+After the audit's own fixes were committed, the application was driven end
+to end against the live stack, prompted by a user's screenshot: a question
+answered in 5.7s with *"Agent could not produce a working query: The AI
+model service is temporarily unavailable. Please try again in a moment."*
+
+That one screen turned out to be showing **three** separate things, and
+separating them is the useful part.
+
+**1. `OPS-008` — the configured model was not installed.** `.env` named
+`OLLAMA_MODEL=qwen2.5-coder:7b`; Ollama had only `llama3.1:8b` and
+`qwen3.8:27b`. Every question on the default therefore failed. Both
+`.env.example` and `config/settings.py` ship `llama3.1:8b`, so the local
+value had drifted from the documented default. Corrected locally (a
+one-line `.env` change, backed up first); the repository already had it
+right.
+
+**2. `OPS-009` (S2, fixed) — a missing model disabled the installed
+ones.** This is why the message was the *generic* breaker refusal rather
+than the accurate "not installed, pull it" text the same stack produces
+on a cold breaker. `agent/harness/breakers.py` keys its breaker by
+**provider**, and every `client.chat` call site reported
+`MODEL_UNAVAILABLE` for any exception — including Ollama's `404 model not
+found`, which is the one case where the provider is demonstrably healthy.
+Five of those opened the breaker, and it then refused *every* model on
+Ollama, including the installed one the model picker offers as the
+documented workaround for `OPS-008`.
+
+Measured before the fix: a question pinned to the installed
+`llama3.1:8b` returned in **1.4s** with the generic refusal; the
+identical question **succeeded in 108.8s with 5 correct rows** once the
+30s cooldown elapsed. After the fix: six consecutive failures on the
+uninstalled model, each with the *accurate* message, then the installed
+model succeeded with **5 rows in 10.4s**.
+
+The defect's shape is worth keeping. `ollama_unavailable_error` and
+`record_outcome` each classified the same 404, independently, and
+**disagreed**: one told the user to pick another model, the other then
+refused the model they picked. Neither was wrong alone, and no test asked
+whether they agreed. The fix is a shared predicate rather than a new
+rule.
+
+**3. `OPS-010` (S3, fixed) — startup said nothing.** The app booted clean
+with an unusable default, so the misconfiguration was invisible until a
+user asked something. `GET /models` already reported
+`installed: false`; nothing stated it where an operator reads it. There
+is now a `[startup]` warning naming the model, the host, `ollama pull`
+and the installed alternatives — silent when Ollama is simply
+unreachable, which `GET /health` already reports.
+
+### What the same run confirmed working
+
+- **A non-SQL question routes correctly.** "Top news stories for today
+  around the world" routes to `web`, calls Tavily (HTTP 200) and
+  synthesises an answer. The screenshot's SQL-framed error was not a
+  routing defect — with the LLM path down, the router's own classifier
+  call failed too.
+- **Write SQL is refused** on all four shapes tried: `DELETE`, `DROP`,
+  a stacked `SELECT …; DELETE`, and `SELECT * FROM sys.tables`.
+- **Masking holds** across admin / user / viewer (§7).
+- The dashboard is served and the built bundle carries the Phase 9 fixes.
+
+### One observation, not a finding
+
+**The LLM router timed out and fell back to keywords on every invocation
+measured.** `router_timeout_seconds` defaults to 5.0, and the log shows
+`[router] routing exceeded 5.0s on attempt 1 -- using keyword fallback`
+for 2 of 2 routed questions on this hardware. It chose correctly both
+times, and the deterministic fallback is the designed behaviour, so
+nothing is broken. It is recorded because it means
+`SOURCE_CONFIDENCE_THRESHOLD` and the LLM classifier have little
+practical effect on this machine — routing here is effectively the
+hand-authored keyword path, which CLAUDE.md §13 already notes has no
+labelled-corpus measurement behind it. A deployment on faster hardware
+would route differently, and neither configuration has been measured for
+accuracy.
+
+---
+
 ## 18. Screenshots
 
 In [`phase-9-screenshots/`](phase-9-screenshots/):
