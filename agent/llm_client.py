@@ -279,6 +279,63 @@ def decoding_options(settings: Settings, num_predict: int) -> dict[str, object]:
     }
 
 
+def _is_model_not_found(exc: Exception) -> bool:
+    """Whether `exc` is Ollama's "that model is not pulled" 404.
+
+    Deliberately the *same* test `ollama_unavailable_error` uses for its
+    "not installed" branch, and factored out so the two cannot disagree.
+    If they did, a caller would be shown "the model is not installed"
+    while the circuit breaker counted a provider outage -- which is
+    exactly the defect `is_provider_health_failure` below exists to stop.
+
+    The message is matched as well as the status code because some
+    `ollama` versions raise `ResponseError` without populating
+    `status_code`.
+    """
+    status_code = getattr(exc, "status_code", None)
+    return isinstance(exc, ollama.ResponseError) and (
+        status_code == 404 or "not found" in str(exc).lower()
+    )
+
+
+def is_provider_health_failure(exc: Exception) -> bool:
+    """Whether a failed model call is evidence about *Ollama's* health.
+
+    `agent/harness/breakers.py` keys its circuit breaker by **provider**,
+    not by model, and gives the right reason: a provider outage takes
+    every model on it down together, so five per-model breakers would
+    each need their own five failures to notice one event.
+
+    That reasoning holds for an outage and **not** for a 404. When Ollama
+    answers `model "x" not found`, it was reached, it parsed the request
+    and it answered -- the provider is demonstrably healthy and one model
+    is simply missing, which is an operator configuration error.
+
+    Until this existed, all seven `client.chat` call sites below reported
+    `FailureClass.MODEL_UNAVAILABLE` for *any* exception, so five
+    missing-model 404s opened the provider breaker and `check_provider`
+    then refused calls for **every** model on Ollama -- including
+    installed ones. The practical effect was that a broken `OLLAMA_MODEL`
+    also blocked the model picker's own working fallback, which is the
+    documented workaround for exactly that misconfiguration.
+
+    Measured against the live application 2026-10-30 with
+    `OLLAMA_MODEL=qwen2.5-coder:7b` not installed: a question pinned to
+    the **installed** `llama3.1:8b` came back in 1.4s with the breaker's
+    generic "The AI model service is temporarily unavailable", and the
+    identical question succeeded in 108.8s once the 30s cooldown elapsed
+    (`OPS-009`).
+
+    Returning `False` here costs nothing in the case the breaker exists
+    for: a 404 is immediate, so there is no timeout to stop paying.
+    Everything else -- an unreachable server, a timeout, a 5xx -- is
+    still a health signal and still opens the breaker, which
+    `tests/test_missing_model_does_not_open_the_provider_breaker.py`
+    asserts in both directions.
+    """
+    return not _is_model_not_found(exc)
+
+
 def ollama_unavailable_error(
     settings: Settings, model: str, exc: Exception
 ) -> OllamaUnavailableError:
@@ -329,10 +386,7 @@ def ollama_unavailable_error(
     host = settings.ollama_host
     prefix = f"Ollama call to model '{model}' at {host} failed"
 
-    status_code = getattr(exc, "status_code", None)
-    if isinstance(exc, ollama.ResponseError) and (
-        status_code == 404 or "not found" in str(exc).lower()
-    ):
+    if _is_model_not_found(exc):
         return OllamaUnavailableError(
             f"{prefix}: the model is not installed on that server. "
             f"Pull it with `ollama pull {model}`, or pick a model that is "
@@ -1008,9 +1062,14 @@ def generate_insight_from_llm(
             options=decoding_options(settings, settings.insight_max_tokens),
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
-        # Provider health signal -- advances the circuit breaker so a
-        # sustained outage stops costing every request a full timeout.
-        record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
+        # Advances the circuit breaker so a sustained outage stops costing
+        # every request a full timeout -- but only when the failure is
+        # evidence about *Ollama*. A "model not found" 404 means the
+        # provider answered and one model is missing, and counting it
+        # disabled the installed models too (`OPS-009`); see
+        # `is_provider_health_failure`.
+        if is_provider_health_failure(exc):
+            record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
         # httpx.HTTPError (covers httpx.ReadTimeout/ConnectTimeout/...) is
         # NOT a subclass of the built-in TimeoutError/ConnectionError --
         # ollama's client is built on httpx, and a slow response (a large
@@ -1202,9 +1261,14 @@ def generate_sql_from_llm(
             options=decoding_options(settings, settings.llm_max_tokens),
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
-        # Provider health signal -- advances the circuit breaker so a
-        # sustained outage stops costing every request a full timeout.
-        record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
+        # Advances the circuit breaker so a sustained outage stops costing
+        # every request a full timeout -- but only when the failure is
+        # evidence about *Ollama*. A "model not found" 404 means the
+        # provider answered and one model is missing, and counting it
+        # disabled the installed models too (`OPS-009`); see
+        # `is_provider_health_failure`.
+        if is_provider_health_failure(exc):
+            record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
         # See the identical note in generate_insight_from_llm: httpx.HTTPError
         # (covers httpx.ReadTimeout/ConnectTimeout/...) is not a subclass of
         # the built-in TimeoutError/ConnectionError, so a merely-slow (not
@@ -1668,9 +1732,14 @@ def generate_query_plan_from_llm(
             options=decoding_options(settings, settings.query_plan_max_tokens),
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
-        # Provider health signal -- advances the circuit breaker so a
-        # sustained outage stops costing every request a full timeout.
-        record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
+        # Advances the circuit breaker so a sustained outage stops costing
+        # every request a full timeout -- but only when the failure is
+        # evidence about *Ollama*. A "model not found" 404 means the
+        # provider answered and one model is missing, and counting it
+        # disabled the installed models too (`OPS-009`); see
+        # `is_provider_health_failure`.
+        if is_provider_health_failure(exc):
+            record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
         raise ollama_unavailable_error(settings, effective_model, exc) from exc
 
     log_ollama_timing(response)
@@ -1792,9 +1861,14 @@ def review_sql_against_plan_from_llm(
             options=decoding_options(settings, settings.sql_review_max_tokens),
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
-        # Provider health signal -- advances the circuit breaker so a
-        # sustained outage stops costing every request a full timeout.
-        record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
+        # Advances the circuit breaker so a sustained outage stops costing
+        # every request a full timeout -- but only when the failure is
+        # evidence about *Ollama*. A "model not found" 404 means the
+        # provider answered and one model is missing, and counting it
+        # disabled the installed models too (`OPS-009`); see
+        # `is_provider_health_failure`.
+        if is_provider_health_failure(exc):
+            record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
         raise ollama_unavailable_error(settings, effective_model, exc) from exc
 
     log_ollama_timing(response)
@@ -1905,9 +1979,14 @@ def review_sql_against_metrics_from_llm(
             options=decoding_options(settings, settings.sql_review_max_tokens),
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
-        # Provider health signal -- advances the circuit breaker so a
-        # sustained outage stops costing every request a full timeout.
-        record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
+        # Advances the circuit breaker so a sustained outage stops costing
+        # every request a full timeout -- but only when the failure is
+        # evidence about *Ollama*. A "model not found" 404 means the
+        # provider answered and one model is missing, and counting it
+        # disabled the installed models too (`OPS-009`); see
+        # `is_provider_health_failure`.
+        if is_provider_health_failure(exc):
+            record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
         raise ollama_unavailable_error(settings, effective_model, exc) from exc
 
     log_ollama_timing(response)
@@ -2110,9 +2189,14 @@ def generate_analytical_intent_from_llm(
             options=decoding_options(settings, settings.intent_classification_max_tokens),
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
-        # Provider health signal -- advances the circuit breaker so a
-        # sustained outage stops costing every request a full timeout.
-        record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
+        # Advances the circuit breaker so a sustained outage stops costing
+        # every request a full timeout -- but only when the failure is
+        # evidence about *Ollama*. A "model not found" 404 means the
+        # provider answered and one model is missing, and counting it
+        # disabled the installed models too (`OPS-009`); see
+        # `is_provider_health_failure`.
+        if is_provider_health_failure(exc):
+            record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
         raise ollama_unavailable_error(settings, effective_model, exc) from exc
 
     log_ollama_timing(response)
@@ -2351,9 +2435,14 @@ def generate_analytical_plan_from_llm(
             options=decoding_options(settings, settings.analytical_plan_max_tokens),
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
-        # Provider health signal -- advances the circuit breaker so a
-        # sustained outage stops costing every request a full timeout.
-        record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
+        # Advances the circuit breaker so a sustained outage stops costing
+        # every request a full timeout -- but only when the failure is
+        # evidence about *Ollama*. A "model not found" 404 means the
+        # provider answered and one model is missing, and counting it
+        # disabled the installed models too (`OPS-009`); see
+        # `is_provider_health_failure`.
+        if is_provider_health_failure(exc):
+            record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
         raise ollama_unavailable_error(settings, effective_model, exc) from exc
 
     log_ollama_timing(response)
