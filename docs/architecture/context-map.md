@@ -74,6 +74,7 @@ its own contract (§3).**
 | Resource → permission mapping | [`../AUTHORIZATION.md`](../AUTHORIZATION.md) | who may do what |
 | Tenant isolation rules and limitations | [`../MULTI_TENANCY.md`](../MULTI_TENANCY.md) | tenancy |
 | Data governance and classification policy | [`../GOVERNANCE.md`](../GOVERNANCE.md) | classification policy |
+| **The `GRANT`s a DBA applies for the read-only database account** (PostgreSQL, SQL Server; MySQL/Oracle sketches) | [`../DBA_READONLY_ACCOUNTS.md`](../DBA_READONLY_ACCOUNTS.md) | **the procedure behind "use a read-only account"** |
 | Prompt-injection benchmark results per category | [`../security/PROMPT_INJECTION_BENCHMARK_GAP_REPORT.md`](../security/PROMPT_INJECTION_BENCHMARK_GAP_REPORT.md) | live benchmark results |
 | CVE triage and dependency decisions | [`../security/CVE_TRIAGE.md`](../security/CVE_TRIAGE.md), [`../DEPENDENCY_SECURITY.md`](../DEPENDENCY_SECURITY.md) | vulnerability posture |
 | Dated audit trail of security changes | [`../security-changelog.md`](../security-changelog.md) | change history |

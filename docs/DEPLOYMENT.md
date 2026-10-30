@@ -35,7 +35,8 @@ this anywhere beyond your own machine — this document covers *how*, not
 ```bash
 cp .env.example .env
 # edit .env: point DB_* at your database (a genuinely read-only account --
-# see SECURITY.md), and OLLAMA_HOST at your Ollama server.
+# the exact GRANTs are in docs/DBA_READONLY_ACCOUNTS.md), and OLLAMA_HOST
+# at your Ollama server.
 
 docker compose build
 docker compose up -d

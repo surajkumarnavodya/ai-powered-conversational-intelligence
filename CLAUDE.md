@@ -681,6 +681,7 @@ authoritative, and explains how to resolve a conflict.
 | Authentication / authorization | [`docs/AUTHENTICATION.md`](docs/AUTHENTICATION.md), [`docs/AUTHORIZATION.md`](docs/AUTHORIZATION.md) |
 | Multi-tenancy rules and limitations | [`docs/MULTI_TENANCY.md`](docs/MULTI_TENANCY.md) |
 | Configuration reference | [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) |
+| The `GRANT`s a DBA applies for the read-only database account, per engine | [`docs/DBA_READONLY_ACCOUNTS.md`](docs/DBA_READONLY_ACCOUNTS.md) |
 | Entity display names: metadata, SQL repair, join and chart-label rules | [`docs/DISPLAY_NAMES.md`](docs/DISPLAY_NAMES.md) |
 | Result-column semantics and chart axis binding (measure vs key) | [`docs/CHART_AXIS_BINDING.md`](docs/CHART_AXIS_BINDING.md) |
 | Measured latency, what causes it, and the hardware ceiling | [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) |

@@ -294,8 +294,11 @@ cp .env.example .env             # Windows: Copy-Item .env.example .env
 
 Edit `.env` with your real database connection details (every variable is
 documented inline in `.env.example`) — **use a dedicated read-only database
-account**, not an admin login (see [`SECURITY.md`](SECURITY.md)). Then
-verify the connection and build the schema index:
+account**, not an admin login. The exact `GRANT`s for PostgreSQL and SQL
+Server are in
+[`docs/DBA_READONLY_ACCOUNTS.md`](docs/DBA_READONLY_ACCOUNTS.md); the
+reasoning is in [`SECURITY.md`](SECURITY.md). Then verify the connection
+and build the schema index:
 
 ```bash
 python scripts/test_db_connection.py

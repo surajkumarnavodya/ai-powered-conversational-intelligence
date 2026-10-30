@@ -76,13 +76,30 @@ where the two differ — read the newer document, not just this paragraph.
 - Query execution goes through a read-only-by-convention SQLAlchemy
   engine, a row cap enforced two independent ways, and a query timeout —
   see `CLAUDE.md`'s "SQL is untrusted output, always" section for the
-  full detail. A best-effort, warning-only check
-  (`db.connection.check_write_privileges`, surfaced in the UI sidebar and
-  `scripts/test_db_connection.py`) queries the connected database's own
-  privilege catalog and flags — never blocks — a `DB_USER` that appears to
-  hold INSERT/UPDATE/DELETE grants, since the database role actually being
-  read-only is the real guarantee behind the validator, not something this
-  app can enforce by itself (see "What is explicitly not guaranteed" below).
+  full detail. `db.connection.check_write_privileges` queries the
+  connected database's own privilege catalog and reports a `DB_USER` that
+  appears to hold INSERT/UPDATE/DELETE grants, since the database role
+  actually being read-only is the real guarantee behind the validator,
+  not something this app can enforce by itself (see "What is explicitly
+  not guaranteed" below). **It is no longer warning-only, and this bullet
+  said it was until 2026-10-30** (`DOC-016`) — understating a control
+  that exists is the more dangerous direction of documentation drift.
+  `api.main._enforce_database_write_privileges` runs it in the app's
+  `lifespan`, once per warmed engine, and **when
+  `ENVIRONMENT=production` it raises `ConfigurationError` and the
+  application refuses to start**, naming the offending database; the same
+  fail-closed posture `_require_identity_in_production` already
+  established for authentication. In any other environment it logs a
+  `critical` security-audit event (`db_write_privileges_detected`) and a
+  startup warning, and the app comes up — the "never breaks local dev"
+  posture every production-only check here follows. It still fails
+  **open** on a database whose check could not run at all
+  (`result.checked is False`: an unsupported `DB_TYPE`, or a role that
+  cannot read its own privilege catalog), which is why a silent startup
+  is not by itself evidence the role is read-only. The grants that make
+  it silent for the right reason are in
+  [`docs/DBA_READONLY_ACCOUNTS.md`](docs/DBA_READONLY_ACCOUNTS.md); it is
+  also reported by `scripts/test_db_connection.py`.
 - `db/query_store.py`'s SQL Server Query Store insights (optional, SQL
   Server only) need the connected principal to additionally hold
   `VIEW DATABASE STATE` (SQL Server 2016–2019) or `VIEW DATABASE
