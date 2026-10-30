@@ -7,6 +7,14 @@ already verified, and what is already known broken), journeys **J16–J18**
 (documentation accuracy; model selection; boundaries and limits), and
 per-row **Defect ref / Severity / Tester / Date** columns on the new
 journeys. **18 journeys across 6 roles.**
+**Revised again:** 2026-10-30 (UAT-readiness Phase 10, `DOC-018`) —
+added **§2.1** (how the six accounts are actually provisioned, and
+which product role each UAT role maps to, which this document asked for
+and never said), **§2.2 entry criteria** and **§2.3 exit criteria**,
+both of which were missing; refreshed §2.6's test counts, which were
+two measurements out of date; and added the eleven findings the
+readiness audit has raised since, so a tester does not spend UAT time
+re-finding an open **S1**.
 **Status: NOT TESTED.** No UAT participant has executed any journey below.
 
 > ### This document contains no results
@@ -16,12 +24,12 @@ journeys. **18 journeys across 6 roles.**
 > an agent. Nothing here may be reported as UAT evidence until a named
 > person has run the journey and signed the row.
 >
-> **Automated tests are not UAT.** The platform has **7,274 backend and
-> 1,161 frontend** automated tests passing (re-measured 2026-10-17 at
-> `08f385e`; 0 failures), and they prove something
-> different: that the code behaves as its authors specified. UAT asks
-> whether the *right* thing was specified, judged by someone who does
-> the job. One cannot substitute for the other.
+> **Automated tests are not UAT.** The platform has **9,593 backend and
+> 1,551 frontend** automated tests passing (re-measured 2026-10-30; 0
+> failures, 16 skipped, 11 `tests/live/` deselected, 8 xfailed), and
+> they prove something different: that the code behaves as its authors
+> specified. UAT asks whether the *right* thing was specified, judged by
+> someone who does the job. One cannot substitute for the other.
 >
 > The same is true of the live technical probing recorded in §2.6. It
 > was performed by an agent against the running application, it is
@@ -95,6 +103,98 @@ say so rather than substituting production data.
 | R5 Business User | Occasional question-asker | J5, J6, J10, J11, J16 |
 | R6 Read-only Viewer | Can see, must not change | J1, J14, J18 |
 
+### 2.1 Provisioning the six accounts (added 2026-10-30, `DOC-018`)
+
+**This section did not exist, and §2.5 asks for "one account per role
+R1–R6, created in advance by an admin" without saying which product role
+to assign.** The names above are *business* roles; the product's roles
+are the eight seeded by `identity.rbac.SEED_ROLES`. They do not map
+one-to-one, so the mapping is stated here rather than guessed at
+provisioning time.
+
+| UAT role | Assign this product role | Note |
+|---|---|---|
+| R1 Platform Admin | `platform_admin` | **Read the warning below before using this one.** |
+| R2 Tenant Admin | `admin` | There is no role literally named `tenant_admin`. |
+| R3 SME / Semantic Reviewer | `analyst` | Carries `catalog.review`, `governance.review`, `recommendation.review` — the J3/J4 permissions. |
+| R4 Business Analyst | `analyst` | Same product role as R3. Use **two separate accounts** so J3's review actions and J5–J9's analytical use are attributable to different testers. |
+| R5 Business User | `user` | |
+| R6 Read-only Viewer | `viewer` | No `text_to_sql.query` — J1 and J18 depend on that. |
+
+> **`platform_admin` will look broken, and that is a known finding, not
+> your defect to raise.** `AUZ-004` (**S3**, open): `platform_admin` is
+> absent from `agent.authz.ROLE_PERMISSIONS`, so it grants **nothing**
+> on the routes gated by that layer — `POST /ask` among them. It is
+> fail-closed, so nothing is exposed, but R1 will be refused things the
+> role's own description says it can do. Give the R1 tester a second
+> account with `admin` as well if J13/J17/J18 need to actually run.
+
+**Steps (an operator with shell access to the deployment does 1–2; an
+admin does 3–4).**
+
+1. Apply the identity migrations and seed the roles, once:
+
+   ```powershell
+   alembic -c identitylembic.ini upgrade head
+   python scriptsootstrap_admin.py
+   ```
+
+   `bootstrap_admin.py` is idempotent — re-running never resets an
+   existing admin's password. It creates the first admin account only
+   when `BOOTSTRAP_ADMIN_ENABLED=true` together with
+   `BOOTSTRAP_ADMIN_EMAIL`/`BOOTSTRAP_ADMIN_PASSWORD`.
+
+2. **Unset `BOOTSTRAP_ADMIN_PASSWORD` from the environment once the
+   account exists**, and change that password at first sign-in.
+
+3. Create the other five accounts. Either let each tester register
+   themselves (needs `ALLOW_PUBLIC_REGISTRATION=true`; display name is
+   mandatory and the password must clear the 12-character policy), or
+   have the admin create them via the tenant-admin screens.
+
+4. Assign each role: `POST /tenant-admin/users/{user_id}/roles`, or the
+   equivalent control in the Tenant Admin screen.
+   `GET /tenant-admin/roles` lists what this tenant may assign.
+
+**No password, token or connection string belongs in this document or
+in any copy of it.** Record *where* a credential came from ("issued by
+the UAT operator on <date>, rotated after"), never the credential.
+Testers receive theirs out of band.
+
+### 2.2 Entry criteria — do not start until all of these are true
+
+| # | Criterion | How to confirm |
+|---|---|---|
+| E1 | A deployment is running and reachable at the URL in §1 | `GET /health` returns `200` with `"status": "ok"` |
+| E2 | The configured `OLLAMA_MODEL` is actually installed | `GET /models` shows `"is_default": true, "installed": true` for it. A model named but not pulled fails every question (`OPS-008`), and since 2026-10-30 the app warns about it at startup |
+| E3 | At least one database is registered, indexed, and **has rows** | `GET /schema/tables` returns tables; ask one known-answer question and get a non-empty result. An empty-but-schema-rich database is `ARC-002` |
+| E4 | All six accounts exist with the roles in §2.1, and each tester has signed in once | Each tester confirms |
+| E5 | `LOCAL_AUTH_ENABLED=true` | J1, J6 and the whole of chat history depend on it |
+| E6 | The feature flags the journeys in scope need are on, and the ones out of scope are off, **and the set is recorded** | Paste the flag values into §1's environment table |
+| E7 | The testers have read §2.6 | Each tester confirms |
+| E8 | Negative testing (J7, J18) is **authorised in writing**, against a non-production database | Named approver recorded |
+| E9 | An operator is on call for J13 (stopping and starting Ollama) | Window agreed |
+
+**If an entry criterion cannot be met, UAT does not start partially.**
+Record which one, and what is being done about it.
+
+### 2.3 Exit criteria — UAT is complete when all of these are true
+
+| # | Criterion |
+|---|---|
+| X1 | Every journey assigned to a role has a status that is not blank: PASS, FAIL, BLOCKED or N/A — **NOT TESTED is not an exit state** |
+| X2 | Every row carries a tester name and a date |
+| X3 | **Zero outstanding P0.** A P0 stops UAT when found (§4) and cannot be waived here |
+| X4 | Every P1 is either fixed and retested, or carries a written, named waiver with a risk statement |
+| X5 | Every P2/P3 is logged in §4 with an owner, whether or not it is fixed |
+| X6 | J4 (governed metric correctness) has a judgement from a real SME, not a technical pass. It is the single highest-value row in this document and a BLOCKED J4 is not an exit |
+| X7 | Each of the six roles has a signed §5 summary |
+| X8 | §6 is completed and signed by the named approver |
+
+**Exit is about the testing being complete and honest, not about every
+defect being gone.** A verdict of "Accept with conditions" is a valid
+exit; a half-filled grid is not.
+
 ---
 
 ## 2.5 Objective, business scenario, preconditions and test data
@@ -132,10 +232,14 @@ ambushed by a defect that is already on record.
 
 ### Already verified by automated tests (not UAT, and not a substitute)
 
-**7,274 backend tests and 1,161 frontend tests pass, 0 failures**
-(measured 2026-10-17 at commit `08f385e`). They prove the code does what
-its authors specified. They say nothing about whether the right thing
-was specified — which is the whole of your job here.
+**9,593 backend tests and 1,551 frontend tests pass, 0 failures**
+(re-measured 2026-10-30; `pytest -q` in 626s, `npm run test` over 107
+files). Every blocking CI gate is green on the same date: `ruff`,
+`black`, `bandit` (0 findings over 119,480 lines), `pip-audit`
+("no known vulnerabilities, 7 ignored"), `detect-secrets`, production
+`mypy`, frontend `vitest` and `npm audit --omit=dev`. They prove the
+code does what its authors specified. They say nothing about whether
+the right thing was specified — which is the whole of your job here.
 
 ### Already verified by live technical probing (manual, by an agent, not UAT)
 
@@ -160,6 +264,34 @@ a regression worth escalating immediately:
 | Connection strings and passwords do not appear in logs | J13.4 |
 
 ### Already known broken or absent — do not raise these as new defects
+
+**Updated 2026-10-30 with the UAT-readiness audit's findings (phases
+0–10).** The table below predates that audit; everything in this block
+is newer and was measured against the running application. The full,
+current list is
+[`docs/uat-readiness/FINDINGS_REGISTER.md`](../uat-readiness/FINDINGS_REGISTER.md),
+which is the authoritative source — read it before raising anything.
+
+| Ref | What you will hit | Affects | Raise only if |
+|---|---|---|---|
+| **AUZ-002** (**S1**, open) | **Documents, policies and the media library are not separated by tenant.** A `tenant_b` admin was observed listing, downloading and **deleting** a `default`-tenant document. If your UAT has more than one tenant, do not put anything confidential in a document or the media library | **J8, J11** | …you see it across *users within one tenant*, which would be a second, different defect |
+| **AUZ-003** (S2, open) | Suspending an account or a tenant does **not** stop `POST /ask` until the access token expires (default 15 minutes). `/auth/me`, `/conversations` and `/navigation` do refuse immediately | **J1.3, J12** | …it outlives the token lifetime |
+| **AUZ-004** (S3, open) | The `platform_admin` role grants nothing on `POST /ask` and the other `agent.authz`-gated routes — see §2.1. Fail-closed, so nothing leaks; it reads as a broken admin account | **J1, J12, J17** | — |
+| **HAL-007** (S2, open) | **Terse questions can be answered confidently and wrongly.** Measured on `llama3.1:8b`: "Most popular products" returned the ten most *expensive* products; "Top selling products" returned 334 rows from a ranking that ranks nothing; "Worst selling products" returned **0** rows from the same shape, which looks exactly like "no data". **This is the most important thing for you to watch for in J5 and J15**: the system is not refusing, it is answering a different question | **J5.1–J5.3, J15** | …always raise a specific instance, with the question and the SQL. Each one is evidence |
+| **HAL-004** (S2, open) | A web-search answer has **no grounding gate** — an invented URL or publication date can reach you while the Sources panel disagrees with the prose. Trust the Sources panel over the sentence | **J10** | …a *database* answer does it, which would be far more serious |
+| **HAL-006** (S2, open) | A question that matches no source returns a polite "couldn't match that" in ~2.4s **without running input validation**, so it never appears in the audit log. J12.3 ("trigger a refused action, then find it in the audit") must be driven with a refusal that reaches the SQL path — a hand-edited `UPDATE` (J7.1) works | **J12.3** | — |
+| **OPS-003** (S2, open) | Three fail-closed startup controls only refuse when `ENVIRONMENT=production`, and the default is `development`. If your UAT deployment is not set to `production`, a non-read-only database account and a missing identity configuration produce a log line rather than a refusal to start | **J2, J7** | — |
+| **UI-010** (S3, open) | The streaming progress badge names the stage that just **finished**, not the one running. During the long wait it will read "plan query" while SQL generation is what is actually happening | **J5.4** | — |
+| **UI-013** (S2, open) | Live captions are cloud-backed, and that exception is documented in source and **not shown to you in the app**. Treat voice input as leaving the machine | **J17** | — |
+| **UI-014** (S3, open) | Chart currency is hardcoded `USD`, in a five-locale app over your own database | **J11, J14** | — |
+| **UI-011** / **UI-015** (S4, open) | `[restricted]` cells are marked but never explained; being offline is reported as "we couldn't check your access" | J11, J14 | — |
+
+Two positive results from the same audit, so you do not spend time
+re-finding them: **every one of the 213 API operations refuses an
+anonymous caller** (401, never 403, with an exact public allowlist of
+16), and **no IDOR was found** across conversations, messages, shares
+or sessions between two users.
+
 
 | Ref | What you will hit | Affects | Raise only if |
 |---|---|---|---|
