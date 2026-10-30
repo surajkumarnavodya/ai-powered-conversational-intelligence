@@ -264,7 +264,21 @@ _PATTERNS: tuple[_Pattern, ...] = (
             r"|(?:^|[-_\s])pay(?:[-_\s](?:amount|total|out))?$|(?:^|[-_\s])pay[-_\s]amount"
             r"|net[-_]?pay|\bctc\b|compensation|\bbonus|incentive[-_]?amount|commission[-_]?amount"
             r"|\bstipend|payslip|take[-_]?home|annual[-_]?income|hourly[-_]?rate"
-            r"|stock[-_]?option|\besop\b|severance",
+            # `annual_income` was here and `yearly_income` was not, so
+            # `DimCustomer.YearlyIncome` was returned in the clear to a
+            # caller without VIEW_RESTRICTED_COLUMNS while the identical
+            # `AnnualIncome` would have masked. Measured against the live
+            # app 2026-10-30 (Phase 9, `UI-012`): the same five rows came
+            # back with FirstName/LastName/EmailAddress/Phone masked and
+            # `YearlyIncome` = 90000.0 beside them.
+            #
+            # Deliberately `yearly[-_]?income` and not a bare `income`:
+            # `net_income`, `income_statement` and `operating_income` are
+            # ordinary company financials, and CLAUDE.md 5.8 names
+            # over-blocking normal analytics as its own failure mode. A
+            # bare-`income` rule is a policy decision, not a defect fix --
+            # see docs/uat-readiness/phase-9-ui.md.
+            r"|yearly[-_]?income" r"|stock[-_]?option|\besop\b|severance",
             re.IGNORECASE,
         ),
         DataClassification.HIGHLY_SENSITIVE,

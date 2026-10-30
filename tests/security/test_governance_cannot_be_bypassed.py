@@ -151,6 +151,45 @@ class TestSqlShapedEvasionDoesNotReachTheResult:
         )
         assert governed.rows[0][1] == RESTRICTED_MASK
 
+    def test_yearly_income_masks_the_same_as_annual_income(self):
+        """`UI-012`. The compensation pattern carried `annual_income` and
+        not `yearly_income`, so a real column -- `DimCustomer.YearlyIncome`
+        in the AdventureWorks sample every UAT journey uses -- came back in
+        the clear to a caller without `VIEW_RESTRICTED_COLUMNS`, in the same
+        row as four columns that had just been masked.
+
+        Both spellings are asserted, so closing one does not reopen the
+        other, and both casings, since the gate reads the name the database
+        returned rather than a normalised one."""
+        for column in ("yearly_income", "YearlyIncome", "annual_income", "AnnualIncome"):
+            governed = govern_result_for_domain(
+                ["customer_id", column],
+                [(1, 90000.0)],
+                VIEWER,
+                BusinessDomain.SALES_MARKETING,
+                0,
+            )
+            assert governed.rows[0][1] == RESTRICTED_MASK, column
+
+    def test_company_income_lines_are_not_over_blocked(self):
+        """The other half of `UI-012`, and the reason the fix is
+        `yearly[-_]?income` rather than a bare `income`.
+
+        CLAUDE.md 5.8 names over-blocking ordinary analytics as its own
+        failure mode: these are company financials on a P&L, not a person's
+        pay, and masking them would break normal reporting. If a later
+        change broadens the pattern to bare `income`, this fails and says
+        so -- which is the conversation to have, not a silent widening."""
+        for column in ("net_income", "operating_income", "income_statement_line"):
+            governed = govern_result_for_domain(
+                ["period", column],
+                [("FY26", 1_250_000.0)],
+                VIEWER,
+                BusinessDomain.FINANCE,
+                0,
+            )
+            assert governed.rows[0][1] == 1_250_000.0, column
+
     def test_a_union_result_is_protected_by_its_column_names(self):
         governed = govern_result_for_domain(
             ["label", "api_key"],
