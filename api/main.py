@@ -20,6 +20,7 @@ programmatic/scripted access on its own.
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import logging
 import sys
 import time
@@ -1452,6 +1453,21 @@ def _run_orchestrated_with_timeout(
     limitation `db.execution._execute_with_timeout`'s own "background
     thread + join" idiom has) -- what bounding the executor buys is
     described in `_get_ask_executor`'s own docstring.
+
+    **The task is submitted inside a copy of the caller's context**, and
+    that is load-bearing rather than tidiness. `ThreadPoolExecutor.submit`
+    gives its worker thread a *fresh, empty* `contextvars` context, so
+    every `ContextVar` a wrapping caller bound before calling this
+    function is invisible to the graph that actually runs here. Measured
+    2026-10-29 (Phase 9, `UI-004`): `api/streaming.py` binds
+    `agent.progress`'s sink on its own worker thread and the graph then
+    ran on *this* pool, so `agent.nodes`' `emit_progress` read `None` for
+    the sink and `POST /ask/stream` emitted **zero** `progress` events for
+    a 58-second question -- only `open`, keepalive comments, `result` and
+    `done`. The documented per-node progress had never reached a browser.
+    `copy_context().run` is per-submit, so a `ContextVar` the graph sets
+    stays inside that copy and cannot leak back to the caller or sideways
+    into another request.
     """
     result: dict[str, Any] = {}
     error: dict[str, BaseException] = {}
@@ -1477,7 +1493,10 @@ def _run_orchestrated_with_timeout(
             error["error"] = exc
 
     try:
-        future = _get_ask_executor(max_workers).submit(_run)
+        # A fresh copy per submit -- a Context cannot be entered twice, and
+        # two concurrent asks must not share one.
+        caller_context = contextvars.copy_context()
+        future = _get_ask_executor(max_workers).submit(caller_context.run, _run)
         future.add_done_callback(lambda _f: on_done())
     except BaseException:
         # Defensive: submission itself failing (the executor singleton
