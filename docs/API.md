@@ -36,6 +36,30 @@ described below.
 
 ## Endpoints
 
+> ### This document describes 82 of the API's 212 operations
+>
+> **Measured 2026-10-30 (UAT-readiness Phase 10, `DOC-020`).** The
+> application exposes **187 paths / 212 operations** in
+> `/openapi.json`, plus `GET /live` and the SPA catch-all
+> `GET /{full_path:path}`, which carry `include_in_schema=False` — 213
+> addressable API operations in all. The sections below describe 82 of
+> them in prose. That has always been true; what was missing was saying
+> so, so a reader could not tell "undocumented" from "does not exist".
+>
+> §[Full endpoint index](#full-endpoint-index) at the end of this file
+> lists **every** operation and marks which ones have a section here.
+> For an operation with no section, the authoritative contract is its
+> router module's own docstring and `api/schemas.py`'s response model —
+> and the live schema is always `GET /openapi.json` (Swagger UI at
+> `/docs`, ReDoc at `/redoc`), which is generated from the code and so
+> cannot drift from it the way this page can.
+>
+> Reproduce the diff:
+>
+> ```powershell
+> .\.venv\Scripts\python.exe -c "import json; from api.main import app; print(json.dumps(app.openapi()))" > openapi.json
+> ```
+
 ### `GET /health`
 
 Real, non-cached reachability check of every external dependency: every
@@ -175,6 +199,13 @@ it client-side from `frontend/src/store/chatStore.ts`'s `queryHistory`),
 must be resent by the caller each request — the API has no server-side
 session of its own. `enable_insight` defaults to `true`.
 
+`forecast_horizon` (optional, positive integer) is how many future
+periods to forecast, and is **only meaningful when the question is
+classified as FORECAST-intent** (`agent.intent.AnalyticalIntentType`) —
+ignored otherwise. Omit it to use `Settings.forecast_default_horizon`.
+A value above `Settings.forecast_max_horizon` returns `400`, never a
+silent clamp.
+
 Response (mirrors what the React dashboard renders — see `agent.state.AgentState`):
 
 ```json
@@ -228,6 +259,46 @@ remains the only thing that decides whether SQL may run:
   "is_distinct": false
 }
 ```
+
+#### The other 26 `AskResponse` fields
+
+**The example above shows 16 of `AskResponse`'s 53 fields**, and this
+document named only 27 of them anywhere until 2026-10-30 (`DOC-021`).
+The gap mattered for one field in particular, so read this before
+writing a client.
+
+**`synthesized_answer` is where the prose answer lives, and `insight`
+is not.** `insight` is the one-sentence summary of a *SQL* result.
+`synthesized_answer` carries the combined answer text whenever two or
+more sources contributed, **and it carries the whole answer on the
+router's no-retrieval route** — a general-knowledge reply, or the fixed
+"I couldn't match that to a data source" message. A client that reads
+only `insight` therefore renders a web, document, policy or
+no-match answer as blank, which looks exactly like a server fault and
+is not one. `answer_truth_level` is
+`agent.provenance.DataTruthLevel`'s value for that text and is
+`ai_inference` when it came from the model's own knowledge rather than
+from a source; never present it as observed fact.
+
+The rest, grouped. Every one is optional with a default, so an existing
+client that ignores all of them is unaffected (`CLAUDE.md` §6.3).
+
+| Field | What it is |
+|---|---|
+| `synthesized_answer`, `answer_truth_level` | above |
+| `document_result`, `policy_result`, `web_result`, `media_search_result`, `attachment_result` | one per non-SQL source that ran, each a `SourceAnswerOut`-shaped block with its own citations |
+| `schema_tables` | the tables retrieved into the generation prompt, as the dashboard's schema panel shows them |
+| `stage_timings` | per-node wall-clock timings in execution order, retried attempts included |
+| `answer_duration_ms` | server-side wall time for the whole run; persisted with the turn, so a reopened conversation shows the same figure |
+| `conversation_id`, `message_id`, `session_id` | the persisted turn's identifiers. `conversation_id`/`message_id` are set only for a locally-authenticated caller whose turn was stored; `session_id` is the correlation token described under the request above |
+| `followup_classification`, `followup_resolved_against`, `context_resolution` | how this question was read against the conversation before it — see [`docs/CONVERSATIONAL_CONTEXT.md`](CONVERSATIONAL_CONTEXT.md). `context_resolution` is `null` when `ENABLE_CONTEXT_RESOLUTION` is off |
+| `analytical_intent`, `analytical_plan` | Prompts 11 and 12. **Read-only context for display** — neither is a way to change what ran, and `analytical_intent` is always `ai_inference` |
+| `analytical_result`, `forecast_result` | the deterministic statistical breakdown, and the forecast when the question was FORECAST-intent. A forecast is never a `DATABASE_FACT` |
+| `governing_metrics` | published `CONFIRMED_BUSINESS_TRUTH` metric definitions this answer was computed against (Prompt 10); empty when none matched |
+| `insight_numbers_checked` | how many numbers in `insight` the grounding check verified against the real rows. `0` with a non-null `insight` means the sentence contained no checkable number — not that it failed |
+| `display_names_repaired`, `display_name_notice` | key columns the display-name guard rewrote into a joined readable name, and an honest disclosure when it could not — see [`docs/DISPLAY_NAMES.md`](DISPLAY_NAMES.md) |
+| `restricted_field_notice` | set when the generated SQL repeatedly referenced a column this caller's role may not view, so the answer is incomplete and says so |
+| `low_confidence_notice` | set when a multi-table join returned 0 rows. **Detection only** — it does not mean the answer is wrong, and its absence does not mean it is right |
 
 `statement_type` and `referenced_tables` come from
 `summarize_sql`; the six structural fields come from `describe_sql`, which
@@ -1197,6 +1268,26 @@ equivalent) also exist (`api/main.py`, `api/documents.py`, `api/media.py`)
 — not yet given their own subsection here; see each module's own
 docstrings for the authoritative contract in the meantime.
 
+**`POST /execute` is the "Confirm and Run" path, and it re-validates.**
+It runs the governed sequence in full — `validate_sql` →
+`enforce_row_limit` → `qualify_table_schema` → `execute_readonly_sql` →
+`govern_rows_for_caller` — against **the SQL in the request body**, so a
+hand-edited statement is exactly as untrusted as a generated one and a
+client cannot submit edited SQL that skips validation, the row cap, the
+timeout or the result gate. `ExecuteResponse` carries six fields this
+page did not previously name (`DOC-021`): `normalized_sql` (the
+validated, row-limited statement that actually ran, `null` when
+rejected or failed — **this, not the submitted text, is what executed**),
+`column_types` and `column_semantics` (per-column inferred type and
+semantic role, in result order, so a client's chart engine binds a real
+measure to the y-axis rather than whichever numeric column came first —
+see [`docs/CHART_AXIS_BINDING.md`](CHART_AXIS_BINDING.md)),
+`chart_recommendation` and `visualization_spec` (a suggested chart type
+with its reason, and the fuller deterministic specification), and
+`cache_status` (the same signal as the `X-Cache` response header,
+mirrored into the body for a client that cannot read headers). All six
+are optional with defaults.
+
 **Feedback** (`api/main.py`, both require `Permission.GOLDEN_EXAMPLE_WRITE`):
 `POST /feedback/golden-example` records a human-approved (question, SQL)
 pair for future few-shot retrieval — the same call the dashboard's
@@ -1351,3 +1442,241 @@ it. See `security/audit_log.py`.
   this project's own needs; expect it to evolve alongside the agent.
 - Not a replacement for reading `SECURITY.md` before pointing either
   interface (UI or API) at a real/sensitive database.
+
+---
+
+<a id="full-endpoint-index"></a>
+
+## Full endpoint index
+
+Generated from `app.openapi()` on **2026-10-30** — 187 paths, 212
+operations. "Described in a section above?" is a literal check for the
+`METHOD /path` pair appearing in this document's prose, so a `no` means
+only that this page has no section for it, never that the operation is
+unsupported or ungoverned: every one of them goes through the same
+authorization, validation and result-governance layers, and
+[`docs/uat-readiness/phase-4-authorization.md`](uat-readiness/phase-4-authorization.md)
+derives its role × route matrix from the live application rather than
+from this list.
+
+Two operations are deliberately absent from `/openapi.json` and so from
+this table: `GET /live` (the liveness probe, described under
+[`GET /health`](#get-health) above) and the SPA catch-all
+`GET /{full_path:path}` that serves `frontend/dist`. **That catch-all is
+why a 200 from this app is never on its own evidence that a route
+exists** — a nonexistent path returns the dashboard's `<!doctype html>`.
+
+| Operation | Described in a section above? |
+|---|---|
+| `POST /analyst/investigate` | yes |
+| `POST /analyst/supervise` | yes |
+| `GET /artifacts` | no |
+| `POST /artifacts` | no |
+| `GET /artifacts/{artifact_id}` | no |
+| `DELETE /artifacts/{artifact_id}` | no |
+| `POST /artifacts/{artifact_id}/refresh` | no |
+| `POST /ask` | yes |
+| `POST /ask/stream` | yes |
+| `GET /attachments/capabilities` | yes |
+| `POST /attachments/upload` | yes |
+| `DELETE /attachments/{attachment_id}` | yes |
+| `POST /attachments/{attachment_id}/ai-edit` | yes |
+| `POST /attachments/{attachment_id}/blur-region` | yes |
+| `GET /attachments/{attachment_id}/detect-text-regions` | yes |
+| `POST /attachments/{attachment_id}/extract-text` | yes |
+| `POST /attachments/{attachment_id}/remove-text` | yes |
+| `POST /attachments/{attachment_id}/resize` | yes |
+| `POST /auth/change-password` | yes |
+| `POST /auth/forgot-password` | yes |
+| `POST /auth/google` | yes |
+| `GET /auth/google/link` | no |
+| `POST /auth/google/link` | no |
+| `DELETE /auth/google/link` | yes |
+| `GET /auth/google/nonce` | yes |
+| `POST /auth/login` | yes |
+| `POST /auth/logout` | yes |
+| `POST /auth/logout-all` | no |
+| `GET /auth/me` | no |
+| `PATCH /auth/me` | yes |
+| `GET /auth/me/avatar` | no |
+| `POST /auth/me/avatar` | no |
+| `DELETE /auth/me/avatar` | no |
+| `POST /auth/refresh` | yes |
+| `POST /auth/register` | yes |
+| `POST /auth/resend-verification` | yes |
+| `POST /auth/reset-password` | yes |
+| `GET /auth/sessions` | yes |
+| `DELETE /auth/sessions/{session_id}` | yes |
+| `POST /auth/verify-email` | yes |
+| `GET /bi/connectors` | no |
+| `POST /bi/connectors` | no |
+| `GET /bi/connectors/{connector_id}` | no |
+| `DELETE /bi/connectors/{connector_id}` | no |
+| `GET /bi/connectors/{connector_id}/export` | no |
+| `POST /bi/connectors/{connector_id}/refresh` | no |
+| `POST /briefing/generate` | yes |
+| `GET /chat/search` | yes |
+| `GET /conversations` | no |
+| `POST /conversations` | yes |
+| `GET /conversations/{conversation_id}` | no |
+| `PATCH /conversations/{conversation_id}` | no |
+| `DELETE /conversations/{conversation_id}` | yes |
+| `GET /conversations/{conversation_id}/messages` | no |
+| `POST /conversations/{conversation_id}/messages` | yes |
+| `GET /conversations/{conversation_id}/share` | no |
+| `POST /conversations/{conversation_id}/share` | no |
+| `PATCH /conversations/{conversation_id}/share` | yes |
+| `POST /conversations/{conversation_id}/share/link/regenerate` | yes |
+| `POST /conversations/{conversation_id}/share/members/invite` | yes |
+| `DELETE /conversations/{conversation_id}/share/members/{member_id}` | yes |
+| `POST /conversations/{conversation_id}/share/revoke` | yes |
+| `POST /data-quality/lineage` | no |
+| `POST /data-quality/scan` | no |
+| `GET /decision-center/briefing` | yes |
+| `GET /documents` | no |
+| `POST /documents` | no |
+| `DELETE /documents/{document_id}` | no |
+| `GET /documents/{document_id}/download` | yes |
+| `GET /eval-platform/runs` | no |
+| `POST /eval-platform/runs/component-benchmark` | no |
+| `POST /eval-platform/runs/report` | no |
+| `GET /eval-platform/runs/{run_id}` | no |
+| `GET /eval-platform/runs/{run_id}/case-reviews` | no |
+| `POST /eval-platform/runs/{run_id}/case-reviews` | no |
+| `POST /eval-platform/runs/{run_id}/release-gate` | no |
+| `POST /execute` | yes |
+| `POST /feedback/golden-example` | yes |
+| `POST /feedback/message` | yes |
+| `POST /generate/confirm` | yes |
+| `GET /governance/assets` | yes |
+| `POST /governance/assets` | yes |
+| `GET /governance/assets/current` | yes |
+| `POST /governance/assets/validate` | yes |
+| `GET /governance/assets/{version_id}` | yes |
+| `PATCH /governance/assets/{version_id}` | yes |
+| `POST /governance/assets/{version_id}/approve` | no |
+| `POST /governance/assets/{version_id}/deploy` | no |
+| `POST /governance/assets/{version_id}/evaluation-results` | no |
+| `GET /governance/assets/{version_id}/events` | no |
+| `POST /governance/assets/{version_id}/reject` | no |
+| `POST /governance/assets/{version_id}/retire` | no |
+| `POST /governance/assets/{version_id}/rollback` | no |
+| `POST /governance/assets/{version_id}/submit-for-evaluation` | no |
+| `POST /governance/assets/{version_id}/submit-for-testing` | no |
+| `POST /governance/assets/{version_id}/test-results` | no |
+| `POST /governance/assets/{version_id}/usage` | no |
+| `GET /governance/assets/{version_id}/usage-summary` | no |
+| `GET /governance/inventory` | yes |
+| `GET /health` | yes |
+| `GET /kpi-monitoring/findings` | yes |
+| `POST /kpi-monitoring/scan` | yes |
+| `POST /lineage/graph` | no |
+| `POST /lineage/stale-check` | no |
+| `POST /lineage/trace` | no |
+| `GET /media/library/{media_id}` | yes |
+| `GET /media/{media_id}` | yes |
+| `GET /metrics/harness` | no |
+| `GET /metrics/performance` | yes |
+| `GET /model-routing/metrics` | yes |
+| `GET /model-routing/policy` | yes |
+| `POST /model-routing/preview` | yes |
+| `GET /models` | yes |
+| `GET /navigation` | no |
+| `POST /navigation/access-denied` | no |
+| `GET /onboarding/jobs` | no |
+| `POST /onboarding/jobs` | no |
+| `GET /onboarding/jobs/{job_id}` | no |
+| `GET /onboarding/jobs/{job_id}/artifacts` | no |
+| `POST /onboarding/jobs/{job_id}/cancel` | no |
+| `POST /onboarding/jobs/{job_id}/discover` | no |
+| `POST /onboarding/jobs/{job_id}/publish` | no |
+| `POST /onboarding/jobs/{job_id}/register-for-chat` | no |
+| `POST /onboarding/jobs/{job_id}/retry` | no |
+| `GET /onboarding/jobs/{job_id}/review-items` | no |
+| `POST /onboarding/jobs/{job_id}/review-items/{item_id}/decide` | no |
+| `POST /optimization/solve` | no |
+| `POST /optimization/validate` | no |
+| `GET /platform-admin/audit-logs` | no |
+| `GET /platform-admin/config-status` | no |
+| `GET /platform-admin/databases` | no |
+| `GET /platform-admin/jobs` | no |
+| `GET /platform-admin/metrics` | yes |
+| `GET /platform-admin/roles` | no |
+| `GET /platform-admin/security-events` | no |
+| `GET /platform-admin/semantic-review-queue` | no |
+| `GET /platform-admin/tenants` | no |
+| `POST /platform-admin/tenants` | no |
+| `POST /platform-admin/tenants/{tenant_id}/status` | no |
+| `GET /platform-admin/users` | no |
+| `POST /platform-admin/users/{user_id}/roles` | no |
+| `DELETE /platform-admin/users/{user_id}/roles/{role_name}` | no |
+| `POST /predictive/drift` | no |
+| `POST /predictive/train` | no |
+| `GET /questions` | yes |
+| `POST /questions` | yes |
+| `GET /questions/stats` | yes |
+| `GET /questions/{job_id}` | yes |
+| `POST /questions/{job_id}/cancel` | yes |
+| `GET /recommendations` | no |
+| `GET /recommendations/metrics` | no |
+| `GET /recommendations/{record_id}` | no |
+| `GET /recommendations/{record_id}/events` | no |
+| `POST /recommendations/{record_id}/expire` | no |
+| `POST /recommendations/{record_id}/feedback` | no |
+| `POST /recommendations/{record_id}/notes` | no |
+| `POST /recommendations/{record_id}/owner` | no |
+| `POST /recommendations/{record_id}/resolve` | no |
+| `POST /scenarios/run` | no |
+| `POST /scenarios/validate` | no |
+| `POST /schema/refresh` | yes |
+| `GET /schema/tables` | yes |
+| `GET /schema-drift/findings` | no |
+| `GET /schema-drift/findings/{finding_id}` | no |
+| `POST /schema-drift/scan` | no |
+| `POST /search/media` | yes |
+| `GET /semantic-catalog/entries` | no |
+| `POST /semantic-catalog/entries` | no |
+| `GET /semantic-catalog/entries/concept/{concept_key}/versions` | no |
+| `GET /semantic-catalog/entries/{entry_id}` | no |
+| `PATCH /semantic-catalog/entries/{entry_id}` | no |
+| `POST /semantic-catalog/entries/{entry_id}/publish` | no |
+| `POST /semantic-catalog/entries/{entry_id}/request-changes` | no |
+| `POST /semantic-catalog/entries/{entry_id}/review` | no |
+| `POST /semantic-intelligence/entries/{entry_id}/rollback` | yes |
+| `GET /semantic-intelligence/findings` | yes |
+| `POST /semantic-intelligence/findings/{finding_id}/decision` | yes |
+| `POST /semantic-intelligence/findings/{finding_id}/rollback` | yes |
+| `GET /semantic-intelligence/impact/{concept_key}` | yes |
+| `POST /semantic-intelligence/run` | yes |
+| `POST /share-invitations/{opaque_token}/accept` | yes |
+| `GET /share-view/{ref}` | yes |
+| `GET /share-view/{ref}/attachments/{attachment_id}` | yes |
+| `GET /sources` | yes |
+| `GET /tenant-admin/audit` | no |
+| `GET /tenant-admin/databases` | no |
+| `POST /tenant-admin/databases/refresh` | no |
+| `GET /tenant-admin/evaluation` | no |
+| `GET /tenant-admin/golden-questions` | no |
+| `GET /tenant-admin/pending-reviews` | no |
+| `GET /tenant-admin/profile` | no |
+| `GET /tenant-admin/roles` | no |
+| `GET /tenant-admin/semantic-catalog-status` | no |
+| `GET /tenant-admin/users` | no |
+| `POST /tenant-admin/users/{user_id}/roles` | no |
+| `DELETE /tenant-admin/users/{user_id}/roles/{role_name}` | no |
+| `POST /voice/synthesize` | yes |
+| `POST /voice/transcribe` | yes |
+| `GET /workflows` | no |
+| `POST /workflows` | no |
+| `GET /workflows/{workflow_id}` | no |
+| `POST /workflows/{workflow_id}/approve` | no |
+| `POST /workflows/{workflow_id}/assign` | no |
+| `POST /workflows/{workflow_id}/comments` | no |
+| `POST /workflows/{workflow_id}/complete` | no |
+| `POST /workflows/{workflow_id}/due-date` | no |
+| `GET /workflows/{workflow_id}/events` | no |
+| `POST /workflows/{workflow_id}/expire` | no |
+| `POST /workflows/{workflow_id}/external-reference` | no |
+| `POST /workflows/{workflow_id}/reject` | no |
+| `POST /workflows/{workflow_id}/start` | no |
+| `POST /workflows/{workflow_id}/submit-for-approval` | no |

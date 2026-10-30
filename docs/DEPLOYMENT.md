@@ -478,8 +478,9 @@ Also new in this pass — a documented procedure where none existed.
 - **Identity database schema**: `alembic -c identity/alembic.ini
   downgrade -1` reverts the most recently applied migration;
   `downgrade <revision>` targets a specific one. Every one of this
-  project's 9 migrations has a real `downgrade()` function (verified by
-  direct read, not assumed) — but as with any schema downgrade, verify
+  project's **18** migrations has a real `downgrade()` function
+  (re-counted and re-read 2026-10-30; this said "9", which nine
+  later revisions had made wrong, `DOC-019`) — but as with any schema downgrade, verify
   against a copy of production data first if the migration you're
   reverting involved a data transformation, not just a schema change
   (Alembic reverts schema; it does not re-derive data your application
