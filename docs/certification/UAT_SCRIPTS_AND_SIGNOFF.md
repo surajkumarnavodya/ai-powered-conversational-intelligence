@@ -197,6 +197,65 @@ exit; a half-filled grid is not.
 
 ---
 
+### 2.4 The feature-flag profile for UAT (added 2026-10-30, `OPS-017`)
+
+**Entry criterion E6 asks for "the feature flags the journeys in scope
+need" and nothing said which those are.** `config/settings.py` carries
+**74** flag-shaped settings, so "on if needed, off if not" was not a
+criterion anyone could check. This is the profile to check against.
+
+Set these deliberately. **A flag absent from `.env` takes the default in
+the right-hand column**, which is not always off.
+
+#### Required on — a journey fails without it
+
+| Flag | Default | Needed by |
+|---|---|---|
+| `LOCAL_AUTH_ENABLED` | `false` | J1, J6, J12 and all chat history. Also E5 |
+| `OLLAMA_MODEL_SELECTION_ENABLED` | `true` | J17 — per-request model choice and the allowlist refusal |
+| `ENABLE_QUERY_PLANNING` | `true` | J9's analytical questions |
+| `ENABLE_REQUEST_GOVERNANCE`, `ENABLE_RESULT_GOVERNANCE`, `ENABLE_RECOMMENDATION_SAFETY` | all `true` | J7, J11.5 masking, J9's provenance. **Leave these alone** — each is a rollback switch for a safety layer |
+| `ENABLE_QUESTION_QUEUE` | `true` | J18's concurrency edge. Read `OPS-012` first: the queue gives a question **120 s** while `POST /ask` gives it **600 s**, so on slow hardware the same question can time out here and succeed there |
+
+#### Required on only if that journey is in scope
+
+| Flag | Default | Journey | Note |
+|---|---|---|---|
+| `ENABLE_DOCUMENT_RAG` | `false` | J8 | Also needs `RAG_STORE_CONNECTION_STRING` (SQL Server 2025+/Azure SQL) |
+| `ENABLE_POLICY_RAG` | `false` | J8, J10 | The policy half of the same store |
+| `ENABLE_MULTI_SOURCE_ROUTER` | `false` | J8, J10 | Without it, only the SQL path runs |
+| `ENABLE_WEB_SEARCH` | `false` | J10 | Needs `WEB_SEARCH_API_KEY`. **Read `OPS-015`**: with web search on, the keyword fallback sends database questions containing `price` or `score` to the web instead |
+| `SHARE_PUBLIC_LINKS_ENABLED` | `false` | J11.5 | Off means the share-link negative test is N/A, not FAIL |
+| `ENABLE_CHAT_ATTACHMENTS` | `true` | J18's oversized-file case | Carries the `pymupdf` AGPL question (`BP-012`); turn it **off** if that decision is unresolved |
+
+#### Turn off for UAT unless a named tester owns it
+
+Each of these was **on** in the environment measured on 2026-10-30 and
+**no journey exercises any of them**. An enabled subsystem nobody tests
+is surface without coverage, and the first two carry more than that.
+
+| Flag | Why off |
+|---|---|
+| `ENABLE_MEDIA_GENERATION` | **Spends money.** Calls IMA Studio per generation. No journey covers it |
+| `ENABLE_IMAGE_EDITING` | Same provider path, no journey |
+| `ENABLE_VOICE_MODE` | No journey, and `UI-013` is open: live captions send microphone audio to the browser vendor's speech service with **no on-screen notice**. Do not put that in front of business users before the disclosure exists |
+| `ENABLE_MEDIA_SEARCH` | No journey. Needs the Tesseract binary; OCR fails open without it, so results are quietly worse rather than broken |
+| `ENABLE_GENERAL_KNOWLEDGE_ANSWERS` | Leave at `false`. On, a question that matched no source gets a composed prose answer instead of the fixed no-match message — and per `HAL-006` that route runs **no input guard**, so nothing is recorded |
+
+#### Record it, do not just set it
+
+Paste the output of this into §1's environment table, so the grid in §5
+is interpretable six months from now:
+
+```powershell
+.venv\Scripts\python.exe -c "from config.settings import Settings, get_settings; s=get_settings(); print('\n'.join(f'{n.upper()}={getattr(s,n)}' for n in sorted(Settings.model_fields) if n.startswith('enable_') or n.endswith('_enabled')))"
+```
+
+**Never paste `.env` itself** — it holds real passwords and keys. The
+command above prints flags only.
+
+---
+
 ## 2.5 Objective, business scenario, preconditions and test data
 
 One row per journey. **Read your journeys' rows before you start** — the
