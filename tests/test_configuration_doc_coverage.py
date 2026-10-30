@@ -138,18 +138,16 @@ _UNDOCUMENTED_BASELINE = frozenset(
 
 def _env_name(field_name: str, field_info: object) -> str:
     """The environment variable a `Settings` field is populated from."""
-    alias = getattr(field_info, "validation_alias", None) or getattr(
-        field_info, "alias", None
-    )
+    alias = getattr(field_info, "validation_alias", None) or getattr(field_info, "alias", None)
     if not isinstance(alias, str):
         alias = field_name
     return alias.upper()
 
 
 def _settings_env_names() -> set[str]:
-    return {
-        _env_name(name, info) for name, info in Settings.model_fields.items()
-    } - set(_DERIVED_NOT_SETTABLE)
+    return {_env_name(name, info) for name, info in Settings.model_fields.items()} - set(
+        _DERIVED_NOT_SETTABLE
+    )
 
 
 def _mentions(text: str, name: str) -> bool:
@@ -182,9 +180,7 @@ class TestTheDocumentedConfigurationSurface:
             f"extending _UNDOCUMENTED_BASELINE."
         )
 
-    def test_the_baseline_does_not_outlive_the_gap(
-        self, undocumented: set[str]
-    ) -> None:
+    def test_the_baseline_does_not_outlive_the_gap(self, undocumented: set[str]) -> None:
         """A baseline entry that has since been documented must be removed, so
         this list can never quietly become a permanent exemption."""
         now_documented = sorted(_UNDOCUMENTED_BASELINE - undocumented)
@@ -199,8 +195,7 @@ class TestTheDocumentedConfigurationSurface:
         real = _settings_env_names()
         stale = sorted(_UNDOCUMENTED_BASELINE - real)
         assert not stale, (
-            f"_UNDOCUMENTED_BASELINE names setting(s) that no longer exist on "
-            f"Settings: {stale}"
+            f"_UNDOCUMENTED_BASELINE names setting(s) that no longer exist on " f"Settings: {stale}"
         )
 
     def test_derived_fields_are_really_derived(self) -> None:
@@ -257,21 +252,16 @@ class TestEveryDocumentedFlagIsRealAndItsDefaultIsRight:
     }
 
     @pytest.mark.parametrize("field,expected", sorted(FLAG_DEFAULTS.items()))
-    def test_flag_default_matches_the_documented_one(
-        self, field: str, expected: bool
-    ) -> None:
+    def test_flag_default_matches_the_documented_one(self, field: str, expected: bool) -> None:
         assert Settings.model_fields[field].default is expected, (
-            f"docs/CONFIGURATION.md documents {field.upper()} as "
-            f"{str(expected).lower()}"
+            f"docs/CONFIGURATION.md documents {field.upper()} as " f"{str(expected).lower()}"
         )
 
     @pytest.mark.parametrize("field,expected", sorted(HARNESS_DEFAULTS.items()))
-    def test_harness_ceiling_matches_the_documented_one(
-        self, field: str, expected: int
-    ) -> None:
-        assert Settings.model_fields[field].default == expected, (
-            f"docs/CONFIGURATION.md documents {field.upper()} as {expected}"
-        )
+    def test_harness_ceiling_matches_the_documented_one(self, field: str, expected: int) -> None:
+        assert (
+            Settings.model_fields[field].default == expected
+        ), f"docs/CONFIGURATION.md documents {field.upper()} as {expected}"
 
     def test_every_documented_flag_appears_in_both_surfaces(self) -> None:
         env_text = _ENV_EXAMPLE.read_text(encoding="utf-8")

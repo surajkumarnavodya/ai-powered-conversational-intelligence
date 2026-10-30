@@ -59,9 +59,7 @@ def _mentions(text: str, name: str) -> bool:
 
 class TestEveryPublicContractFieldIsDocumented:
     @pytest.mark.parametrize("model_name", sorted(_PINNED_MODELS))
-    def test_no_field_is_absent_from_the_document(
-        self, model_name: str, api_doc: str
-    ) -> None:
+    def test_no_field_is_absent_from_the_document(self, model_name: str, api_doc: str) -> None:
         model = _PINNED_MODELS[model_name]
         missing = sorted(f for f in model.model_fields if not _mentions(api_doc, f))
         assert not missing, (
@@ -141,8 +139,7 @@ class TestTheDocumentDoesNotClaimEndpointsThatDoNotExist:
 
         phantom = sorted(e for e in documented if not served(e))
         assert not phantom, (
-            f"docs/API.md documents endpoint(s) the application does not "
-            f"serve: {phantom}"
+            f"docs/API.md documents endpoint(s) the application does not " f"serve: {phantom}"
         )
 
     def test_the_index_counts_match_the_live_schema(self, api_doc: str) -> None:
