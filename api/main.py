@@ -62,6 +62,7 @@ from agent.llm_client import get_ollama_client
 from agent.model_registry import (
     InvalidModelSelectionError,
     build_model_options,
+    discover_installed_models,
     installed_model_names,
     validate_model_selection,
 )
@@ -297,6 +298,41 @@ def _enforce_database_write_privileges(db_engines: Mapping[str, Any], settings) 
     )
 
 
+def _warn_when_the_default_model_is_not_installed(settings) -> None:
+    """Warns at startup when `OLLAMA_MODEL` names a model Ollama does not have.
+
+    Added 2026-10-30 (`OPS-008`). The app has always started cleanly in
+    this state and then failed **every** question at generation time, with
+    the failure only visible once a user asked something. `GET /models`
+    already reported `installed: false` for it, so the information was
+    there -- nothing just said it out loud at the point an operator is
+    reading the log.
+
+    A warning and never a refusal, for the same reason
+    `_warn_on_ask_concurrency_pool_mismatch` above is: the model may be
+    mid-pull, and an operator may be starting the app deliberately before
+    `ollama pull` finishes.
+
+    **Silent when the installed set comes back empty**, because
+    `agent.model_registry.discover_installed_models` fails open to an
+    empty set when Ollama cannot be reached -- warning then would blame
+    the model for an unreachable server, which `GET /health`'s own
+    `ollama` block already reports accurately.
+    """
+    installed = discover_installed_models(settings)
+    if not installed or settings.ollama_model in installed:
+        return
+    logger.warning(
+        "[startup] OLLAMA_MODEL=%r is not installed on %s -- every question using "
+        "the default model will fail at generation. Run `ollama pull %s`, or set "
+        "OLLAMA_MODEL to one of the installed models: %s.",
+        settings.ollama_model,
+        settings.ollama_host,
+        settings.ollama_model,
+        ", ".join(sorted(installed)) or "(none)",
+    )
+
+
 def _warn_on_ask_concurrency_pool_mismatch(settings) -> None:
     """Enterprise scalability assessment (2026-09-27): warns at startup when
     this process could admit more concurrent `/ask` requests
@@ -473,6 +509,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         warm_password_hasher()
 
     app.state.ollama_client = get_ollama_client(settings)
+    # After the client is warmed, so this reuses the same connection rather
+    # than opening a second one just to ask.
+    _warn_when_the_default_model_is_not_installed(settings)
     app.state.compiled_graph = build_graph()
     app.state.orchestrator_graph = (
         build_orchestrator_graph() if settings.enable_multi_source_router else None
