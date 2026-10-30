@@ -36,7 +36,7 @@ resolver over every tracked `.md` file.
 
 ### 1.1 What this phase did **not** check
 
-- **External HTTP links were not fetched.** 864 relative links resolve;
+- **External HTTP links were not fetched.** 874 relative links resolve;
   the `https://` ones were not requested, because doing so from this
   environment would be a network side effect against third parties for
   a link-rot check. A human can run a link checker against the rendered
@@ -67,7 +67,7 @@ Claim → location → verified? → fix. "Verified" means re-measured on
 | 4 | "8,297 backend passed / 0 failed" | `README.md` | **NO** — stale | `pytest -q` → **9,593 passed, 16 skipped, 11 deselected, 8 xfailed, 0 failed**, 625.95s | `DOC-017`, fixed |
 | 5 | "1,491 frontend across 103 files" | `README.md` | **NO** — stale | `npm run test` → **107 files / 1,551 tests**, 0 failed, 35.08s | `DOC-017`, fixed |
 | 6 | "`bandit` … 0 Low/0 Med/0 High across **56,950** lines" | `README.md` | **Partly** — still 0 findings, but the line count understated scope by half | `bandit -c pyproject.toml -r .` → 0 findings over **119,480** lines. Phase 8 rescoped it from 12 named packages to the whole tree | `DOC-017`, fixed |
-| 7 | "`black` clean over 1,665 files" | `README.md` | **NO** — stale | `black --check .` → exit 0, **1,686** files | `DOC-017`, fixed |
+| 7 | "`black` clean over 1,665 files" | `README.md` | **NO** — stale | `black --check .` → exit 0, **1,688** files | `DOC-017`, fixed |
 | 8 | "the 15-journey, 6-role script" | `README.md` ×2 | **NO** | `UAT_SCRIPTS_AND_SIGNOFF.md` defines **J1–J18** and says "18 journeys across 6 roles" in its own header | `DOC-012`/`DOC-017`, fixed |
 | 9 | "7,274 backend and 1,161 frontend tests passing" | `UAT_SCRIPTS_AND_SIGNOFF.md` §header, §2.6 | **NO** — two measurements stale | as #4/#5 | `DOC-018`, fixed `9f7f0df` |
 | 10 | "92.3% execution accuracy … `llama3.1:8b` … 57 cases", with a staleness banner | `README.md` Known limitations | **YES** | `docs/EVALUATION.md:53-64` states exactly those figures, that model, that database, 57 cases, and self-discloses as stale | none needed; newer `HAL-007` evidence added alongside |
@@ -153,7 +153,7 @@ accurate**, which they are, to the digit.
 
 | # | Claim | Location | Verified? | Evidence | Fix |
 |---|---|---|---|---|---|
-| 38 | Internal documentation links resolve | all 202 tracked `.md` files | **YES** | **864** relative links checked, **0 broken**. The 4 reported are illustrative markdown inside prose (`[1](url)` in `MULTI_SOURCE_GUIDE.md`, `[x](javascript:…)` in a pen-test report) | none needed |
+| 38 | Internal documentation links resolve | all 203 tracked `.md` files | **YES** | **874** relative links checked, **0 broken**. The 4 reported are illustrative markdown inside prose (`[1](url)` in `MULTI_SOURCE_GUIDE.md`, `[x](javascript:…)` in a pen-test report) | none needed |
 | 39 | External `https://` links resolve | all | **UNVERIFIED** | not fetched; see §1.1 | a human must run a link checker |
 | 40 | `CLAUDE.md` is within the project's own instruction-size budget | `scripts/check_instruction_size.py` | **NO** | `python scripts/check_instruction_size.py` → `CLAUDE.md 93,619 chars **over the soft target**`, exit **1**. Soft target 60,000; Claude Code's hard limit 150,000 | **Flagged `DOC-024`** (S4) — see §8 |
 | 41 | `README.md`'s diagram is "a real screenshot … still TODO" | `README.md:103-104` | **YES, it was** | no chat + generated-SQL screenshot existed in the repository | §7.3 |
@@ -365,7 +365,7 @@ about its privilege-check queries for those two engines.
 |---|---|---|---|
 | Backend tests | 8,297 / 7,274 | **9,593 passed, 0 failed** (16 skipped, 11 deselected, 8 xfailed, 626s) | `pytest -q` |
 | Frontend tests | 1,491 / 1,435 / 1,161 | **1,551 passed, 0 failed**, 107 files | `npm run test` |
-| `black` | 1,665 / 1,635 files | **1,686**, exit 0 | `black --check .` |
+| `black` | 1,665 / 1,635 files | **1,688**, exit 0 | `black --check .` |
 | `ruff` | 1 finding (`I001`) | **0**, exit 0 | `ruff check .` |
 | `bandit` | 0 over 56,950 lines | **0 over 119,480 lines** | `bandit -c pyproject.toml -r .` |
 | `pip-audit` | "cannot be run here" | **exit 0**, "No known vulnerabilities found, 7 ignored" | CI's exact command |
@@ -380,7 +380,7 @@ about its privilege-check queries for those two engines.
 
 ### 7.2 Links
 
-864 relative links across 202 tracked markdown files, **0 broken**.
+874 relative links across 203 tracked markdown files, **0 broken**.
 External links were not fetched (§1.1).
 
 ### 7.3 The README screenshot

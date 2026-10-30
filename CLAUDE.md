@@ -1206,7 +1206,7 @@ contract lists its specific limitations; these are the cross-cutting ones.
   start under `ENVIRONMENT=production` -- a behaviour an existing test
   already pinned. Also measured, and worth not re-deriving: **449
   documented command lines across ten user-facing docs all run as
-  written, and all 864 relative links across 202 markdown files
+  written, and all 874 relative links across 203 markdown files
   resolve**; there are **zero** phantom endpoints in `docs/API.md` and
   **zero** genuine default mismatches between `.env.example` and
   `Settings`. What was wrong was never a broken command -- it was
