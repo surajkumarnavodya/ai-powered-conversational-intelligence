@@ -1140,6 +1140,34 @@ contract lists its specific limitations; these are the cross-cutting ones.
   exclusion from `[tool.bandit]` in `pyproject.toml`, so a new package
   is covered the day it is created. `tests/test_ci_gate_coverage.py`
   fails when any of these falls behind the repository.
+  **Ten, counting the one nobody counted: `docker-scan`'s `docker build`
+  step** (2026-10-30, Phase 11, `OPS-021`). The note above about the
+  Trivy container scan being report-only is about the **scan** step --
+  `aquasecurity/trivy-action` only fails a step when its `exit-code`
+  input is set, which it deliberately is not -- and **not** about the
+  plain `run: docker build -t text-to-sql-dashboard:ci .` step above it
+  in the same job, which fails the job like any other command. Read as
+  "the container job is advisory", which is how both §5.7 and this
+  bullet could be read, that job going red is invisible. It was red:
+  `docker build .` failed outright from 2026-10-29, so **the image this
+  project ships could not be built**.
+  The cause is a standing trap, not a one-off. `BP-009` declared
+  `numpy` as a direct dependency and pinned what the **3.14 dev venv**
+  had installed, `numpy==2.5.3` -- and numpy 2.5.x declares
+  `Requires-Python >=3.12` while the Dockerfile and CI target **3.11**.
+  So **a pin taken from this machine's venv can be uninstallable on the
+  deploy target**, which is the scipy incident `requirements.txt`
+  documents at length, reached from the opposite direction (there a
+  3.14-chosen pin had no 3.11 wheel; here it excludes 3.11 by
+  metadata). Repinned to `numpy==2.4.6`, which declares
+  `Requires-Python >=3.11` and ships cp311 *and* cp314 wheels -- one pin
+  for both targets, no marker, the same reasoning the scipy pin states.
+  **`tests/test_declared_dependencies.py` cannot catch this and is not
+  meant to**: it asserts a package is *declared*, never that its pin is
+  *installable on 3.11*, which no mocked test can know. `docker build`
+  is the only gate that knows, so when adding or bumping a pin, check
+  the new version's `Requires-Python` against 3.11 before trusting a
+  green local suite.
 
 - **An aggregate over a restricted column is still disclosed, and that is
   a standing policy question rather than a bug.** `SEC-006` (§5.4) closed

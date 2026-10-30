@@ -194,3 +194,40 @@ class TestEveryActionIsPinnedToACommitSha:
             "credential-stealing commits. Resolve the tag to a commit SHA "
             "against GitHub's API and pin that, with the version in a comment."
         )
+
+
+class TestTheContainerBuildIsABlockingGate:
+    """`docker-scan` builds the image this project ships, and that step
+    blocks even though the Trivy step beside it does not.
+
+    UAT-readiness Phase 11 (`OPS-021`). The distinction had never been
+    written down, and the consequence was a real S1 going unnoticed:
+    `aquasecurity/trivy-action` only fails a step when its `exit-code`
+    input is set, which it deliberately is not, so both `CLAUDE.md` 13
+    and `SECURITY.md` described "the Trivy container scan" as
+    report-only -- which reads as "the container job is advisory". The
+    plain `run: docker build` step above it is not advisory, and it had
+    been failing since 2026-10-29, because `numpy==2.5.3` declares
+    `Requires-Python >=3.12` while this image targets 3.11. The image
+    could not be built at all.
+
+    This asserts the build step is present and blocking, so nobody can
+    quietly make it `continue-on-error` and restore that invisibility.
+    It cannot assert the build *passes* -- that needs a Docker daemon,
+    which CI has and the mocked suite does not.
+    """
+
+    def test_the_image_is_built_and_the_build_step_blocks(self) -> None:
+        step = _step("docker-scan", "Build image")
+        assert "docker build" in step.get("run", ""), step
+        assert step.get("continue-on-error") is not True, (
+            "The container build must block. The Trivy scan step beside it is "
+            "report-only by design (its `exit-code` input is unset), which is "
+            "not a statement about this step -- see OPS-021."
+        )
+
+    def test_the_build_targets_the_repository_dockerfile(self) -> None:
+        """A build of some other context would pass while the shipped
+        image stayed broken."""
+        run = _step("docker-scan", "Build image")["run"]
+        assert run.strip().endswith("."), run
