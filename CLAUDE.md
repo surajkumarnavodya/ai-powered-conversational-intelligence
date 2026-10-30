@@ -1171,10 +1171,10 @@ contract lists its specific limitations; these are the cross-cutting ones.
   `phase-0-recon.md`, `phase-1-architecture.md`,
   `phase-2-security.md`, `phase-3-authentication.md`,
   `phase-4-authorization.md`, `phase-5-hallucination.md`,
-  `phase-6-loops.md`, `phase-7-context.md` and
-  `phase-8-best-practices.md` hold the
-  method and evidence for what has been done. **Phases 0-8 are
-  complete; phases 9-12 are not started.**
+  `phase-6-loops.md`, `phase-7-context.md`,
+  `phase-8-best-practices.md` and `phase-9-ui.md` hold the
+  method and evidence for what has been done. **Phases 0-9 are
+  complete; phases 10-12 are not started.**
   Before re-investigating anything security- or architecture-shaped,
   check the register: it records what was measured, on what date, and
   which items are deliberately flagged for an owner decision rather than
@@ -1273,6 +1273,67 @@ contract lists its specific limitations; these are the cross-cutting ones.
   directions: a dependency scan called 117 routes ungated when they are
   not, and a minimal-body probe returns 422 before an in-handler check
   ever runs.
+
+  Phase 9 (2026-10-30) fixed nine findings and flagged six, driving
+  real Chrome over the live app for seven role accounts. **Three of its
+  lessons are standing traps, and all three are about measurement rather
+  than code.**
+  *First:* **a UI audit can rate-limit itself, and the wreckage reads as
+  a finding.** `POST /auth/refresh` shares
+  `login_rate_limit_per_minute` (default 10/min, keyed by client IP) and
+  one full page load spends one refresh, so a driver that navigates with
+  a page load per screen (84 of them) trips the limit on itself. Before
+  `UI-002` that *silently signed the driver out*, so cells recorded the
+  sign-in page as though it were the screen under test -- three of that
+  run's screenshots are byte-identical to the sign-in capture -- read as data,
+  that grid claimed a `viewer` could open Platform Admin. Navigate
+  client-side (`history.pushState`) and spend one refresh per role. A
+  screenshot of a screen you did not reach is still a screenshot.
+  *Second:* **jsdom does not reliably stay silent about what it cannot
+  see.** `color-contrast` is blind there and was already disabled.
+  `target-size` is also blind (every element measures 0x0). But
+  `label-content-name-mismatch` reports a **false pass** -- the exact
+  markup Chrome flagged lands in axe's `passes` list, because the rule
+  needs rendered text -- so a jsdom test asking axe about it reads as
+  evidence of the opposite of the truth. All three are disabled in
+  `frontend/src/test/axe.ts` with the measurement behind each.
+  *Third, and the most reusable:* **before recording something as
+  "browser-only", check whether it is actually computable.**
+  `src/test/axe.ts` and `src/index.contrast.test.ts` both recorded
+  colour contrast as unreachable without a browser, and on that basis
+  the whole class of `bg-[var(--token)]/15 text-[var(--token)]` status
+  badges went unchecked -- with a comment asserting "the tint is too
+  faint to shift the result", which is false in the direction that hides
+  a failure. `src/test/contrast.ts` already composited, so those
+  pairings were arithmetic all along: computing them reproduces Chrome's
+  ratios **to the second decimal** (`#15803d` on `#dcece2`: Chrome 4.09,
+  computed 4.09). The 30 sub-AA declared-token pairings are now pinned
+  in `frontend/src/index.contrast.baseline.json` as a **no-growth**
+  baseline -- a new failure fails, and a since-fixed pairing fails too,
+  so it cannot decay into an allowlist.
+  Two more worth not re-deriving. **`UI-004`: the documented per-node
+  streaming progress had never reached a browser.** `api/streaming.py`
+  binds the progress sink to a `ContextVar` on its own thread, but
+  `api.main.ask` hands the graph to a second `ThreadPoolExecutor`, and
+  `submit` gives its worker a *fresh, empty* context -- so
+  `emit_progress` read `None` every time. The existing test could not
+  catch it because it replaced `api.main.ask` wholesale, which removes
+  the thread boundary that *was* the bug. **When a control depends on a
+  `ContextVar`, a test that mocks away the thread hop tests nothing.**
+  And the fix exposed `UI-010`: `emit_progress` fires *after* a node
+  returns, so the badge names the node that **finished**, not the one
+  running -- measured as 97 seconds reading "plan query" (0.05 ms) while
+  `generate_sql` (96,807 ms) ran. Two docstrings claimed otherwise and
+  are corrected; the protocol change is flagged.
+  Phase 9 also found `UI-012`, a real masking miss:
+  `governance/classification.py`'s compensation pattern carried
+  `annual[-_]?income` and not `yearly[-_]?income`, so
+  `DimCustomer.YearlyIncome` came back as `90000.0` to a caller without
+  `VIEW_RESTRICTED_COLUMNS` in the same row as four masked columns.
+  Fixed narrowly, with a companion test asserting `net_income` and
+  `operating_income` are **not** masked -- so a later widening to bare
+  `income` fails loudly instead of quietly over-blocking §5.8's
+  ordinary analytics.
 
   Phase 7 (2026-10-29) fixed five findings and flagged two, and
   **corrected a measurement every context budget in this repo is sized
