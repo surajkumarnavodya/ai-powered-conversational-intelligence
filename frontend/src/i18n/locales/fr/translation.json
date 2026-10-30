@@ -35,6 +35,8 @@
     "localRegistrationVerifyEmail": "Compte créé. Vérifiez votre e-mail pour confirmer votre adresse avant de vous connecter.",
     "localPasswordMismatch": "Les mots de passe ne correspondent pas.",
     "localGenericError": "Une erreur s'est produite. Veuillez réessayer.",
+    "sessionCheckUnavailable": "Nous n'avons pas pu vérifier votre connexion pour le moment. Votre session est peut-être encore active ; réessayez dans un instant.",
+    "sessionCheckRetry": "Réessayer",
     "showPassword": "Afficher le mot de passe",
     "hidePassword": "Masquer le mot de passe",
     "completeProfileTitle": "Ajoutez votre nom affiché pour terminer la configuration de votre compte.",
@@ -59,7 +61,8 @@
     "recommendations": "Recommandations",
     "platformAdmin": "Administration de la plateforme",
     "tenantAdmin": "Administration du client",
-    "decisionCenter": "Centre de Décision"
+    "decisionCenter": "Centre de Décision",
+    "primaryLandmark": "Navigation principale"
   },
   "header": {
     "openHistory": "Ouvrir l'historique du chat",
@@ -563,5 +566,15 @@
     "uploadFailed": "Cette image n'a pas pu être importée. Veuillez réessayer.",
     "removeFailed": "Cette image n'a pas pu être supprimée. Veuillez réessayer.",
     "removeConfirm": "Supprimer votre photo de profil ? Vous pourrez en importer une autre à tout moment."
+  },
+  "routeGate": {
+    "checkingAccess": "Vérification de vos accès…",
+    "accessCheckFailed": "Nous n'avons pas pu vérifier votre accès à cet écran.",
+    "retry": "Réessayer",
+    "forbiddenTitle": "Vous n'avez pas accès à cet écran",
+    "forbiddenBody": "Le rôle de votre compte ne couvre pas cette zone. Si vous en avez besoin, demandez à un administrateur de revoir vos accès.",
+    "goToPermitted": "Aller à un écran accessible",
+    "notFoundTitle": "Cette page n'existe pas",
+    "notFoundBody": "L'adresse ouverte ne correspond à aucun écran de cette application. Elle est peut-être mal saisie ou issue d'une version antérieure."
   }
 }

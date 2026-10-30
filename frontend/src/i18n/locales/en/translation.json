@@ -35,6 +35,8 @@
     "localRegistrationVerifyEmail": "Account created. Check your email to verify your address before signing in.",
     "localPasswordMismatch": "Passwords do not match.",
     "localGenericError": "Something went wrong. Please try again.",
+    "sessionCheckUnavailable": "We couldn't check your sign-in just now. Your session may still be active — try again in a moment.",
+    "sessionCheckRetry": "Try again",
     "showPassword": "Show password",
     "hidePassword": "Hide password",
     "completeProfileTitle": "Add your display name to finish setting up your account.",
@@ -63,7 +65,8 @@
     "groupWorkspace": "Workspace",
     "groupReview": "Review",
     "groupAdministration": "Administration",
-    "decisionCenter": "Decision Center"
+    "decisionCenter": "Decision Center",
+    "primaryLandmark": "Primary navigation"
   },
   "header": {
     "openHistory": "Open chat history",
@@ -874,5 +877,15 @@
     "uploadFailed": "That picture couldn't be uploaded. Please try again.",
     "removeFailed": "That picture couldn't be removed. Please try again.",
     "removeConfirm": "Remove your profile picture? You can upload a new one at any time."
+  },
+  "routeGate": {
+    "checkingAccess": "Checking your access…",
+    "accessCheckFailed": "We couldn't check your access to this screen.",
+    "retry": "Try again",
+    "forbiddenTitle": "You don't have access to this screen",
+    "forbiddenBody": "Your account's role doesn't include this area. If you need it, ask an administrator to review your access.",
+    "goToPermitted": "Go to a screen you can use",
+    "notFoundTitle": "That page does not exist",
+    "notFoundBody": "The address you opened is not a screen in this app. It may be mistyped, or from an older version."
   }
 }

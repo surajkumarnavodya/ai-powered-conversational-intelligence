@@ -35,6 +35,8 @@
     "localRegistrationVerifyEmail": "Cuenta creada. Revisa tu correo para verificar tu dirección antes de iniciar sesión.",
     "localPasswordMismatch": "Las contraseñas no coinciden.",
     "localGenericError": "Algo salió mal. Inténtalo de nuevo.",
+    "sessionCheckUnavailable": "No pudimos comprobar tu inicio de sesión en este momento. Tu sesión puede seguir activa; inténtalo de nuevo en un momento.",
+    "sessionCheckRetry": "Inténtalo de nuevo",
     "showPassword": "Mostrar contraseña",
     "hidePassword": "Ocultar contraseña",
     "completeProfileTitle": "Añade tu nombre para mostrar para terminar de configurar tu cuenta.",
@@ -59,7 +61,8 @@
     "recommendations": "Recomendaciones",
     "platformAdmin": "Administración de la plataforma",
     "tenantAdmin": "Administración del inquilino",
-    "decisionCenter": "Centro de Decisiones"
+    "decisionCenter": "Centro de Decisiones",
+    "primaryLandmark": "Navegación principal"
   },
   "header": {
     "openHistory": "Abrir historial de chat",
@@ -563,5 +566,15 @@
     "uploadFailed": "No se pudo subir esa imagen. Inténtalo de nuevo.",
     "removeFailed": "No se pudo quitar esa imagen. Inténtalo de nuevo.",
     "removeConfirm": "¿Quitar tu foto de perfil? Puedes subir otra cuando quieras."
+  },
+  "routeGate": {
+    "checkingAccess": "Comprobando tu acceso…",
+    "accessCheckFailed": "No pudimos comprobar tu acceso a esta pantalla.",
+    "retry": "Inténtalo de nuevo",
+    "forbiddenTitle": "No tienes acceso a esta pantalla",
+    "forbiddenBody": "El rol de tu cuenta no incluye esta área. Si la necesitas, pide a un administrador que revise tu acceso.",
+    "goToPermitted": "Ir a una pantalla que puedas usar",
+    "notFoundTitle": "Esa página no existe",
+    "notFoundBody": "La dirección que abriste no es una pantalla de esta aplicación. Puede estar mal escrita o ser de una versión anterior."
   }
 }
