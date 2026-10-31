@@ -1579,7 +1579,15 @@ contract lists its specific limitations; these are the cross-cutting ones.
   the persist directory), each graded
   `truth_level="confirmed_business_truth"`. Journeys J2 and J3 complete,
   the review dashboard renders correctly, the publish reports success,
-  and the confirmed meaning never reaches a prompt. **This is §4.8 ("one
+  and the confirmed meaning never reaches a prompt. **It is wider than
+  retrieval**, which is what makes it S2: the SME review dashboard
+  (`api/semantic_catalog.py`) takes `database_id` as an ungated query
+  filter and so *can* see these entries, while every surface that would
+  **act** on one is keyed to a `DB_CONNECTIONS` name and cannot --
+  `api/kpi_monitoring.py` and `api/decision_center.py` resolve through
+  `_allowed_database` and therefore answer **404** for a per-job id,
+  which is not even an addressable input. The review loop is closed;
+  the consumption loop is not connected to it. **This is §4.8 ("one
   owner per fact") applied to an identifier, and it is the failure mode
   that rule exists for**: two correct derivations of one fact produce a
   silent write-to-nowhere, with no error anywhere to find it by. When a

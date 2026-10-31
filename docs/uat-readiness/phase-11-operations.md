@@ -489,6 +489,24 @@ practice: the chunks marked `confirmed_business_truth`, the one grade that
 requires an explicit human action, are precisely the ones that are
 unreachable.
 
+**It is wider than retrieval, which is what settles the severity.**
+Every consumer of a published catalog entry filters it by `database_id`,
+and they split cleanly into the one that can see these entries and the
+ones that cannot:
+
+| Consumer | Keys on | Sees an onboarding-bridged entry? |
+|---|---|---|
+| `api/semantic_catalog.py:289` — the SME review dashboard | a free `database_id` query filter, no gate | **yes** — which is exactly why J3 renders correctly |
+| `agent/nodes.py:1255` business-context retrieval | `state["selected_database"]` | no |
+| `api/kpi_monitoring.py:277`, `api/decision_center.py:259` | `_allowed_database`, which validates against `{d.name for d in settings.databases_for_tenant(...)}` | no — and the per-job id is **not even an addressable input**: an id outside `DB_CONNECTIONS` raises **404** |
+| `api/data_quality.py`, `api/lineage.py`, `api/schema_drift.py`, `api/semantic_intelligence.py`, `api/bi_integration.py` | a configured database id | no |
+
+So the one surface that can read these entries is the one that reviews
+them, and every surface that would *act* on them is keyed to a
+`DB_CONNECTIONS` name. That is the whole shape of the finding in one
+line: **the review loop is closed and the consumption loop is not
+connected to it.**
+
 **Narrowed, so the fix is not aimed at the wrong module.** A catalog entry
 authored directly against a configured database is filed under that
 connection's own name and *is* retrievable — the four real
