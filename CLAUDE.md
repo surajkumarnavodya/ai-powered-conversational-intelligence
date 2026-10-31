@@ -1253,21 +1253,47 @@ contract lists its specific limitations; these are the cross-cutting ones.
   `detect-secrets audit .secrets.baseline`. Full triage:
   [`docs/uat-readiness/phase-2-security.md`](docs/uat-readiness/phase-2-security.md)
   §6.4.
-- **The UAT-readiness audit is in progress and writes its own findings to
-  disk.** `docs/uat-readiness/FINDINGS_REGISTER.md` is the live register;
-  `phase-0-recon.md`, `phase-1-architecture.md`,
-  `phase-2-security.md`, `phase-3-authentication.md`,
-  `phase-4-authorization.md`, `phase-5-hallucination.md`,
-  `phase-6-loops.md`, `phase-7-context.md`,
-  `phase-8-best-practices.md`, `phase-9-ui.md`,
-  `phase-10-documentation.md` and `phase-11-operations.md` hold the
-  method and evidence for what has been done. **Phases 0-11 are
-  complete; phase 12 (the consolidated report and gate) is not
-  started.**
+- **The UAT-readiness audit is complete and writes its own findings to
+  disk.** `docs/uat-readiness/UAT_READINESS_REPORT.md` is the
+  consolidated gate and **the one owner of the verdict**;
+  `FINDINGS_REGISTER.md` is the per-finding register;
+  `phase-0-recon.md` through `phase-11-operations.md` hold the method
+  and evidence. **All twelve phases are complete (2026-10-31).**
+  **Verdict: NOT READY for UAT** -- 140 findings, 80 fixed, **1 open
+  S1** (`AUZ-002`, cross-tenant document read *and delete*) and **13
+  open S2**, all 14 *Flagged* for an owner decision rather than
+  forgotten. Four gate items are false (the open S1/S2 count,
+  `detect-secrets` being the one red blocking gate, the absent accuracy
+  threshold, and the UAT environment); five are true (authorization
+  matrix, SQL-safety and masking on both dialects, prompt injection,
+  loop bounds, backup/restore drilled). **The path to READY WITH
+  CONDITIONS is mostly operator and owner actions, not engineering** --
+  §8 of the report lists twelve, of which two are engineering.
   Before re-investigating anything security- or architecture-shaped,
-  check the register: it records what was measured, on what date, and
-  which items are deliberately flagged for an owner decision rather than
-  open defects.
+  check the report and then the register: together they record what was
+  measured, on what date, and which items are deliberately flagged for
+  an owner decision rather than open defects. **Do not re-derive a
+  finding the register already holds**, and do not read a *Flagged* row
+  as an oversight.
+  Phase 12 (2026-10-31) added one finding, `SEC-008`, and it is worth
+  one line here because it is **a third instance of a pattern this file
+  already records twice**: the masking regression suite
+  (`tests/security/test_masking_survives_renaming.py`, which holds the
+  `SEC-006` S1 closed) pinned `dialect="postgres"` on every case while
+  all four connections configured here are `mssql`, so the strictest
+  control in `governance/result_policy.py` had no coverage in the
+  dialect it runs against. The control was sound; only the coverage was
+  missing. What the measurement exposed is the keeper: parsed in the
+  **wrong** dialect a T-SQL statement yields `by_name={}`, and an output
+  with no resolved sources is classified by its own name alone -- the
+  pre-`SEC-006` behaviour. Mutation-verified at 10 failures, three of
+  them the `CREDENTIAL` case §5.4 says no role unlocks. It is
+  unreachable today only because both governed callers derive the
+  dialect from the executing connection (`agent/nodes.py:2861`,
+  `api/main.py:1930`). So alongside `projection_source_columns`'
+  optional `by_name`/`in_order` and `insight_grounding_failure`'s
+  optional `result_labels`, **a wrong `dialect` silently buys the weaker
+  path too** -- not an error, just less protection.
   Phase 10 (2026-10-30) fixed nine documentation findings and flagged
   four, and **two of its lessons generalise past documentation.**
   *First:* **a doc that claims completeness is a claim to measure, not
@@ -1327,7 +1353,9 @@ contract lists its specific limitations; these are the cross-cutting ones.
   installed, so every question on the default fails; the app starts
   anyway although `GET /models` already reports `installed: false`).
   It also delivered the UAT golden question set (`eval/uat_golden/`,
-  57 questions, 11 journeys, both dialects, gated by
+  **50** questions -- 32 accuracy + 18 behaviour, 11 journeys, 45
+  `mssql` + 5 `postgresql`; this entry said **57** until Phase 12
+  counted them by loading the YAML -- gated by
   `tests/test_uat_golden_set.py`) -- a **behaviour and structure** gate,
   not an accuracy gate, until a human authors `expected_sql` for every
   case marked `GOLD SQL REQUIRED`.

@@ -326,9 +326,20 @@ jobs:
         # config would also have to enumerate them, and because
         # `tests/__init__.py` does not exist, so a `mypy .`-shaped
         # invocation cannot be narrowed by exclusion alone without
-        # silently dropping real modules. `tests/test_mypy_gate_covers_every_production_package.py`
-        # fails when a tracked top-level package is missing from it, so
-        # the list cannot silently fall behind.
+        # silently dropping real modules.
+        # `tests/test_ci_gate_coverage.py`'s
+        # `TestTheProductionTypeGateEnumeratesEveryPackage` fails when a
+        # tracked top-level package is missing from this list (and when
+        # this step is made report-only, or names a package that no
+        # longer holds any tracked Python), so the list cannot silently
+        # fall behind.
+        #
+        # Corrected 2026-10-31 (UAT-readiness Phase 12): this comment
+        # previously named
+        # `tests/test_mypy_gate_covers_every_production_package.py`,
+        # which has never existed. The assertions are real and passing;
+        # only the pointer was wrong -- but a stale pointer to the test
+        # that guards a gate is how an unmeasured gate begins.
         run: >
           mypy
           agent analytics api artifacts attachments bi_integration briefing config

@@ -11,6 +11,17 @@ not run here, the row says **Unverified** and names what a human must
 run — never "passed". See `phase-0-recon.md` §6 for the full list of
 environment-blocked checks.
 
+**Updated 2026-10-31 — the audit is complete.** Phase 12 consolidated
+all twelve phases into
+[`UAT_READINESS_REPORT.md`](UAT_READINESS_REPORT.md), which is the owner
+of the verdict and of the waiver list. **Verdict: NOT READY** — 140
+findings, 80 fixed, **1 open S1** (`AUZ-002`) and **13 open S2**, all 14
+*Flagged* for an owner decision. Phase 12 added one finding of its own
+(`SEC-008`) and corrected the tally method that had understated the open
+S2 count; see the Phase 12 section at the end of this file. **Read the
+report before this table** if the question is "may UAT start?" — this
+table answers "what is the status of finding X?" instead.
+
 **Updated 2026-10-30** with Phase 10 (`phase-10-documentation.md`).
 Phase 10 fixed nine documentation findings and flagged four. Two of the
 nine are worth reading even if documentation is not your concern,
@@ -190,6 +201,7 @@ the history of what was believed when stays readable.
 | OPS-024 | 11 | S3 | The blocking `pip-audit` gate had gone red again -- 11 reachable advisories in `pypdf` and `pyasn1` | Re-ran CI's own `pip-audit -r requirements-dev.txt` with its six `--ignore-vuln` IDs, 2026-10-31: **"Found 11 known vulnerabilities, ignored 7 in 2 packages"**. `pypdf` 6.21.2 -> seven (CVE-2026-119203/119204/119205 fixed in 6.21.4; CVE-2026-119206/119207/119208/119209 in 6.21.3); `pyasn1` 0.6.4 -> four (CVE-2026-119194/119195/119196/119197, fixed in 0.6.5). Both reachable, not theoretical: `attachments/pdf_safety.py`, `attachments/pipeline.py`, `attachments/processors/pdf_processor.py`, `rag/ingestion.py` and `api/documents.py` all point `pypdf` at caller-supplied bytes, and `pyasn1` is what `google-auth` decodes OIDC id-token certificates with, so it parses bytes fetched from a remote issuer. `CLAUDE.md` §5.7 and §13 both recorded this gate as **passing** (last measured 2026-10-25), and the phase doc's own gate table initially recorded it as *not re-run* on the strength of that -- **which is how a decaying gate stays green in a document**: this is the third time this one `pypdf` pin has gone red (2026-10-22, 2026-10-25, 2026-10-31). Also worth not rediscovering: the first attempt failed on a transient DNS outage (`Failed to resolve 'pypi.org'`), and `pip-audit` unable to reach an index exits non-zero and looks exactly like a finding | **Fixed** | (this branch) | Bumped to `pypdf==6.21.4` and `pyasn1==0.6.5` rather than adding an `--ignore-vuln`, the response this repo has already chosen twice for this package. **Both checked against the deploy target before pinning** -- the `OPS-021` lesson applied, not restated: `pypdf==6.21.4` declares `Requires-Python >=3.9`, `pyasn1==0.6.5` `>=3.8`, both pure-python `py3` wheels, so one pin serves the 3.11 image and the 3.14 local venv with no environment marker that could let them drift. `pip check` clean; 622 PDF/attachment/document/OIDC tests pass; the gate then reports "No known vulnerabilities found, 7 ignored" (exit 0). One benign side effect noted so it is not rediscovered as a failure: 6.21.4 deprecates `add_js`, which `tests/test_attachments_processors.py` uses **deliberately** to build a PDF carrying embedded JavaScript for the rejection test -- the call must stay until pypdf 7.0 forces `add_open_action`, since replacing it would change what the fixture is an attack sample of |
 | OPS-025 | 11 | **S2** | `retrieve_schema`'s terminal failure was not terminal -- the run continued, spent a model call, and answered HTTP 500 | Found by the ChromaDB resilience drill §4.4 had recorded as *Unverified*. `retrieve_schema_node` (`agent/nodes.py:1056`) catches `SchemaRetrievalError` and composes a terminal `{"status": "failed", "failure_explanation": ...}` -- but `agent/graph.py:433` was **`graph.add_edge("retrieve_schema", "retrieve_golden_examples")`, unconditional**, while `sanitize_input`, `classify_followup` and `generate_sql` all route their terminal states to `END` through a `route_after_*` function. So the state was written and driven straight past: every downstream node ran with `selected_database = None`, `generate_sql` spent a real model call on a prompt containing no schema, and the run died in `agent.nodes._require_selected_database`'s `RuntimeError("reached with no selected_database")` -- not an `AgentError`, so `api/main.py:754`'s last-resort handler returned **HTTP 500 "An unexpected error occurred."**, discarding the pipeline's own actionable message. **Measured live 2026-10-31**, `CHROMA_PERSIST_DIR` pointed at an empty directory on this host's four-database configuration: `[retrieve_schema] failed: No configured database has a built schema index. Run `python scripts/build_embeddings.py` first.` then `RAISED after 68.43s: RuntimeError: reached with no selected_database`. **68 seconds and one model call to turn an actionable message into an opaque 500.** Reached by *forgetting a documented setup step*, not by a rare fault -- `scripts/build_embeddings.py` is in `CLAUDE.md` §9's run order and `GET /health` already reports "Index is empty" per database -- which is what makes it S2 rather than an edge case. Third instance of the shape Phase 6 named: `LOP-001` (recursion limit) and `LOP-004` (`ProviderUnavailable`) were the same defect, a *designed* terminal condition escaping `run_agent` as an unhandled exception | **Fixed** | (this branch) | Two changes, because there were two triggers. (1) `route_after_schema_retrieval` + `add_conditional_edges` so the node's terminal state reaches `END` -- the established pattern, not a new one; node set unchanged, so the §4.1 bound arithmetic is untouched (`tests/test_agent_loop_bounds.py` 45 tests still pass). (2) `embeddings/retriever.py::select_database` now wraps its `get_chroma_client` call, which `retrieve_relevant_schema` already wrapped and it did not: acquiring the client mkdirs `CHROMA_PERSIST_DIR`, so an unusable directory raises `OSError`, which `except SchemaRetrievalError` never matched -- measured as `FileExistsError [WinError 183]` out of `run_agent` in 0.04 s with the path pointing at a regular file (multi-database only; the single-database branch returns first). **Verified live after the fix: 68.43 s + `RuntimeError` -> 0.38 s, `status="failed"`, `attempt_history[0].outcome == "schema_retrieval_error"`, `will_retry: False`**, and the explanation still names the command to run. `tests/test_schema_retrieval_failure_is_terminal.py` (9) + `tests/test_db_router.py` (4 new, in the file that already owns `select_database`). **Mutation-verified**: reverting both source files fails 6 of them, and the captured log shows the defect itself -- `[generate_sql] attempt=1/4 last_error='Schema retrieval failed: ...'` |
 | OPS-026 | 11 | S4 | `GET /health` discloses the schema-index directory's absolute path to an unauthenticated caller | Measured 2026-10-31 during the §4.4 drill, no `Authorization` header: `GET /health` -> 503 with `databases[].schema_index.detail = "Unreachable: [WinError 183] Cannot create a file when that file already exists: 'C:\Users\<user>\AppData\Local\Temp\...\chroma_unavailable'"`, repeated per configured database. `api/main.py:1347-1356` **already anticipates public exposure** -- its comment says this endpoint is unauthenticated "so raw driver/Chroma text ending up here is a real, publicly-visible leak" -- and applies `redact_secrets`, which covers configured *secrets*, not filesystem topology. Same residual as `LOP-008` and as §4.3's C2b note about `/execute` disclosing database host and port, but on an endpoint that requires no credentials at all. Low severity on its own: a path, not data, and only in a misconfigured state | **Flagged** | -- | Not fixed: `/health`'s body is consumed by the dashboard and is an operator diagnostic, so trimming what it reports is an API-surface and ops trade-off, not a defect fix -- the path is exactly what tells an operator *which* directory is wrong. **Proposal:** keep the full detail when the caller is authenticated and reduce it to the component name plus "see server logs" otherwise, or add the path to the startup log and drop it from the body. The same session's `OPS-025` fix deliberately kept the path **out** of the user-facing `failure_explanation` for this reason, pinned by `tests/test_db_router.py::TestSelectDatabaseMultiDb::test_the_persist_directory_path_never_reaches_the_message` |
+| SEC-008 | 12 | S3 | The masking regression suite pinned one dialect, and it was not the one this project runs | `tests/security/test_masking_survives_renaming.py` -- the suite holding `SEC-006` closed -- authored every case with `dialect="postgres"`, while all four connections configured here are `mssql`. So the strictest control in `governance/result_policy.py` had **no** regression coverage in the dialect it runs against, and Phase 12 gate item 4 ("masking attack suites passing on SQL Server **and** PostgreSQL") was not tickable. Measured before fixing: `projection_source_columns` resolves every T-SQL rename and wrapper form correctly when the dialect matches -- `TOP n`, `[bracket]`-quoted identifiers, `CAST(... AS VARCHAR(n))`, `ISNULL`, `+` concatenation, `OFFSET/FETCH`, CTE renames. **The control was sound; only its coverage was not.** What the measurement also showed is the part worth keeping: parsed in the *wrong* dialect a T-SQL statement yields `by_name={}`, and an output with no resolved sources is classified by its own name alone -- exactly the pre-`SEC-006` behaviour. Not reachable today, because both governed callers derive the dialect from the executing connection (`agent/nodes.py:2861`, `api/main.py:1930`, both `get_sqlglot_dialect(db_config.db_type)`) -- but it is a **third** instance of the pattern CLAUDE.md 5.4 and 5.5 already record twice, where an optional or wrong argument silently buys the weaker path | **Fixed** | this phase | `TestTheSameProtectionHoldsOnSqlServer` -- 9 T-SQL rename forms, the `CREDENTIAL`-withheld case x 3 roles, an over-blocking counter-case, the aggregate residual pinned in both dialects. 52 pass, up from 37 (collected counts, measured both ways). **Mutation-verified**: flipping the class to `dialect="postgres"` fails 10, three of them the credential case |
 ---
 
 ## SEC-001 — proposed fix (flagged, not applied)
@@ -632,3 +644,151 @@ startup and nothing said it. Worth noting only because the information was
 genuinely already there, in `GET /models`, which is the usual shape of an
 operational gap: not missing data, just data nobody surfaced at the moment
 it mattered.
+
+---
+
+## Phase 12 — the consolidated report and gate (2026-10-31)
+
+**The audit is complete. Verdict: NOT READY.** The full report, with the
+rubric, the waiver list and the sign-off block, is
+[`UAT_READINESS_REPORT.md`](UAT_READINESS_REPORT.md) — **that file, not
+this one, is the owner of the verdict.** This section records only what
+Phase 12 itself did and the two things it learned.
+
+**Where the audit landed.** 140 findings, **80 fixed**, **1 open S1**
+(`AUZ-002`) and **13 open S2**, every one of the 14 *Flagged* rather than
+forgotten — each needs an owner decision because its fix crosses a stop
+line. Four gate items are false: the open S1/S2 count, "all CI gates
+green" (`detect-secrets` is the one red blocking gate), the accuracy
+threshold, and the UAT environment. Five are true: the authorization
+matrix, SQL-safety and masking on both dialects, prompt injection, loop
+bounds, and backup/restore/rollback drilled.
+
+### The one new finding, and why it was found here
+
+`SEC-008` was not found by auditing. It was found by trying to tick gate
+item 4 — *"SQL-safety and masking attack suites passing on SQL Server
+**and** PostgreSQL"* — honestly. The SQL-validator attack matrix really
+does run 86 payloads across five dialects. The **masking** suite, which
+is what holds the `SEC-006` S1 closed, ran `dialect="postgres"` on every
+one of its cases, and **all four connections configured on this machine
+are `mssql`**. So the strictest control in `governance/result_policy.py`
+had no regression coverage in the dialect it actually runs against.
+
+The control itself was sound — `projection_source_columns` resolves
+`TOP n`, `[bracket]`-quoted identifiers, `CAST(... AS VARCHAR(n))`,
+`ISNULL`, `+` concatenation, `OFFSET/FETCH` and T-SQL CTE renames
+correctly once the dialect matches. Only its coverage was missing, and it
+is closed by `TestTheSameProtectionHoldsOnSqlServer` (52 collected, up
+from 37). Full suite after the change: **9,702 passed, 0 failed** --
++15 on the 9,687 measured before it, which is exactly the new class.
+
+**The part worth carrying forward is what the measurement exposed, not
+the gap it closed.** Parsed in the *wrong* dialect, a T-SQL statement
+yields `by_name={}` — no source names at all — and an output column with
+no resolved sources is classified by its own name alone, which is exactly
+the pre-`SEC-006` behaviour. Mutation-verified: flipping the new class to
+`postgres` fails **10** of its tests, three of them the `CREDENTIAL` case
+across all three roles, i.e. a dialect mismatch would release
+`password_hash AS note` in the clear to a caller CLAUDE.md §5.4 says *no
+role* unlocks.
+
+It is not reachable today, and the reason is the thing to preserve: both
+governed callers derive the dialect from the connection about to execute
+the statement (`agent/nodes.py:2861` and `api/main.py:1930`, both
+`get_sqlglot_dialect(db_config.db_type)`), and `api/main.py` uses that
+one value for `validate_sql`, `enforce_row_limit`, `qualify_table_schema`
+**and** `projection_source_columns`. **This is a third instance of a
+pattern this register already holds twice** — `projection_source_columns`'
+optional `by_name`/`in_order` (`SEC-006`) and
+`insight_grounding_failure`'s optional `result_labels` (`HAL-002`) both
+silently buy the weaker path when omitted. A wrong `dialect` is the same
+hazard in a different costume: not an error, just less protection.
+
+### A method note, because it changed a headline number
+
+**The tally in this register was parsed, not read — and the first parse
+was wrong in the direction that flatters.** A script extracted every row
+by an ID pattern of three capitals and a number, which silently dropped
+every `BP-*` and `UI-*` row: 33 findings, including **two open S2s**
+(`BP-012`, the AGPL dependency, and `UI-013`, the undisclosed cloud
+captions). It reported 11 open S2 where the answer is 13, and the total
+as 106 where it is 140.
+
+Nothing in the output looked wrong. The counts were internally
+consistent, every row it did print was real, and the totals summed. It
+was caught only because a cross-check against the per-phase prose found
+`BP-012` missing from a list it should have been on.
+
+Two things generalise. **A tally derived by pattern-match needs its
+*denominator* checked, not just its rows** — "106 findings" was never
+compared to anything, and a two-letter ID prefix is not an exotic case in
+a register that uses `BP` and `UI` for a quarter of its rows.
+
+**Then the same script was wrong a second time, and this table was
+blameless for it.** Eight rows carry a pipe inside a code span —
+`` `Mapped[str \| None]` `` (`BP-015`),
+`` `_MANAGER = _ANALYST \| {…}` `` (`OPS-023`),
+`` `_PLATFORM_ADMIN = _ADMIN \| {…}` `` (`AUZ-004`),
+`` `db_datareader\|CR…` `` (`DOC-015`), plus `ARC-004`, `BP-001`,
+`CTX-006` and `OPS-014`. **All eight are correctly escaped as `\|`** —
+`1222f11` was the commit that did the last of them. The script split on
+every `|` regardless, so it read those rows as over-wide and took a
+fragment of prose as a Status.
+
+Re-run with a splitter that breaks only on a pipe *not* preceded by a
+backslash, the parse is clean (`0 inconsistent tables` across this file
+and the report) and **reproduces every hand-resolved figure exactly**:
+140 findings, 1 open S1, 13 open S2, 80 fixed. So this second bug moved
+no number — but only because the five rows it corrupted had been read by
+hand first, and the hand reading happened to agree.
+
+**The lesson is narrower and more useful than "check your parser".** Both
+bugs were in the same thirty-line script, both were silent, and both
+produced output that looked entirely reasonable: consistent totals, real
+rows, no exceptions. The first was caught by a cross-check against prose
+(`BP-012` missing from a list it belonged on); the second by validating
+the table's cell counts as an artifact in its own right. **Neither was
+caught by reading the script.** When a number in this audit comes from
+parsing one of the audit's own documents, validate the document's shape
+and cross-check at least one row against prose before publishing the
+total.
+
+### Five numbers this phase re-measured and corrected
+
+Each had been restated from an earlier phase's prose. None changes a
+verdict; all five are the kind of figure a later session would otherwise
+inherit and repeat. **The pattern is that a count is only as good as the
+method that produced it, and four of these five came from grepping
+something that should have been parsed.**
+
+| Figure | Was recorded as | Actually | How it was wrong |
+|---|---|---|---|
+| UAT golden set size | **57** questions (`CLAUDE.md` §13) | **50** — 32 accuracy + 18 behaviour | Counted by loading the YAML. `CLAUDE.md` is corrected |
+| Golden cases with gold SQL | "only 2 carry `expected_sql`" | **zero** | The two textual matches for that key are *comments*. So **not one accuracy case is machine-scorable**, which makes gate item 7 worse than first written, not better |
+| Masking suite before the fix | 39 tests | **37** | `grep -c 'def test_'` misses parametrisation; measured with `--collect-only` both before and after (37 → 52) |
+| Attack-matrix corpus | 86 payloads (Phase 2) | **107** | Summed the file's own eight payload tables with `ast`. The corpus grew after Phase 2 wrote that number |
+| Suite sizes generally | function counts | **collected** counts | `test_authorization_matrix.py` is 20 functions and **259 collected cases**; `test_adversarial_input.py` 41 and **89**. Both numbers are now given side by side so neither reads as a regression |
+
+One of the five does not reconcile and is left as it stands rather than
+guessed at: Phase 2 §3's before/after table reads *"Refused 155 → 163,
+Accepted-or-crashed 23 → 8"* against a stated 178 payload/dialect
+combinations. 155 + 23 = 178, but 163 + 8 = 171, so seven combinations
+are unaccounted for in the "after" column. The report therefore cites the
+**691 collected cases** and the three deliberately-accepted payloads
+rather than repeating the 163/166 arithmetic. **A number that does not
+sum is not a number to restate.**
+
+### One trap re-confirmed, from the other side
+
+`.github/workflows/ci.yml` documents at length that a backtick inside a
+double-quoted bash string is unconditional command substitution,
+regardless of the Python-level `if` it textually sits inside — the bug
+that made `scripts/check_secrets_baseline.py` a `.py` file. This phase
+hit the same thing editing its own report: a `python -c "..."`
+replacement string containing `` `OPS-006` `` had that token executed and
+spliced out, leaving an empty pair of parentheses in the prose. Harmless
+here and caught by reading the result, but worth one line: **do not put
+backticks in a double-quoted shell string**, not even in documentation
+text, and especially not in a project whose documentation is full of
+them.

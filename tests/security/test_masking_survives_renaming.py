@@ -28,6 +28,15 @@ ordinary analytics, and over-blocking it is its own failure mode
 intended behaviour and names the one residual it leaves
 (`MAX(salary) WHERE id = 7`), so a later session finds a decision rather
 than an oversight.
+
+**Dialect coverage, added by Phase 12 (`SEC-008`).** Every case authored
+for `SEC-006` parses in the `postgres` dialect, while all four
+connections configured on the machine this suite was written on are
+`mssql` -- so the strictest control in `governance/result_policy.py` was
+pinned in a dialect this project does not run.
+`TestTheSameProtectionHoldsOnSqlServer` closes that with the T-SQL forms
+of the same attack, including four (`TOP n`, `[bracket]`-quoted
+identifiers) that the `postgres` dialect cannot parse at all.
 """
 
 from __future__ import annotations
@@ -62,14 +71,27 @@ def _clear_classification_cache():
     reset_classification_cache()
 
 
-def _govern(sql: str, columns: list[str], roles=UNPRIVILEGED_ROLES, domain=BusinessDomain.HR):
+def _govern(
+    sql: str,
+    columns: list[str],
+    roles=UNPRIVILEGED_ROLES,
+    domain=BusinessDomain.HR,
+    dialect: str = "postgres",
+):
     """Governs one single-row result exactly as the live callers do.
 
     Mirrors `agent.nodes.execute_sql_node` and `POST /execute`: derive the
     projection sources from the statement that was executed, then pass
     both views into the domain gate.
+
+    `dialect` defaults to `postgres` so every case authored before
+    `SEC-008` keeps its exact previous meaning. Both live callers resolve
+    it from the connection that is about to execute the statement --
+    `agent/nodes.py:2861` and `api/main.py:1930` both read
+    `get_sqlglot_dialect(db_config.db_type)` -- which is what
+    `TestTheSameProtectionHoldsOnSqlServer` depends on being true.
     """
-    sources = projection_source_columns(sql, dialect="postgres")
+    sources = projection_source_columns(sql, dialect=dialect)
     return govern_result_for_domain(
         columns,
         [[SECRET] * len(columns)],
@@ -305,3 +327,142 @@ class TestTheHelperDegradesWithoutWeakening:
 
         assert sources.by_name == {}
         assert sources.in_order == ()
+
+
+#: (label, sql, the column names the driver reports back)
+#:
+#: T-SQL forms of the same attack, added by UAT-readiness Phase 12
+#: (`SEC-008`). Every case above is authored in `postgres`, so until this
+#: class existed the one dialect this project's own `.env` actually uses
+#: -- all four configured connections are `mssql` -- had no masking
+#: regression coverage at all, and the Phase 12 gate item "masking attack
+#: suites passing on SQL Server **and** PostgreSQL" was not tickable.
+#:
+#: Four of these cannot be parsed by the `postgres` dialect at all
+#: (`TOP n` and `[bracket]`-quoted identifiers), which is why the shared
+#: `_RENAMES` list could not simply be run twice: parsed in the wrong
+#: dialect they yield *no* source names, and an output with no resolved
+#: sources is classified by its own name alone -- i.e. exactly the
+#: pre-`SEC-006` behaviour. That is a hazard about dialect *resolution*,
+#: not about this gate, and it is bounded because both governed callers
+#: derive the dialect from the executing connection (see `_govern`).
+_TSQL_RENAMES: list[tuple[str, str, list[str]]] = [
+    ("tsql: no rename (control)", "SELECT TOP 10 salary FROM employees", ["salary"]),
+    ("tsql: TOP with an alias", "SELECT TOP 10 salary AS region FROM employees", ["region"]),
+    (
+        "tsql: bracket-quoted rename",
+        "SELECT [salary] AS [region] FROM [dbo].[employees]",
+        ["region"],
+    ),
+    (
+        "tsql: CAST to VARCHAR(n)",
+        "SELECT TOP 5 CAST(salary AS VARCHAR(20)) AS region FROM employees",
+        ["region"],
+    ),
+    ("tsql: ISNULL wrapper", "SELECT ISNULL(salary, 0) AS region FROM employees", ["region"]),
+    (
+        "tsql: OFFSET/FETCH instead of LIMIT",
+        "SELECT salary AS region FROM employees ORDER BY 1 OFFSET 0 ROWS FETCH NEXT 5 ROWS ONLY",
+        ["region"],
+    ),
+    (
+        "tsql: renamed inside a CTE",
+        "WITH x AS (SELECT TOP 10 salary AS s FROM employees) SELECT s AS region FROM x",
+        ["region"],
+    ),
+    (
+        "tsql: one UNION branch carries it",
+        "SELECT TOP 1 salary AS region FROM employees "
+        "UNION ALL SELECT TOP 1 0 AS region FROM employees",
+        ["region"],
+    ),
+    ("tsql: ssn renamed", "SELECT TOP 1 ssn AS code FROM employees", ["code"]),
+]
+
+
+class TestTheSameProtectionHoldsOnSqlServer:
+    """`SEC-006`'s fix must hold in the dialect this project actually runs.
+
+    CLAUDE.md names PostgreSQL, MySQL, SQL Server and Oracle as supported
+    targets, and `tests/security/test_sql_validator_attack_matrix.py`
+    already runs its 86 payloads across five dialects for exactly this
+    reason. The masking suite did not, which left the strictest control
+    in `governance/result_policy.py` pinned in one dialect only.
+    """
+
+    @pytest.mark.parametrize(
+        ("label", "sql", "columns"), _TSQL_RENAMES, ids=[r[0] for r in _TSQL_RENAMES]
+    )
+    def test_the_value_never_reaches_an_unprivileged_caller(
+        self, label: str, sql: str, columns: list[str]
+    ) -> None:
+        governed = _govern(sql, columns, dialect="tsql")
+
+        assert (
+            SECRET not in governed.rows[0]
+        ), f"{label}: the restricted value was returned in the clear via {sql!r}"
+        assert governed.changed
+
+    @pytest.mark.parametrize("roles", [("user",), ("analyst",), ("admin",)])
+    def test_a_renamed_credential_column_is_withheld_whatever_the_role(self, roles) -> None:
+        """The no-key boundary, in T-SQL.
+
+        `CREDENTIAL` is withheld from every caller including an admin
+        (CLAUDE.md 5.4), and a rename unlocked it before `SEC-006`. The
+        `+` operator here is T-SQL string concatenation, not addition --
+        a wrapper form that does not exist in the `postgres` cases.
+        """
+        governed = _govern(
+            "SELECT TOP 1 'x' + CAST(password_hash AS VARCHAR(80)) AS note FROM users",
+            ["note"],
+            roles=roles,
+            dialect="tsql",
+        )
+
+        assert governed.rows[0][0] == WITHHELD_MASK
+        assert governed.rows[0][0] != RESTRICTED_MASK
+
+    def test_an_admin_still_sees_a_renamed_salary(self) -> None:
+        """The counter-case, so this class is not merely "mask more"."""
+        governed = _govern(
+            "SELECT TOP 10 salary AS region FROM employees",
+            ["region"],
+            roles=("admin",),
+            dialect="tsql",
+        )
+
+        assert governed.rows[0][0] == SECRET
+
+    def test_ordinary_tsql_analytics_is_not_over_blocked(self) -> None:
+        """A restricted column in `WHERE` must not taint an unrelated output.
+
+        Over-blocking ordinary analytics is its own failure mode
+        (CLAUDE.md 5.8), and this is the shape most likely to regress if
+        the source walk is ever widened from "computed from" to
+        "mentioned anywhere".
+        """
+        governed = _govern(
+            "SELECT TOP 10 department AS region FROM employees WHERE salary > 100000",
+            ["region"],
+            dialect="tsql",
+        )
+
+        assert governed.rows[0][0] == SECRET
+        assert not governed.changed
+
+    def test_the_aggregate_exclusion_is_the_same_in_tsql(self) -> None:
+        """Pinned so the deliberate residual does not differ by dialect.
+
+        `TestTheAggregateExclusionIsDeliberate` records why an aggregate
+        contributes no source names. If that ever changed for one dialect
+        and not the other, the policy question CLAUDE.md 13 holds open
+        would have two different answers.
+        """
+        sources = projection_source_columns(
+            "SELECT TOP 10 department, AVG(salary) AS avg_pay FROM employees "
+            "GROUP BY department",
+            dialect="tsql",
+        )
+
+        assert sources.by_name["department"] == frozenset({"department"})
+        assert sources.by_name.get("avg_pay", frozenset()) == frozenset()
