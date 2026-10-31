@@ -3439,6 +3439,39 @@ def route_after_classification(state: AgentState) -> str:
     return "retrieve_schema"
 
 
+def route_after_schema_retrieval(state: AgentState) -> str:
+    """Conditional edge after retrieve_schema: proceed, or stop and explain.
+
+    `retrieve_schema_node` already composes a terminal `"failed"` state
+    with a `failure_explanation` when no schema is available -- an empty
+    or unbuilt index, a tenant with no queryable database, or any other
+    `SchemaRetrievalError`. Until `OPS-025` the edge out of that node was
+    **unconditional**, so that explanation was written into the state and
+    then driven straight past: `retrieve_golden_examples` onwards ran
+    with no `selected_database`, `generate_sql` spent a real model call
+    (68.4 s measured) on a prompt containing no schema, and the run ended
+    in `agent.nodes._require_selected_database`'s
+    `RuntimeError("reached with no selected_database")` -- which is not an
+    `AgentError`, so `api/main.py`'s last-resort handler turned the
+    pipeline's own actionable message into HTTP 500 "An unexpected error
+    occurred."
+
+    This is the same shape as `LOP-001`/`LOP-004` (Phase 6): a *designed*
+    terminal condition escaping `run_agent` as an unhandled exception. The
+    rule that came out of those, and the reason this function exists: when
+    a node can end a run, something on the path must turn that into a
+    response.
+
+    An unbuilt index is the most likely misconfiguration on a fresh UAT
+    host -- `scripts/build_embeddings.py` is a documented setup step and
+    `GET /health` already reports "Index is empty" per database -- so this
+    path is reached by forgetting a setup step, not by a rare fault.
+    """
+    if state.get("status") == "failed":
+        return "failed"
+    return "retrieve_golden_examples"
+
+
 def route_after_generation(state: AgentState) -> str:
     """Conditional edge after generate_sql: review, or stop (rejected/failed/rate_limited).
 

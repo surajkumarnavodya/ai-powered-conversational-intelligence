@@ -256,6 +256,7 @@ from agent.nodes import (
     route_after_metric_conformance,
     route_after_review,
     route_after_sanitization,
+    route_after_schema_retrieval,
     route_after_validation,
     sanitize_input_node,
     validate_sql_node,
@@ -430,7 +431,19 @@ def build_graph():
             "needs_clarification": END,
         },
     )
-    graph.add_edge("retrieve_schema", "retrieve_golden_examples")
+    # Conditional, not a plain edge: retrieve_schema_node can end the run
+    # (no schema index, or a tenant with no queryable database), and before
+    # `OPS-025` that terminal state was driven straight past -- costing a
+    # model call and ending in HTTP 500 instead of the explanation the node
+    # had already written. See `route_after_schema_retrieval`.
+    graph.add_conditional_edges(
+        "retrieve_schema",
+        route_after_schema_retrieval,
+        {
+            "retrieve_golden_examples": "retrieve_golden_examples",
+            "failed": END,
+        },
+    )
     graph.add_edge("retrieve_golden_examples", "retrieve_business_context")
     graph.add_edge("retrieve_business_context", "classify_analytical_intent")
     graph.add_edge("classify_analytical_intent", "build_analytical_plan")

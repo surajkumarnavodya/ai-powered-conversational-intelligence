@@ -148,6 +148,70 @@ class TestSelectDatabaseMultiDb:
         with pytest.raises(SchemaRetrievalError):
             select_database("any question", settings=settings)
 
+    @pytest.mark.parametrize(
+        "error",
+        [
+            FileExistsError(183, "Cannot create a file when that file already exists"),
+            PermissionError(13, "Permission denied"),
+            OSError(28, "No space left on device"),
+        ],
+        ids=["persist_dir_is_a_file", "permission_denied", "disk_full"],
+    )
+    def test_an_unusable_persist_directory_raises_schema_retrieval_error(self, monkeypatch, error):
+        """`OPS-025`: acquiring the client touches the filesystem.
+
+        `get_chroma_client` mkdirs `CHROMA_PERSIST_DIR` on every call, so a
+        persist directory that is a regular file, permission-denied or on a
+        full disk raises `OSError` -- and this call sits *outside* the
+        `try` that `retrieve_relevant_schema` wraps its own client
+        acquisition in. `retrieve_schema_node` catches
+        `SchemaRetrievalError` and nothing else, so any other type escaped
+        `run_agent` and `api/main.py`'s last-resort handler turned it into
+        HTTP 500. Measured live before the fix with `CHROMA_PERSIST_DIR`
+        pointing at a regular file: `FileExistsError [WinError 183]` out of
+        `run_agent` in 0.04 s.
+
+        The *type* is the assertion. Reachable only with more than one
+        configured database, which is why it lives with the two-db
+        settings.
+        """
+
+        def _raise(settings):
+            raise error
+
+        monkeypatch.setattr("embeddings.retriever.get_chroma_client", _raise)
+
+        with pytest.raises(SchemaRetrievalError) as caught:
+            select_database("any question", settings=_two_db_settings())
+
+        assert "unavailable" in str(caught.value)
+
+    def test_the_persist_directory_path_never_reaches_the_message(self, monkeypatch):
+        """`retrieve_schema_node` copies this message into a user-facing
+        `failure_explanation`, so the raw OS error -- which renders the
+        persist directory's absolute path -- must stay in the log.
+
+        Before `OPS-025`'s guard the caller got a generic HTTP 500 that
+        disclosed nothing, so putting the path in the response would have
+        traded a crash for a new disclosure of server filesystem layout
+        (the `LOP-008` class: `redact_secrets` covers configured secrets,
+        not topology).
+        """
+
+        def _raise(settings):
+            raise PermissionError(13, "Permission denied: 'D:\\\\secret-place\\\\.chroma'")
+
+        monkeypatch.setattr("embeddings.retriever.get_chroma_client", _raise)
+
+        with pytest.raises(SchemaRetrievalError) as caught:
+            select_database("any question", settings=_two_db_settings())
+
+        message = str(caught.value)
+        assert "secret-place" not in message
+        assert "Permission denied" not in message
+        # Still actionable without it: it names the setting to look at.
+        assert "CHROMA_PERSIST_DIR" in message
+
 
 @pytest.fixture(autouse=True)
 def _mock_settings_for_node_tests(monkeypatch):
