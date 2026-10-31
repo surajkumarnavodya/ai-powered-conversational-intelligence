@@ -49,7 +49,7 @@ this hardware, not of the software.
    `postgres_uat` business database, which `docker stop` can take down at
    will. That is a faithful drill of *the application's* behaviour when
    its database disappears; it is not a drill of the production Postgres
-   or of SQL Server specifically. §10 names what a human with elevation
+   or of SQL Server specifically. §11 names what a human with elevation
    must still run.
 3. **Two drills were run twice, because the first run of each was
    invalid.** Both are reported in §4 rather than quietly replaced,
@@ -75,6 +75,8 @@ this hardware, not of the software.
 | `OPS-019` | S3 | An unreachable database burned the retry budget, then blamed the question | **Fixed** `8e049ea` |
 | `OPS-020` | S3 | Admission control is sized for ~50× the capacity this hardware has | **Flagged** |
 | `OPS-021` | **S1** | `docker build .` failed outright — the image this project ships could not be built | **Fixed** `e7df257` |
+| `OPS-022` | **S2** | Onboarding's published semantic meaning is filed where the SQL pipeline never looks | **Flagged** (test only) |
+| `OPS-023` | S3 | The R3 account's roles over-grant on one authz surface and under-grant on the other | **Flagged** |
 
 Positive results, recorded as evidence so a later phase need not redo
 them: Ollama resilience passes all five checks (§4.1); the identity
@@ -278,7 +280,7 @@ modes for UAT are "index empty" and "index stale", both of which
 `/health` already reports per database ("Index is empty -- run
 scripts/build_embeddings.py").
 
-**Recorded as Unverified, not passed.** §10 has the command.
+**Recorded as Unverified, not passed.** §11 has the command.
 
 ---
 
@@ -398,23 +400,118 @@ on its own. A restore needs a role with `CREATEDB`, or a
 pre-created empty database. Any runbook that assumes the application's own
 credentials suffice is wrong.
 
-### 6.2 ChromaDB — a directory copy, and it does not need a drill
+### 6.2 ChromaDB — the schema index is derived, but the directory is not
 
-The index is 41 MB in 805 files under `embeddings/.chroma`. It is
-**regenerated data, not a backup target**: `scripts/build_embeddings.py`
-rebuilds it from live introspection, `/health` reports per database
-whether it is populated, and `.gitignore` already treats it as generated.
-So its RPO is "whatever the current schema is" and its RTO is one command.
+An earlier draft of this section said Chroma "deliberately needs no
+backup". That is **wrong in the dangerous direction**, and
+`docs/DEPLOYMENT.md`'s existing "Backup & recovery" section already says
+why in its own last bullet, which is worth reading past the first one.
 
-Measured for the Postgres database created in §9.2: a full build of a
-3-table schema took **about one second**. The `adventureworks` index (36
-tables) is the realistic case and was not rebuilt in this session, so no
-figure is claimed for it.
+The persist directory is not one thing. Enumerated by reading every
+non-test caller of `embeddings.schema_indexer.get_chroma_client` —
+`embeddings/golden_examples.py`, `feedback/store.py`, `media/store.py`,
+`retrieval/vector_store.py`, `embeddings/retriever.py`,
+`agent/orchestrator/router_catalog.py` — plus
+`schema_drift/snapshot_store.py`, which writes
+`.schema_drift_snapshot__<db>.json` files *beside* the Chroma store in the
+same directory:
 
-The practical backup instruction is therefore *not* "copy the directory"
-but "be able to run `build_embeddings.py`", which needs the database
-reachable — which is why `OPS-014` below matters more than a Chroma
-backup would.
+| What | Rebuildable from | Collections here |
+|---|---|---|
+| Schema DDL index | live introspection, `scripts/build_embeddings.py` | 7 `schema_ddl__*` |
+| Business-context chunks | `python -m scripts.ingest_schema` | 4 `knowledge_base__*` (453 of them `adventureworks`) |
+| **Golden examples** | **nothing — human-curated** | 4 `golden_examples__*`, **6 items** |
+| **Message feedback** | **nothing — human-curated** | `response_feedback`, **8 items** |
+| Media index | re-ingesting the media library (OCR/ASR cost) | `media_images`, `media_video_segments`, 0 items here |
+| Schema-drift baselines | **nothing — a point-in-time record** | JSON files, not collections |
+
+Measured for the Postgres database of §9.2: a full build of a 3-table
+schema took **about one second**. The `adventureworks` index (36 tables)
+was not rebuilt in this session, so no figure is claimed for it.
+
+So the correct instruction is the one `docs/DEPLOYMENT.md` gives: rebuild
+the schema index from the database, and take a filesystem-level copy of
+`CHROMA_PERSIST_DIR` if golden examples, feedback and drift baselines
+matter to the deployment. `AUZ-005` is relevant to how much the first of
+those matters — any `user` can write a golden example that steers their
+whole tenant, which cuts both ways: it is worth preserving *and* worth
+being able to roll back.
+
+41 MB in 805 files here, so a directory copy is trivial in cost — but
+§6.3 is why that number is larger than it should be.
+
+### 6.3 `OPS-022` — what counting the collections turned up
+
+Listing the directory to size the backup is how this was found, which is
+the same argument §8.2.1 makes: attempt the check even when a document
+says the area is covered.
+
+**203 collections. 185 of them (91%) are
+`knowledge_base__My_Warehouse_<8 hex>`, each holding exactly one chunk.**
+
+They are not junk, and that is the finding. Each holds a published
+semantic-catalog concept, `status="published"`,
+`truth_level="confirmed_business_truth"` — the output of UAT journey
+**J2** (onboard a database) followed by **J3** (an SME confirms its
+semantic meaning and publishes it). 185 of them because Phase 9 drove
+onboarding through the browser repeatedly, and **every publish opens a
+new namespace that no later publish reuses and nothing ever deletes.**
+
+Two modules name the same onboarded database two different ways, and
+neither is wrong on its own terms:
+
+| Module | Produces | For |
+|---|---|---|
+| `onboarding/env_registration.py:70` `slugify_connection_name` | `my_warehouse` | the `DB_CONNECTIONS` entry |
+| `onboarding/catalog_bridge.py:66` `catalog_database_id_for_job` | `My_Warehouse_33ef5683` | the catalog entry, and so the vector-store collection |
+
+`agent/nodes.py:1255` retrieves business context with
+`db_name = state["selected_database"]` — a `DB_CONNECTIONS` name. So
+retrieval reads `knowledge_base__my_warehouse`, and **measured on this
+checkout, `knowledge_base__my_warehouse` does not exist at all**, while
+`schema_ddl__my_warehouse` does. The schema index for the onboarded
+database is where the pipeline expects it; the human-confirmed business
+meaning is in 185 places it never looks.
+
+```
+knowledge_base__my_warehouse exists: False
+schema_ddl__my_warehouse exists:     True
+knowledge_base__My_Warehouse_33ef5683: status='published' truth='confirmed_business_truth'
+```
+
+**Why this is S2 rather than a tidiness problem.** Nothing errors and no
+screen looks broken: J2 completes, J3's review dashboard reads catalog
+entries from the identity database and shows them correctly, and the
+publish reports success. A business tester would sign both journeys off.
+What never happens is the only thing they were for — the confirmed
+meaning reaching the SQL prompt. It also inverts §4's provenance rule in
+practice: the chunks marked `confirmed_business_truth`, the one grade that
+requires an explicit human action, are precisely the ones that are
+unreachable.
+
+**Narrowed, so the fix is not aimed at the wrong module.** A catalog entry
+authored directly against a configured database is filed under that
+connection's own name and *is* retrievable — the four real
+`knowledge_base__*` collections are named `adventureworks`, `hr`,
+`test_db`, `default`, all `DB_CONNECTIONS` entries. Only the onboarding
+bridge's id scheme diverges.
+
+**Flagged, not fixed.** The job-id suffix is deliberate and documented:
+`catalog_database_id_for_job`'s docstring says it exists so two labels
+differing only in punctuation never share a catalog namespace — and
+`slugify_connection_name` genuinely does collapse `"My Warehouse"` and
+`"My-Warehouse!!"` to one name, so simply adopting it trades this finding
+for a cross-database collision. A correct fix has to reconcile the two
+schemes *and* backfill 185 existing collections plus their
+`SemanticCatalogEntry.database_id` rows, which is a data migration and a
+product decision about what happens when one label is onboarded twice.
+Proposal in the register.
+
+Pinned by `tests/test_onboarding_catalog_bridge.py
+::TestTheCatalogIdAndTheConnectionNameDoNotMeet` — two
+`xfail(strict=True)` that fail the day it is fixed, above a passing
+non-vacuity test asserting the punctuation-collision property any
+replacement scheme must keep.
 
 ---
 
@@ -626,13 +723,48 @@ were read from the identity database:
 | R5 Business User | `uat9.r5@example.com` | `user` | yes |
 | R6 Read-only Viewer | `uat9.r6@example.com` | `viewer` | yes |
 
-**R3 is granted `manager`, while §2.1 says `analyst`** — which it says
-precisely because `analyst` carries `catalog.review`,
+**R3 is granted `manager`, while §2.1 says `analyst`** — and §2.1 says
+`analyst` precisely because `analyst` carries `catalog.review`,
 `governance.review` and `recommendation.review`, the J3 and J4
-permissions. Whether `manager` carries them was not measured here, so
-this is reported as a mismatch to resolve rather than as a defect in
-either place. Resolve it before E4 is signed: either grant R3 `analyst`
-per the document, or measure `manager` and correct the document.
+permissions. An earlier draft of this section left "whether `manager`
+carries them" unmeasured. **Measured now** (`OPS-023`), and the answer
+is interesting in both directions, because this application authorizes
+in two structurally different places — Phase 4's central lesson:
+
+| Surface | `user,manager` | `user,analyst` | Difference |
+|---|---|---|---|
+| `identity.rbac` (re-reads the DB) | **24** permissions | 20 | `manager` is a strict **superset** — `_MANAGER = _ANALYST \| {…}` at `identity/rbac.py:361` |
+| `agent.authz` (reads the JWT only) | **7** permissions | 12 | `manager` is **not a key** in `ROLE_PERMISSIONS`, so it grants nothing |
+
+So R3 as provisioned is **simultaneously over- and under-granted**:
+
+- **Over**, on the identity surface: `manager` adds `users.read`,
+  `sessions.revoke_any`, `audit.read_any` and `admin.dashboard.read` on
+  top of everything `analyst` has. An SME reviewer can read any account,
+  sign any user out everywhere, read any audit record and open the admin
+  dashboard. All three review permissions J3/J4 need *are* held, so the
+  journeys work — but R3 stops being a usable negative control for
+  Phase 4's "a reviewer may not administer" assertions.
+- **Under**, on the agent surface: `manager` is absent from
+  `agent.authz.ROLE_PERMISSIONS` (whose keys are exactly `viewer`,
+  `user`, `analyst`, `admin`), so R3 falls back to what `user` alone
+  grants and loses five permissions `analyst` would have carried:
+  `view_restricted_columns`, `policy_rag_query`,
+  `documents_read_sensitive`, `media_generate`, `run_optimization`.
+
+This is `AUZ-004`'s shape — a role outside `ROLE_PERMISSIONS` granting
+nothing, fail-closed and correct as a control, misleading as an account —
+reached by a second role and with a concrete UAT consequence: a J3 or J4
+step that reads a sensitive document or queries policy RAG fails for R3,
+and the tester has no way to tell a deliberate refusal from a
+misconfigured account.
+
+**The decision the earlier draft left open is now closed by the
+measurement: the document is right and the account is wrong.** `analyst`
+is the grant that works on both surfaces; `manager` works on neither
+cleanly. Resolve before **E4** is signed by granting R3 `analyst` and
+removing `manager` — an operator action against the identity database,
+so it is recorded here rather than performed by this audit (§11 item 8).
 
 ### 9.2 `OPS-016` — both dialects now have an environment, and the
 Postgres leg is live-verified
@@ -679,7 +811,7 @@ claim those five cases exist to test. **The golden cases' own
 `expected_sql` still requires a human** (they are marked
 `GOLD SQL REQUIRED`), so this verifies the *path*, not the *answers*.
 
-The `.env` block and the read-only GRANTs are in §10.
+The `.env` block and the read-only GRANTs are in §11.
 
 A second, unrelated observation from this instance: the same question
 answered in **2.0 s** against a 3-table Postgres schema versus **79–127 s**
@@ -738,7 +870,44 @@ the fixed file.
 
 ---
 
-## 10. What a human must still run
+## 10. Gate re-measurement at the end of this phase
+
+Shared rule 10 — the phase is not done if it broke something another
+phase relies on. Run on this checkout 2026-10-31, each command exactly
+as CI runs it.
+
+| Gate | Command | Result |
+|---|---|---|
+| `ruff` | `ruff check .` | **0 findings**, exit 0 |
+| `black` | `black --check .` | **1,692 files** unchanged, exit 0 |
+| `bandit` | `bandit -c pyproject.toml -r . -f txt` | **0** issues at every severity, 0 skipped |
+| `mypy` (production) | the 41-package list from `ci.yml` | **0 issues in 482 source files** |
+| `pytest` | `pytest -q` | **9,674 passed, 0 failed**, 16 skipped, 11 deselected, 18 xfailed, 882 s |
+| frontend `oxlint` | `npm run lint` | exit 0 — 32 warnings, **0 errors** (pre-existing; no frontend file was touched this phase) |
+| frontend `vitest` | `npm run test` | **1,551 passed, 0 failed** across 107 files, 35.8 s |
+| frontend `tsc` | `npx tsc --noEmit -p tsconfig.app.json` | clean |
+
+Two notes on the numbers rather than just the numbers.
+
+**The test count moved and the reason is attributable.** `CLAUDE.md` §13
+recorded 9,485 passed / 5 xfailed on 2026-10-28. This phase's own commits
+account for the growth, and the xfail count rising from 5 to **18** is
+deliberate: these phases pin open findings as `xfail(strict=True)` so a
+fix cannot land silently (`OPS-015` 8, `OPS-022` 2, plus Phase 7's
+`CTX-007` 3). **A rising strict-xfail count is not decay** — each one
+fails the day its finding is fixed, which is the point. What would be
+decay is a rising *skip* count, and that is unchanged at 16.
+
+**`pip-audit` and `detect-secrets` were not re-run here**, so no claim is
+made about them in either direction. §5.7 of `CLAUDE.md` records why that
+matters: `pip-audit`'s result is a statement about a date, and
+`detect-secrets`' baseline cannot be refreshed from a Windows checkout.
+`detect-secrets` was last measured **red** (a stale baseline, no leaked
+secret). Neither was touched by this phase — the only dependency change
+was `OPS-021`'s `numpy` repin, which `pip-audit` reports nothing on.
+
+---
+## 11. What a human must still run
 
 Nothing here was skipped silently; each is blocked by this environment.
 
@@ -824,9 +993,32 @@ Nothing here was skipped silently; each is blocked by this environment.
    including the five Postgres ones that now have an environment to run
    in. §9.2 verified the path, not the answers.
 
+8. **Grant R3 the role the script specifies** (`OPS-023`). Measured, so
+   the choice is no longer open — `analyst` is correct on both
+   authorization surfaces and `manager` on neither. This is a write to
+   the identity database's role grants, so it is an operator action:
+
+   ```powershell
+   # via the admin UI (R1 account) -- Platform Admin > Users > uat9.r3@example.com
+   # grant: analyst      remove: manager
+   ```
+
+   Then re-check that R3 can reach a J3 catalog review and a J4
+   governance review, and that it can **no longer** open the admin
+   dashboard — the over-grant half is what made R3 useless as a negative
+   control.
+
+9. **A decision on `OPS-022`**, which this audit deliberately did not
+   take. The repair is not the code change but the backfill: 185
+   existing collections and their `SemanticCatalogEntry.database_id`
+   rows are filed under a per-job id. Until it is taken, a UAT tester
+   should be told that J2 + J3 publish successfully and that the
+   confirmed meaning does **not** yet reach J4's SQL prompt, so J4 must
+   not be signed off as evidence that the catalog works.
+
 ---
 
-## 11. Session summary
+## 12. Session summary
 
 - **S1 found and fixed: 1.** `OPS-021` — `docker build .` failed
   outright, so the image this project ships could not be built. A
@@ -834,18 +1026,39 @@ Nothing here was skipped silently; each is blocked by this environment.
   only gate that could see it sits in a job widely described as
   advisory. `AUZ-002` remains the project's only *open* S1 and is not
   this phase's.
-- **S2 open from this phase: 2** — `OPS-012` (the queue's 120 s budget
-  versus `/ask`'s 600 s, measured on both sides) and `OPS-015` (the live
+- **S2 open from this phase: 3** — `OPS-012` (the queue's 120 s budget
+  versus `/ask`'s 600 s, measured on both sides), `OPS-015` (the live
   router misses 46% of the golden SQL set, including three quarters of
-  J4). Both flagged for an owner with a concrete proposal; neither is
-  fixable without changing behaviour nothing currently measures.
+  J4), and `OPS-022` (onboarding's published, human-confirmed semantic
+  meaning is filed under a `database_id` the SQL pipeline never
+  queries — 185 collections' worth, with no error anywhere). None is
+  fixable without changing behaviour nothing currently measures; all
+  three carry a concrete proposal and a test that fails the day they
+  are fixed.
 - **Fixed this session: 6** — `OPS-011`, `OPS-013`, `OPS-016`,
   `OPS-017`, `OPS-019`, `OPS-021`. Five shipped with tests that fail
   before and pass after; `OPS-013` and `OPS-019` are mutation-verified.
-- **Flagged for a decision: 4** — `OPS-012`, `OPS-014`, `OPS-015`,
-  `OPS-020`.
+- **Flagged for a decision: 6** — `OPS-012`, `OPS-014`, `OPS-015`,
+  `OPS-020`, `OPS-022`, `OPS-023`.
+- **Two of this phase's own records were corrected rather than left to
+  stand.** §6.2 had said ChromaDB "deliberately needs no backup" —
+  wrong in the dangerous direction, since golden examples, message
+  feedback and schema-drift baselines share that directory with no live
+  source to rebuild from; `CLAUDE.md` §12 listed the whole directory as
+  derived and no longer does. §9.1 had recorded R3's role mismatch with
+  `manager`'s permissions unmeasured; measuring them (`OPS-023`) showed
+  the account is **both** over-granted (4 admin permissions on
+  `identity.rbac`) and under-granted (5 analyst permissions missing on
+  `agent.authz`), which closes the decision the earlier draft left
+  open.
 - **The capacity answer UAT needs, in one line:** this hardware serves
   **one question at a time**; three testers at once triples latency to
   ~195 s, and six breaks it — 5 of 6 fail on the 300 s per-call timeout
   and the provider circuit breaker opens, penalising the next user too.
+- **Gates at the end of the phase:** `ruff` 0, `black` clean over 1,692
+  files, `bandit` 0 at every severity, `mypy` (production) 0 in 482
+  files, `pytest` **9,674 passed / 0 failed**, frontend `vitest`
+  **1,551 passed / 0 failed**, `tsc` clean. `pip-audit` and
+  `detect-secrets` were not re-run, so nothing is claimed about them
+  (§10).
 - **Next phase:** 12 — the consolidated UAT readiness report and gate.

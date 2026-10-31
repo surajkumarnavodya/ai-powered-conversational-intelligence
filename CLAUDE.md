@@ -808,9 +808,20 @@ Only when a task is specifically about them — never as a side effect:
   `.secrets.baseline` is tool-generated; regenerate, never hand-edit.
 - **Migrations**: `identity/migrations/` — the only real migrations here.
   Never hand-edit an applied revision; add a new one.
-- **Generated/derived** (each rebuilt by its own command): `embeddings/.chroma/`,
+- **Generated/derived** (each rebuilt by its own command):
   `frontend/dist/`, any `node_modules/`, `.venv/`, `__pycache__/`,
   `.mypy_cache/`, `.ruff_cache/`, `.pytest_cache/`, `.vs/`, `media_library/`.
+  **`embeddings/.chroma/` used to be on that list and does not belong
+  there** (corrected 2026-10-31, Phase 11). Only the *schema index* is
+  derived. The same persist directory also holds **golden examples** and
+  **message feedback** -- both human-curated, with no live source to
+  rebuild from -- the media index, and `schema_drift`'s point-in-time
+  drift baselines. Treating the whole directory as regenerable is wrong
+  in the dangerous direction: `scripts/build_embeddings.py` restores the
+  index and nothing restores the rest. Back it up at the filesystem
+  level if curated examples and feedback matter; per-component table in
+  [`docs/uat-readiness/phase-11-operations.md`](docs/uat-readiness/phase-11-operations.md)
+  §6.2. It is still gitignored and still must not be committed.
 - **Benchmark-pinned prompt text**: `agent.llm_client._INSIGHT_SYSTEM_PROMPT`
   and the generation system prompt. `docs/EVALUATION_CURRENT.md`'s accuracy
   numbers were measured against their exact wording; changing them without
@@ -1201,10 +1212,11 @@ contract lists its specific limitations; these are the cross-cutting ones.
   `phase-2-security.md`, `phase-3-authentication.md`,
   `phase-4-authorization.md`, `phase-5-hallucination.md`,
   `phase-6-loops.md`, `phase-7-context.md`,
-  `phase-8-best-practices.md`, `phase-9-ui.md` and
-  `phase-10-documentation.md` hold the
-  method and evidence for what has been done. **Phases 0-10 are
-  complete; phases 11-12 are not started.**
+  `phase-8-best-practices.md`, `phase-9-ui.md`,
+  `phase-10-documentation.md` and `phase-11-operations.md` hold the
+  method and evidence for what has been done. **Phases 0-11 are
+  complete; phase 12 (the consolidated report and gate) is not
+  started.**
   Before re-investigating anything security- or architecture-shaped,
   check the register: it records what was measured, on what date, and
   which items are deliberately flagged for an owner decision rather than
@@ -1551,3 +1563,47 @@ contract lists its specific limitations; these are the cross-cutting ones.
   assertion and all of those test code that raises on violation; and
   repo hygiene clean, with the only absolute paths in tracked code being
   two `/home/app/.cache` container paths.
+
+  Phase 11 (2026-10-30/31) fixed six findings and flagged six, and
+  **its most reusable lesson is about identifiers, not operations.**
+  `OPS-022`: two modules independently derive a name for the same
+  onboarded database -- `onboarding/env_registration.py`'s
+  `slugify_connection_name` produces the `DB_CONNECTIONS` entry
+  (`my_warehouse`), `onboarding/catalog_bridge.py`'s
+  `catalog_database_id_for_job` produces the catalog's `database_id`
+  (`My_Warehouse_<job8>`), and the catalog's id is what names the
+  vector-store collection. Business-context retrieval asks for
+  `knowledge_base__<selected_database>`, i.e. the *connection* name, so
+  it reads a collection that **does not exist**, while every published
+  chunk sits in one of **185** per-job collections (91% of all 203 in
+  the persist directory), each graded
+  `truth_level="confirmed_business_truth"`. Journeys J2 and J3 complete,
+  the review dashboard renders correctly, the publish reports success,
+  and the confirmed meaning never reaches a prompt. **This is §4.8 ("one
+  owner per fact") applied to an identifier, and it is the failure mode
+  that rule exists for**: two correct derivations of one fact produce a
+  silent write-to-nowhere, with no error anywhere to find it by. When a
+  new surface needs the id of something that already has one, resolve it
+  from the existing authority rather than deriving it again. Flagged,
+  not fixed -- the job-id suffix is deliberate (it keeps two labels
+  differing only in punctuation apart, which the connection slug really
+  does collapse), so a fix must reconcile both schemes *and* backfill
+  185 collections and their `SemanticCatalogEntry.database_id` rows.
+  Pinned by two `xfail(strict=True)` in
+  `tests/test_onboarding_catalog_bridge.py`.
+  Two more worth not re-deriving. **This hardware serves one question at
+  a time**: three testers at once triples latency to ~195 s and six
+  breaks it (5 of 6 fail the 300 s per-call timeout, after which the
+  provider circuit breaker opens and penalises the *next* user), while
+  `max_concurrent_ask_requests` defaults to **50** and
+  `/questions/stats` advertises 100 per user -- so the first control a
+  burst meets is not admission control but a timeout (`OPS-020`,
+  flagged; the actionable form for UAT is to stagger testers, not to
+  change a default). And **a role can be simultaneously over- and
+  under-granted**, because this codebase authorizes in two structurally
+  different places: `identity/rbac.py`'s `_MANAGER = _ANALYST | {...}`
+  is a strict superset of `analyst`, while `manager` is **not a key** in
+  `agent.authz.ROLE_PERMISSIONS` and so grants nothing there -- the UAT
+  R3 account measured 24 permissions on one surface and 7 (vs
+  `analyst`'s 12) on the other (`OPS-023`). Checking one surface gives
+  the wrong answer in whichever direction you happened to check.
