@@ -66,7 +66,18 @@ chromadb==1.5.9
 # docs/uat-readiness/phase-2-security.md. Same reachability argument as
 # above, so same response: bump to the fixing release rather than add an
 # --ignore-vuln for a parser this app points at untrusted uploads.
-pypdf==6.21.2
+# 6.21.4 clears SEVEN more (CVE-2026-119203/119204/119205/119206/119207/
+# 119208/119209), published after 2026-10-25 and red again when CI's own
+# pip-audit command was re-run 2026-10-31 [OPS-024]. This is the third
+# time this one pin has gone red, which is the point CLAUDE.md 5.7 makes
+# about the list decaying: a green pip-audit is a statement about a date.
+# Unchanged reachability argument -- attachments/pdf_safety.py,
+# attachments/pipeline.py, attachments/processors/pdf_processor.py,
+# rag/ingestion.py and api/documents.py all point this parser at
+# caller-supplied bytes -- so the same response again: bump, never ignore.
+# Requires-Python >=3.9 with a pure-python py3 wheel, so one pin serves
+# the 3.11 deploy target and the 3.14 local venv (the OPS-021 check).
+pypdf==6.21.4
 
 # XXE/billion-laughs-hardened XML parsing for db/query_cost.py's MSSQL
 # SHOWPLAN_XML parsing -- was already present transitively but pinned
@@ -257,8 +268,14 @@ pyjwt[crypto]==2.15.1
 # this is exactly the "do not implement cryptography from scratch" case.
 # pyasn1/pyasn1-modules are its own transitive deps, pinned explicitly so a
 # future `pip install` doesn't silently drift them.
+# 0.6.5 clears CVE-2026-119194/119195/119196/119197, reported against
+# 0.6.4 when CI's pip-audit command was re-run 2026-10-31 [OPS-024].
+# Reachable in principle rather than in theory: pyasn1 is what google-auth
+# uses to decode the certificates behind OIDC id-token verification, so it
+# parses bytes fetched from a remote issuer. Requires-Python >=3.8,
+# BSD-2-Clause, pure-python py3 wheel -- safe on both 3.11 and 3.14.
 google-auth==2.58.1
-pyasn1==0.6.4
+pyasn1==0.6.5
 pyasn1-modules==0.4.2
 
 # --- Voice mode (optional, on by default -- see voice/, ENABLE_VOICE_MODE) ---

@@ -481,6 +481,19 @@ restriction as a boundary.** Full detail:
   `rag/ingestion.py` and `attachments/processors/` point that parser at
   caller-supplied bytes. **The lesson is that this list decays:** a green
   `pip-audit` is a statement about a date, not about the repository.
+  **And it decayed again, twice over, which is why that sentence is now
+  the operative instruction rather than an aside.** Re-run 2026-10-31
+  (Phase 11, `OPS-024`): **11 findings in 2 packages** — seven more
+  `pypdf` advisories (CVE-2026-119203…119209) and four in `pyasn1`
+  0.6.4 (CVE-2026-119194…119197), the latter reachable because
+  `google-auth` decodes OIDC id-token certificates with it. Bumped to
+  `pypdf==6.21.4` and `pyasn1==0.6.5`, both checked for
+  `Requires-Python` against the 3.11 image before pinning (the
+  `OPS-021` check), and the gate reports "No known vulnerabilities
+  found, 7 ignored" again. **So this is the third time this one `pypdf`
+  pin has gone red** (2026-10-22, 2026-10-25, 2026-10-31). Never read
+  "`pip-audit` passes" in this file as a current fact: re-run it, and
+  print the date beside whatever you record.
   *Still red, and it was not previously known to be:* **`detect-secrets`
   is a fifth blocking gate, and it fails.** Neither this section nor §13
   had ever counted it. It is **not** a leaked secret — the full-repo

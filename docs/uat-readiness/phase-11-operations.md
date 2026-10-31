@@ -77,6 +77,7 @@ this hardware, not of the software.
 | `OPS-021` | **S1** | `docker build .` failed outright — the image this project ships could not be built | **Fixed** `e7df257` |
 | `OPS-022` | **S2** | Onboarding's published semantic meaning is filed where the SQL pipeline never looks | **Flagged** (test only) |
 | `OPS-023` | S3 | The R3 account's roles over-grant on one authz surface and under-grant on the other | **Flagged** |
+| `OPS-024` | S3 | The blocking `pip-audit` gate had gone red again — 11 advisories in `pypdf` and `pyasn1` | **Fixed** |
 
 Positive results, recorded as evidence so a later phase need not redo
 them: Ollama resilience passes all five checks (§4.1); the identity
@@ -904,6 +905,7 @@ as CI runs it.
 | frontend `oxlint` | `npm run lint` | exit 0 — 32 warnings, **0 errors** (pre-existing; no frontend file was touched this phase) |
 | frontend `vitest` | `npm run test` | **1,551 passed, 0 failed** across 107 files, 35.8 s |
 | frontend `tsc` | `npx tsc --noEmit -p tsconfig.app.json` | clean |
+| `pip-audit` | CI's command, 6 `--ignore-vuln` IDs | **red on 2026-10-31 (11 findings / 2 packages), green after the fix** — §10.1 |
 
 Two notes on the numbers rather than just the numbers.
 
@@ -916,15 +918,66 @@ fix cannot land silently (`OPS-015` 8, `OPS-022` 2, plus Phase 7's
 fails the day its finding is fixed, which is the point. What would be
 decay is a rising *skip* count, and that is unchanged at 16.
 
-**`pip-audit` and `detect-secrets` were not re-run here**, so no claim is
-made about them in either direction. §5.7 of `CLAUDE.md` records why that
-matters: `pip-audit`'s result is a statement about a date, and
-`detect-secrets`' baseline cannot be refreshed from a Windows checkout.
-`detect-secrets` was last measured **red** (a stale baseline, no leaked
-secret). Neither was touched by this phase — the only dependency change
-was `OPS-021`'s `numpy` repin, which `pip-audit` reports nothing on.
+**`detect-secrets` was not re-run here**, so no claim is made about it in
+either direction: its baseline cannot be refreshed from a Windows
+checkout (`CLAUDE.md` §5.7), and it was last measured **red** — a stale
+baseline, no leaked secret. **`pip-audit` was re-run, and it was red**;
+see §10.1.
 
 ---
+### 10.1 `OPS-024` — the `pip-audit` gate had gone red again
+
+§10's table originally recorded `pip-audit` as *not re-run*, with
+`CLAUDE.md` §5.7's reasoning quoted as the excuse: its result is a
+statement about a date. Re-running it is how that stopped being an
+excuse. The first attempt failed on a transient DNS outage
+(`Failed to resolve 'pypi.org'`) — which is worth recording, because a
+tool that cannot reach an index **exits non-zero and looks exactly like
+a finding**. Retried once DNS recovered:
+
+```
+Found 11 known vulnerabilities, ignored 7 in 2 packages
+pypdf  6.21.2  CVE-2026-119203/119204/119205  -> 6.21.4
+pypdf  6.21.2  CVE-2026-119206/119207/119208/119209 -> 6.21.3
+pyasn1 0.6.4   CVE-2026-119194/119195/119196/119197 -> 0.6.5
+```
+
+**Fixed by bumping both pins, not by ignoring anything** — the response
+this repository has already chosen twice for this same package, and for
+the same reason: `attachments/pdf_safety.py`,
+`attachments/pipeline.py`, `attachments/processors/pdf_processor.py`,
+`rag/ingestion.py` and `api/documents.py` all point `pypdf` at
+caller-supplied bytes, so a PDF-parser advisory here is reachable by an
+ordinary upload. `pyasn1` is reachable one step further out: it is what
+`google-auth` decodes OIDC id-token certificates with, so it parses
+bytes fetched from a remote issuer.
+
+Both candidates were checked against the deploy target before being
+pinned, which is the `OPS-021` lesson applied rather than restated:
+`pypdf==6.21.4` declares `Requires-Python >=3.9` and `pyasn1==0.6.5`
+`>=3.8`, both pure-python `py3` wheels, so one pin serves the 3.11 image
+and the 3.14 local venv with no marker that could let the two drift.
+`pip check` → "No broken requirements found"; the gate then reports
+**"No known vulnerabilities found, 7 ignored"** (exit 0).
+
+**This is the third time this one `pypdf` pin has gone red** (2026-10-22,
+2026-10-25, 2026-10-31), which is the useful part. The decay is not a
+lapse in anyone's diligence — it is the normal behaviour of a pinned
+dependency with an active security tracker, and it means **a green
+`pip-audit` recorded in a document is evidence about a date and nothing
+else**. Any phase that reports this gate as green should print the date
+beside it, as §10's table now does.
+
+One side effect, benign and noted so it is not rediscovered as a
+failure: `pypdf` 6.21.4 deprecates `add_js`, which
+`tests/test_attachments_processors.py` uses *deliberately* to build a
+PDF carrying embedded JavaScript for the rejection test. The test
+passes and the warning is correct; the call must stay until pypdf 7.0
+forces `add_open_action`, because replacing it would change what the
+fixture is an attack sample of.
+
+---
+
 ## 11. What a human must still run
 
 Nothing here was skipped silently; each is blocked by this environment.
@@ -1053,13 +1106,19 @@ Nothing here was skipped silently; each is blocked by this environment.
   fixable without changing behaviour nothing currently measures; all
   three carry a concrete proposal and a test that fails the day they
   are fixed.
-- **Fixed this session: 6** — `OPS-011`, `OPS-013`, `OPS-016`,
-  `OPS-017`, `OPS-019`, `OPS-021`. Five shipped with tests that fail
-  before and pass after; `OPS-013` and `OPS-019` are mutation-verified.
+- **Fixed this session: 7** — `OPS-011`, `OPS-013`, `OPS-016`,
+  `OPS-017`, `OPS-019`, `OPS-021`, `OPS-024`. Five shipped with tests
+  that fail before and pass after; `OPS-013` and `OPS-019` are
+  mutation-verified.
 - **Flagged for a decision: 6** — `OPS-012`, `OPS-014`, `OPS-015`,
   `OPS-020`, `OPS-022`, `OPS-023`.
-- **Two of this phase's own records were corrected rather than left to
-  stand.** §6.2 had said ChromaDB "deliberately needs no backup" —
+- **Three of this phase's own records were corrected rather than left
+  to stand**, which is the pattern worth carrying into Phase 12: the
+  things this audit got wrong were not missed checks but **checks whose
+  results had expired**. `OPS-024` is the cleanest case — the gate
+  table recorded `pip-audit` as "not re-run" and cited `CLAUDE.md`'s own
+  note that its result is a statement about a date; running it found 11
+  reachable advisories. §6.2 had said ChromaDB "deliberately needs no backup" —
   wrong in the dangerous direction, since golden examples, message
   feedback and schema-drift baselines share that directory with no live
   source to rebuild from; `CLAUDE.md` §12 listed the whole directory as
@@ -1076,7 +1135,9 @@ Nothing here was skipped silently; each is blocked by this environment.
 - **Gates at the end of the phase:** `ruff` 0, `black` clean over 1,692
   files, `bandit` 0 at every severity, `mypy` (production) 0 in 482
   files, `pytest` **9,674 passed / 0 failed**, frontend `vitest`
-  **1,551 passed / 0 failed**, `tsc` clean. `pip-audit` and
-  `detect-secrets` were not re-run, so nothing is claimed about them
-  (§10).
+  **1,551 passed / 0 failed**, `tsc` clean. **`pip-audit` was red** —
+  11 advisories in `pypdf` and `pyasn1`, both reachable, fixed by
+  bumping the pins (`OPS-024`, §10.1); it is green again, and the date
+  matters more than the colour. `detect-secrets` was not re-run, so
+  nothing is claimed about it.
 - **Next phase:** 12 — the consolidated UAT readiness report and gate.
