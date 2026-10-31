@@ -163,6 +163,29 @@ pass.
    `run_agent` catches `GraphRecursionError` regardless, because a
    constant can drift and a catch cannot. Never remove that catch to
    "let the real error surface".
+   **A node that can end a run needs an edge that ends it, and this
+   has now gone wrong three times in the same shape** (`LOP-001`,
+   `LOP-004`, and `OPS-025` on 2026-10-31). `sanitize_input`,
+   `classify_followup` and `generate_sql` each route their terminal
+   status to `END` through a `route_after_*` function;
+   `retrieve_schema` composed a terminal `"failed"` state with a
+   `failure_explanation` behind a **plain `add_edge`**, so the state was
+   written and then driven straight past — every downstream node ran with
+   `selected_database = None`, `generate_sql` spent a real model call on
+   a prompt containing no schema, and the run died in
+   `_require_selected_database`'s `RuntimeError`, which is not an
+   `AgentError`, so the last-resort handler returned **HTTP 500** and
+   discarded the pipeline's own actionable message. Measured live: 68.43 s
+   to produce that 500, against **0.38 s** for the graceful failure after
+   the fix. So when a node gains a terminal return, add the conditional
+   edge in the same change — and the companion rule from `LOP-004` still
+   applies at the exception level: when adding a control that *raises* to
+   stop a run, check that something on the path turns it into a response.
+   `agent.exceptions.SchemaRetrievalError` is the type
+   `retrieve_schema_node` catches, so a new vector-store failure mode
+   must arrive as that type or it escapes (`select_database`'s
+   `get_chroma_client` call raised bare `OSError` until `OPS-025`).
+   Pinned by `tests/test_schema_retrieval_failure_is_terminal.py`.
 2. **An accuracy aid fails open; a safety control fails closed.** Planning,
    golden examples, business-context retrieval, insight, analytics,
    recommendations, and persistence all degrade to "no extra help" on error
@@ -1208,7 +1231,18 @@ contract lists its specific limitations; these are the cross-cutting ones.
   — so when the decision is made, that test is the one to change, and its
   failure will say so. Do not "fix" it silently in either direction.
 - **The `detect-secrets` baseline is stale, so that blocking gate is red**
-  (2026-10-25). No leaked secret: the triage found no un-baselined secret
+  (2026-10-25; **re-measured 2026-10-31 and still red, and the staleness
+  has grown** -- **85 un-baselined findings across 54 tracked files**,
+  up from ~37 files: 60 in `tests/` fixtures, 10 Alembic revision hex,
+  10 i18n labels, 5 doc examples. The only production-code hit is
+  `identity/security.py:363`'s `_DECOY_PASSWORD`, the deliberately
+  public constant `AUN-001` spends Argon2id work on, already carrying
+  `# nosec B105`. Note that CI's own command cannot be run here at all --
+  `detect-secrets scan $(git ls-files)` overflows Windows' argument
+  limit -- but the question it answers can be, by scanning to a
+  temporary file and diffing with path separators normalised; method in
+  [`docs/uat-readiness/phase-11-operations.md`](docs/uat-readiness/phase-11-operations.md)
+  §10). No leaked secret: the triage found no un-baselined secret
   hash, only new `tests/` fixtures, Alembic revision hex and two i18n
   label strings. It cannot be refreshed from a Windows checkout --
   `detect-secrets` writes OS-native path separators, so a locally

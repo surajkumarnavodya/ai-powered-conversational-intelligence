@@ -78,6 +78,8 @@ this hardware, not of the software.
 | `OPS-022` | **S2** | Onboarding's published semantic meaning is filed where the SQL pipeline never looks | **Flagged** (test only) |
 | `OPS-023` | S3 | The R3 account's roles over-grant on one authz surface and under-grant on the other | **Flagged** |
 | `OPS-024` | S3 | The blocking `pip-audit` gate had gone red again — 11 advisories in `pypdf` and `pyasn1` | **Fixed** |
+| `OPS-025` | **S2** | `retrieve_schema`'s terminal failure was not terminal — the run continued, spent a model call, and answered HTTP 500 | **Fixed** |
+| `OPS-026` | S4 | `GET /health` discloses the schema-index directory's absolute path to an unauthenticated caller | **Flagged** |
 
 Positive results, recorded as evidence so a later phase need not redo
 them: Ollama resilience passes all five checks (§4.1); the identity
@@ -264,24 +266,56 @@ as `LOP-008` (already open, S3), which concerns driver errors reaching
 field too, not only `error_history`. Recorded against `LOP-008` rather
 than opened again.
 
-### 4.4 ChromaDB — Unverified here, with the reason
+### 4.4 ChromaDB — drilled, and it found `OPS-025`
 
-Chroma is embedded, not a server, so "killing" it means making its
-persist directory unavailable. On Windows the running process holds open
-SQLite handles, so the directory cannot be renamed or deleted while the
-app is up — the failure mode this drill wants cannot be induced without
-stopping the app, which makes it a restart test rather than a resilience
-test.
+This section recorded **Unverified** until 2026-10-31, on the reasoning
+that Chroma is embedded rather than a server, so "killing" it means
+making its persist directory unavailable — and on Windows the running
+process holds open SQLite handles, so the directory cannot be renamed
+while the app is up. That reasoning was sound about the *mid-request*
+case and wrong to stop there, because it never tested the case a UAT host
+actually reaches: the directory being unusable **when a question
+arrives**.
 
-What *was* verified: `/health` reports the schema index independently of
-the connection (§4.3's C3 shows `schema_index.ok: true` while
-`connection.ok: false`), and building a brand-new index into an empty
-persist directory works end to end (§9.2). The genuine Chroma failure
-modes for UAT are "index empty" and "index stale", both of which
-`/health` already reports per database ("Index is empty -- run
-scripts/build_embeddings.py").
+Driven without touching the live persist directory, by pointing
+`CHROMA_PERSIST_DIR` at a path of this session's choosing. That matters
+beyond convenience: `CLAUDE.md` §12 was corrected earlier in this phase
+to say the directory holds golden examples, message feedback and
+schema-drift baselines with **no live source to rebuild from**, so moving
+the real one is the drill design to avoid.
 
-**Recorded as Unverified, not passed.** §11 has the command.
+Two separate unavailability modes, because they fail differently:
+
+| | Observed |
+|---|---|
+| D1 `/health`, persist path is a regular file | **HTTP 503 `degraded`**, and per database `schema_index.ok: false` with `connection.ok: true` — the exact mirror of §4.3's C3, so the endpoint distinguishes "the server is fine, the index is not" in both directions |
+| D1b app startup, same state | **Starts normally.** Correct per `CLAUDE.md` §4.2: the index is not a safety control, and refusing to boot would make a recoverable misconfiguration an outage |
+| D2 `run_agent`, index absent (empty directory) | **Before `OPS-025`:** the node composed its refusal, the graph drove straight past it, `generate_sql` spent a model call on a prompt with no schema, and the run died 68.43 s later in `RuntimeError: reached with no selected_database` → HTTP 500. **After:** `0.38 s`, `status="failed"`, one `error_history` entry, `attempt_history[0].outcome == "schema_retrieval_error"`, `will_retry: False` |
+| D3 `run_agent`, persist path is a regular file | **Before:** `FileExistsError [WinError 183]` out of `run_agent` in 0.04 s — `OSError`, which `except SchemaRetrievalError` never matched. **After:** `0.05 s`, `status="failed"`, path-free explanation naming `CHROMA_PERSIST_DIR` |
+| D4 recovery | A valid directory is picked up with **no restart** for D2/D3, because `get_chroma_client` re-`mkdir`s per call and the cached client is keyed by path — but `CHROMA_PERSIST_DIR` itself is read from frozen `Settings`, so *changing the setting* is a restart either way |
+
+**The finding is the drill's whole value, and it is why "Unverified" was
+not a safe place to leave this.** `OPS-025` is the third instance of the
+shape Phase 6 named — `LOP-001` (recursion limit) and `LOP-004`
+(`ProviderUnavailable`) were the same defect: a *designed* terminal
+condition escaping `run_agent` as an unhandled exception, so `POST /ask`
+answered HTTP 500 instead of the refusal the pipeline had already
+composed. Here the handler and the message both already existed; only the
+edge out of the node was unconditional, while the three other nodes that
+can end a run all route to `END` through a `route_after_*` function.
+
+What makes it S2 rather than an edge case is how it is reached: an
+unbuilt index is a **forgotten setup step**, not a rare fault.
+`scripts/build_embeddings.py` is in `CLAUDE.md` §9's run order, §11 item
+5 of this document tells an operator to run it, and `GET /health` already
+reports "Index is empty — run scripts/build_embeddings.py" per database.
+So on a fresh UAT host that skipped it, every question took ~70 s and
+returned an opaque 500 while the health endpoint was simultaneously
+reporting the exact cause.
+
+`OPS-026` came out of the same drill and is recorded separately: D1's
+`schema_index.detail` carries the persist directory's **absolute path**,
+and `/health` takes no credentials.
 
 ---
 
@@ -441,7 +475,50 @@ being able to roll back.
 41 MB in 805 files here, so a directory copy is trivial in cost — but
 §6.3 is why that number is larger than it should be.
 
+**Drilled end to end 2026-10-31**, which this section previously only
+described. Cold (app stopped, so the SQLite files are consistent), copied
+to a scratch path, restored to a second scratch path, and the restored
+copy then **opened with a real `chromadb.PersistentClient` and its
+collections counted** — because a byte-count match proves the copy ran,
+not that the store is usable:
+
+| Step | Measured |
+|---|---|
+| Source | 813 files, **39.1 MiB** (the 41 MB above, in MiB) |
+| Backup (copy out) | **0.51 s** |
+| Restore (copy back to a new path) | **0.41 s** |
+| Open restored copy + list collections | **1.44 s**, 205 collections |
+| **RTO achieved** | **≈ 2.4 s** end to end for a store this size |
+
+The curated content §6.2's table says has no live source to rebuild from
+was verified *in the restored copy*, not in the original:
+`golden_examples__adventureworks` 4 + `golden_examples__default` 2 =
+**6 golden examples**, `response_feedback` **8 items**, and **1**
+`.schema_drift_snapshot__*.json` — matching the table above exactly.
+
+**RPO is the honest half, and it is unbounded**: nothing schedules this
+copy. RTO is ~2.4 s plus however long ago someone last ran it, which is
+`OPS-018`'s point restated for Chroma rather than the identity database.
+§11 item 6 carries the command; there is no scheduler in this project by
+design, so it is an OS or platform task.
+
+Two caveats a human should not have to rediscover. The copy was taken
+**with the app stopped**; a hot copy of an open SQLite store is not
+guaranteed consistent, so a zero-downtime backup needs either a Chroma-
+level export or a filesystem snapshot, neither of which was drilled here.
+And 205 collections is **up from the 203** counted earlier the same day —
+see §6.3.
+
 ### 6.3 `OPS-022` — what counting the collections turned up
+
+**Re-measured 2026-10-31 on the restored copy: 187 per-job collections of
+205 total (91.2%), each still holding exactly one chunk** — up from the
+185 of 203 recorded earlier the same day. The finding reproduces
+unchanged: `knowledge_base__my_warehouse` (the `DB_CONNECTIONS` name the
+pipeline queries) **still does not exist**, while `schema_ddl__my_warehouse`
+does. The growth of two in a single day, with no deletions, is itself
+evidence for the unbounded-growth half of the finding — one collection
+per onboarding publish, none reused.
 
 Listing the directory to size the backup is how this was found, which is
 the same argument §8.2.1 makes: attempt the check even when a document
@@ -552,6 +629,42 @@ replacement scheme must keep.
 - Driver and Chroma exception text is passed through `redact_secrets`
   before being returned, which matters because this endpoint is
   unauthenticated.
+- **The schema-index probe was confirmed in the other direction
+  2026-10-31** (§4.4 D1): with the persist path unusable, `/health` →
+  **503 `degraded`** with `schema_index.ok: false` and
+  `connection.ok: true` on all four databases. Taken with §4.3's C3, the
+  two components are independently reported, not one flag wearing two
+  names — which is what the prompt's "health endpoints reflect real
+  dependency health" asks for, for the dependencies §7.2 says are
+  covered.
+
+### 7.1a `OPS-026` — what that detail string contains
+
+The same drill's response body carried, per database:
+
+```
+"schema_index": {"ok": false, "detail": "Unreachable: [WinError 183] Cannot
+create a file when that file already exists: 'C:\Users\<user>\AppData\
+Local\Temp\...\chroma_unavailable'"}
+```
+
+So an **unauthenticated** caller learns the absolute path of the
+schema-index directory. `api/main.py:1347-1356` already anticipated
+public exposure — its own comment says raw Chroma text here "is a real,
+publicly-visible leak" — and applies `redact_secrets`, which covers
+configured *secrets* and not filesystem topology. It is the `LOP-008`
+class again, and the third place this phase has met it: §4.3's C2b found
+`/execute` returning database host and port the same way.
+
+Severity S4 and **flagged, not fixed**: it is a path rather than data, it
+appears only in a misconfigured state, and the path is precisely what
+tells an operator which directory is wrong — so trimming it is an
+API-surface and operations trade-off rather than a defect fix. The
+proposal is in the register. Worth noting that `OPS-025`'s fix, made in
+the same session, deliberately kept this path **out** of the user-facing
+`failure_explanation` and pinned that with a test, so the authenticated
+path and the unauthenticated one now disagree about it — which is the
+decision an owner should settle.
 
 ### 7.2 `OPS-014` — the identity database is not checked
 
@@ -901,7 +1014,7 @@ as CI runs it.
 | `black` | `black --check .` | **1,692 files** unchanged, exit 0 |
 | `bandit` | `bandit -c pyproject.toml -r . -f txt` | **0** issues at every severity, 0 skipped |
 | `mypy` (production) | the 41-package list from `ci.yml` | **0 issues in 482 source files** |
-| `pytest` | `pytest -q` | **9,674 passed, 0 failed**, 16 skipped, 11 deselected, 18 xfailed, 882 s |
+| `pytest` | `pytest -q` | **9,687 passed, 0 failed**, 16 skipped, 11 deselected, 18 xfailed, 912 s |
 | frontend `oxlint` | `npm run lint` | exit 0 — 32 warnings, **0 errors** (pre-existing; no frontend file was touched this phase) |
 | frontend `vitest` | `npm run test` | **1,551 passed, 0 failed** across 107 files, 35.8 s |
 | frontend `tsc` | `npx tsc --noEmit -p tsconfig.app.json` | clean |
@@ -910,7 +1023,12 @@ as CI runs it.
 Two notes on the numbers rather than just the numbers.
 
 **The test count moved and the reason is attributable.** `CLAUDE.md` §13
-recorded 9,485 passed / 5 xfailed on 2026-10-28. This phase's own commits
+recorded 9,485 passed / 5 xfailed on 2026-10-28. The further move within
+this session — 9,674 → **9,687**, re-run after `OPS-025` — is exactly the
+13 tests that fix shipped: 9 in
+`tests/test_schema_retrieval_failure_is_terminal.py` and 4 added to
+`tests/test_db_router.py` (11 collected there, 7 pre-existing). Nothing
+else changed, and the skip and deselect counts are unmoved. This phase's own commits
 account for the growth, and the xfail count rising from 5 to **18** is
 deliberate: these phases pin open findings as `xfail(strict=True)` so a
 fix cannot land silently (`OPS-015` 8, `OPS-022` 2, plus Phase 7's
@@ -918,11 +1036,49 @@ fix cannot land silently (`OPS-015` 8, `OPS-022` 2, plus Phase 7's
 fails the day its finding is fixed, which is the point. What would be
 decay is a rising *skip* count, and that is unchanged at 16.
 
-**`detect-secrets` was not re-run here**, so no claim is made about it in
-either direction: its baseline cannot be refreshed from a Windows
-checkout (`CLAUDE.md` §5.7), and it was last measured **red** — a stale
-baseline, no leaked secret. **`pip-audit` was re-run, and it was red**;
-see §10.1.
+**`detect-secrets` was measured after all, and it is still red** — this
+paragraph previously said no claim was made about it, which was the one
+gate left unmeasured. It cannot be *refreshed* from a Windows checkout
+(`CLAUDE.md` §5.7), and CI's own command cannot even be run here:
+`detect-secrets scan $(git ls-files)` overflows Windows' argument limit
+("Argument list too long"). But the security question it exists to answer
+— *is any secret hash present that the baseline has not reviewed?* — is
+answerable without touching the committed artifact: scan to a temporary
+file, normalise path separators on both sides, and diff. Measured
+2026-10-31:
+
+| | |
+|---|---|
+| Baseline | 44 files, 672 reviewed findings |
+| Fresh scan, tracked files only | 94 files, 1,469 findings |
+| **Un-baselined** | **85 findings across 54 tracked files** |
+
+By category: 60 in `tests/` fixtures, 10 Alembic revision hex in
+`identity/migrations/versions/`, 10 i18n label strings in
+`frontend/src/i18n/locales/{es,fr}/translation.json`, 5 example strings
+in `docs/`. **The same categories `CLAUDE.md` §13's full triage already
+cleared as false positives, grown from ~37 files to 54** — so the gate's
+redness is still staleness, not a leak, and it is still decaying.
+
+The one hit in production code was checked individually rather than by
+category: `identity/security.py:363`, flagged `Secret Keyword`, is
+`_DECOY_PASSWORD = "decoy-password-never-accepted-anywhere"` — the fixed,
+public constant `AUN-001`'s timing-oracle fix spends Argon2id work on, and
+it already carries `# nosec B105` explaining that treating it as a secret
+would defeat its purpose. Benign, and deliberately so.
+
+Two method notes, because both could mislead someone repeating this. A
+no-`--baseline` scan also flags **`.secrets.baseline`'s own 672 hex
+hashes** (detect-secrets excludes the baseline from its own scan only when
+`--baseline` is passed), which inflates the raw count from 85 to 1,393 —
+excluded above. And the committed baseline's keys turned out to match a
+forward-slash scan almost completely (5 unreproduced entries), so it was
+generated on Linux, consistent with §5.7's instruction to refresh it
+there.
+
+**`pip-audit` was re-run, and it was red**; see §10.1. Re-verified green
+at the end of this session: `No known vulnerabilities found, 7 ignored`,
+exit 0.
 
 ---
 ### 10.1 `OPS-024` — the `pip-audit` gate had gone red again
@@ -996,14 +1152,23 @@ Nothing here was skipped silently; each is blocked by this environment.
    `Communication link failure`), which `OPS-019`'s classifier handles by
    keyword but which has not been seen live.
 
-2. **The ChromaDB unavailability drill**, on Linux or with the app
-   stopped, where the persist directory can be moved while handles are
-   open:
+2. **The *mid-request* ChromaDB drill only.** §4.4 now covers the
+   unavailable-at-startup and unavailable-when-a-question-arrives cases,
+   including recovery, and it found `OPS-025` doing so. What is still
+   unverified is the directory becoming unavailable **while a request is
+   in flight**, which Windows will not allow — the running process holds
+   open SQLite handles. On Linux, with the app up:
 
    ```bash
-   mv embeddings/.chroma embeddings/.chroma.bak && curl -s localhost:8000/health
+   mv embeddings/.chroma embeddings/.chroma.bak   # while a question runs
+   curl -s localhost:8000/health
    mv embeddings/.chroma.bak embeddings/.chroma
    ```
+
+   Expect it to add little: the cached client already holds its handles,
+   so this measures Chroma's own behaviour on a vanished file rather than
+   this application's. Do it on a copy, never the live directory — §6.2
+   is why.
 
 3. **The application image CVE scan.** The image builds again after
    `OPS-021`; scanning the built image was not completed here, so only
@@ -1049,16 +1214,24 @@ Nothing here was skipped silently; each is blocked by this environment.
    python scripts\build_embeddings.py
    ```
 
-6. **A scheduled backup of the identity database** (`OPS-018`). There is
-   no scheduler in this project by design, so this is an operating-system
-   or platform task:
+6. **A scheduled backup of the identity database *and* the Chroma
+   persist directory** (`OPS-018`). There is no scheduler in this project
+   by design, so this is an operating-system or platform task. Both are
+   now drilled with measured RTOs (§6.1, §6.2); what neither has is a
+   schedule, which is the whole of the remaining RPO problem:
 
    ```powershell
    pg_dump -h <host> -U <role> -d text_to_sql_identity -Fc -f identity_$(Get-Date -f yyyyMMdd).dump
+   Stop-Service <the api service>   # a cold copy; see §6.2's caveat
+   Copy-Item -Recurse embeddings\.chroma chroma_$(Get-Date -f yyyyMMdd)
+   Start-Service <the api service>
    ```
 
-   Restore needs a role with `CREATEDB` or a pre-created empty database —
-   `identity_admin` cannot do it (§6.1).
+   Restore of the identity database needs a role with `CREATEDB` or a
+   pre-created empty database — `identity_admin` cannot do it (§6.1). The
+   Chroma copy needs the app stopped to be consistent, and it is the only
+   copy of the golden examples, message feedback and drift baselines
+   (§6.2).
 
 7. **`expected_sql` for the golden cases marked `GOLD SQL REQUIRED`**,
    including the five Postgres ones that now have an environment to run
@@ -1080,12 +1253,26 @@ Nothing here was skipped silently; each is blocked by this environment.
    control.
 
 9. **A decision on `OPS-022`**, which this audit deliberately did not
-   take. The repair is not the code change but the backfill: 185
-   existing collections and their `SemanticCatalogEntry.database_id`
+   take. The repair is not the code change but the backfill: **187**
+   existing collections (re-counted at the end of this session, up from
+   185 earlier the same day) and their `SemanticCatalogEntry.database_id`
    rows are filed under a per-job id. Until it is taken, a UAT tester
    should be told that J2 + J3 publish successfully and that the
    confirmed meaning does **not** yet reach J4's SQL prompt, so J4 must
    not be signed off as evidence that the catalog works.
+
+10. **Refresh the `detect-secrets` baseline on Linux**, which is the last
+    red blocking gate and the one §10 left unmeasured until now. 85
+    un-baselined findings across 54 tracked files, every one in a
+    category already triaged benign — so this is a stale artifact, not a
+    leak, and it cannot be refreshed from this checkout (`CLAUDE.md`
+    §5.7: OS-native path separators):
+
+    ```bash
+    detect-secrets scan $(git ls-files) --baseline .secrets.baseline
+    detect-secrets audit .secrets.baseline
+    python scripts/check_secrets_baseline.py <the pre-scan copy>
+    ```
 
 ---
 
@@ -1097,6 +1284,16 @@ Nothing here was skipped silently; each is blocked by this environment.
   only gate that could see it sits in a job widely described as
   advisory. `AUZ-002` remains the project's only *open* S1 and is not
   this phase's.
+- **S2 found and fixed: 1.** `OPS-025` — `retrieve_schema`'s terminal
+  failure was not terminal. Found by running the one drill this document
+  had recorded as **Unverified** (§4.4), which is the lesson: an
+  unverified check is not a low-risk check, it is an unmeasured one. The
+  node composed its refusal, the graph drove past it, `generate_sql`
+  spent a model call on a prompt with no schema, and the run died in a
+  `RuntimeError` that became **HTTP 500** — 68.43 s to discard an
+  actionable message, against 0.38 s for the graceful failure after the
+  fix. Third instance of the shape Phase 6 named (`LOP-001`, `LOP-004`),
+  so `CLAUDE.md` §4.1 now carries the rule rather than the anecdote.
 - **S2 open from this phase: 3** — `OPS-012` (the queue's 120 s budget
   versus `/ask`'s 600 s, measured on both sides), `OPS-015` (the live
   router misses 46% of the golden SQL set, including three quarters of
@@ -1106,13 +1303,18 @@ Nothing here was skipped silently; each is blocked by this environment.
   fixable without changing behaviour nothing currently measures; all
   three carry a concrete proposal and a test that fails the day they
   are fixed.
-- **Fixed this session: 7** — `OPS-011`, `OPS-013`, `OPS-016`,
-  `OPS-017`, `OPS-019`, `OPS-021`, `OPS-024`. Five shipped with tests
-  that fail before and pass after; `OPS-013` and `OPS-019` are
-  mutation-verified.
-- **Flagged for a decision: 6** — `OPS-012`, `OPS-014`, `OPS-015`,
-  `OPS-020`, `OPS-022`, `OPS-023`.
-- **Three of this phase's own records were corrected rather than left
+- **Fixed this session: 8** — `OPS-011`, `OPS-013`, `OPS-016`,
+  `OPS-017`, `OPS-019`, `OPS-021`, `OPS-024`, `OPS-025`. Six shipped with
+  tests that fail before and pass after; `OPS-013`, `OPS-019` and
+  `OPS-025` are mutation-verified — reverting `OPS-025`'s two source
+  files fails 6 of its 13 tests, and the captured log shows the defect
+  itself (`[generate_sql] attempt=1/4 last_error='Schema retrieval
+  failed: ...'`).
+- **Flagged for a decision: 7** — `OPS-012`, `OPS-014`, `OPS-015`,
+  `OPS-020`, `OPS-022`, `OPS-023`, `OPS-026` (S4: `GET /health` gives an
+  unauthenticated caller the schema-index directory's absolute path —
+  the `LOP-008` class, and the third place this phase met it).
+- **Five of this phase's own records were corrected rather than left
   to stand**, which is the pattern worth carrying into Phase 12: the
   things this audit got wrong were not missed checks but **checks whose
   results had expired**. `OPS-024` is the cleanest case — the gate
@@ -1127,17 +1329,42 @@ Nothing here was skipped silently; each is blocked by this environment.
   the account is **both** over-granted (4 admin permissions on
   `identity.rbac`) and under-granted (5 analyst permissions missing on
   `agent.authz`), which closes the decision the earlier draft left
-  open.
+  open. **Two more were corrected at the end of the session, and both
+  were of the remaining kind — a check this document had declined to
+  run.** §4.4 recorded the ChromaDB drill as *Unverified* because the
+  mid-request case cannot be induced on Windows; running the cases that
+  *can* be found `OPS-025`, an S2. §10 said nothing about
+  `detect-secrets` because its baseline cannot be refreshed here;
+  refreshing it and *measuring* it are different acts, and measuring it
+  showed the gate still red with the staleness grown from ~37 files to
+  54. **So the count is five**, and the generalisation for Phase 12 is
+  sharper than "results expire": of the five, two were expired
+  measurements and three were checks recorded as blocked when only part
+  of them was.
+- **Backup/restore is now drilled on both stores, with measured RTOs
+  and an honestly unbounded RPO.** Identity database: §6.1, end to end,
+  functionally verified by signing in against the restored copy. Chroma:
+  **39.1 MiB / 813 files, backup 0.51 s, restore 0.41 s, open-and-verify
+  1.44 s → RTO ≈ 2.4 s**, with the 6 golden examples, 8 feedback items
+  and 1 drift baseline counted *in the restored copy* rather than the
+  original. Neither has a schedule, which is the whole of the remaining
+  RPO problem (`OPS-018`) and an OS task, not a code one.
 - **The capacity answer UAT needs, in one line:** this hardware serves
   **one question at a time**; three testers at once triples latency to
   ~195 s, and six breaks it — 5 of 6 fail on the 300 s per-call timeout
   and the provider circuit breaker opens, penalising the next user too.
-- **Gates at the end of the phase:** `ruff` 0, `black` clean over 1,692
-  files, `bandit` 0 at every severity, `mypy` (production) 0 in 482
-  files, `pytest` **9,674 passed / 0 failed**, frontend `vitest`
-  **1,551 passed / 0 failed**, `tsc` clean. **`pip-audit` was red** —
-  11 advisories in `pypdf` and `pyasn1`, both reachable, fixed by
-  bumping the pins (`OPS-024`, §10.1); it is green again, and the date
-  matters more than the colour. `detect-secrets` was not re-run, so
-  nothing is claimed about it.
+- **Gates at the end of the phase:** `ruff` 0, `black` clean over 1,693
+  files, `bandit` 0 at every severity over 119,611 lines, `mypy`
+  (production) 0 in 482 files, `pytest` **9,687 passed / 0 failed**
+  (912 s; +13 = `OPS-025`'s own tests), frontend `vitest` **1,551
+  passed / 0 failed**, `tsc` clean. **`pip-audit` was red** — 11
+  advisories in `pypdf` and `pyasn1`, both reachable, fixed by bumping
+  the pins (`OPS-024`, §10.1); green again, and the date matters more
+  than the colour. **`detect-secrets` is red** and now measured rather
+  than passed over: 85 un-baselined findings across 54 tracked files,
+  all in already-triaged-benign categories, refresh being a Linux task
+  (§10, §11 item 10). **`docker build` passes** and the image was
+  verified from the inside on the deploy target — Python **3.11.16**,
+  `numpy 2.4.6`, `scipy 1.17.1`, `pypdf 6.21.4`, `pyasn1 0.6.5`, `import
+  api.main` clean, running as **uid=1000(app)**.
 - **Next phase:** 12 — the consolidated UAT readiness report and gate.
