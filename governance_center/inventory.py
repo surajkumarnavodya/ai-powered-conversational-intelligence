@@ -236,6 +236,18 @@ _PROMPT_SOURCES: tuple[tuple[str, str, str, str, Callable[[], str], str], ...] =
         "",
     ),
     (
+        "moderation_local_classify",
+        "Local content-safety classification",
+        "moderation.provider",
+        "_LOCAL_MODERATION_SYSTEM_PROMPT",
+        lambda: _resolve("moderation.provider", "_LOCAL_MODERATION_SYSTEM_PROMPT"),
+        "The one prompt in this application whose output gates whether content is "
+        "ingested at all (MODERATION_PROVIDER=ollama_local). Its untrusted-data "
+        "framing is load-bearing in an unusual way: the chunk it rates is exactly "
+        "the content an attacker controls, and the answer it asks for is whether "
+        "that content is safe.",
+    ),
+    (
         "rag_answer",
         "Document/policy RAG answer",
         "rag.graph",

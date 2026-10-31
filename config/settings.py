@@ -1682,10 +1682,10 @@ class Settings(BaseSettings):
             rather than on a timer.
         moderation_provider: Which content-moderation backend
             `moderation/provider.py` uses to check a chunk before it's ever
-            embedded/stored. Only `azure_content_safety` is implemented
-            today -- structured the same `SUPPORTED_..._PROVIDERS`-dict
-            pattern as `web_search_provider`/`media_embedding_provider` so
-            a second provider is a new dict entry, not a redesign. This
+            embedded/stored -- `azure_content_safety` (the default) or
+            `ollama_local`. Structured the same `SUPPORTED_..._PROVIDERS`-dict
+            pattern as `web_search_provider`/`media_embedding_provider`, so
+            the second one was a new dict entry rather than a redesign. This
             gate is mandatory (not a feature flag) whenever
             `enable_media_search` or `enable_document_rag`/
             `enable_policy_rag` is on -- there is deliberately no
@@ -1695,6 +1695,40 @@ class Settings(BaseSettings):
             (`moderation.exceptions.ModerationNotConfiguredError`), the
             same "fail at point of use" posture
             `rag.store.RagStoreNotConfiguredError` already has.
+
+            **Which to choose, stated plainly.** `azure_content_safety` is
+            the stronger gate: a purpose-built safety classifier, covering
+            images as well as text. `ollama_local` keeps ingestion inside
+            this project's otherwise fully-local posture (no outbound call,
+            no API key, no per-chunk cost) and exists because the
+            combination "gate is mandatory" + "Azure is the only
+            implementation" meant a deployment with no Azure resource could
+            have document/policy RAG switched on and never ingest a single
+            file. It is weaker in two named ways: a general
+            instruction-following model is not a purpose-built classifier,
+            and it examines an image only when
+            `moderation_local_vision_model` is set. See
+            `docs/RISK_REGISTER.md`'s R-013 and R-021.
+        moderation_local_model: The Ollama model `ollama_local` rates a
+            *text* chunk with. Blank (the default) uses `ollama_model`,
+            which is what a single-model deployment wants; naming a
+            different one lets an operator pin the classifier while the
+            SQL model changes. Called through `rag.llm.call_ollama`, so it
+            is inside the circuit breaker, the model-call budget and the
+            request deadline like every other model call here (`LOP-004`).
+        moderation_local_vision_model: The Ollama model `ollama_local`
+            rates an *image* chunk with -- an ingested image, a video
+            keyframe, or an image embedded in a PDF. Must be
+            vision-capable (`llava`, `llama3.2-vision`, ...); a text-only
+            model fails the call and so fails ingestion closed. Blank (the
+            default) records image chunks as `"not_checked"` for all four
+            harm categories rather than failing every upload of a PDF that
+            merely has a logo on its cover -- disclosed in the stored audit
+            row (`decision_summary`'s `unchecked_categories`) and in a
+            warning log line, never a silent pass. Independent of
+            `media_vision_model`, which is a captioning aid that fails
+            open; borrowing that one here would silently put an
+            accuracy-aid default in front of a safety control.
         azure_content_safety_endpoint: The Content Safety resource's REST
             endpoint (e.g. `https://<resource>.cognitiveservices.azure.com`).
             Called directly via `httpx` (`.../contentsafety/image:analyze`,
@@ -3569,9 +3603,14 @@ class Settings(BaseSettings):
     attachment_processing_timeout_seconds: float = Field(default=30.0, gt=0)
     attachment_storage_dir: Path = Path("./data/attachments")
     attachment_retention_hours: int = Field(default=24, gt=0)
-    moderation_provider: Literal["azure_content_safety"] = "azure_content_safety"
+    moderation_provider: Literal["azure_content_safety", "ollama_local"] = "azure_content_safety"
     azure_content_safety_endpoint: str = ""
     azure_content_safety_key: SecretStr | None = None
+    # Blank means "use OLLAMA_MODEL" -- one fewer thing to keep in step for
+    # the common single-model deployment, and a separate name for an
+    # operator who wants the classifier pinned while the SQL model moves.
+    moderation_local_model: str = ""
+    moderation_local_vision_model: str = ""
     moderation_severity_threshold: int = Field(default=4, ge=0, le=7)
     moderation_blocklist_path: Path | None = None
     malware_scan_provider: Literal["clamav", "disabled"] = "disabled"

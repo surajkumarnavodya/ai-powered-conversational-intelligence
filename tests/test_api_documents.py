@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from moderation.exceptions import ModerationNotConfiguredError, ModerationProviderError
 
 import api.main as api_main
 from config.settings import Settings
@@ -450,3 +451,70 @@ class TestDownloadDocument:
 
         assert response.status_code == 200
         assert response.content == b"%PDF-1.4 raw bytes"
+
+
+class TestTheModerationGateFailingClosedIsNotAServerFault:
+    """Every way the mandatory gate can refuse must reach the uploader as a
+    503, not a 500.
+
+    `api/documents.py` caught `ModerationNotConfiguredError` by name, so a
+    configuration gap was already a clean 503. What was not covered is the
+    gate failing closed for any *other* reason -- the shape `LOP-004`
+    caught on the agent path, where a control working exactly as designed
+    surfaced as an internal error and discarded the message the pipeline
+    had already composed. The handler now catches the `ModerationError`
+    family.
+    """
+
+    def test_a_missing_store_connection_is_a_503(self, monkeypatch, client):
+        # The error this project's operators actually hit first.
+        def _raise(*a, **k):
+            raise ModerationNotConfiguredError(
+                "MODERATION_STORE_CONNECTION_STRING is not set in .env."
+            )
+
+        monkeypatch.setattr("api.documents.ingest_pdf", _raise)
+
+        response = client.post(
+            "/documents",
+            files={"file": ("f.pdf", b"%PDF-1.4", "application/pdf")},
+            data={"collection": "policies"},
+        )
+
+        assert response.status_code == 503
+        assert "MODERATION_STORE_CONNECTION_STRING" in response.json()["detail"]
+
+    def test_an_unreadable_classifier_reply_is_a_503_not_a_500(self, monkeypatch, client):
+        def _raise(*a, **k):
+            raise ModerationProviderError(
+                "Local moderation model 'llama3.1:8b' returned no JSON object."
+            )
+
+        monkeypatch.setattr("api.documents.ingest_pdf", _raise)
+
+        response = client.post(
+            "/documents",
+            files={"file": ("f.pdf", b"%PDF-1.4", "application/pdf")},
+            data={"collection": "policies"},
+        )
+
+        assert response.status_code == 503
+
+    def test_an_asset_nothing_examined_is_a_503_not_a_500(self, monkeypatch, client):
+        # `moderate_chunks` raises this when every chunk came back
+        # not_checked -- an image-only asset with no vision model.
+        def _raise(*a, **k):
+            raise ModerationProviderError(
+                "Moderation examined nothing in this asset: all 1 chunk(s) came back "
+                "not_checked."
+            )
+
+        monkeypatch.setattr("api.documents.ingest_pdf", _raise)
+
+        response = client.post(
+            "/documents",
+            files={"file": ("f.pdf", b"%PDF-1.4", "application/pdf")},
+            data={"collection": "policies"},
+        )
+
+        assert response.status_code == 503

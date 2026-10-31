@@ -41,6 +41,7 @@ def call_ollama(
     temperature: float = 0.0,
     model: str | None = None,
     label: str = "rag_llm",
+    images: list[bytes] | None = None,
 ) -> str:
     """Runs one Ollama chat call and returns the response text.
 
@@ -48,6 +49,16 @@ def call_ollama(
     analyst planner passes the caller's validated model choice through here);
     `None` keeps the pre-existing default, so every existing caller is
     unchanged.
+
+    `images` attaches raw image bytes to the user message, for a
+    vision-capable model. Added for `moderation.provider`'s local image
+    classifier, and deliberately added *here* rather than by giving that
+    module its own `client.chat`: the breaker, the per-execution model-call
+    budget, the deadline clamp, the usage rollup and the prompt-truncation
+    check are all things `harness_ollama_client` plus the two lines below
+    apply, and a second call site would escape every one of them
+    (`LOP-004`). `None` omits the key entirely, so no existing caller's
+    request shape changes.
 
     Decoding parameters come from `agent.llm_client.decoding_options`, the
     one owner of that policy. Until this call used it, the options dict
@@ -82,7 +93,11 @@ def call_ollama(
             model=model or settings.ollama_model,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
+                {
+                    "role": "user",
+                    "content": user_prompt,
+                    **({"images": images} if images else {}),
+                },
             ],
             # `temperature` is this helper's one per-call parameter, so it
             # is overlaid on the shared policy rather than dropped; every

@@ -605,11 +605,10 @@ silently skipping the check.
   *before* any content check ran — a real gap where a rejected file's
   bytes could already be sitting in the store ahead of the rejection being
   known. Now nothing touches `rag/store.py` until moderation has passed.
-- **The taxonomy, and its honest limits.** Azure AI Content Safety (the
-  only provider implemented, `moderation/provider.py`) checks real harm
-  categories — Hate, SelfHarm, Sexual, Violence — over its REST API
-  (`httpx`, no vendor SDK dependency, matching this project's other
-  external-API integrations). Azure has no dedicated "weapons," "drugs,"
+- **The taxonomy, and its honest limits.** Azure AI Content Safety
+  (`moderation/provider.py`) checks real harm categories — Hate, SelfHarm,
+  Sexual, Violence — over its REST API (`httpx`, no vendor SDK dependency,
+  matching this project's other external-API integrations). Azure has no dedicated "weapons," "drugs,"
   or "synthetic/AI-generated media" category: weapons are covered by a
   coarse Violence-category proxy for imagery plus a custom text blocklist
   (`config/moderation_blocklist.yaml`) against OCR/caption/transcript/
@@ -620,13 +619,37 @@ silently skipping the check.
   since no mainstream API reliably detects this today. This category is
   deliberately a soft-flag, never a hard-reject, even once a real detector
   is eventually plugged in — see `docs/RISK_REGISTER.md`'s R-014.
-- **A real, disclosed exception to "fully local."** Unlike voice mode/media
-  search's own on-device embedding path, this gate calls a third-party
-  cloud API for every chunk of every ingested file — see
-  `docs/RISK_REGISTER.md`'s R-013. The provider is pluggable
-  (`moderation.provider.SUPPORTED_MODERATION_PROVIDERS`, shaped like
-  `search/web_search.py`'s own provider map), so this is a deliberate,
-  named tradeoff, not an unexamined one.
+- **Two providers, and the tradeoff is the operator's to make.**
+  `MODERATION_PROVIDER=azure_content_safety` (the default) is the stronger
+  gate and a real, disclosed exception to this project's otherwise
+  "fully local" posture: unlike voice mode/media search's own on-device
+  embedding path, it calls a third-party cloud API for every chunk of
+  every ingested file — see `docs/RISK_REGISTER.md`'s R-013.
+  `MODERATION_PROVIDER=ollama_local` classifies each chunk with this
+  project's own local Ollama runtime instead, and is honestly the weaker
+  of the two — see R-021 for the two specific ways, and
+  `moderation/provider.py::_ollama_local`'s docstring. It exists because
+  the combination "this gate is mandatory" + "Azure was the only
+  implementation" meant a deployment without an Azure resource could have
+  document/policy RAG enabled and never ingest a single file; the first
+  error it hit named a configuration it could not satisfy. Three
+  properties hold for either provider, which is what makes the choice a
+  configuration decision rather than a rewrite of the gate: both report
+  severities on Azure's 0/2/4/6 scale, so `MODERATION_SEVERITY_THRESHOLD`
+  means the same thing; **neither decides a rejection** —
+  `moderation/gate.py` applies the threshold and the asset-level rule, so
+  no model's own judgement about its own output is the control; and both
+  fail closed, a provider that cannot be reached or whose answer cannot be
+  read raising rather than returning "clean"
+  (`ModerationProviderError`).
+- **A local provider that cannot examine a chunk says so.** With
+  `ollama_local` and no `MODERATION_LOCAL_VISION_MODEL`, an image chunk is
+  recorded `"not_checked"` for all four harm categories — the same honest
+  marker `synthetic_media` has always used — never a false "passed". That
+  marker now reaches the stored audit row as `unchecked_categories`
+  (`moderation.gate.decision_summary`), where before it existed only in
+  memory: a `"passed"` row recorded the pass without recording what the
+  pass had covered.
 - **Audit trail carries metadata, never content.** A rejection is logged
   via `security.audit_log.log_security_event` with the asset's content
   hash, which category triggered it, and the chunk index — never the

@@ -1392,12 +1392,11 @@ store ahead of the rejection being known. Now nothing touches
 `rag/store.py` until moderation has passed; a rejected PDF never gets a
 `rag.documents` row at all.
 
-**Taxonomy and its honest limits** (`moderation/taxonomy.py`). Azure AI
-Content Safety (the only provider implemented, `moderation/provider.py`,
-called via its REST API with `httpx` — no vendor SDK) checks four real
-harm categories — Hate, SelfHarm, Sexual, Violence, each scored 0/2/4/6,
+**Taxonomy and its honest limits** (`moderation/taxonomy.py`). Both
+providers (`moderation/provider.py`) check the same four real harm
+categories — Hate, SelfHarm, Sexual, Violence, each scored 0/2/4/6,
 hard-rejecting at or above `MODERATION_SEVERITY_THRESHOLD` (default 4).
-Azure has **no dedicated "weapons," "drugs," or "synthetic/AI-generated
+Neither has a **dedicated "weapons," "drugs," or "synthetic/AI-generated
 media" category** — stated honestly rather than glossed over:
 - **Weapons**: a coarse Violence-category proxy for imagery (Azure can't
   distinguish "weapon" from "violence" generally) plus a custom text
@@ -1414,13 +1413,53 @@ media" category** — stated honestly rather than glossed over:
   auto-rejected false positive on real user content was judged worse than
   under-flagging). See `docs/RISK_REGISTER.md`'s R-014.
 
-**A disclosed exception to "fully local."** Unlike every other model in
-this stack (Ollama, local CLIP, `faster-whisper`/Piper), accurate content
-moderation has no comparable on-device option today — this gate calls a
-third-party cloud API for every chunk of every ingested file. The
-provider is pluggable (`moderation.provider.SUPPORTED_MODERATION_PROVIDERS`),
-so this is a deliberate, named tradeoff (see `docs/RISK_REGISTER.md`'s
-R-013), not an unexamined one.
+**Two providers (`MODERATION_PROVIDER`), and what is identical between
+them.** `azure_content_safety` (the default) calls Azure AI Content
+Safety's REST API with `httpx` — no vendor SDK — and is a disclosed
+exception to "fully local": unlike every other model in this stack
+(Ollama, local CLIP, `faster-whisper`/Piper) it sends every chunk of every
+ingested file to a third-party cloud API (`docs/RISK_REGISTER.md`'s
+R-013). `ollama_local` (added 2026-10-31,
+`moderation.provider._ollama_local`) rates each chunk with this project's
+own Ollama runtime instead, through `rag.llm.call_ollama` — so the call is
+inside the circuit breaker, the model-call budget, the request deadline,
+the usage rollup and the prompt-truncation check like every other model
+call here (`LOP-004`), rather than being an eleventh-and-a-half call site
+outside all of them. It exists because this gate is mandatory and Azure
+was the only implementation, so a deployment with no Azure resource could
+have `ENABLE_DOCUMENT_RAG`/`ENABLE_POLICY_RAG` on and fail **every**
+upload; it is honestly the weaker gate (`R-021`).
+
+Three things are the same either way, which is what makes this a
+configuration choice rather than two gates:
+
+- **Neither provider decides a rejection.** Each returns severities with
+  `triggered=False`; `moderation/gate.py` applies the threshold and the
+  asset-level rule. The local provider is a classifier the pipeline reads,
+  not a model asked to approve its own input — the §4.3 "the LLM may
+  propose, never decides" split, applied to the one prompt whose output
+  gates ingestion.
+- **Both fail closed.** An unreachable provider, a model that is not
+  installed, or a reply that cannot be read as a rating for all four
+  categories raises (`ModerationProviderError` /
+  `OllamaUnavailableError` / `httpx.HTTPError`) and is never treated as a
+  pass. `api/documents.py` maps the whole `ModerationError` family to
+  **503**, so a gate working as designed does not surface as an HTTP 500.
+- **A chunk nobody could examine says so, and an asset nobody could
+  examine is refused.** With `ollama_local` and no
+  `MODERATION_LOCAL_VISION_MODEL`, an image chunk is recorded
+  `source="not_checked"` for all four categories — the marker
+  `synthetic_media` has always used — and
+  `moderation.gate.decision_summary` now carries those into the stored
+  audit row as `unchecked_categories`. If **every** chunk of an asset
+  comes back that way, `moderate_chunks` raises instead of passing it:
+  `media/ingest.py` submits a plain image as image chunks and nothing
+  else, so without that rule selecting the local provider would have made
+  this mandatory gate a silent no-op for the whole media pipeline. The
+  rule is "every chunk", not "any chunk", on purpose — a PDF whose pages
+  were rated and whose cover logo was not has still been examined, and
+  refusing it would make the local provider unable to ingest ordinary
+  documents.
 
 **Metadata store (`moderation/store.py`), dedupe, and pooling.** A
 dedicated SQL Server connection (`MODERATION_STORE_CONNECTION_STRING`) —

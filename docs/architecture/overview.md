@@ -508,18 +508,34 @@ ingestion closed.
 **Invariants that must not regress:** a hard-reject on any chunk rejects
 the **entire** asset — never a partial ingestion — and nothing from a
 rejected file is ever embedded or stored anywhere (a rejected PDF never
-gets a `rag.documents` row at all, including its raw bytes). Azure AI
-Content Safety (the only provider) has no dedicated "weapons"/"drugs"/
-"synthetic media" category — stated honestly via a text-blocklist proxy
-for the first two and a disclosed `"not_checked"` placeholder (never a
-hard-reject) for deepfake detection, not silently glossed over. This is
-the one required exception to this project's "fully local" model
-posture — accurate content moderation has no on-device option today.
+gets a `rag.documents` row at all, including its raw bytes). Neither
+provider has a dedicated "weapons"/"drugs"/"synthetic media" category —
+stated honestly via a text-blocklist proxy for the first two and a
+disclosed `"not_checked"` placeholder (never a hard-reject) for deepfake
+detection, not silently glossed over. **An asset whose every chunk came
+back `"not_checked"` is refused, not passed** — otherwise a provider that
+cannot examine a given content type would turn this mandatory gate into a
+no-op for a whole pipeline, which is the exact outcome having no
+`ENABLE_CONTENT_MODERATION` toggle is meant to prevent.
+
+**Two providers, and the choice is the operator's**
+(`MODERATION_PROVIDER`). `azure_content_safety` is the default and the
+stronger gate, and is this project's one required exception to its "fully
+local" model posture. `ollama_local` (added 2026-10-31) classifies each
+chunk with this project's own Ollama runtime instead: no outbound call and
+no API key, honestly weaker, and the reason it exists is that "mandatory
+gate" plus "Azure is the only implementation" meant a deployment with no
+Azure resource could have document/policy RAG enabled and never ingest a
+single file. What holds for either: both report severities on the same
+0/2/4/6 scale, **neither decides a rejection** (`moderation/gate.py` owns
+the threshold and the asset-level rule), and a provider that cannot be
+reached or whose answer cannot be read raises rather than returning
+"clean".
 
 **Read [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md#12-content-moderation-gate)**
 for the full per-type chunking strategy (image/video/PDF), the dedupe
 store, and the concurrency design, and
-[`docs/RISK_REGISTER.md`](../RISK_REGISTER.md)'s R-013/R-014 for the
+[`docs/RISK_REGISTER.md`](../RISK_REGISTER.md)'s R-013/R-014/R-021 for the
 disclosed tradeoffs above.
 
 

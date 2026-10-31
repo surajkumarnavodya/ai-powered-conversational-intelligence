@@ -1061,9 +1061,11 @@ moderation gate" section for the design rationale.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `MODERATION_PROVIDER` | `azure_content_safety` | Selects the provider (`moderation/provider.py::SUPPORTED_MODERATION_PROVIDERS`). Only Azure AI Content Safety is implemented today. |
-| `AZURE_CONTENT_SAFETY_ENDPOINT` | *(unset)* | Your Content Safety resource's REST endpoint. |
+| `MODERATION_PROVIDER` | `azure_content_safety` | Selects the provider (`moderation/provider.py::SUPPORTED_MODERATION_PROVIDERS`): `azure_content_safety` or `ollama_local`. See the note under this table. |
+| `AZURE_CONTENT_SAFETY_ENDPOINT` | *(unset)* | Your Content Safety resource's REST endpoint. `azure_content_safety` only. |
 | `AZURE_CONTENT_SAFETY_KEY` | *(unset)* | Subscription key for the endpoint above. `SecretStr`-wrapped. |
+| `MODERATION_LOCAL_MODEL` | *(blank = `OLLAMA_MODEL`)* | `ollama_local` only: the model that rates a **text** chunk. |
+| `MODERATION_LOCAL_VISION_MODEL` | *(blank = images recorded `not_checked`)* | `ollama_local` only: the **vision-capable** model that rates an image chunk. A text-only model here fails the call, so ingestion fails closed. |
 | `MODERATION_SEVERITY_THRESHOLD` | `4` | Minimum Azure severity (0/2/4/6) that hard-rejects a Hate/SelfHarm/Sexual/Violence category. Verify against your Content Safety API version. |
 | `MODERATION_BLOCKLIST_PATH` | *(blank = `config/moderation_blocklist.yaml`)* | Override for the weapons/drugs text-term blocklist — Azure has no dedicated category for either. |
 | `MODERATION_STORE_CONNECTION_STRING` | *(unset)* | Dedicated SQL Server connection for moderation decisions/dedupe metadata (`moderation.media_assets`) — separate from `DB_CONNECTIONS` **and** `RAG_STORE_CONNECTION_STRING` (point both at the same database if you want one shared store). `SecretStr`-wrapped. |
@@ -1073,6 +1075,23 @@ moderation gate" section for the design rationale.
 | `MODERATION_STORE_POOL_RECYCLE_SECONDS` | `1800` | Discard/replace a pooled connection after this long, regardless of use — set below your SQL Server/network's idle-connection timeout. |
 | `MEDIA_INGEST_WORKERS` | `4` | Concurrent worker threads `scripts/build_media_index.py` uses (this project's first bounded thread pool — previously a sequential loop). |
 | `MEDIA_IMAGE_TILE_THRESHOLD_PX` | `2048` | An ingested image larger than this (either dimension) is tiled before moderation, so a classifier's own downsampling can't hide a small region of concern. |
+
+**Choosing a provider.** `azure_content_safety` is the stronger gate: a
+purpose-built safety classifier, covering images as well as text.
+`ollama_local` keeps ingestion inside this project's otherwise fully-local
+posture — no outbound call, no API key, no per-chunk cost — and exists
+because "the gate is mandatory" plus "Azure is the only implementation"
+meant a deployment with no Azure resource could have `ENABLE_DOCUMENT_RAG`/
+`ENABLE_POLICY_RAG` switched on and never successfully ingest a file. It is
+weaker in two named ways, neither hidden: a general instruction-following
+model is not a purpose-built classifier, and it examines an **image** only
+when `MODERATION_LOCAL_VISION_MODEL` is set (otherwise image chunks are
+recorded `not_checked`, which appears in the stored
+`moderation.media_assets.moderation_checks` row as `unchecked_categories`).
+Both providers report severities on the same 0/2/4/6 scale, so
+`MODERATION_SEVERITY_THRESHOLD` means the same thing for either, and
+neither decides a rejection — `moderation/gate.py` applies the threshold.
+See `docs/RISK_REGISTER.md`'s R-013 and R-021.
 
 ## Chat attachments (images, PDF, DOCX, XLSX, PPTX, TXT, MD, CSV, JSON)
 

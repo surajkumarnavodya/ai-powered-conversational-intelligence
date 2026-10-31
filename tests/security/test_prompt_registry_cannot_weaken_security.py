@@ -138,6 +138,16 @@ EXPECTED_LIVE_INVARIANTS: dict[str, set[SafetyInvariant]] = {
         SafetyInvariant.UNTRUSTED_DATA_FRAMING,
         SafetyInvariant.NO_WRITE_STATEMENTS,
     },
+    # Added 2026-10-31 with `MODERATION_PROVIDER=ollama_local`. Every one of
+    # these three is load-bearing here rather than conventional: the chunk
+    # this prompt rates is attacker-supplied content, and a successful
+    # injection into it would be an injection into the gate that decides
+    # whether that same content is ingested.
+    "moderation_local_classify": {
+        SafetyInvariant.UNTRUSTED_DATA_FRAMING,
+        SafetyInvariant.NO_PROMPT_DISCLOSURE,
+        SafetyInvariant.NO_FABRICATION,
+    },
     "rag_answer": {
         SafetyInvariant.UNTRUSTED_DATA_FRAMING,
         SafetyInvariant.NO_FABRICATION,
