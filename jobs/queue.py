@@ -98,6 +98,7 @@ from jobs.store import (
     QueueStats,
     build_idempotency_key,
 )
+from security.audit_log import reset_correlation_id, set_correlation_id
 
 logger = logging.getLogger(__name__)
 
@@ -473,7 +474,27 @@ class QuestionQueue:
         slot per crash until the user can no longer ask anything. The
         `finally` is what guarantees the slot is released and the
         dispatcher is woken, whatever happened above it.
+
+        The correlation ID is bound here, on the **worker** side of the
+        thread boundary, for exactly the reason `set_audit_tenant_id`'s
+        own comment gives: a `contextvars` value does not cross a raw
+        `ThreadPoolExecutor`, so the submitting request's context is not
+        this thread's. Binding from `job.correlation_id` rather than
+        copying the submitter's context is also the more correct source
+        -- a job can start long after `POST /questions` returned, and
+        the id recorded on the job is what `GET /questions/{id}` hands
+        the caller. Before this, every log line a queued question
+        produced read `correlation_id=-`, so the one identifier a user
+        can quote matched nothing in the log (`OPS-013`).
         """
+        correlation_token = set_correlation_id(job.correlation_id)
+        try:
+            self._execute_with_correlation(job)
+        finally:
+            reset_correlation_id(correlation_token)
+
+    def _execute_with_correlation(self, job: JobRecord) -> None:
+        """The body of `_execute`, with this job's correlation ID bound."""
         envelope = self._build_envelope(job)
         with self._envelope_lock:
             self._envelopes[job.job_id] = envelope

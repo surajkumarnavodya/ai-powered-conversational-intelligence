@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Route, Routes } from 'react-router-dom'
 import { AuthGate } from '@/components/auth/AuthGate'
+import { NotFoundPage } from '@/components/auth/NotFoundPage'
 import { RequireNavItem } from '@/components/auth/RequireNavItem'
 import { AppShell } from '@/components/layout/AppShell'
 import { PwaUpdateBanner } from '@/components/layout/PwaUpdateBanner'
@@ -162,6 +163,15 @@ export function App() {
               authenticated, the same pattern every other authenticated
               page in this app already uses. */}
           <Route path="/accept-invitation/:token" element={<AcceptInvitation />} />
+          {/* Last, and inside the shell on purpose. `api/main.py` serves
+              this app from a catch-all `GET /{full_path:path}`, so a
+              mistyped or stale in-app address arrives here as a 200 with
+              `index.html`. Without this route `<Routes>` matched nothing
+              and rendered `null` -- a genuinely blank page (measured:
+              zero characters of body text, Phase 9 `UI-003`). Keeping it
+              inside `AuthGate`/`AppShell` means the header and navigation
+              are still there to leave by. */}
+          <Route path="*" element={<NotFoundPage />} />
         </Route>
       </Routes>
     </ToastProvider>

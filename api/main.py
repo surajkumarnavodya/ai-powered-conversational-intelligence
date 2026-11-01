@@ -20,6 +20,7 @@ programmatic/scripted access on its own.
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import logging
 import sys
 import time
@@ -45,6 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from analytics.engine import compute_analytics_result
 from analytics.visualization import build_chart_spec
+from identity.security import warm_password_hasher
 
 from agent.authz import Permission
 from agent.exceptions import AgentError
@@ -52,12 +54,15 @@ from agent.graph import build_graph
 from agent.harness import budgets_from_settings as harness_budgets_from_settings
 from agent.harness import create_envelope
 from agent.harness.breakers import breaker_states as harness_breaker_states
+from agent.harness.context import publish_envelope
+from agent.harness.envelope import ExecutionEnvelope
 from agent.harness.telemetry import get_harness_telemetry
 from agent.inference_fingerprint import fingerprint_summary as inference_fingerprint_summary
 from agent.llm_client import get_ollama_client
 from agent.model_registry import (
     InvalidModelSelectionError,
     build_model_options,
+    discover_installed_models,
     installed_model_names,
     validate_model_selection,
 )
@@ -77,6 +82,7 @@ from agent.sql_validator import (
     describe_sql,
     enforce_row_limit,
     find_unexpected_table_references,
+    projection_source_columns,
     qualify_table_schema,
     summarize_sql,
     validate_sql,
@@ -201,6 +207,7 @@ from security.audit_log import (
     get_correlation_id,
     log_security_event,
     reset_correlation_id,
+    sanitize_correlation_id,
     set_correlation_id,
 )
 from security.client_ip import resolve_client_ip
@@ -288,6 +295,41 @@ def _enforce_database_write_privileges(db_engines: Mapping[str, Any], settings) 
         "only because ENVIRONMENT is not 'production'.",
         len(writable_databases),
         ", ".join(sorted(writable_databases)),
+    )
+
+
+def _warn_when_the_default_model_is_not_installed(settings) -> None:
+    """Warns at startup when `OLLAMA_MODEL` names a model Ollama does not have.
+
+    Added 2026-10-30 (`OPS-008`). The app has always started cleanly in
+    this state and then failed **every** question at generation time, with
+    the failure only visible once a user asked something. `GET /models`
+    already reported `installed: false` for it, so the information was
+    there -- nothing just said it out loud at the point an operator is
+    reading the log.
+
+    A warning and never a refusal, for the same reason
+    `_warn_on_ask_concurrency_pool_mismatch` above is: the model may be
+    mid-pull, and an operator may be starting the app deliberately before
+    `ollama pull` finishes.
+
+    **Silent when the installed set comes back empty**, because
+    `agent.model_registry.discover_installed_models` fails open to an
+    empty set when Ollama cannot be reached -- warning then would blame
+    the model for an unreachable server, which `GET /health`'s own
+    `ollama` block already reports accurately.
+    """
+    installed = discover_installed_models(settings)
+    if not installed or settings.ollama_model in installed:
+        return
+    logger.warning(
+        "[startup] OLLAMA_MODEL=%r is not installed on %s -- every question using "
+        "the default model will fail at generation. Run `ollama pull %s`, or set "
+        "OLLAMA_MODEL to one of the installed models: %s.",
+        settings.ollama_model,
+        settings.ollama_host,
+        settings.ollama_model,
+        ", ".join(sorted(installed)) or "(none)",
     )
 
 
@@ -458,7 +500,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # `_warn_on_ask_concurrency_pool_mismatch` just above is a warning.
     run_question_queue_startup_checks(settings)
 
+    if settings.local_auth_enabled:
+        # One Argon2id hash, so the decoy verification that keeps
+        # `POST /auth/login` constant-ish across "account exists" and
+        # "account does not exist" (finding AUN-001) is already built
+        # before the first login attempt -- otherwise the very first
+        # unmatched attempt in a process pays ~150 ms instead of ~60 ms.
+        warm_password_hasher()
+
     app.state.ollama_client = get_ollama_client(settings)
+    # After the client is warmed, so this reuses the same connection rather
+    # than opening a second one just to ask.
+    _warn_when_the_default_model_is_not_installed(settings)
     app.state.compiled_graph = build_graph()
     app.state.orchestrator_graph = (
         build_orchestrator_graph() if settings.enable_multi_source_router else None
@@ -772,7 +825,13 @@ async def _correlation_id_middleware(request: Request, call_next):
     structured events (see that module's docstring) and echoes it back as a
     response header, so a caller can correlate their request with a
     specific audit-log line without this app needing per-user identity."""
-    correlation_id = request.headers.get("X-Correlation-ID") or str(uuid.uuid4())
+    # Sanitised, never taken on trust: this value is stamped onto every
+    # log record for the request and echoed back, so an unchecked header
+    # forges log fields (see `sanitize_correlation_id`). A rejected value
+    # falls back to a generated id, so correlation keeps working.
+    correlation_id = sanitize_correlation_id(request.headers.get("X-Correlation-ID")) or str(
+        uuid.uuid4()
+    )
     token = set_correlation_id(correlation_id)
     try:
         response = await call_next(request)
@@ -1410,7 +1469,7 @@ def _run_orchestrated_with_timeout(
     tenant_id: str | None = None,
     forecast_horizon: int | None = None,
     model_explicitly_selected: bool = False,
-    envelope: object | None = None,
+    envelope: ExecutionEnvelope | None = None,
 ) -> Mapping[str, Any]:
     """Runs `run_orchestrated` on `_get_ask_executor`'s bounded pool and
     gives up *waiting* past `timeout_seconds`, raising `_AskRequestTimedOut`
@@ -1433,6 +1492,21 @@ def _run_orchestrated_with_timeout(
     limitation `db.execution._execute_with_timeout`'s own "background
     thread + join" idiom has) -- what bounding the executor buys is
     described in `_get_ask_executor`'s own docstring.
+
+    **The task is submitted inside a copy of the caller's context**, and
+    that is load-bearing rather than tidiness. `ThreadPoolExecutor.submit`
+    gives its worker thread a *fresh, empty* `contextvars` context, so
+    every `ContextVar` a wrapping caller bound before calling this
+    function is invisible to the graph that actually runs here. Measured
+    2026-10-29 (Phase 9, `UI-004`): `api/streaming.py` binds
+    `agent.progress`'s sink on its own worker thread and the graph then
+    ran on *this* pool, so `agent.nodes`' `emit_progress` read `None` for
+    the sink and `POST /ask/stream` emitted **zero** `progress` events for
+    a 58-second question -- only `open`, keepalive comments, `result` and
+    `done`. The documented per-node progress had never reached a browser.
+    `copy_context().run` is per-submit, so a `ContextVar` the graph sets
+    stays inside that copy and cannot leak back to the caller or sideways
+    into another request.
     """
     result: dict[str, Any] = {}
     error: dict[str, BaseException] = {}
@@ -1458,7 +1532,10 @@ def _run_orchestrated_with_timeout(
             error["error"] = exc
 
     try:
-        future = _get_ask_executor(max_workers).submit(_run)
+        # A fresh copy per submit -- a Context cannot be entered twice, and
+        # two concurrent asks must not share one.
+        caller_context = contextvars.copy_context()
+        future = _get_ask_executor(max_workers).submit(caller_context.run, _run)
         future.add_done_callback(lambda _f: on_done())
     except BaseException:
         # Defensive: submission itself failing (the executor singleton
@@ -1653,6 +1730,11 @@ def ask(
             budgets=harness_budgets_from_settings(settings),
         )
     )
+    # Hands this execution's envelope to a wrapping caller that
+    # registered for it -- today only `api/streaming.py`, which needs it
+    # to cancel the run when the SSE client disconnects (`LOP-005`). A
+    # no-op on every other path, including a direct `POST /ask`.
+    publish_envelope(harness_envelope)
 
     try:
         final_state = _run_orchestrated_with_timeout(
@@ -1966,12 +2048,20 @@ def execute(
         governance_domain = detect_domain(
             execution_sql, _referenced_names(execution_sql, columns)
         ).domain
+        # The names behind each output column (see
+        # agent.sql_validator.projection_source_columns): without them an
+        # alias strips a column's classification off its own values, and
+        # this is the route a caller hand-edits SQL on (UAT-readiness
+        # Phase 2, `SEC-006`).
+        projection_sources = projection_source_columns(execution_sql, dialect=dialect)
         governed = govern_result_for_domain(
             columns,
             rows,
             identity.roles,
             governance_domain,
             settings.governance_min_group_size,
+            projection_sources.by_name,
+            projection_sources.in_order,
         )
         rows = governed.rows
         # See agent/nodes.py's identical condition: an `audit_required`

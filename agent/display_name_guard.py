@@ -37,6 +37,39 @@ module must not reintroduce it from the other side.
 is a measure, not a label, and swapping it would change what the query
 computes. Only key columns in a user-facing *label* position -- a bare
 projection, or a GROUP BY term -- are candidates.
+
+**The join a repair writes is a LEFT join, and that is a correctness
+requirement rather than a preference.** An INNER join is the obvious
+choice -- the join column is a *declared* foreign key, so "every fact row
+has a matching dimension row" reads like something the constraint
+guarantees. It does not. A foreign key permits NULL in the constrained
+column, and a real warehouse also carries orphans (a staged load, a
+removed dimension member, a constraint created `WITH NOCHECK` or
+disabled). Those rows are dropped by an INNER join, and because the
+repair is applied to a statement whose measure is usually an aggregate,
+what the user then reads is a *smaller total* for the question they
+asked, with nothing to indicate rows went missing.
+
+Measured on this exact repair (UAT-readiness Phase 2026-10-28, `HAL-003`):
+`SELECT ProductKey, SUM(SalesAmount) ... GROUP BY ProductKey` over four
+fact rows, one with a NULL `ProductKey` and one orphan, returned
+**2527.0 across 4 groups** before the repair and **1250.0 across 2
+groups** after it. Half the measured total, presented as the answer. With
+a LEFT join the total is 2527.0 again; the unmatched rows collect into
+one group whose label is NULL, which is honest -- the database has no
+name for them -- and is the same outcome `NO_DISPLAY_NAME_NOTICE` already
+exists to describe.
+
+A LEFT join cannot add rows either: a foreign key's target is always a
+primary key or a unique constraint, so the dimension side matches at most
+once and no fan-out is possible (`db.display_names.find_join_path` only
+ever returns a single-column declared FK, and refuses a composite one).
+
+**One semantic change is inherent to the feature and is not a defect:**
+grouping moves from the key to the display name, so two keys sharing one
+display name merge into a single group. That is what "by product name"
+means, and it is the point of the repair. It changes the *grain of the
+labels*, never the total.
 """
 
 from __future__ import annotations
@@ -303,7 +336,12 @@ def enforce_display_names(
             statement = statement.join(
                 f"{display.table} AS {alias}",
                 on=on,
-                join_type="inner",
+                # LEFT, never INNER -- a declared foreign key does not
+                # guarantee a match (NULLs are permitted, orphans happen),
+                # and an INNER join here silently drops those fact rows
+                # from an aggregate. See this module's docstring for the
+                # measurement. `HAL-003`.
+                join_type="left",
                 dialect=dialect or None,
             )
             sources[alias.lower()] = display.table

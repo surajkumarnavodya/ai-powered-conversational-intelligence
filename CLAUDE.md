@@ -144,6 +144,48 @@ pass.
    `tests/test_sql_agent_integration.py::test_existing_nodes_are_all_still_present`
    (an exhaustive equality check) **and**
    `frontend/src/components/sql/QueryLifecycle.tsx`'s stage map.
+   **A node added anywhere inside a retry cycle also changes the bound on
+   the whole run, and getting that wrong is an HTTP 500, not a slow
+   query.** LangGraph's `recursion_limit` is computed by
+   `agent.graph.recursion_limit_for` from three structural constants —
+   `LONGEST_RETRY_CYCLE_NODES` (13: the `execute_sql → retrieve_schema`
+   missing-reference cycle), `PRE_CYCLE_NODES` and
+   `POST_EXECUTION_NODES`. This went wrong once, silently:
+   `enforce_display_names` was inserted into that cycle, the arithmetic
+   was never updated, and at the default `MAX_RETRIES=3` the worst case
+   needed 54 node executions against a limit of 50, so a question whose
+   every attempt hit a missing column raised `GraphRecursionError` and
+   `POST /ask` answered **500** instead of its own "gave up after 4
+   attempts" (2026-10-28, `LOP-001`).
+   `tests/test_agent_loop_bounds.py::TestTheStructuralBoundMatchesTheGraph`
+   now recomputes all three from the compiled graph's edge set and fails
+   with the new number, so this cannot drift unnoticed again — and
+   `run_agent` catches `GraphRecursionError` regardless, because a
+   constant can drift and a catch cannot. Never remove that catch to
+   "let the real error surface".
+   **A node that can end a run needs an edge that ends it, and this
+   has now gone wrong three times in the same shape** (`LOP-001`,
+   `LOP-004`, and `OPS-025` on 2026-10-31). `sanitize_input`,
+   `classify_followup` and `generate_sql` each route their terminal
+   status to `END` through a `route_after_*` function;
+   `retrieve_schema` composed a terminal `"failed"` state with a
+   `failure_explanation` behind a **plain `add_edge`**, so the state was
+   written and then driven straight past — every downstream node ran with
+   `selected_database = None`, `generate_sql` spent a real model call on
+   a prompt containing no schema, and the run died in
+   `_require_selected_database`'s `RuntimeError`, which is not an
+   `AgentError`, so the last-resort handler returned **HTTP 500** and
+   discarded the pipeline's own actionable message. Measured live: 68.43 s
+   to produce that 500, against **0.38 s** for the graceful failure after
+   the fix. So when a node gains a terminal return, add the conditional
+   edge in the same change — and the companion rule from `LOP-004` still
+   applies at the exception level: when adding a control that *raises* to
+   stop a run, check that something on the path turns it into a response.
+   `agent.exceptions.SchemaRetrievalError` is the type
+   `retrieve_schema_node` catches, so a new vector-store failure mode
+   must arrive as that type or it escapes (`select_database`'s
+   `get_chroma_client` call raised bare `OSError` until `OPS-025`).
+   Pinned by `tests/test_schema_retrieval_failure_is_terminal.py`.
 2. **An accuracy aid fails open; a safety control fails closed.** Planning,
    golden examples, business-context retrieval, insight, analytics,
    recommendations, and persistence all degrade to "no extra help" on error
@@ -196,7 +238,21 @@ restriction as a boundary.** Full detail:
   statement type**, never a regex blocklist. It also rejects system
   catalog/data-dictionary references (`information_schema`, `pg_catalog`,
   mssql `sys`, Oracle `ALL_*`/`DBA_*`/`USER_*`/`V$`/`GV$`), nested
-  aggregates, and unsafe query hints.
+  aggregates, and unsafe query hints. **Two further refusals were added
+  2026-10-25** by the UAT-readiness Phase 2 attack sweep, both safety
+  violations (fail closed, never retried): `row_lock` (`FOR UPDATE`/`FOR
+  SHARE` and MSSQL `WITH (TABLOCKX)`-style hints — read-only in their
+  projection, blocking in effect) and `unparseable_depth`. The second
+  matters beyond its own payload: sqlglot parses *and walks and
+  regenerates* by recursive descent, so a 90-byte input made the
+  validator raise `RecursionError` — a `RuntimeError`, not a
+  `SqlglotError` — instead of returning a refusal. **A gate that crashes
+  has not failed closed.** The trigger depth is not a property of the
+  input: it moves with the dialect and with the caller's own stack depth,
+  so the guard is an exception catch around the whole check sequence, not
+  a length or depth cap. Any new sqlglot-parsing security helper needs
+  the same guard; `agent.sql_validator.projection_source_columns` carries
+  it. See [`docs/uat-readiness/phase-2-security.md`](docs/uat-readiness/phase-2-security.md) §3.1.
 - **Validation runs every time SQL is about to be shown or executed,
   including after a user hand-edits it.** An edit is exactly as untrusted as
   an LLM generation. A stored statement (a BI connector's, an artifact's) is
@@ -239,8 +295,44 @@ restriction as a boundary.** Full detail:
   suspended tenant fails closed, and every failure reports one generic
   message — a caller must not be able to tell "no such tenant" from
   "suspended" from "not yours".
+  **"Fails closed" is true of one of the two authorization surfaces, and
+  measuring which is worth your time before you rely on it (2026-10-28,
+  `AUZ-003`).** `resolve_tenant_context` — the only function that reads
+  tenant *status* live — has exactly two non-test callers, both on the
+  `identity.rbac` path (`require_local_user`, and login/refresh). The
+  `agent.authz` path (`api.authz.require_permission`) authorizes from the
+  signature-verified JWT alone and touches no database, so it never sees
+  a suspension. Measured with an untouched access token, user **and**
+  tenant suspended: `/auth/me`, `/conversations` and `/navigation` → 401,
+  but `GET /models`, `GET /sources`, `GET /schema/tables` and
+  **`POST /ask`** → 200, with the question actually answered. The bound
+  is one access-token lifetime (`access_token_expire_minutes`, default
+  15, and its `Field(...)` sets **no upper bound**); refresh does refuse,
+  so it self-heals. Open and flagged for an owner decision — four options
+  weighed in [`docs/uat-readiness/phase-4-authorization.md`](docs/uat-readiness/phase-4-authorization.md)
+  §4.2 — and pinned as *current* behaviour by
+  `tests/security/test_authorization_matrix.py::TestSuspensionDoesNotReachTheTokenOnlySurface`,
+  so the fix cannot land without that test changing.
+  A related trap cost this audit one void measurement: `api/main.py`
+  serves the frontend from a catch-all `GET /{full_path:path}`, so **any
+  nonexistent path returns 200** with `<!doctype html>`. `GET /config`
+  and `GET /schema` are not routes. On this app a 200 is never on its own
+  evidence that a route authorized you.
 - Cross-tenant access to a resource returns the **same 404 a nonexistent
   resource gets** (anti-enumeration), never a distinguishable 403.
+  Verified across 11 cross-user attempts on a real conversation and its
+  share, 2026-10-28, with the body byte-identical to a random UUID's —
+  but **two stores have no tenant to compare at all.** `rag/store.py`
+  and `media/store.py` have no `tenant_id` column and not one entry
+  point that accepts a tenant, and `api/documents.py`,
+  `api/media*.py` and `api/attachments.py` contain the string "tenant"
+  **zero** times each. Reproduced at runtime: a `tenant_b` admin
+  listed, downloaded and **deleted** a `default`-tenant document
+  (200/200/204). That is `AUZ-002`, an open **S1** needing a migration;
+  three `xfail(strict=True)` tests in
+  `tests/security/test_authorization_matrix.py::TestCrossTenantDocumentAccess`
+  hold the line. Do not add a new caller of either store without
+  threading a tenant through it.
 - Tenant scoping is folded into the query's own `WHERE` clause, never applied
   as a post-hoc filter.
 
@@ -260,7 +352,24 @@ restriction as a boundary.** Full detail:
   insight step, recommendation engine, chart builder and response all receive
   protected rows.
 - The result gate classifies the **returned column names**, not the SQL text
-  — so an alias, a `UNION`, or `SELECT *` reaches the same protection.
+  — so a `UNION` or `SELECT *` reaches the same protection. **This entry
+  also said "an alias", and that was false in the dangerous direction
+  until 2026-10-25.** A rename does not keep the name the gate reads:
+  `SELECT salary AS region` came back as a column called `region`, which
+  classifies as ordinary business data, so the value was returned in the
+  clear — 13 of 14 measured rename and wrapper variants defeated the gate,
+  `SELECT password_hash AS note` among them, i.e. a `CREDENTIAL` column the
+  bullet above says *no* role unlocks. Closed by classifying each output by
+  the strictest of its own name and the base columns it was **computed
+  from**: `agent.sql_validator.projection_source_columns` resolves those
+  (through aliases, wrappers, arithmetic, CTE renames and every compound
+  branch) and the two governed callers that hold the executed SQL pass them
+  into `govern_result_for_domain`. Both parameters are optional, so a new
+  caller that forgets them silently gets the *old, weaker* behaviour —
+  pass them. One residual is deliberate and is a standing policy question,
+  not a bug: an aggregate over a restricted column is still returned, so
+  `MAX(salary) WHERE id = 7` discloses an individual value. See
+  [`docs/uat-readiness/phase-2-security.md`](docs/uat-readiness/phase-2-security.md) §4.1–§4.2.
 - **Small-group suppression applies to an authorized caller too** — it
   protects the individual in the group, not the column's sensitivity. The
   group label and count stay visible and **suppression never drops a row** (a
@@ -271,10 +380,12 @@ restriction as a boundary.** Full detail:
   the result gate names it in `actions`.
 - A **stored** result is re-governed on every read against the *current*
   caller's roles — never trusted because it was governed when captured. Roles
-  change. Both read-back surfaces do this: `api.artifacts._result_out` and
-  `api.shares._governed_result_snapshot`. A share is the sharpest case — an
-  "anyone with the link" viewer holds no roles at all — so a new surface that
-  serves a persisted `result_snapshot` must re-govern it too.
+  change. All **three** read-back surfaces do this: `api.artifacts._result_out`,
+  `api.shares._governed_result_snapshot` and `api.jobs._regovern_job_result`
+  (the asynchronous question queue's stored result — this entry said "both"
+  and named only the first two until 2026-10-25). A share is the sharpest
+  case — an "anyone with the link" viewer holds no roles at all — so a new
+  surface that serves a persisted `result_snapshot` must re-govern it too.
 
 ### 5.5 Untrusted content and prompt injection
 
@@ -378,6 +489,47 @@ restriction as a boundary.** Full detail:
   an applied revision is the hand-edit §12 forbids. So as of 2026-10-22
   `black`, `bandit`, `pytest` and `pip-audit` all pass; the lone `I001`
   is the only blocking finding left.
+  **Re-measured 2026-10-25 (UAT-readiness Phase 2), and the picture
+  changed in three ways.** Read this paragraph rather than the one above,
+  and re-measure again before trusting either.
+  *Green:* `ruff check .` exits **0** — the `I001` above is fixed with
+  ruff's own import sort, not a `# noqa`, so there is no longer a standing
+  blocking lint finding. `black` clean over 1,670 files. `bandit` "No
+  issues identified" over 57,270 lines with **0** `# nosec` skipped.
+  `pytest` **9,066 passed / 0 failed**. `npm audit --omit=dev` 0
+  vulnerabilities.
+  *Was red, now green:* `pip-audit` had gone red again on three `pypdf`
+  advisories published after 2026-10-22 (CVE-2026-115572/115580/115585).
+  Bumped to `pypdf==6.21.2` rather than ignored, because
+  `rag/ingestion.py` and `attachments/processors/` point that parser at
+  caller-supplied bytes. **The lesson is that this list decays:** a green
+  `pip-audit` is a statement about a date, not about the repository.
+  **And it decayed again, twice over, which is why that sentence is now
+  the operative instruction rather than an aside.** Re-run 2026-10-31
+  (Phase 11, `OPS-024`): **11 findings in 2 packages** — seven more
+  `pypdf` advisories (CVE-2026-119203…119209) and four in `pyasn1`
+  0.6.4 (CVE-2026-119194…119197), the latter reachable because
+  `google-auth` decodes OIDC id-token certificates with it. Bumped to
+  `pypdf==6.21.4` and `pyasn1==0.6.5`, both checked for
+  `Requires-Python` against the 3.11 image before pinning (the
+  `OPS-021` check), and the gate reports "No known vulnerabilities
+  found, 7 ignored" again. **So this is the third time this one `pypdf`
+  pin has gone red** (2026-10-22, 2026-10-25, 2026-10-31). Never read
+  "`pip-audit` passes" in this file as a current fact: re-run it, and
+  print the date beside whatever you record.
+  *Still red, and it was not previously known to be:* **`detect-secrets`
+  is a fifth blocking gate, and it fails.** Neither this section nor §13
+  had ever counted it. It is **not** a leaked secret — the full-repo
+  triage found no un-baselined secret hash, only ~37 files of new
+  `tests/` fixtures and Alembic revision hex plus two i18n label strings
+  — the baseline is simply stale, and refreshing it must be done on
+  Linux because `detect-secrets` writes OS-native path separators.
+  `scripts/check_secrets_baseline.py` now normalises those and prints
+  *what* changed grouped by what it means, which it did not before; that
+  silence is why the gate's redness went unnoticed. Details and the exact
+  command:
+  [`docs/uat-readiness/phase-2-security.md`](docs/uat-readiness/phase-2-security.md)
+  §6.3–§6.5.
 
 ### 5.8 Domain privacy and safety — consult the policy before changing behavior
 
@@ -513,6 +665,25 @@ WSL/macOS/Linux. Frontend: `npm run test` / `npm run lint` /
 - `tests/conftest.py` strips every env var a `Settings` field could read, so a
   test never silently inherits the developer's real `.env`. It also clears the
   three process-lifetime caches between tests.
+  **That sentence was true and insufficient until 2026-10-28.** It strips
+  names that *are* `Settings` field names, but `config/settings.py`
+  deliberately reads two **open-ended** families straight from
+  `os.environ` — `DB_CONNECTIONS` plus a `DB_<NAME>_*` block per entry
+  (`_parse_named_connections`), and `MCP_SERVERS` plus `MCP_<NAME>_*`.
+  Neither family's members are field names, so none of them was stripped,
+  and `load_dotenv()` had already loaded them. Measured with the autouse
+  fixture active: **24 `DB_*` vars visible inside a test**, two of them
+  `DB_<NAME>_PASSWORD`, and `get_settings().databases` returning this
+  machine's **four real SQL Server connections** — so the bullet above
+  ("no real database") was false in exactly the way it had already been
+  found false for Ollama: silently. The only trace was an `SAWarning`
+  about a real server version, printed after pytest's summary.
+  Now closed by stripping the prefix families, and pinned by
+  `tests/test_settings_env_isolation.py` (7 tests, mutation-verified) so
+  it cannot regress unnoticed again. The lesson generalises past this
+  one fix: **any new config read that bypasses a `Settings` field also
+  bypasses test isolation**, so it needs a matching entry in
+  `conftest._DYNAMIC_ENV_PREFIXES`.
 - `tests/security/` is for adversarial-scenario regressions that do not fit a
   single module's test file. Check whether a scenario is already covered
   before adding one.
@@ -546,6 +717,7 @@ authoritative, and explains how to resolve a conflict.
 | Authentication / authorization | [`docs/AUTHENTICATION.md`](docs/AUTHENTICATION.md), [`docs/AUTHORIZATION.md`](docs/AUTHORIZATION.md) |
 | Multi-tenancy rules and limitations | [`docs/MULTI_TENANCY.md`](docs/MULTI_TENANCY.md) |
 | Configuration reference | [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) |
+| The `GRANT`s a DBA applies for the read-only database account, per engine | [`docs/DBA_READONLY_ACCOUNTS.md`](docs/DBA_READONLY_ACCOUNTS.md) |
 | Entity display names: metadata, SQL repair, join and chart-label rules | [`docs/DISPLAY_NAMES.md`](docs/DISPLAY_NAMES.md) |
 | Result-column semantics and chart axis binding (measure vs key) | [`docs/CHART_AXIS_BINDING.md`](docs/CHART_AXIS_BINDING.md) |
 | Measured latency, what causes it, and the hardware ceiling | [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) |
@@ -672,9 +844,20 @@ Only when a task is specifically about them — never as a side effect:
   `.secrets.baseline` is tool-generated; regenerate, never hand-edit.
 - **Migrations**: `identity/migrations/` — the only real migrations here.
   Never hand-edit an applied revision; add a new one.
-- **Generated/derived** (each rebuilt by its own command): `embeddings/.chroma/`,
+- **Generated/derived** (each rebuilt by its own command):
   `frontend/dist/`, any `node_modules/`, `.venv/`, `__pycache__/`,
   `.mypy_cache/`, `.ruff_cache/`, `.pytest_cache/`, `.vs/`, `media_library/`.
+  **`embeddings/.chroma/` used to be on that list and does not belong
+  there** (corrected 2026-10-31, Phase 11). Only the *schema index* is
+  derived. The same persist directory also holds **golden examples** and
+  **message feedback** -- both human-curated, with no live source to
+  rebuild from -- the media index, and `schema_drift`'s point-in-time
+  drift baselines. Treating the whole directory as regenerable is wrong
+  in the dangerous direction: `scripts/build_embeddings.py` restores the
+  index and nothing restores the rest. Back it up at the filesystem
+  level if curated examples and feedback matter; per-component table in
+  [`docs/uat-readiness/phase-11-operations.md`](docs/uat-readiness/phase-11-operations.md)
+  §6.2. It is still gitignored and still must not be committed.
 - **Benchmark-pinned prompt text**: `agent.llm_client._INSIGHT_SYSTEM_PROMPT`
   and the generation system prompt. `docs/EVALUATION_CURRENT.md`'s accuracy
   numbers were measured against their exact wording; changing them without
@@ -801,7 +984,7 @@ contract lists its specific limitations; these are the cross-cutting ones.
   is for.
 - **Lint/type findings — measure before claiming one is, or is not, yours.**
   Measured 2026-10-17: `mypy .` reported **631 errors across 115 files**
-  (**re-measured 2026-10-23: 700 across 124** — the growth is entirely in
+  (**re-measured 2026-10-25: 723 across 129** — the growth is entirely in
   `tests/`, tracking tests added since; the **7 production-code errors
   below are unchanged**), of
   which **616 are in `tests/`** and 8 in `eval/security_benchmark/` (largely
@@ -860,7 +1043,9 @@ contract lists its specific limitations; these are the cross-cutting ones.
   one. **Mutation-verified**: removing the rollup clear fails 2 of the 9
   tests in `tests/test_no_real_llm_calls_in_tests.py`, one of them the
   exact `recommendations == []` assertion the five failures made. A full
-  run is now **0 failed** (8261 passed, measured 2026-10-24).
+  run is now **0 failed** (8261 passed, measured 2026-10-24; 8,297 passed
+  / 0 failed re-measured 2026-10-25; **9,485 passed / 0 failed
+  re-measured 2026-10-28**, 16 skipped, 11 deselected, 5 xfailed, 514s).
 
 - **The local 7B model still refuses some answerable terse questions.**
   Measured 2026-10-22, after the retrieval fix in
@@ -890,6 +1075,85 @@ contract lists its specific limitations; these are the cross-cutting ones.
   these terse questions is uneven even when they succeed -- one phrasing
   returned a bare product list with no measure column, another a single
   row -- which is the same model-capacity limitation, not a pipeline bug.
+  **Re-measured 2026-10-28 (UAT-readiness Phase 5) and this entry is now
+  stale in both directions -- read the new numbers, not the ones above.**
+  On `llama3.1:8b`, live, against `adventureworks`: **none of the three
+  phrasings was refused**, so the false-refusal half of this entry no
+  longer reproduces. What replaced it is worse and is why the entry is
+  being corrected rather than deleted. "Most popular products" returned
+  the ten most **expensive** products (`SELECT TOP 10
+  EnglishProductName, StandardCost ... ORDER BY StandardCost DESC`) --
+  a confident, plausible-looking answer to a *different question*.
+  "Top selling products", the phrasing this entry calls working,
+  returned **334 rows** from a `ROW_NUMBER() OVER (PARTITION BY
+  d.ProductKey ORDER BY COUNT(d.ProductKey))` that ranks nothing,
+  because partitioning by the column being ranked gives every row
+  `rn = 1`. "Worst selling products" returned **0 rows** from the same
+  degenerate shape -- a *false empty*, where the reader concludes the
+  data has no answer. So "uneven quality" understates it: the failure
+  mode is answering the wrong question, and one phrasing's failure is
+  indistinguishable from "no data".
+  **No grounding check can catch this, and that is the point worth
+  keeping.** The insight for the expensive-products answer was correct
+  about what had been *computed* -- it said "by standard cost", not
+  "most popular" -- so provenance held and the gate behaved as designed.
+  Deterministic grounding verifies an answer against *the result*; it
+  cannot verify the result against the *question*. Only the eval suite
+  measures that. All five phrasings are now a standing dataset
+  (`eval/uat_golden/sql_accuracy.yaml`, `uat_j15_*`) so the next model
+  change re-measures them instead of rediscovering them. Evidence and
+  the open decision: `HAL-007` / `DOC-011` in
+  [`docs/uat-readiness/FINDINGS_REGISTER.md`](docs/uat-readiness/FINDINGS_REGISTER.md).
+
+- **A fail-closed layer does not run on one live route, and it is the
+  input guard** (2026-10-28, `HAL-006`, open and flagged).
+  `guardrails/__init__.py` lists input validation
+  (`agent.input_guard.check_input`) as fail-closed. It is wired into
+  `agent.nodes.sanitize_input_node`, which lives **inside the SQL
+  subgraph**, plus `agent.orchestrator.general_knowledge` (reached only
+  when `ENABLE_GENERAL_KNOWLEDGE_ANSWERS` is on) and `api.jobs`. The
+  orchestrator's `route_after_router` can send a question straight to
+  `synthesis` -> END when it matches no source, and on that route no
+  guard runs. Measured: five structurally different inputs -- a direct
+  prompt injection, an off-topic request, a DELETE request, a DROP TABLE
+  request and an unanswerable forecast question -- all returned 200 /
+  `succeeded` / `rejection_reason: null` in ~2.4s with one identical
+  no-match message, while `check_input` on the injection returns
+  `passed=False, reason=injection_detected`.
+  **It is not a data-safety bypass**: that route does no retrieval, no
+  generation and no execution, and the validator and RBAC gates are
+  untouched; the message being byte-identical for every input even
+  satisfies §5.5's no-oracle rule perfectly. What is lost is
+  **detection and the audit record**, so the UAT script's J12.3
+  ("trigger a refused action, then find it in the audit") cannot pass
+  there, and the documented `injection_detected` / `off_topic` reasons
+  are unreachable through `/ask` for an unmatched question. Pinned as
+  *current* behaviour by two `xfail(strict=True)` tests in
+  `tests/security/test_input_guard_reaches_every_route.py`, so the fix
+  cannot land without those marks coming off.
+
+- **The insight gate checks three kinds of contradiction, not one**
+  (2026-10-28, `HAL-001`/`HAL-002`, both fixed). It used to check
+  numbers only, so `"West was the strongest region."` against a result
+  whose computed top label is `East` was stored and shown. It now also
+  refuses a superlative attached to a label that is not the computed top
+  one, and a direction opposite to a computed two-period trend. Both
+  fire **only on a contradiction of something `agent.insight
+  .summarize_result` computed in Python from the real rows** -- never on
+  a merely unverifiable claim, which stays labelled rather than
+  suppressed. A comparative, a causal claim, a date the result does not
+  contain, and an entity absent from the result are **deliberate
+  residuals**, each pinned by a test that says so.
+  Two traps for a new caller. `agent.insight.insight_grounding_failure`
+  takes `result_labels` **optionally**, and omitting it silently gets
+  the weaker two-check gate -- the same shape §5.4 records for
+  `projection_source_columns`. And `_compute_trend` now only produces a
+  trend for a label column `analytics.period_labels
+  .classify_period_column` recognises as chronological: before that
+  gate, a `Region, TotalSales` result produced a -58.3%
+  "period-over-period" change between two region names, and because
+  `ResultSummary.allowed_percents()` feeds the gate, it *licensed* an
+  insight stating a decline that never happened.
 
 - **Four CI steps are non-blocking** by deliberate, dated decision:
   `gitleaks`, `mypy` (§5.7), the Trivy container scan — report-only because
@@ -900,3 +1164,529 @@ contract lists its specific limitations; these are the cross-cutting ones.
   describes the older measurement ("281 ... all in test files"); the figures
   above are the current ones.
   See [`docs/security/CVE_TRIAGE.md`](docs/security/CVE_TRIAGE.md).
+  **There are five blocking gates, not four, and this bullet and §5.7
+  both missed one until 2026-10-25:** `detect-secrets` (its own job, so
+  it runs even when `test` fails) blocks, and it was failing. Neither
+  list had ever named it, which is the more useful lesson here — a gate
+  nobody enumerates is a gate nobody measures. The blocking set is
+  `ruff`, `black`, `bandit`, `pytest`, `pip-audit` **and**
+  `detect-secrets`.
+  **Nine blocking gates as of 2026-10-29 (Phase 8), not six.** Three
+  were added: a **second, blocking `mypy` step** scoped to the 41
+  production packages (0 errors in 482 files; the report-only `mypy .`
+  stays as it is and still reports 746, 736 of them in `tests/`), the
+  frontend's **`vitest`** suite (1,508 tests that CI had never run),
+  and **`npm audit --omit=dev`**. The blocking set is now `ruff`,
+  `black`, `bandit`, `pytest`, `pip-audit`, `detect-secrets`,
+  `mypy` (production), frontend `vitest` and `npm audit`.
+  `bandit`'s scope also changed and the old number was misleading: it
+  named twelve packages on the command line, so it had **never scanned
+  `identity/`** or ~25 other packages — 58,041 of 119,384 lines, i.e.
+  "green" meant 48.6% of the code, and the whole tree reported **24**
+  findings, six in `identity/security.py`. It is now scoped by
+  exclusion from `[tool.bandit]` in `pyproject.toml`, so a new package
+  is covered the day it is created. `tests/test_ci_gate_coverage.py`
+  fails when any of these falls behind the repository.
+  **Ten, counting the one nobody counted: `docker-scan`'s `docker build`
+  step** (2026-10-30, Phase 11, `OPS-021`). The note above about the
+  Trivy container scan being report-only is about the **scan** step --
+  `aquasecurity/trivy-action` only fails a step when its `exit-code`
+  input is set, which it deliberately is not -- and **not** about the
+  plain `run: docker build -t text-to-sql-dashboard:ci .` step above it
+  in the same job, which fails the job like any other command. Read as
+  "the container job is advisory", which is how both §5.7 and this
+  bullet could be read, that job going red is invisible. It was red:
+  `docker build .` failed outright from 2026-10-29, so **the image this
+  project ships could not be built**.
+  The cause is a standing trap, not a one-off. `BP-009` declared
+  `numpy` as a direct dependency and pinned what the **3.14 dev venv**
+  had installed, `numpy==2.5.3` -- and numpy 2.5.x declares
+  `Requires-Python >=3.12` while the Dockerfile and CI target **3.11**.
+  So **a pin taken from this machine's venv can be uninstallable on the
+  deploy target**, which is the scipy incident `requirements.txt`
+  documents at length, reached from the opposite direction (there a
+  3.14-chosen pin had no 3.11 wheel; here it excludes 3.11 by
+  metadata). Repinned to `numpy==2.4.6`, which declares
+  `Requires-Python >=3.11` and ships cp311 *and* cp314 wheels -- one pin
+  for both targets, no marker, the same reasoning the scipy pin states.
+  **`tests/test_declared_dependencies.py` cannot catch this and is not
+  meant to**: it asserts a package is *declared*, never that its pin is
+  *installable on 3.11*, which no mocked test can know. `docker build`
+  is the only gate that knows, so when adding or bumping a pin, check
+  the new version's `Requires-Python` against 3.11 before trusting a
+  green local suite.
+
+- **An aggregate over a restricted column is still disclosed, and that is
+  a standing policy question rather than a bug.** `SEC-006` (§5.4) closed
+  the rename bypass by classifying each output column by the base columns
+  it was computed from; an **aggregated** projection deliberately
+  contributes none, because masking `AVG(salary) AS avg_pay` would reject
+  ordinary analytics and §5.8 names over-blocking as its own failure mode.
+  The residual is the narrow case: `SELECT MAX(salary) FROM employees
+  WHERE id = 7` returns one individual's salary. Deciding when an
+  aggregate is too narrow to count as one is what small-group suppression
+  already exists to decide, so extending it to this shape is a product
+  decision, not a defect fix. Pinned as *current* behaviour by
+  `tests/security/test_masking_survives_renaming.py::TestTheAggregateExclusionIsDeliberate`
+  — so when the decision is made, that test is the one to change, and its
+  failure will say so. Do not "fix" it silently in either direction.
+- **The `detect-secrets` baseline is stale, so that blocking gate is red**
+  (2026-10-25; **re-measured 2026-10-31 and still red, and the staleness
+  has grown** -- **85 un-baselined findings across 54 tracked files**,
+  up from ~37 files: 60 in `tests/` fixtures, 10 Alembic revision hex,
+  10 i18n labels, 5 doc examples. The only production-code hit is
+  `identity/security.py:363`'s `_DECOY_PASSWORD`, the deliberately
+  public constant `AUN-001` spends Argon2id work on, already carrying
+  `# nosec B105`. Note that CI's own command cannot be run here at all --
+  `detect-secrets scan $(git ls-files)` overflows Windows' argument
+  limit -- but the question it answers can be, by scanning to a
+  temporary file and diffing with path separators normalised; method in
+  [`docs/uat-readiness/phase-11-operations.md`](docs/uat-readiness/phase-11-operations.md)
+  §10). No leaked secret: the triage found no un-baselined secret
+  hash, only new `tests/` fixtures, Alembic revision hex and two i18n
+  label strings. It cannot be refreshed from a Windows checkout --
+  `detect-secrets` writes OS-native path separators, so a locally
+  regenerated baseline has backslash keys CI's forward-slash scan can
+  never produce, and hand-normalising them would be the hand-edit §12
+  forbids for a tool-generated file. Run on Linux:
+  `detect-secrets scan $(git ls-files) --baseline .secrets.baseline`, then
+  `detect-secrets audit .secrets.baseline`. Full triage:
+  [`docs/uat-readiness/phase-2-security.md`](docs/uat-readiness/phase-2-security.md)
+  §6.4.
+- **The UAT-readiness audit is complete and writes its own findings to
+  disk.** `docs/uat-readiness/UAT_READINESS_REPORT.md` is the
+  consolidated gate and **the one owner of the verdict**;
+  `FINDINGS_REGISTER.md` is the per-finding register;
+  `phase-0-recon.md` through `phase-11-operations.md` hold the method
+  and evidence. **All twelve phases are complete (2026-10-31).**
+  **Verdict: NOT READY for UAT** -- 140 findings, 80 fixed, **1 open
+  S1** (`AUZ-002`, cross-tenant document read *and delete*) and **13
+  open S2**, all 14 *Flagged* for an owner decision rather than
+  forgotten. Four gate items are false (the open S1/S2 count,
+  `detect-secrets` being the one red blocking gate, the absent accuracy
+  threshold, and the UAT environment); five are true (authorization
+  matrix, SQL-safety and masking on both dialects, prompt injection,
+  loop bounds, backup/restore drilled). **The path to READY WITH
+  CONDITIONS is mostly operator and owner actions, not engineering** --
+  §8 of the report lists twelve, of which two are engineering.
+  Before re-investigating anything security- or architecture-shaped,
+  check the report and then the register: together they record what was
+  measured, on what date, and which items are deliberately flagged for
+  an owner decision rather than open defects. **Do not re-derive a
+  finding the register already holds**, and do not read a *Flagged* row
+  as an oversight.
+  Phase 12 (2026-10-31) added one finding, `SEC-008`, and it is worth
+  one line here because it is **a third instance of a pattern this file
+  already records twice**: the masking regression suite
+  (`tests/security/test_masking_survives_renaming.py`, which holds the
+  `SEC-006` S1 closed) pinned `dialect="postgres"` on every case while
+  all four connections configured here are `mssql`, so the strictest
+  control in `governance/result_policy.py` had no coverage in the
+  dialect it runs against. The control was sound; only the coverage was
+  missing. What the measurement exposed is the keeper: parsed in the
+  **wrong** dialect a T-SQL statement yields `by_name={}`, and an output
+  with no resolved sources is classified by its own name alone -- the
+  pre-`SEC-006` behaviour. Mutation-verified at 10 failures, three of
+  them the `CREDENTIAL` case §5.4 says no role unlocks. It is
+  unreachable today only because both governed callers derive the
+  dialect from the executing connection (`agent/nodes.py:2861`,
+  `api/main.py:1930`). So alongside `projection_source_columns`'
+  optional `by_name`/`in_order` and `insight_grounding_failure`'s
+  optional `result_labels`, **a wrong `dialect` silently buys the weaker
+  path too** -- not an error, just less protection.
+  Phase 10 (2026-10-30) fixed nine documentation findings and flagged
+  four, and **two of its lessons generalise past documentation.**
+  *First:* **a doc that claims completeness is a claim to measure, not
+  to read.** `docs/CONFIGURATION.md` opened with "every environment
+  variable this project reads"; a scripted diff found **110 of 447**
+  settings in neither it nor `.env.example`, **26 of them `ENABLE_*`
+  flags, most on by default** -- the very flags
+  `docs/DEPLOYMENT.md`'s rollback procedure tells an operator to set
+  back. The 26 are documented now and the remaining 77 are a
+  **no-growth baseline** in `tests/test_configuration_doc_coverage.py`
+  that fails in *both* directions, so it cannot decay into an
+  allowlist the way a plain exemption list would. Same shape in
+  `docs/API.md`, which never named **`synthesized_answer`** -- the
+  field carrying the prose answer on every non-SQL route, where the
+  documented `insight` is `None`. A client written from that page
+  renders a web, document, policy or no-match answer **blank**, which
+  reads as a server fault and is not one.
+  *Second:* **understating a control is the dangerous direction, and
+  it happened here.** `SECURITY.md` called
+  `check_write_privileges` "best-effort, warning-only" and said it
+  "never blocks" long after
+  `api.main._enforce_database_write_privileges` began refusing to
+  start under `ENVIRONMENT=production` -- a behaviour an existing test
+  already pinned. Also measured, and worth not re-deriving: **449
+  documented command lines across ten user-facing docs all run as
+  written, and all 874 relative links across 203 markdown files
+  resolve**; there are **zero** phantom endpoints in `docs/API.md` and
+  **zero** genuine default mismatches between `.env.example` and
+  `Settings`. What was wrong was never a broken command -- it was
+  fourteen stale numbers and three things that were simply absent, the
+  sharpest being that "use a dedicated read-only database account" is
+  instructed in eleven places and had **no procedure anywhere**
+  (now `docs/DBA_READONLY_ACCOUNTS.md`).
+  Phases 3-4 (2026-10-28) fixed five findings — a login timing oracle
+  (`AUN-001`), a lockout that outlived a password reset (`AUN-002`), a
+  suspended account keeping access on the identity surface (`AUN-003`),
+  a defeatable password-policy check (`AUN-004`) and the test-isolation
+  leak in §7 (`BP-003`) — and left four flagged for an owner: `AUZ-002`
+  (**S1**, cross-tenant document read *and delete*), `AUZ-003` (**S2**,
+  §5.3), `AUZ-004` (`platform_admin` grants nothing on the
+  `agent.authz` surface, because it is not in
+  `agent.authz.ROLE_PERMISSIONS` — fail-closed, but it reads as a broken
+  admin account) and `AUZ-005` (any `user` can write a golden example
+  that steers their whole tenant; cannot escalate privilege, since the
+  validator and result gate still apply, so the exposure is to answer
+  *accuracy*).
+  Phase 5 (2026-10-28) fixed three S2 grounding defects -- `HAL-003`
+  (an INNER join in the display-name repair that halved a measured
+  total), `HAL-001` (a fabricated period-over-period trend that the
+  insight gate then licensed) and `HAL-002` (the gate checking numbers
+  only) -- and flagged four: `HAL-004` (**S2**, the web-search path has
+  no grounding gate at all, so an invented URL and publication date
+  reach the reader while the Sources panel disagrees), `HAL-006`
+  (**S2**, the input guard above), `HAL-007` (**S2**, terse questions
+  answered wrongly -- model capacity, see the entry above) and
+  `OPS-008` (**S2**, `.env` names an `OLLAMA_MODEL` that is not
+  installed, so every question on the default fails; the app starts
+  anyway although `GET /models` already reports `installed: false`).
+  It also delivered the UAT golden question set (`eval/uat_golden/`,
+  **50** questions -- 32 accuracy + 18 behaviour, 11 journeys, 45
+  `mssql` + 5 `postgresql`; this entry said **57** until Phase 12
+  counted them by loading the YAML -- gated by
+  `tests/test_uat_golden_set.py`) -- a **behaviour and structure** gate,
+  not an accuracy gate, until a human authors `expected_sql` for every
+  case marked `GOLD SQL REQUIRED`.
+  Phase 6 (2026-10-28) fixed seven findings and flagged one. **Two were
+  S2 and both were the same shape — a *designed* terminal condition
+  escaping `run_agent` as an unhandled exception, so `POST /ask`
+  answered HTTP 500 instead of the refusal the pipeline had already
+  composed.** `LOP-001` is the recursion-limit drift §4.1 now records.
+  `LOP-004` is `ProviderUnavailable`: the Ollama circuit breaker opens,
+  `harness_ollama_client` raises it a layer below the
+  `OllamaUnavailableError` that `generate_sql_node` handles, and
+  **nothing in the repository caught it** — so the breaker working
+  exactly as designed produced a 500 at the moment graceful degradation
+  mattered most. Both graphs now convert it to a terminal `failed`
+  carrying the breaker's own safe message. The generalisable lesson:
+  when adding a control that raises to stop a run, check that something
+  on the path turns it into a response.
+  The other five: `LOP-002` (no no-progress detection — a stub model
+  repeating one statement spent 4 generation calls and 4 database
+  executions on it; `generate_sql_node` now ends the run when an
+  attempt reproduces the previous query, compared on
+  `agent.sql_validator.canonical_sql_form` so a reformat does not count
+  as progress. **Do not "fix" an unexpectedly short retry run by
+  removing it** — check `attempt_history[-1]["outcome"] ==
+  "no_progress"` first), `LOP-003` (all ten `agent/orchestrator/`
+  nodes were registered without `guard_node`, so every non-SQL route
+  had no step budget, no deadline check and no cancellation
+  checkpoint), `LOP-005` (the dashboard's Stop button aborted the fetch
+  and the server ran to completion; `/ask/stream` now cancels the
+  execution on disconnect, via a new envelope *observer* in
+  `agent/harness/context.py`), `LOP-006`
+  (`agent.harness.resolve_timeout` had **zero** non-test callers, so
+  the database query was the one operation not clamped to the request
+  deadline) and `LOP-007` (retry error context was unbounded, and the
+  retry block is `SectionPriority.CRITICAL`, which `context_budget`
+  never drops *and never truncates* — so one verbose driver error could
+  push the prompt over and make Ollama truncate from the start, where
+  the system prompt lives).
+  Flagged: `LOP-008` (**S3**) — a driver error reaching the retry
+  prompt and `AskResponse.error_history` can contain row values, since
+  `redact_secrets` redacts connection secrets and not data. Not a
+  cross-privilege disclosure, but a path by which a value the *result*
+  gate would have masked appears in an error message. Fixing it is a
+  product decision: the error text is what makes self-correction work.
+  **One standing rule came out of `LOP-004`: only
+  `agent/llm_client.py` may construct an `ollama.Client`.** Anything
+  else escapes the circuit breaker, the per-execution model-call budget
+  and the deadline clamp all at once — which is what
+  `rag.llm.call_ollama` was doing for the router, both RAG subgraphs,
+  web search, media search, the general-knowledge answer and the
+  analyst planner. It now calls `harness_ollama_client`, and
+  `tests/test_llm_client_usage_rollup.py` asserts the one-module rule
+  over the whole application.
+  Two positive results worth not re-deriving: **all 213 operations deny
+  an anonymous caller** (401, never 403, with an exact public allowlist
+  of 16), and **no IDOR** across two users on conversations, messages,
+  shares or sessions. Mass assignment is blocked everywhere by
+  `extra="forbid"`. The authorization matrix is derived from the live
+  app rather than a list, because this codebase authorizes in **three**
+  structurally different places — a dependency reading the JWT
+  (`agent.authz`), a dependency re-reading the database
+  (`identity.rbac`), and a call *inside the handler*
+  (`api.governance._authorize` and its siblings). Any audit technique
+  that sees only one of the three reaches a wrong conclusion in both
+  directions: a dependency scan called 117 routes ungated when they are
+  not, and a minimal-body probe returns 422 before an in-handler check
+  ever runs.
+
+  Phase 9 (2026-10-30) fixed nine findings and flagged six, driving
+  real Chrome over the live app for seven role accounts. **Three of its
+  lessons are standing traps, and all three are about measurement rather
+  than code.**
+  *First:* **a UI audit can rate-limit itself, and the wreckage reads as
+  a finding.** `POST /auth/refresh` shares
+  `login_rate_limit_per_minute` (default 10/min, keyed by client IP) and
+  one full page load spends one refresh, so a driver that navigates with
+  a page load per screen (84 of them) trips the limit on itself. Before
+  `UI-002` that *silently signed the driver out*, so cells recorded the
+  sign-in page as though it were the screen under test -- three of that
+  run's screenshots are byte-identical to the sign-in capture -- read as data,
+  that grid claimed a `viewer` could open Platform Admin. Navigate
+  client-side (`history.pushState`) and spend one refresh per role. A
+  screenshot of a screen you did not reach is still a screenshot.
+  *Second:* **jsdom does not reliably stay silent about what it cannot
+  see.** `color-contrast` is blind there and was already disabled.
+  `target-size` is also blind (every element measures 0x0). But
+  `label-content-name-mismatch` reports a **false pass** -- the exact
+  markup Chrome flagged lands in axe's `passes` list, because the rule
+  needs rendered text -- so a jsdom test asking axe about it reads as
+  evidence of the opposite of the truth. All three are disabled in
+  `frontend/src/test/axe.ts` with the measurement behind each.
+  *Third, and the most reusable:* **before recording something as
+  "browser-only", check whether it is actually computable.**
+  `src/test/axe.ts` and `src/index.contrast.test.ts` both recorded
+  colour contrast as unreachable without a browser, and on that basis
+  the whole class of `bg-[var(--token)]/15 text-[var(--token)]` status
+  badges went unchecked -- with a comment asserting "the tint is too
+  faint to shift the result", which is false in the direction that hides
+  a failure. `src/test/contrast.ts` already composited, so those
+  pairings were arithmetic all along: computing them reproduces Chrome's
+  ratios **to the second decimal** (`#15803d` on `#dcece2`: Chrome 4.09,
+  computed 4.09). The 30 sub-AA declared-token pairings are now pinned
+  in `frontend/src/index.contrast.baseline.json` as a **no-growth**
+  baseline -- a new failure fails, and a since-fixed pairing fails too,
+  so it cannot decay into an allowlist.
+  Two more worth not re-deriving. **`UI-004`: the documented per-node
+  streaming progress had never reached a browser.** `api/streaming.py`
+  binds the progress sink to a `ContextVar` on its own thread, but
+  `api.main.ask` hands the graph to a second `ThreadPoolExecutor`, and
+  `submit` gives its worker a *fresh, empty* context -- so
+  `emit_progress` read `None` every time. The existing test could not
+  catch it because it replaced `api.main.ask` wholesale, which removes
+  the thread boundary that *was* the bug. **When a control depends on a
+  `ContextVar`, a test that mocks away the thread hop tests nothing.**
+  And the fix exposed `UI-010`: `emit_progress` fires *after* a node
+  returns, so the badge names the node that **finished**, not the one
+  running -- measured as 97 seconds reading "plan query" (0.05 ms) while
+  `generate_sql` (96,807 ms) ran. Two docstrings claimed otherwise and
+  are corrected; the protocol change is flagged.
+  Phase 9 also found `UI-012`, a real masking miss:
+  `governance/classification.py`'s compensation pattern carried
+  `annual[-_]?income` and not `yearly[-_]?income`, so
+  `DimCustomer.YearlyIncome` came back as `90000.0` to a caller without
+  `VIEW_RESTRICTED_COLUMNS` in the same row as four masked columns.
+  Fixed narrowly, with a companion test asserting `net_income` and
+  `operating_income` are **not** masked -- so a later widening to bare
+  `income` fails loudly instead of quietly over-blocking §5.8's
+  ordinary analytics.
+
+  Phase 7 (2026-10-29) fixed five findings and flagged two, and
+  **corrected a measurement every context budget in this repo is sized
+  against.** `config/settings.py` said the usable window is
+  `num_ctx / OLLAMA_NUM_PARALLEL` and to budget against half. Measured
+  on `llama3.1:8b` at `num_ctx=16384`, `/api/ps` confirming the served
+  length: a ~22,065-token prompt was processed **whole** at 15,442 real
+  tokens, and a ~50,065-token one came back at **8,194 with the system
+  prompt gone** (the probe put a codeword in the system prompt; the
+  model answered "There is no codeword"). So **the shape is a cliff, not
+  a taper** — a prompt is processed whole up to roughly the full
+  `num_ctx` and past that is cut to `num_ctx/2`, losing the *start*.
+  "Exactly half" is the post-truncation floor, not the admission limit.
+  `context_budget_max_chars` (32,000) and `web_search_context_max_chars`
+  (18,000) are therefore sized against half the real window and leave
+  ~50% of context unused — conservative in the safe direction, and
+  **deliberately not changed**, because raising them changes which
+  blocks reach the model and moves `docs/EVALUATION_CURRENT.md`'s
+  numbers. Also measured, and the reason the detector below uses a loose
+  ratio rather than trusting `CHARS_PER_TOKEN = 4`: real text here runs
+  **3.8–5.7 characters per token**, dense DDL to prose.
+  **The generalisable lesson is the one `CTX-006` fixes.** This codebase
+  already understood this failure precisely — `agent/context_budget.py`
+  and `rag/llm.py` both document it in their docstrings — and had no way
+  to tell whether either defence was working: `prompt_eval_count` was
+  logged on every call and never compared to what was *sent*. So every
+  Phase 7 finding had to be measured by hand, and any could have been
+  live for months silently. `agent.llm_client.report_prompt_truncation`
+  now warns on every one of the eleven Ollama call sites, each with its
+  own `label`. **Only `agent/llm_client.py`'s seven `client.chat` calls
+  and `rag.llm.call_ollama` may reach Ollama** (the standing rule
+  `LOP-004` established), which is what makes that coverage complete.
+  Three fixes were the same shape as `LOP-003` — a correct control
+  covering only some of the places it should, with nothing measuring the
+  gap. `CTX-002`: the context budget covered `generate_sql` but not
+  `plan_query` or `build_analytical_plan`, which embed the *same*
+  `schema_context`; both now assemble through one `_assemble_budgeted`
+  helper, so a future schema-bearing prompt is budgeted by construction.
+  `CTX-001`: the prompt registry's drift suite pinned "exactly the live
+  prompt set", but that set was a hand-maintained tuple in
+  `governance_center/inventory.py` and nothing compared it to the
+  repository — **eleven live prompts were outside it**, including all
+  three read from `prompts/*.md` at runtime (retunable with no code
+  change at all) and two assembled *inside a function*, where no
+  module-level inventory can see them. The inventory now holds 25, and
+  `tests/security/test_prompt_registry_covers_every_live_prompt.py`
+  scans the source tree with `ast` to close the other direction.
+  **Do not build a system prompt inside a function** — a test now fails
+  if you do. `CTX-005`: the attachment OCR fallback was appended *after*
+  `max_attachment_text_chars` was applied, so the ceiling was advisory
+  on the one path whose content is a user-uploaded file.
+  Flagged for an owner: `CTX-003` (**neither routing prompt states any
+  safety invariant** — `prompts/router.md` and the fallback classifier
+  both receive the question and the transcript and carry no
+  untrusted-data framing, which falsifies `governance_center/safety.py`'s
+  own docstring claim that every such prompt carries it; bounded by
+  `router_node`'s RBAC filter, and not fixed because editing a live
+  routing prompt changes routing behaviour that nothing measures) and
+  `CTX-007` (**schema retrieval is punctuation-sensitive** — "top
+  selling products" retrieves 5 tables, "top selling products."
+  retrieves 8 and "...?" 6. Case and whitespace do not matter because
+  `_extract_keywords` already normalises the lexical path; it is the
+  *embedding* query that is raw, and `_select_by_relevance` sizes its
+  result from the gap between consecutive scores, so a small vector
+  shift changes the *count*. **Do not "just add a `.strip()`"**: the
+  trailing-period variant retrieves `FactInternetSales`, arguably the
+  more correct table, and the entry above records that this exact
+  question is answered badly today — so normalising toward the base
+  behaviour may make retrieval worse. Decide with
+  `scripts/run_benchmark`, not from the code. Pinned by three
+  `xfail(strict=True)` tests).
+  One deliverable is explicitly **UNVERIFIED, not passed**: retrieval
+  recall/precision has no labelled fixture set, and
+  `docs/retrieval-evaluation.md` says so in its own opening.
+
+  Phase 8 (2026-10-29) fixed eight findings and flagged three, and
+  **two of its lessons are standing traps worth not rediscovering.**
+  *First:* **`assert` is not a control.** `python -O` and
+  `PYTHONOPTIMIZE=1` delete every `assert` from the bytecode, and three
+  boundaries were relying on one — the four JWT key checks in
+  `identity/security.py` (where removal turns a configuration failure
+  into an opaque **HTTP 500 on every login**, because the next line
+  calls `.get_secret_value()` on `None`),
+  `mcp_client/trust.py::assert_no_remote_tool_is_registered` (the trust
+  boundary keeping a remote MCP server's tools out of the local
+  registry) and `mcp_client/protocol.py`'s JSON-RPC newline-framing
+  check. All three raise now. **Narrowing-only asserts are deliberately
+  kept**, with a `# nosec B101` naming the real guarantee: the
+  distinction is whether removing the statement removes a control, not
+  whether the statement is an `assert`. Tested in a subprocess, since
+  `-O` is interpreter start-up state, with a test that proves asserts
+  really are stripped first so the rest cannot pass vacuously.
+  *Second, and this one has already cost one broken application:*
+  **`identity/models.py`'s module docstring is right and `mypy` is
+  wrong there, on purpose.** Do **not** close the four SQLAlchemy
+  `SQLCoreOperations[...]`-vs-`None` errors in
+  `identity/repositories/` by widening a column to `Mapped[X | None]`
+  or `Mapped[Optional[X]]`. SQLAlchemy's declarative resolution crashes
+  on a union annotation under this project's Python 3.14, and the
+  docstring states that mypy seeing those attributes as non-Optional is
+  the accepted cost of the workaround. A session did it anyway and
+  `import api.main` raised `TypeError: descriptor '__getitem__'
+  requires a 'typing.Union' object but received a 'tuple'` — the whole
+  application stopped importing. They are closed with line-scoped
+  `# type: ignore[assignment]` citing that docstring (`BP-015`).
+  Also measured and not to be re-derived. **Coverage had never been
+  measured in this project** — no coverage tooling was declared
+  anywhere and CI has no coverage step. `pytest-cov==7.0.0` is now in
+  `requirements-dev.txt`, and over the whole mocked suite:
+  `governance/` 98.7%, `identity/` 97.0%, `security/` 96.0%, `api/`
+  94.5%, `guardrails/` 93.3% (**95.4%** across the five), plus
+  `agent/sql_validator.py` **94%** and `agent/input_guard.py` 98%. Every
+  security-critical package clears 90%; **13 individual files do not**,
+  worst `identity/db.py` 69.6%, `api/jobs.py` 69.9%,
+  `identity/email.py` 71.4%, `api/chat_persistence.py` 76.1%. **No
+  coverage gate was added to CI on purpose** — picking a threshold is a
+  product decision, not an auditor's ratchet.
+  **Six packages were imported directly by production code and never
+  declared**, each present only through another package's dependency
+  tree: `requests` (which is what `security/outbound_url.py`, the SSRF
+  validator, makes its requests with), `httpx`, `av`,
+  `huggingface_hub`, `numpy` and `starlette` (imported by
+  `security/client_ip.py`, on the rate-limiting path). Same shape as the
+  `pyyaml` line already in `requirements.txt`.
+  `tests/test_declared_dependencies.py` derives this from the source
+  tree with `ast`, which is how it found four of the six that
+  inspection had missed — **a new direct import of a third-party
+  package must be declared, or that test fails.**
+  Flagged for an owner: **`BP-012` (S2) — `pymupdf` is AGPL-3.0**
+  (`License: Dual Licensed - GNU AFFERO GPL 3.0 or Artifex Commercial
+  License`), imported by `attachments/processors/pdf_processor.py` and
+  `rag/ingestion.py`, and `enable_chat_attachments` defaults to
+  **`True`**, so it is not behind an off-by-default flag;
+  `piper-tts` is GPL-3.0-or-later on the voice path. `LICENSE` here is
+  MIT and both ship in the single Docker image. AGPL's network clause
+  is the problem: serving software that uses AGPL code obliges you to
+  offer the whole work's source under AGPL, and this is a network-served
+  application. `pypdf` (BSD-3-Clause) is already a declared dependency
+  used elsewhere in `attachments/`, so a replacement path plausibly
+  exists. A legal decision, not an engineering one. Also flagged:
+  `BP-010` (`ai_generator_client.py` — 593 lines, zero importers, zero
+  tests, and importing it would bypass `security/outbound_url.py`,
+  bypass `Settings` for credentials, and call `logging.basicConfig()` at
+  import time, hijacking the root logger; pinned unwired by a guard
+  test) and `BP-013` (`LICENSE` still reads `Copyright (c) 2026 <Your
+  Name>`).
+  Verified clean rather than assumed, so a later phase need not recheck:
+  zero bare `except:` in production and no swallowed errors across 135
+  broad handlers (all log with `exc_info=True` or re-raise); **zero**
+  blocking calls and zero synchronous `run_agent`/`session.*` calls
+  lexically inside an `async def`; 0.85% of 6,713 tests carry no
+  assertion and all of those test code that raises on violation; and
+  repo hygiene clean, with the only absolute paths in tracked code being
+  two `/home/app/.cache` container paths.
+
+  Phase 11 (2026-10-30/31) fixed six findings and flagged six, and
+  **its most reusable lesson is about identifiers, not operations.**
+  `OPS-022`: two modules independently derive a name for the same
+  onboarded database -- `onboarding/env_registration.py`'s
+  `slugify_connection_name` produces the `DB_CONNECTIONS` entry
+  (`my_warehouse`), `onboarding/catalog_bridge.py`'s
+  `catalog_database_id_for_job` produces the catalog's `database_id`
+  (`My_Warehouse_<job8>`), and the catalog's id is what names the
+  vector-store collection. Business-context retrieval asks for
+  `knowledge_base__<selected_database>`, i.e. the *connection* name, so
+  it reads a collection that **does not exist**, while every published
+  chunk sits in one of **185** per-job collections (91% of all 203 in
+  the persist directory), each graded
+  `truth_level="confirmed_business_truth"`. Journeys J2 and J3 complete,
+  the review dashboard renders correctly, the publish reports success,
+  and the confirmed meaning never reaches a prompt. **It is wider than
+  retrieval**, which is what makes it S2: the SME review dashboard
+  (`api/semantic_catalog.py`) takes `database_id` as an ungated query
+  filter and so *can* see these entries, while every surface that would
+  **act** on one is keyed to a `DB_CONNECTIONS` name and cannot --
+  `api/kpi_monitoring.py` and `api/decision_center.py` resolve through
+  `_allowed_database` and therefore answer **404** for a per-job id,
+  which is not even an addressable input. The review loop is closed;
+  the consumption loop is not connected to it. **This is §4.8 ("one
+  owner per fact") applied to an identifier, and it is the failure mode
+  that rule exists for**: two correct derivations of one fact produce a
+  silent write-to-nowhere, with no error anywhere to find it by. When a
+  new surface needs the id of something that already has one, resolve it
+  from the existing authority rather than deriving it again. Flagged,
+  not fixed -- the job-id suffix is deliberate (it keeps two labels
+  differing only in punctuation apart, which the connection slug really
+  does collapse), so a fix must reconcile both schemes *and* backfill
+  185 collections and their `SemanticCatalogEntry.database_id` rows.
+  Pinned by two `xfail(strict=True)` in
+  `tests/test_onboarding_catalog_bridge.py`.
+  Two more worth not re-deriving. **This hardware serves one question at
+  a time**: three testers at once triples latency to ~195 s and six
+  breaks it (5 of 6 fail the 300 s per-call timeout, after which the
+  provider circuit breaker opens and penalises the *next* user), while
+  `max_concurrent_ask_requests` defaults to **50** and
+  `/questions/stats` advertises 100 per user -- so the first control a
+  burst meets is not admission control but a timeout (`OPS-020`,
+  flagged; the actionable form for UAT is to stagger testers, not to
+  change a default). And **a role can be simultaneously over- and
+  under-granted**, because this codebase authorizes in two structurally
+  different places: `identity/rbac.py`'s `_MANAGER = _ANALYST | {...}`
+  is a strict superset of `analyst`, while `manager` is **not a key** in
+  `agent.authz.ROLE_PERMISSIONS` and so grants nothing there -- the UAT
+  R3 account measured 24 permissions on one surface and 7 (vs
+  `analyst`'s 12) on the other (`OPS-023`). Checking one surface gives
+  the wrong answer in whichever direction you happened to check.

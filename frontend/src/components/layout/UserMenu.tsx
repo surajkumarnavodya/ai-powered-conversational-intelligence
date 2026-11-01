@@ -78,7 +78,19 @@ export function UserMenu({
         <button
           ref={triggerRef}
           type="button"
-          aria-label={t('userMenu.trigger')}
+          /* WCAG 2.5.3 (Label in Name). When initials are shown they are
+             the only thing on this control a user can read, so a
+             speech-input user says "UA", not "account menu" -- and the
+             accessible name has to contain it. Measured in Chrome
+             2026-10-29 (Phase 9, `UI-006`); axe counts `aria-hidden` text
+             as visible text for this rule, so hiding the initials does not
+             satisfy it, and hiding them would not help the speech-input
+             user either. The purpose stays in the name, after them. */
+          aria-label={
+            displayName
+              ? `${initialsFor(displayName)} - ${t('userMenu.trigger')}`
+              : t('userMenu.trigger')
+          }
           title={displayName ?? t('userMenu.trigger')}
           // The white ring is applied only when a *picture* is shown: it
           // exists to separate a photograph from the surface behind it,
@@ -103,6 +115,10 @@ export function UserMenu({
           {avatarUrl ? (
             <img src={avatarUrl} alt="" className="h-full w-full object-cover" />
           ) : displayName ? (
+            // Not `aria-hidden`: the initials are in the accessible name
+            // above, so they are a real (if terse) visible label rather
+            // than decoration. `aria-label` overrides element content when
+            // the name is computed, so this is announced once, not twice.
             initialsFor(displayName)
           ) : (
             <UserCircle className="h-4.5 w-4.5" />

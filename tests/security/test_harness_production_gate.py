@@ -143,13 +143,25 @@ class TestPhase1StructuralReview:
         """Per-execution state in a module global is cross-request
         contamination waiting to happen.
 
-        Three kinds of module-level name are legitimate and excluded:
+        Four kinds of module-level name are legitimate and excluded:
         UPPER_CASE constants, type aliases (a `Callable[...]` alias is a
-        type, not state), and the named process-health registries,
-        which hold provider and process state but never one
-        execution's.
+        type, not state), the named process-health registries -- which
+        hold provider and process state but never one execution's -- and
+        anything assigned a `ContextVar(...)`.
+
+        That last exclusion is a rule rather than another name in the
+        allowlist, which is the point. A `ContextVar` is per-thread and
+        per-task *by construction*, so it is the opposite of the shared
+        mutable global this test exists to forbid -- it is the mechanism
+        this package uses precisely to avoid one (see
+        `agent/harness/context.py`'s own docstring on why the envelope
+        cannot live in a closure). Naming each one instead meant the
+        second one (`_envelope_observer`, added for `LOP-005`) failed
+        this test despite being exactly as safe as the first, which is
+        an allowlist telling a maintainer to widen it -- the worst
+        instruction a security test can give.
         """
-        allowed_registries = {"_breakers", "_lock", "_default", "_current_envelope", "logger"}
+        allowed_registries = {"_breakers", "_lock", "_default", "logger"}
         for path in _HARNESS_DIR.glob("*.py"):
             tree = ast.parse(path.read_text(encoding="utf-8"))
             for node in tree.body:
@@ -165,7 +177,51 @@ class TestPhase1StructuralReview:
                         continue
                     if isinstance(value, ast.Subscript):
                         continue
+                    if (
+                        isinstance(value, ast.Call)
+                        and isinstance(value.func, ast.Name)
+                        and value.func.id == "ContextVar"
+                    ):
+                        continue
                     pytest.fail(f"{path.name} has module-level mutable state: {name}")
+
+    def test_the_context_var_exclusion_admits_only_context_vars(self):
+        """Keeps the exclusion above from becoming a blanket pass.
+
+        It matches on the constructor name, so a plain `dict()` or
+        `list()` at module scope must still fail. Asserted on the real
+        package: every module-level assignment in `agent/harness/` is
+        either a constant, a type alias, a named registry, or a
+        `ContextVar` -- and the two `ContextVar`s are the only ones the
+        new rule admits.
+        """
+        context_vars = set()
+        other_calls = set()
+        for path in _HARNESS_DIR.glob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in tree.body:
+                if not isinstance(node, ast.Assign | ast.AnnAssign):
+                    continue
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                value = node.value
+                for target in targets:
+                    if not isinstance(target, ast.Name) or target.id.isupper():
+                        continue
+                    if not isinstance(value, ast.Call) or not isinstance(value.func, ast.Name):
+                        continue
+                    if value.func.id == "ContextVar":
+                        context_vars.add(target.id)
+                    else:
+                        other_calls.add(f"{path.name}:{target.id}")
+
+        assert context_vars == {"_current_envelope", "_envelope_observer"}
+        # `telemetry.py:_default` is the named process-health registry
+        # the allowlist above already covers: one rollup of node and
+        # execution counts for the process, never one execution's state.
+        assert other_calls == {"telemetry.py:_default"}, (
+            "a module-level name built by a constructor other than ContextVar "
+            f"appeared in agent/harness/: {sorted(other_calls)}"
+        )
 
 
 class TestPhase4FailureInjection:

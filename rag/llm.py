@@ -19,7 +19,15 @@ import logging
 import httpx
 import ollama
 
-from agent.llm_client import decoding_options, ollama_unavailable_error
+from agent.harness.breakers import record_outcome
+from agent.harness.failures import FailureClass
+from agent.llm_client import (
+    decoding_options,
+    harness_ollama_client,
+    log_ollama_timing,
+    ollama_unavailable_error,
+    report_prompt_truncation,
+)
 from config.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -32,6 +40,8 @@ def call_ollama(
     max_tokens: int,
     temperature: float = 0.0,
     model: str | None = None,
+    label: str = "rag_llm",
+    images: list[bytes] | None = None,
 ) -> str:
     """Runs one Ollama chat call and returns the response text.
 
@@ -39,6 +49,16 @@ def call_ollama(
     analyst planner passes the caller's validated model choice through here);
     `None` keeps the pre-existing default, so every existing caller is
     unchanged.
+
+    `images` attaches raw image bytes to the user message, for a
+    vision-capable model. Added for `moderation.provider`'s local image
+    classifier, and deliberately added *here* rather than by giving that
+    module its own `client.chat`: the breaker, the per-execution model-call
+    budget, the deadline clamp, the usage rollup and the prompt-truncation
+    check are all things `harness_ollama_client` plus the two lines below
+    apply, and a second call site would escape every one of them
+    (`LOP-004`). `None` omits the key entirely, so no existing caller's
+    request shape changes.
 
     Decoding parameters come from `agent.llm_client.decoding_options`, the
     one owner of that policy. Until this call used it, the options dict
@@ -67,15 +87,17 @@ def call_ollama(
             callers (the RAG subgraph nodes) handle it identically to the
             SQL pipeline's own LLM-call failures.
     """
-    client = ollama.Client(
-        host=settings.ollama_host, timeout=settings.ollama_request_timeout_seconds
-    )
+    client = harness_ollama_client(settings)
     try:
         response = client.chat(
             model=model or settings.ollama_model,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
+                {
+                    "role": "user",
+                    "content": user_prompt,
+                    **({"images": images} if images else {}),
+                },
             ],
             # `temperature` is this helper's one per-call parameter, so it
             # is overlaid on the shared policy rather than dropped; every
@@ -84,7 +106,25 @@ def call_ollama(
             options={**decoding_options(settings, max_tokens), "temperature": temperature},
         )
     except (ollama.ResponseError, ConnectionError, TimeoutError, OSError, httpx.HTTPError) as exc:
+        record_outcome("ollama", FailureClass.MODEL_UNAVAILABLE)
         raise ollama_unavailable_error(settings, model or settings.ollama_model, exc) from exc
+
+    # Closes the breaker on success and records this call in the
+    # performance rollup -- the same one line every `client.chat` in
+    # `agent/llm_client.py` makes. Without it a breaker opened by a
+    # failure here would never recover from a success here, and
+    # `GET /metrics/performance` would under-count every model call the
+    # router, both RAG subgraphs, web search, media search and the
+    # analyst planner make.
+    log_ollama_timing(response)
+    # The one chokepoint for eight of this application's eleven Ollama
+    # call sites -- the router, both RAG subgraphs, web search, media
+    # search, the general-knowledge answer, attachment QA and the
+    # analyst planner all arrive here -- so checking once covers every
+    # prompt in the application that is assembled from retrieved or
+    # uploaded content. `label` names which, since they share this
+    # function (2026-10-29, UAT-readiness Phase 7, `CTX-006`).
+    report_prompt_truncation(len(system_prompt) + len(user_prompt), response, settings, label)
 
     return (
         response.get("message", {}).get("content", "")

@@ -24,6 +24,7 @@ ordinary retry-loop logs.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from collections import deque
@@ -93,6 +94,57 @@ def reset_audit_tenant_id(token: Token[str | None]) -> None:
 def get_audit_tenant_id() -> str | None:
     """Returns the tenant audit events are currently stamped with, or `None`."""
     return _tenant_id.get()
+
+
+#: A correlation ID is an opaque token, so the accepted shape is
+#: deliberately narrow: alphanumerics plus `.`, `_`, `:` and `-`, which
+#: covers a UUID, a W3C `traceparent` and the usual hex/dotted trace ids
+#: without admitting anything that changes how a log line parses.
+#: Anything else is discarded in favour of a server-generated id rather
+#: than cleaned up, because a correlation id carries no information this
+#: app needs -- there is nothing to preserve by salvaging it.
+_CORRELATION_ID_MAX_CHARS = 128
+_CORRELATION_ID_RE = re.compile(rf"\A[A-Za-z0-9._:-]{{1,{_CORRELATION_ID_MAX_CHARS}}}\Z")
+
+
+def sanitize_correlation_id(value: str | None) -> str | None:
+    """Returns `value` if it is a safe correlation ID, else `None`.
+
+    The correlation ID arrives from a client-supplied `X-Correlation-ID`
+    header and `CorrelationIdLogFilter` stamps it onto **every** log
+    record for that request, so it is raw untrusted input reaching every
+    log line -- exactly what `security.sanitization.truncate_for_log`'s
+    docstring says must never be logged unbounded. Left unchecked it was
+    all three of:
+
+    - **log-field forgery**: this app's log format is
+      `... | correlation_id=<id> | tenant_id=<id> | <message>`, so an id
+      containing a tab or a `|` injects further `key=value` pairs that a
+      downstream shipper parsing key/value pairs ingests as real fields.
+      Measured: an id of `x`, a tab, `level=CRITICAL`, a tab,
+      `event=admin_login_success` produced a log line carrying both
+      forged fields.
+    - **terminal escape injection**: an id containing ANSI escapes (an
+      ESC byte followed by `[31m`) is written verbatim into logs an
+      operator reads in a terminal.
+    - **unbounded log bloat**: a 4 KiB id was accepted and stamped onto
+      every record for the request.
+
+    Returning `None` rather than a scrubbed string lets the caller fall
+    back to a freshly generated id, which keeps correlation working
+    (every line for the request still shares one id) while attributing
+    nothing to client input.
+
+    Args:
+        value: The raw header value, or `None` when absent.
+
+    Returns:
+        The value unchanged when it matches `_CORRELATION_ID_RE`,
+        otherwise `None`.
+    """
+    if value is None:
+        return None
+    return value if _CORRELATION_ID_RE.match(value) else None
 
 
 def set_correlation_id(value: str | None) -> Token[str | None]:

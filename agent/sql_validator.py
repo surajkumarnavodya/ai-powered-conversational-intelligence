@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterable
 from typing import Literal
 
 import sqlglot
@@ -77,8 +78,45 @@ _DISALLOWED_NESTED_TYPES: tuple[type[exp.Expression], ...] = (
 #     (filesystem I/O); utl_inaddr (DNS/hostname resolution, exfiltration-
 #     capable); dbms_lock (sleep-based DoS); dbms_scheduler/dbms_java
 #     (arbitrary job/code execution).
+#
+# 2026-10-25, UAT-readiness Phase 2 (SEC-004/SEC-005). Two further classes
+# were found accepted by an adversarial sweep over this validator:
+#   - **Nested-SQL evaluators.** `query_to_xml('<sql>', ...)` (postgres) and
+#     `DBMS_XMLGEN.GETXML('<sql>')` (oracle) take a *query string* and
+#     execute it. The inner string is never parsed by sqlglot, so every
+#     check in `validate_sql` -- the statement-type allowlist, the
+#     system-catalog gate, this very denylist -- applies to the outer call
+#     and not to what actually runs. Measured: `SELECT query_to_xml('SELECT
+#     * FROM pg_authid', true, true, '')` was accepted, while the plain
+#     `SELECT ... FROM pg_authid` it wraps is refused. These are the one
+#     entry class here that is a *gate bypass* rather than an extra
+#     capability, which is why they are listed first.
+#   - **Transaction-log, trace and audit readers.** mssql `fn_dblog` /
+#     `fn_dump_dblog` read the transaction log and so can surface column
+#     values from recent modifications -- including rows a restricted-column
+#     gate protects in a normal SELECT; `fn_trace_gettable` and
+#     `fn_get_audit_file` read trace/audit files from disk;
+#     `fn_virtualfilestats` discloses storage paths. `sys.fn_dump_dblog` was
+#     already refused, but only incidentally, by the `sys.` schema check --
+#     the bare, unqualified `fn_dblog(...)` form was accepted.
+#   - postgres `pg_logdir_ls` lists the log directory (filesystem
+#     disclosure), completing the `pg_ls_dir`/`pg_stat_file` set above.
 _DANGEROUS_FUNCTION_NAMES: frozenset[str] = frozenset(
     {
+        # nested-SQL evaluators -- see the note above; these bypass the
+        # statement allowlist and the system-catalog gate entirely
+        "query_to_xml",
+        "query_to_xmlschema",
+        "query_to_xml_and_xmlschema",
+        "dbms_xmlgen",
+        "dbms_sql",
+        # transaction-log / trace / audit / log-directory readers
+        "fn_dblog",
+        "fn_dump_dblog",
+        "fn_trace_gettable",
+        "fn_get_audit_file",
+        "fn_virtualfilestats",
+        "pg_logdir_ls",
         "pg_sleep",
         "pg_read_file",
         "pg_read_binary_file",
@@ -309,6 +347,8 @@ ViolationType = Literal[
     "system_catalog_access",
     "nested_aggregate",
     "unsafe_query_option",
+    "unparseable_depth",
+    "row_lock",
 ]
 
 SAFETY_VIOLATION_TYPES: frozenset[str] = frozenset(
@@ -320,6 +360,13 @@ SAFETY_VIOLATION_TYPES: frozenset[str] = frozenset(
         "dangerous_function",
         "system_catalog_access",
         "unsafe_query_option",
+        # "unparseable_depth" is a safety violation rather than a retryable
+        # parse mistake on purpose: it means no check in this module was
+        # able to run at all, so nothing is *known* about the statement.
+        # Fail closed (CLAUDE.md §4.2), and never retry -- the same text
+        # would exhaust the stack again.
+        "unparseable_depth",
+        "row_lock",
     }
 )
 
@@ -342,7 +389,48 @@ SAFETY_VIOLATION_TYPES: frozenset[str] = frozenset(
 # (`OPTION (...)`/`QueryOption`), but the check below matches by node type,
 # not by dialect, so it applies uniformly regardless of which dialect
 # `validate_sql` was called with.
-_UNSAFE_QUERY_OPTION_NAMES: frozenset[str] = frozenset({"maxrecursion"})
+#
+# 2026-10-25, UAT-readiness Phase 2 (SEC-005): the adversarial sweep found
+# two sibling options accepted by the same check. `QUERYTRACEON n` enables
+# an undocumented engine trace flag for the query, and `MAXDOP 0` lifts the
+# parallelism cap to every core on the server -- a resource-exhaustion
+# lever reachable from a statement that is read-only in every other
+# respect. Both are flat denials for the same reason MAXRECURSION is: no
+# business question this app answers needs to override the engine's own
+# limits. `RECOMPILE`, `FAST n` and the join/aggregation hints are left
+# alone deliberately -- they change plan selection, not a safety bound.
+_UNSAFE_QUERY_OPTION_NAMES: frozenset[str] = frozenset({"maxrecursion", "querytraceon", "maxdop"})
+
+# 2026-10-25, UAT-readiness Phase 2 (SEC-003). Lock-taking and
+# lock-escalating constructs, reachable from a statement whose root is an
+# ordinary `exp.Select` and which therefore passes every check above:
+#   - `SELECT ... FOR UPDATE` / `FOR SHARE` / `FOR NO KEY UPDATE` (all four
+#     supported engines) parse to `exp.Lock` and take real row locks that
+#     block other transactions for the life of this one.
+#   - MSSQL table hints `WITH (TABLOCKX)`, `WITH (UPDLOCK, HOLDLOCK)` and
+#     friends parse to `exp.WithTableHint` and escalate to table-level or
+#     held locks -- an availability attack on a shared database issued from
+#     a query this app calls read-only.
+# Both are refused regardless of the configured dialect, by node type.
+#
+# `NOLOCK` / `READUNCOMMITTED` are deliberately **not** here: they *reduce*
+# isolation rather than escalate locking, they are ordinary idiom in MSSQL
+# reporting queries, and refusing them would reject correct SQL. They are a
+# data-consistency trade-off, not a safety bound, which is the line this
+# module draws everywhere else.
+_LOCK_ESCALATING_TABLE_HINTS: frozenset[str] = frozenset(
+    {
+        "tablock",
+        "tablockx",
+        "updlock",
+        "xlock",
+        "holdlock",
+        "paglock",
+        "rowlock",
+        "serializable",
+        "repeatableread",
+    }
+)
 
 
 def _find_unsafe_query_option(statement: exp.Expression) -> exp.Expression | None:
@@ -351,6 +439,25 @@ def _find_unsafe_query_option(statement: exp.Expression) -> exp.Expression | Non
         name = (getattr(name_node, "this", None) or "").lower()
         if name in _UNSAFE_QUERY_OPTION_NAMES:
             return option
+    return None
+
+
+def _find_lock_construct(statement: exp.Expression) -> exp.Expression | None:
+    """Returns the first lock-taking/escalating node anywhere in the tree.
+
+    `find_all` rather than reading `statement.args["locks"]`, because a
+    `FOR UPDATE` inside a subquery or a CTE sits on that inner `Select` and
+    not on the root -- the same reason the write/DDL check above walks the
+    whole tree.
+    """
+    lock = next(statement.find_all(exp.Lock), None)
+    if lock is not None:
+        return lock
+    for hint in statement.find_all(exp.WithTableHint):
+        for item in hint.expressions:
+            name = (getattr(item, "name", "") or "").lower()
+            if name in _LOCK_ESCALATING_TABLE_HINTS:
+                return hint
     return None
 
 
@@ -511,6 +618,16 @@ def validate_sql(sql: str, dialect: str | None = DEFAULT_DIALECT) -> ValidationR
     Rejects:
         - Empty input.
         - SQL that fails to parse.
+        - SQL nested deeply enough to exhaust the interpreter stack inside
+          sqlglot's recursive-descent parser. Fails closed with
+          `violation_type="unparseable_depth"` (a *safety* violation, see
+          `SAFETY_VIOLATION_TYPES`) rather than letting the `RecursionError`
+          escape, because when the parse cannot complete, none of the checks
+          below have run and nothing at all is known about the statement.
+        - A lock-taking or lock-escalating construct -- `FOR UPDATE`,
+          `FOR SHARE`, or an MSSQL `WITH (TABLOCKX)`-style table hint --
+          which is read-only in its projection but still blocks other
+          transactions.
         - More than one statement (blocks `SELECT 1; DROP TABLE x`).
         - Any root statement type other than SELECT/UNION/EXCEPT/INTERSECT
           (blocks INSERT/UPDATE/DELETE/DROP/ALTER/TRUNCATE/ATTACH/COPY/etc.).
@@ -550,6 +667,64 @@ def validate_sql(sql: str, dialect: str | None = DEFAULT_DIALECT) -> ValidationR
 
     Returns:
         A `ValidationResult`.
+    """
+    try:
+        return _validate_sql_checks(sql, dialect)
+    except RecursionError:
+        # 2026-10-25, UAT-readiness Phase 2 (SEC-002). sqlglot parses by
+        # recursive descent, and walks/regenerates the tree the same way, so
+        # nesting depth in the *input* maps directly onto interpreter stack
+        # depth. `RecursionError` is a `RuntimeError`, not a `SqlglotError`,
+        # so the inner handler never saw it and it escaped this module --
+        # turning the security boundary into a crash instead of a refusal.
+        # Measured before this guard existed: a **90-byte** payload,
+        # `SELECT ` followed by 41 nested parentheses, raised; so did `ABS(`
+        # x37, `NOT ` x81, and `(SELECT * FROM ` x89. Reachable from every
+        # caller-supplied-SQL route, none of which caps the text length
+        # (`api/schemas.py::ExecuteRequest.sql` is `min_length=1` with no
+        # maximum).
+        #
+        # Wrapped around the whole check sequence, not just the parse: the
+        # tree walks (`statement.walk()`, `find_all`) and the final
+        # `statement.sql(dialect=...)` regeneration recurse over the same
+        # depth, so a payload that parses just under the limit can still
+        # raise further down.
+        #
+        # Caught rather than bounded by a pre-parse length/depth scan because
+        # the raising shapes share no one measurable feature: `NOT NOT ...
+        # 1=1` has no brackets at all, so a bracket-depth counter would miss
+        # it, while a length cap would reject legitimate long queries. The
+        # exception is the accurate signal, and catching it unwinds the
+        # frames it consumed.
+        #
+        # Classified as a safety violation, not a retryable parse error:
+        # when the analysis does not complete, the statement is *unanalyzed*
+        # rather than merely malformed, and re-running the same text would
+        # raise again.
+        logger.warning(
+            "[sql_validator] refused SQL that exhausted the parser's recursion "
+            "limit (%d characters) -- failing closed, nothing about the "
+            "statement could be checked",
+            len(sql),
+        )
+        return ValidationResult(
+            is_valid=False,
+            error=(
+                "The SQL is nested too deeply to be analyzed safely and is refused "
+                "for that reason -- not because of anything it was found to contain. "
+                "Rewrite it with less nesting (fewer parentheses, subqueries or "
+                "chained NOTs)."
+            ),
+            violation_type="unparseable_depth",
+        )
+
+
+def _validate_sql_checks(sql: str, dialect: str | None) -> ValidationResult:
+    """The check sequence itself. See `validate_sql`, which is its only caller.
+
+    Split out purely so one `except RecursionError` in `validate_sql` can
+    cover the parse, every tree walk, and the final regeneration -- all three
+    recurse over the input's nesting depth.
     """
     stripped = sql.strip().rstrip(";").strip()
     if not stripped:
@@ -682,6 +857,18 @@ def validate_sql(sql: str, dialect: str | None = DEFAULT_DIALECT) -> ValidationR
                 "recursion cap), regardless of what the query is trying to compute."
             ),
             violation_type="unsafe_query_option",
+        )
+
+    lock_construct = _find_lock_construct(statement)
+    if lock_construct is not None:
+        return ValidationResult(
+            is_valid=False,
+            error=(
+                f"'{lock_construct.sql(dialect=dialect)}' is not allowed -- it takes or "
+                "escalates database locks, which blocks other transactions even though "
+                "the query itself only reads. This app's queries never lock."
+            ),
+            violation_type="row_lock",
         )
 
     return ValidationResult(
@@ -871,7 +1058,7 @@ class SqlShape(BaseModel):
     is_distinct: bool = False
 
 
-def _render_shape_items(nodes: object) -> tuple[str, ...]:
+def _render_shape_items(nodes: Iterable[exp.Expression] | None) -> tuple[str, ...]:
     """Renders AST nodes back to SQL text, de-duplicated and bounded.
 
     De-duplication matters: an aggregate repeated in `SELECT` and
@@ -879,7 +1066,7 @@ def _render_shape_items(nodes: object) -> tuple[str, ...]:
     Order is preserved so the rendering follows the statement.
     """
     seen: list[str] = []
-    for node in nodes or ():  # type: ignore[union-attr]
+    for node in nodes or ():
         try:
             text = node.sql().strip()
         # nosec B112 - `describe_sql` is a presentation aid (CLAUDE.md 4.2: an
@@ -1273,3 +1460,262 @@ def qualify_table_schema(
         if not table.args.get("db"):
             table.set("db", exp.to_identifier(schema))
     return statement.sql(dialect=dialect)
+
+
+class ProjectionSources(BaseModel):
+    """What each output column of one statement was computed from.
+
+    Two views of the same facts, because neither alone reaches every
+    projection shape:
+
+    * `by_name` keys on the output column's own name. It survives wildcard
+      expansion and compound-query merging, and is what CTE resolution
+      produces.
+    * `in_order` keys on projection position. It is the only way to reach
+      an **unaliased** expression (`SELECT salary * 1`), whose output name
+      the driver invents. Empty unless the statement is a single `Select`
+      with no wildcard, where position is unambiguous.
+
+    A consumer should use `in_order` when its length matches the result's
+    column count and fall back to `by_name` otherwise -- see
+    `governance.result_policy._source_names_for_column`.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    by_name: dict[str, frozenset[str]] = {}
+    in_order: tuple[frozenset[str], ...] = ()
+
+
+#: Guards `projection_source_columns`'s walk through chained CTEs. A
+#: recursive CTE references itself, and a long `WITH a AS (...), b AS
+#: (SELECT ... FROM a), ...` chain is legitimate, so the walk needs a
+#: bound that is neither "no recursion" nor "unbounded".
+_MAX_PROJECTION_RESOLUTION_DEPTH = 12
+
+
+def _projection_is_aggregated(projection: exp.Expression) -> bool:
+    """Whether this output expression aggregates over rows.
+
+    Kept separate because it marks the one deliberate limit of
+    `projection_source_columns` -- see that function's own note on
+    aggregates.
+    """
+    return any(isinstance(node, exp.AggFunc) for node in projection.walk())
+
+
+def _select_output_sources(
+    select: exp.Expression,
+    cte_outputs: dict[str, dict[str, frozenset[str]]],
+    depth: int,
+) -> dict[str, frozenset[str]]:
+    """One query level's output name -> the base column names it reads.
+
+    Name-keyed, which is what CTE resolution needs. `projection_source_columns`
+    additionally returns the same information in projection *order*, because
+    an unaliased expression (`SELECT salary * 1`) has no output name of its
+    own -- the driver invents one -- and position is then the only way to
+    reach it.
+    """
+    if depth > _MAX_PROJECTION_RESOLUTION_DEPTH:
+        return {}
+
+    # A compound query contributes every branch's sources under the same
+    # output names: `SELECT salary AS c FROM e UNION ALL SELECT 0 AS c`
+    # must inherit `salary` for `c`, not be let through because one branch
+    # happens to be a literal.
+    if isinstance(select, exp.Union | exp.Except | exp.Intersect):
+        merged: dict[str, frozenset[str]] = {}
+        for side in (select.left, select.right):
+            if side is None:
+                continue
+            for name, branch_sources in _select_output_sources(
+                side, cte_outputs, depth + 1
+            ).items():
+                merged[name] = merged.get(name, frozenset()) | branch_sources
+        return merged
+
+    if not isinstance(select, exp.Select):
+        return {}
+
+    outputs: dict[str, frozenset[str]] = {}
+    for projection in select.expressions:
+        name = (projection.alias_or_name or "").lower()
+        if not name or name == "*":
+            # `SELECT *` and `t.*` name nothing of their own. They are
+            # already safe: a wildcard preserves the base column names, so
+            # the existing name-based classification sees them unchanged.
+            continue
+        if _projection_is_aggregated(projection):
+            outputs.setdefault(name, frozenset())
+            continue
+        sources: set[str] = set()
+        for column in projection.find_all(exp.Column):
+            column_name = (column.name or "").lower()
+            if not column_name or column_name == "*":
+                continue
+            sources.add(column_name)
+            # Reading a CTE's output column inherits whatever that CTE's
+            # own projection read, which is how `WITH x AS (SELECT salary
+            # AS region ...) SELECT region FROM x` resolves back to
+            # `salary`. Additive on purpose -- a name is never dropped,
+            # only ever joined by the names behind it.
+            for cte_name, cte_map in cte_outputs.items():
+                del cte_name  # the match is on the column, not the CTE's name
+                sources |= cte_map.get(column_name, frozenset())
+        if sources:
+            outputs[name] = outputs.get(name, frozenset()) | frozenset(sources)
+    return outputs
+
+
+def projection_source_columns(sql: str, dialect: str | None = DEFAULT_DIALECT) -> ProjectionSources:
+    """Maps each output column name to the base column names it reads.
+
+    2026-10-25, UAT-readiness Phase 2 (SEC-006). The result-governance
+    gate classifies a result's **returned column names**, which is the
+    right default -- it catches `SELECT *`, a `UNION`, and any projection
+    that keeps the column's own name. What it cannot see is a *rename*:
+    `SELECT salary AS region FROM employees` returns a column called
+    `region`, which classifies as ordinary business data, so the value was
+    returned in the clear. Measured against the shipped configuration, 13
+    of 14 rename and wrapper variants defeated the gate this way,
+    including `SELECT password_hash AS note`, whose category no role may
+    ever see.
+
+    This function supplies the missing half: the names *behind* each
+    output column, so the gate can classify an output by the strictest of
+    (its own name, every name it was computed from). It resolves through
+    aliases, single-argument wrappers (`UPPER`, `CAST`, arithmetic),
+    CTE renames, and every branch of a compound query.
+
+    **Aggregates are deliberately excluded**, and this is the one place
+    that judgement is recorded. An aggregated projection maps to an empty
+    source set, so `AVG(salary) AS avg_pay` is *not* masked by this
+    mechanism. Masking it would reject ordinary, legitimate analytics --
+    "average pay by department" is the normal case, not an attack -- and
+    CLAUDE.md §5.8 names over-blocking ordinary analytics as its own
+    failure mode. The narrow residual, an aggregate over one row
+    (`MAX(salary) WHERE id = 7`), is what small-group suppression exists
+    for, and extending that to this shape is a policy decision rather
+    than a defect fix. It is reported as an open item, not silently
+    closed here.
+
+    Args:
+        sql: The statement whose result is being governed. On the governed
+            path this has already passed `validate_sql`, so it parses.
+        dialect: sqlglot dialect to parse with.
+
+    Returns:
+        A `ProjectionSources`. Both of its views can legitimately be
+        empty -- that leaves the caller's own name-based classification
+        exactly as it was. This function only ever *adds* names to
+        classify, so an empty result is a no-op and never a relaxation.
+    """
+    try:
+        statement = sqlglot.parse_one(sql, read=dialect)
+    except (SqlglotError, RecursionError):
+        # Unreachable on the governed path (`validate_sql` parsed the same
+        # text with the same dialect first, and refuses what it cannot).
+        # Returning an empty map here is a no-op, not a weakening: the
+        # name-based gate still runs on every column.
+        logger.debug("[sql_validator] projection sources unavailable: SQL did not re-parse")
+        return ProjectionSources()
+
+    cte_outputs: dict[str, dict[str, frozenset[str]]] = {}
+    for cte in statement.find_all(exp.CTE):
+        cte_name = (cte.alias_or_name or "").lower()
+        if not cte_name:
+            continue
+        cte_outputs[cte_name] = _select_output_sources(cte.this, cte_outputs, 0)
+
+    by_name = _select_output_sources(statement, cte_outputs, 0)
+    ordered = _ordered_projection_sources(statement, cte_outputs)
+    return ProjectionSources(by_name=by_name, in_order=ordered)
+
+
+def _ordered_projection_sources(
+    statement: exp.Expression,
+    cte_outputs: dict[str, dict[str, frozenset[str]]],
+) -> tuple[frozenset[str], ...]:
+    """The same source sets, in the order the projections appear.
+
+    Only produced for a single `Select` whose projection list has no
+    wildcard: a `SELECT *` expands to a column count this function cannot
+    know, and a compound query's branches are already merged by name, so in
+    both cases position would be a guess. Returns `()` then, and the
+    name-keyed map is used alone.
+    """
+    if not isinstance(statement, exp.Select):
+        return ()
+    projections = list(statement.expressions)
+    if any(
+        isinstance(projection, exp.Star) or projection.find(exp.Star) is not None
+        for projection in projections
+    ):
+        return ()
+    ordered: list[frozenset[str]] = []
+    for projection in projections:
+        if _projection_is_aggregated(projection):
+            ordered.append(frozenset())
+            continue
+        sources: set[str] = set()
+        for column in projection.find_all(exp.Column):
+            column_name = (column.name or "").lower()
+            if not column_name or column_name == "*":
+                continue
+            sources.add(column_name)
+            for cte_map in cte_outputs.values():
+                sources |= cte_map.get(column_name, frozenset())
+        ordered.append(frozenset(sources))
+    return tuple(ordered)
+
+
+#: Collapses every run of whitespace, for the text fallback in
+#: `canonical_sql_form` below.
+_COLLAPSE_WHITESPACE = re.compile(r"\s+")
+
+
+def canonical_sql_form(sql: str, dialect: str | None = DEFAULT_DIALECT) -> str:
+    """A canonical rendering of `sql`, for "is this the same query?".
+
+    2026-10-28, UAT-readiness Phase 6 (`LOP-002`). The agent's retry loop
+    needs to tell a genuinely new attempt from the model handing back the
+    statement it was just told was wrong, and it needs that answer for
+    text that may not parse at all -- the `parse_error` retry path is one
+    of the loops being bounded.
+
+    So: parsed and regenerated through sqlglot wherever the statement
+    parses, which canonicalizes keyword case, quoting and layout
+    **without** touching string literals. That distinction is the point.
+    `WHERE name = 'bob'` and `WHERE name = 'BOB'` stay different queries,
+    because they are, and collapsing them would stop a run that was
+    making progress. Where it does not parse, the fallback is
+    whitespace-collapsed, upper-cased raw text -- cruder, but it still
+    catches the exact repeat, which is the case that matters there.
+
+    Lives here, beside `validate_sql` and `projection_source_columns`,
+    because this module is the one owner of sqlglot parsing in the agent
+    (CLAUDE.md 4.8), and it already carries the `RecursionError` guard
+    that every sqlglot call site in this codebase needs: sqlglot parses by
+    recursive descent, so a deeply-nested input raises a `RuntimeError`
+    rather than a `SqlglotError` (CLAUDE.md 5.1). This is an efficiency
+    aid rather than a gate, so it degrades to the text form instead of
+    refusing -- an unparseable statement is already refused by
+    `validate_sql`, which is the control.
+
+    Args:
+        sql: Any SQL text, parseable or not.
+        dialect: sqlglot dialect to parse with.
+
+    Returns:
+        A string that is equal for two statements differing only in
+        layout or keyword case, and unequal whenever anything the
+        database would read differently changed.
+    """
+    try:
+        statement = sqlglot.parse_one(sql, read=dialect)
+        if statement is not None:
+            return statement.sql(dialect=dialect)
+    except (SqlglotError, RecursionError):
+        logger.debug("[sql_validator] canonical form fell back to the text comparison")
+    return _COLLAPSE_WHITESPACE.sub(" ", sql).strip().upper()

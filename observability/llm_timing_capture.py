@@ -1,6 +1,6 @@
 """Captures Ollama's own per-call timing/token counts from `agent.llm_client`'s
 log output -- currently the only channel that exposes this data at all
-(`AgentState` doesn't carry it; see `agent.llm_client._log_ollama_timing`'s
+(`AgentState` doesn't carry it; see `agent.llm_client.log_ollama_timing`'s
 own docstring for why wall-clock alone can't substitute for it: it can't
 distinguish model-load time from prompt-processing time from generation
 time, and only Ollama's own response fields can).
@@ -31,7 +31,7 @@ _TIMING_LINE_RE = re.compile(
 @dataclass(frozen=True)
 class LlmCallTiming:
     """One real Ollama call's own reported timing/token breakdown -- see
-    `agent.llm_client._log_ollama_timing` for what each field measures."""
+    `agent.llm_client.log_ollama_timing` for what each field measures."""
 
     total_ms: float
     load_ms: float
@@ -99,7 +99,7 @@ def capture_llm_timings() -> Iterator[LlmTimingCapture]:
     for the whole block), not limited to the first call.
 
     Forces the `agent.llm_client` logger to INFO for the duration
-    (`_log_ollama_timing` logs at INFO -- if the process-wide log level is
+    (`log_ollama_timing` logs at INFO -- if the process-wide log level is
     configured coarser, e.g. WARNING, the logger's *effective* level would
     suppress the record before it's even constructed, regardless of a
     handler being attached) and restores its prior level afterward, rather

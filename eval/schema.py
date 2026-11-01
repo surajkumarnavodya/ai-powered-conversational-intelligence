@@ -161,6 +161,17 @@ class BenchmarkCase:
     # ("not applicable") for a case that doesn't.
     expected_intent: str | None = None
     expect_ambiguity: bool = False
+    # UAT-readiness Phase 5: which journey of
+    # `docs/certification/UAT_SCRIPTS_AND_SIGNOFF.md` this case belongs to
+    # (`"J5"`, `"J7"`, ...), and which SQL dialect it is authored for.
+    # Both optional and empty by default, so every pre-existing
+    # `eval/benchmark/*.yaml` case is unchanged; the UAT golden set in
+    # `eval/uat_golden/` is the dataset that sets them, and
+    # `tests/test_uat_golden_set.py` is what asserts they stay consistent
+    # with the journey list. Metadata only -- no evaluator reads either,
+    # because neither says anything about whether an answer is correct.
+    journey: str = ""
+    dialect: str = ""
     notes: str = ""
 
 
@@ -196,6 +207,9 @@ class FollowUpCase:
     turns: tuple[FollowUpTurn, ...]
     difficulty: Difficulty = "real_world"
     category: str = "follow_up"
+    #: See `BenchmarkCase.journey` / `.dialect`.
+    journey: str = ""
+    dialect: str = ""
     notes: str = ""
 
 
@@ -263,7 +277,7 @@ class CaseRunResult:
     cost_estimate_rows: float | None = None
     complexity_score: int | None = None
     # Ollama's own reported token counts (see agent/llm_client.py's
-    # `_log_ollama_timing`), captured by `eval.runner` via a temporary log
+    # `log_ollama_timing`), captured by `eval.runner` via a temporary log
     # handler on the `agent.llm_client` logger -- "where available" per the
     # benchmark request, since this is the only channel that currently
     # exposes them (AgentState itself doesn't carry token counts). None if

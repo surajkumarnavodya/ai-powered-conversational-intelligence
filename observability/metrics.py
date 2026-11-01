@@ -44,7 +44,7 @@ singleton/lock rather than standing up a second metrics object.
 The AI usage rollup (catalogue row 45) is a fourth such cumulative
 counter, added the same way: `record_llm_call` sums Ollama's own
 per-call `prompt_eval_count`/`eval_count` per model name, fed from
-`agent.llm_client._log_ollama_timing` -- the one point all of that
+`agent.llm_client.log_ollama_timing` -- the one point all of that
 module's `client.chat` calls already funnel through, which is why no
 call site changed. **Tokens only; this module reports no monetary
 figure**, because the LLM runs locally and no per-token price exists for
@@ -322,7 +322,7 @@ class PerformanceMetrics:
         """Adds one LLM call's own reported token counts to `tenant_id`'s
         cumulative per-model usage rollup (catalogue row 45).
 
-        Called by `agent.llm_client._log_ollama_timing` -- the single point
+        Called by `agent.llm_client.log_ollama_timing` -- the single point
         every one of that module's `client.chat` calls already funnels
         through, which is why no call site needed changing and why a future
         call site is counted for free. See that function's docstring for the

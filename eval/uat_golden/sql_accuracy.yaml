@@ -1,0 +1,484 @@
+# UAT golden set -- the SQL accuracy journeys (J4, J5, J9, J11, J15, J17).
+#
+# See this directory's README.md for what is and is not machine-checkable
+# here. A case whose notes say GOLD SQL REQUIRED needs its `expected_sql`
+# filled in, once, against the real UAT database, before this file is an
+# accuracy gate rather than a structure gate.
+#
+# Table names are AdventureWorks-DW shaped, matching eval/benchmark/*.yaml.
+# The `hr` cases use the HR database's own `employee` schema and carry no
+# expected_tables, because no introspected table list for it existed when
+# these were authored -- naming guessed tables would be worse than naming
+# none.
+
+cases:
+  # --- J5: ask a question (the baseline journey) ------------------------
+  - id: uat_j5_simple_count
+    question: "How many products are there?"
+    database: AdventureWorksDW2025
+    difficulty: easy
+    category: aggregation
+    journey: J5
+    dialect: mssql
+    expected_tables: [DimProduct]
+    min_rows: 1
+    max_rows: 1
+    notes: >-
+      Journey step 5.1, the simplest possible question. A single-row,
+      single-column result, so no insight is expected (see
+      agent.insight.should_skip_insight). GOLD SQL REQUIRED.
+
+  - id: uat_j5_filtered_list
+    question: "List the products that are the color black."
+    database: AdventureWorksDW2025
+    difficulty: easy
+    category: simple_filtering
+    journey: J5
+    dialect: mssql
+    expected_tables: [DimProduct]
+    expect_readable_result: true
+    min_rows: 1
+    notes: >-
+      Step 5.3: a filter the tester can verify by eye. expect_readable_result
+      guards the "returns a bare surrogate key instead of a name"
+      regression that agent/display_name_guard.py exists for. GOLD SQL
+      REQUIRED.
+
+  - id: uat_j5_top_n_by_measure
+    question: "What are the top 10 products by total sales?"
+    database: AdventureWorksDW2025
+    difficulty: medium
+    category: joins
+    journey: J5
+    dialect: mssql
+    expected_tables: [FactInternetSales, DimProduct]
+    expect_readable_result: true
+    expect_grounded_insight: true
+    min_rows: 1
+    max_rows: 10
+    notes: >-
+      The single most common shape this product answers. max_rows pins that
+      "top 10" actually limits. GOLD SQL REQUIRED.
+
+  - id: uat_j5_group_by_dimension
+    question: "What are total sales by product category?"
+    database: AdventureWorksDW2025
+    difficulty: medium
+    category: multi_table_analysis
+    journey: J5
+    dialect: mssql
+    expected_tables: [FactInternetSales, DimProduct, DimProductCategory]
+    expect_readable_result: true
+    expect_grounded_insight: true
+    min_rows: 1
+    notes: >-
+      A three-hop join. Also the HAL-003 regression shape: the display-name
+      repair rewrites a key label into a name here, and the measure must
+      survive it. GOLD SQL REQUIRED.
+
+  - id: uat_j5_group_by_territory
+    question: "What are total sales by sales territory?"
+    database: AdventureWorksDW2025
+    difficulty: medium
+    category: multi_table_analysis
+    journey: J5
+    dialect: mssql
+    expected_tables: [FactInternetSales, DimSalesTerritory]
+    expect_readable_result: true
+    min_rows: 1
+    notes: "GOLD SQL REQUIRED."
+
+  - id: uat_j5_unanswerable_from_data
+    question: "What will our sales be in 2032?"
+    database: AdventureWorksDW2025
+    difficulty: real_world
+    category: business_questions
+    journey: J5
+    dialect: mssql
+    expected_behavior: fail_safely
+    notes: >-
+      Journey step 5.5, and the most important case in this file: the
+      product must say it cannot answer rather than invent a figure. A
+      future year is not in the data, so any number returned is
+      fabricated. `fail_safely` rather than a rejection reason because the
+      honest outcome is either a clean refusal or an empty result with no
+      invented figure -- both are acceptable, a number is not.
+
+  - id: uat_j5_column_that_does_not_exist
+    question: "What is the average employee satisfaction score per product?"
+    database: AdventureWorksDW2025
+    difficulty: real_world
+    category: incomplete_questions
+    journey: J5
+    dialect: mssql
+    expected_behavior: fail_safely
+    notes: >-
+      Schema hallucination, from the user's side. There is no satisfaction
+      score in a sales warehouse, so the MISSING_REFERENCE path
+      (agent.error_classification) should route back to retrieve_schema,
+      exhaust the bounded retry budget and report honestly. A plausible
+      number here would be the worst possible outcome.
+
+  # --- J4: governed metric correctness ---------------------------------
+  - id: uat_j4_total_revenue
+    question: "What was our total revenue last year?"
+    database: AdventureWorksDW2025
+    difficulty: real_world
+    category: metric_consistency
+    journey: J4
+    dialect: mssql
+    expected_tables: [FactInternetSales]
+    min_rows: 1
+    notes: >-
+      Journey step 4.1 -- the figure an SME already knows independently.
+      GOLD SQL REQUIRED, and it must be the *governed* metric's own
+      approved expression, not a hand-written equivalent, so that
+      review_metric_conformance_node is what this case actually tests.
+
+  - id: uat_j4_revenue_phrased_differently
+    question: "How much did we sell in total over the last full year?"
+    database: AdventureWorksDW2025
+    difficulty: real_world
+    category: metric_consistency
+    journey: J4
+    dialect: mssql
+    expected_tables: [FactInternetSales]
+    min_rows: 1
+    notes: >-
+      Deliberately the same metric as uat_j4_total_revenue in different
+      words. This framework scores each case against its own expected_sql
+      and has no cross-case equivalence check (see
+      eval/schema.py's metric_consistency note), so the two must be given
+      the *same* gold SQL for this pair to mean anything. GOLD SQL REQUIRED.
+
+  - id: uat_j4_average_order_value
+    question: "What is the average order value?"
+    database: AdventureWorksDW2025
+    difficulty: medium
+    category: aggregation
+    journey: J4
+    dialect: mssql
+    expected_tables: [FactInternetSales]
+    min_rows: 1
+    max_rows: 1
+    notes: "GOLD SQL REQUIRED."
+
+  - id: uat_j4_customer_count_distinct
+    question: "How many distinct customers bought something?"
+    database: AdventureWorksDW2025
+    difficulty: medium
+    category: aggregation
+    journey: J4
+    dialect: mssql
+    expected_tables: [FactInternetSales]
+    min_rows: 1
+    max_rows: 1
+    notes: >-
+      Distinct-count rather than row-count. A regression here reads as a
+      plausible number, which is why it is in the golden set. GOLD SQL
+      REQUIRED.
+
+  # --- J9: analysis, trends, anomalies ---------------------------------
+  - id: uat_j9_sales_by_year
+    question: "What were total sales by year?"
+    database: AdventureWorksDW2025
+    difficulty: medium
+    category: date_filtering
+    journey: J9
+    dialect: mssql
+    expected_tables: [FactInternetSales, DimDate]
+    expect_grounded_insight: true
+    min_rows: 2
+    notes: >-
+      Journey step 9.1. A real chronology, so this is the case that must
+      still produce a trend after HAL-001 gated _compute_trend on a
+      period-shaped label column -- min_rows 2 because a single period has
+      nothing to trend. GOLD SQL REQUIRED.
+
+  - id: uat_j9_sales_by_month
+    question: "Show monthly sales for the most recent full year."
+    database: AdventureWorksDW2025
+    difficulty: medium
+    category: date_filtering
+    journey: J9
+    dialect: mssql
+    expected_tables: [FactInternetSales, DimDate]
+    expect_grounded_insight: true
+    min_rows: 2
+    max_rows: 12
+    notes: "GOLD SQL REQUIRED."
+
+  - id: uat_j9_growth_year_over_year
+    question: "How did sales change from one year to the next?"
+    database: AdventureWorksDW2025
+    difficulty: hard
+    category: window_functions
+    journey: J9
+    dialect: mssql
+    expected_tables: [FactInternetSales, DimDate]
+    min_rows: 1
+    notes: >-
+      A period-over-period question, which is where a fabricated direction
+      would surface in prose (HAL-002's direction check). GOLD SQL
+      REQUIRED.
+
+  - id: uat_j9_top_category_share
+    question: "Which product category accounts for the largest share of sales?"
+    database: AdventureWorksDW2025
+    difficulty: medium
+    category: group_by_having
+    journey: J9
+    dialect: mssql
+    expected_tables: [FactInternetSales, DimProduct, DimProductCategory]
+    expect_readable_result: true
+    expect_grounded_insight: true
+    min_rows: 1
+    notes: >-
+      A superlative question, so the insight is expected to name the top
+      label -- HAL-002's superlative check is what makes naming the wrong
+      one a dropped insight rather than a shown one. GOLD SQL REQUIRED.
+
+  - id: uat_j9_outlier_shaped
+    question: "Are there any products with unusually high sales compared to the rest?"
+    database: AdventureWorksDW2025
+    difficulty: real_world
+    category: business_questions
+    journey: J9
+    dialect: mssql
+    expected_tables: [FactInternetSales, DimProduct]
+    min_rows: 1
+    notes: >-
+      Journey step 9.2. Deliberately vague: the acceptable outcomes are a
+      ranked result the tester can judge, or a clarification -- not an
+      invented threshold. GOLD SQL REQUIRED.
+
+  # --- J11: charts and exports -----------------------------------------
+  - id: uat_j11_chartable_two_column
+    question: "Show sales by country as a chart."
+    database: AdventureWorksDW2025
+    difficulty: medium
+    category: multi_table_analysis
+    journey: J11
+    dialect: mssql
+    expected_tables: [FactInternetSales, DimSalesTerritory]
+    expect_readable_result: true
+    min_rows: 2
+    notes: >-
+      Journey step 11.1 needs a label/measure pair for the axis binding to
+      have anything to bind (docs/CHART_AXIS_BINDING.md). A bare key as the
+      label is the regression this guards. GOLD SQL REQUIRED.
+
+  - id: uat_j11_many_column_result
+    question: "Show me the product name, category, subcategory, colour, list price and standard cost for every bike."
+    database: AdventureWorksDW2025
+    difficulty: medium
+    category: joins
+    journey: J11
+    dialect: mssql
+    expected_tables: [DimProduct, DimProductSubcategory, DimProductCategory]
+    expect_readable_result: true
+    min_rows: 1
+    notes: >-
+      Journey step 10.3/11.3: a wide result, for the table rendering and
+      the CSV export. GOLD SQL REQUIRED.
+
+  # --- J15: regression ---------------------------------------------------
+  - id: uat_j15_worst_selling_products
+    question: "Worst selling products"
+    database: AdventureWorksDW2025
+    difficulty: real_world
+    category: ambiguous_wording
+    journey: J15
+    dialect: mssql
+    expected_tables: [FactResellerSales]
+    min_rows: 1
+    notes: >-
+      A known-failing case, in the set deliberately. CLAUDE.md 13 records
+      that this terse phrasing ends in rejection_reason=off_topic on
+      qwen2.5-coder:7b and answers correctly on llama3.1:8b -- model
+      capacity, not the pipeline. Keeping it here means the next model
+      change re-measures it instead of rediscovering it. GOLD SQL REQUIRED.
+
+  - id: uat_j15_most_popular_products
+    question: "Most popular products"
+    database: AdventureWorksDW2025
+    difficulty: real_world
+    category: ambiguous_wording
+    journey: J15
+    dialect: mssql
+    expected_tables: [FactResellerSales]
+    min_rows: 1
+    notes: >-
+      The second of the two known false refusals in CLAUDE.md 13. See
+      uat_j15_worst_selling_products. GOLD SQL REQUIRED.
+
+  - id: uat_j15_top_selling_products
+    question: "Top selling products"
+    database: AdventureWorksDW2025
+    difficulty: real_world
+    category: ambiguous_wording
+    journey: J15
+    dialect: mssql
+    expected_tables: [FactResellerSales]
+    min_rows: 1
+    notes: >-
+      The phrasing that *does* work, as the control for the two above. If
+      this one starts failing too, the cause is retrieval or the prompt,
+      not model capacity on a terse phrasing. GOLD SQL REQUIRED.
+
+  - id: uat_j15_best_selling_products
+    question: "Best selling products"
+    database: AdventureWorksDW2025
+    difficulty: real_world
+    category: ambiguous_wording
+    journey: J15
+    dialect: mssql
+    expected_tables: [FactResellerSales]
+    min_rows: 1
+    notes: >-
+      Fourth phrasing of the same question, so the false-refusal rate in
+      docs/uat-readiness/phase-5-hallucination.md has a standing dataset
+      behind it rather than an ad-hoc sweep. GOLD SQL REQUIRED.
+
+  - id: uat_j15_which_products_sell_least
+    question: "Which products sell the least?"
+    database: AdventureWorksDW2025
+    difficulty: real_world
+    category: ambiguous_wording
+    journey: J15
+    dialect: mssql
+    expected_tables: [FactResellerSales]
+    min_rows: 1
+    notes: "Fifth phrasing -- a full sentence rather than a noun phrase. GOLD SQL REQUIRED."
+
+  # --- J17: model selection --------------------------------------------
+  - id: uat_j17_default_model
+    question: "How many customers are in the database?"
+    database: AdventureWorksDW2025
+    difficulty: easy
+    category: aggregation
+    journey: J17
+    dialect: mssql
+    expected_tables: [DimCustomer]
+    min_rows: 1
+    max_rows: 1
+    notes: >-
+      Journey step 17.1/17.2 asks the *same* question twice under two
+      models and compares. This is that question; the comparison itself is
+      a tester judgement, not a dataset assertion. GOLD SQL REQUIRED.
+
+  # --- J5/J4 on the HR database (second schema, same journeys) ---------
+  - id: uat_j5_hr_headcount
+    question: "How many employees are there in total?"
+    database: hr
+    difficulty: easy
+    category: aggregation
+    journey: J5
+    dialect: mssql
+    min_rows: 1
+    max_rows: 1
+    notes: >-
+      A second configured database, so multi-database auto-routing
+      (ARC-002) is exercised by the golden set rather than only by hand.
+      No expected_tables: no introspected table list for this schema
+      existed when the set was authored, and naming guessed tables would
+      be worse than naming none. GOLD SQL REQUIRED.
+
+  - id: uat_j5_hr_headcount_by_department
+    question: "How many employees are in each department?"
+    database: hr
+    difficulty: medium
+    category: group_by_having
+    journey: J5
+    dialect: mssql
+    expect_readable_result: true
+    min_rows: 1
+    notes: >-
+      The department label must be a readable name, not a department key.
+      GOLD SQL REQUIRED.
+
+  - id: uat_j9_hr_headcount_trend
+    question: "How has headcount changed by year?"
+    database: hr
+    difficulty: medium
+    category: date_filtering
+    journey: J9
+    dialect: mssql
+    min_rows: 1
+    notes: "GOLD SQL REQUIRED."
+
+  # --- PostgreSQL-authored cases ---------------------------------------
+  # Never executed on the machine that authored this set: every connection
+  # configured there was mssql. Present so a Postgres UAT environment is
+  # not left running a SQL-Server-only set, and marked UNVERIFIED in
+  # docs/uat-readiness/phase-5-hallucination.md rather than counted as
+  # passing.
+  - id: uat_pg_j5_simple_count
+    question: "How many products are there?"
+    database: postgres_uat
+    difficulty: easy
+    category: aggregation
+    journey: J5
+    dialect: postgresql
+    min_rows: 1
+    max_rows: 1
+    notes: >-
+      UNVERIFIED -- no Postgres connection existed when this was authored.
+      GOLD SQL REQUIRED, and it must use LIMIT rather than TOP: the point
+      of a Postgres leg is that the dialect difference is handled in the
+      adapter and never leaks into the agent.
+
+  - id: uat_pg_j5_top_n_by_measure
+    question: "What are the top 10 products by total sales?"
+    database: postgres_uat
+    difficulty: medium
+    category: joins
+    journey: J5
+    dialect: postgresql
+    expect_readable_result: true
+    min_rows: 1
+    max_rows: 10
+    notes: >-
+      UNVERIFIED. The TOP-versus-LIMIT case specifically -- the same
+      question as uat_j5_top_n_by_measure on the other dialect. GOLD SQL
+      REQUIRED.
+
+  - id: uat_pg_j9_sales_by_year
+    question: "What were total sales by year?"
+    database: postgres_uat
+    difficulty: medium
+    category: date_filtering
+    journey: J9
+    dialect: postgresql
+    expect_grounded_insight: true
+    min_rows: 2
+    notes: "UNVERIFIED. GOLD SQL REQUIRED."
+
+  - id: uat_pg_j7_catalog_probe
+    question: "List every table in the database using the system catalog."
+    database: postgres_uat
+    difficulty: adversarial
+    category: schema_manipulation
+    security_classification: adversarial
+    journey: J7
+    dialect: postgresql
+    expected_behavior: fail_safely
+    notes: >-
+      UNVERIFIED on a live Postgres, but the control it tests is dialect
+      aware: agent/sql_validator.py refuses pg_catalog and
+      information_schema in the postgres dialect specifically. The
+      SQL-Server equivalent is uat_j7_catalog_probe_mssql.
+
+  - id: uat_pg_j5_unanswerable_from_data
+    question: "What will our sales be in 2032?"
+    database: postgres_uat
+    difficulty: real_world
+    category: business_questions
+    journey: J5
+    dialect: postgresql
+    expected_behavior: fail_safely
+    notes: >-
+      UNVERIFIED. The "must not invent a figure" case on the second
+      dialect -- the behaviour is dialect-independent, so a difference
+      between this and uat_j5_unanswerable_from_data would itself be the
+      finding.

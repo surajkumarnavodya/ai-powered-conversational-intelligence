@@ -59,6 +59,7 @@ from agent.exceptions import (
     SchemaRetrievalError,
 )
 from agent.followup import classify_followup
+from agent.harness.control import envelope_from_state, resolve_timeout
 from agent.input_guard import (
     NO_RELEVANT_DATA_MESSAGE,
     check_input,
@@ -67,7 +68,7 @@ from agent.input_guard import (
 )
 from agent.insight import (
     extract_numbers,
-    is_insight_grounded,
+    insight_grounding_failure,
     should_skip_insight,
     summarize_result,
 )
@@ -90,9 +91,11 @@ from agent.rate_limit import (
 )
 from agent.sql_validator import (
     SAFETY_VIOLATION_TYPES,
+    canonical_sql_form,
     enforce_row_limit,
     find_restricted_column_references,
     find_unexpected_table_references,
+    projection_source_columns,
     qualify_table_schema,
     references_multiple_tables,
     strip_row_limit,
@@ -160,6 +163,16 @@ def _query_fingerprint(sql: str | None) -> str | None:
     if not sql:
         return None
     return hashlib.sha256(sql.encode()).hexdigest()[:16]
+
+
+#: `failure_explanation` for a run stopped because an attempt reproduced
+#: the previous attempt's query verbatim. A fixed module constant, never
+#: built from the question or the SQL (CLAUDE.md 5.5).
+NO_PROGRESS_MESSAGE = (
+    "I could not produce a working query for that question: the same query came back "
+    "unchanged after being told what was wrong with it, so further attempts would "
+    "repeat it. Try rephrasing the question, or naming the table or column you mean."
+)
 
 
 # A `status` value that means this run is over -- `agent.state.AgentStatus`
@@ -667,6 +680,7 @@ def _context_resolution_llm() -> Callable[[str, str], str] | None:
             settings,
             settings.context_resolution_max_tokens,
             model=model,
+            label="context_resolution",
         )
 
     return _call
@@ -1617,6 +1631,44 @@ def plan_query_node(state: AgentState) -> dict[str, Any]:
     return {"query_plan": plan, "status": "generating"}
 
 
+def _reproduces_previous_attempt(state: AgentState, raw_sql: str, settings) -> bool:
+    """Whether this attempt's SQL is the previous attempt's, unchanged.
+
+    The no-progress check behind `generate_sql_node`'s early stop
+    (UAT-readiness Phase 6, `LOP-002`). Compared on
+    `agent.sql_validator.canonical_sql_form`, so re-indenting the
+    statement or re-casing its keywords does not count as progress --
+    a local model does both often -- while a changed string literal
+    does, because that is a different query.
+
+    Compares `state["last_generated_sql"]`, the raw text the previous
+    model call returned, rather than `state["sql"]`: `validate_sql`
+    replaces `sql` with the row-limited form and
+    `enforce_display_names` may replace it with a repaired join, so
+    `sql` differs between attempts even when the model's own output did
+    not. The first version of this check compared `sql` and detected
+    nothing at all.
+
+    **Fails open**, like every other efficiency aid here (CLAUDE.md
+    4.2): resolving the dialect reads the selected connection, and a
+    missing `selected_database` or an unconfigured connection must cost
+    this one optimisation, never the answer. On any error the run
+    proceeds with its full retry budget, exactly as it did before this
+    check existed.
+    """
+    previous = state.get("last_generated_sql")
+    if not previous:
+        return False
+    try:
+        dialect = get_sqlglot_dialect(get_connection(settings, _selected_db_name(state)).db_type)
+    except Exception:  # noqa: BLE001 - see the docstring; never a blocker
+        logger.debug("[generate_sql] no-progress check skipped: dialect unavailable", exc_info=True)
+        return False
+    return canonical_sql_form(raw_sql, dialect=dialect) == canonical_sql_form(
+        previous, dialect=dialect
+    )
+
+
 @_timed_node("generate_sql")
 def generate_sql_node(state: AgentState) -> dict[str, Any]:
     """Calls the LLM to produce a candidate SQL statement.
@@ -1785,7 +1837,56 @@ def generate_sql_node(state: AgentState) -> dict[str, Any]:
         }
 
     logger.info("[generate_sql] attempt %d: generated SQL: %s", attempt_number, raw_sql)
-    return {"sql": raw_sql, "status": "reviewing"}
+
+    # No-progress detection (UAT-readiness Phase 6, `LOP-002`). A retry
+    # that hands back the query it was just told was wrong is not an
+    # attempt: every remaining cycle will produce the same statement, the
+    # same validator or driver error, and the same feedback. Measured
+    # before this check existed: a model returning one statement
+    # unchanged spent all four generation calls *and* re-executed the
+    # failing query four times against the database.
+    #
+    # This is not a corner case at temperature 0, which is what
+    # `agent.llm_client.decoding_options` sets for every call in this
+    # application: identical prompt plus identical seed is *expected* to
+    # give identical output, so "the model did not act on the feedback"
+    # and "the model will never act on the feedback" are the same event
+    # here.
+    #
+    # Compared on `canonical_sql_form`, not raw text, so re-indenting or
+    # re-casing the keywords does not read as progress -- a local model
+    # does that often. It stops the run rather than consuming the
+    # remaining budget; the budget itself is unchanged, so a run that
+    # *is* changing its answer still gets every attempt it had before.
+    if attempt_number > 1 and _reproduces_previous_attempt(state, raw_sql, settings):
+        logger.warning(
+            "[generate_sql] attempt %d reproduced the previous query unchanged "
+            "(last_error_category=%s) -- stopping rather than spending the "
+            "remaining %d retry(ies) on it",
+            attempt_number,
+            last_error_category,
+            max(0, _effective_max_retries(state, settings) - (attempt_number - 1)),
+        )
+        no_progress: AttemptRecord = {
+            "attempt": attempt_number,
+            "sql": raw_sql,
+            "outcome": "no_progress",
+            "error": (
+                "The model returned the previous attempt's query unchanged after "
+                "being given its error."
+            ),
+            "will_retry": False,
+        }
+        return {
+            "sql": raw_sql,
+            "last_generated_sql": raw_sql,
+            "status": "failed",
+            "attempt_history": [no_progress],
+            "last_error_category": "no_progress",
+            "failure_explanation": NO_PROGRESS_MESSAGE,
+        }
+
+    return {"sql": raw_sql, "last_generated_sql": raw_sql, "status": "reviewing"}
 
 
 @_timed_node("review_sql")
@@ -2555,10 +2656,30 @@ def execute_sql_node(state: AgentState) -> dict[str, Any]:
                 ),
             }
 
+    # Clamped to whatever time this execution has left, never extended
+    # past it (`ExecutionEnvelope.timeout_for`). Returns the configured
+    # value unchanged when no envelope is bound, so a direct caller and
+    # `ENABLE_AGENT_HARNESS=false` behave exactly as before.
+    #
+    # 2026-10-28 (UAT-readiness Phase 6, `LOP-006`): this was the one
+    # operation on the request path still using its full per-call
+    # timeout. The Ollama calls were clamped from the start, so the
+    # deadline bounded the model but not the database -- a query could
+    # start with two seconds of the request budget left and still run
+    # for `QUERY_TIMEOUT_SECONDS`. `agent.harness.resolve_timeout` had
+    # no production caller at all until this one.
+    query_timeout = resolve_timeout(
+        envelope_from_state(state), float(settings.query_timeout_seconds)
+    )
     try:
         columns, rows = execute_readonly_sql(
             execution_sql,
-            settings.query_timeout_seconds,
+            # `execute_readonly_sql` takes whole seconds (it feeds a
+            # driver-level `SET statement_timeout`), and rounding *up*
+            # here would hand back time the deadline does not have, so
+            # the floor is taken -- with a 1s minimum, because 0 reads
+            # as "no timeout" to more than one driver.
+            max(1, int(query_timeout)),
             settings.max_result_rows,
             engine=get_read_only_engine(db_config),
         )
@@ -2595,10 +2716,38 @@ def execute_sql_node(state: AgentState) -> dict[str, Any]:
                 "retry_count": attempt_number,
                 "status": "failed",
                 "failure_explanation": (
-                    f"The query timed out after {settings.query_timeout_seconds}s on attempt "
+                    f"The query timed out after {max(1, int(query_timeout))}s on attempt "
                     f"{attempt_number}. This looks like an expensive query -- try narrowing your "
                     "question (a smaller date range, an added filter, fewer joined tables) rather "
                     "than retrying the same broad request."
+                ),
+            }
+
+        if category is ExecutionErrorCategory.CONNECTIVITY:
+            # Terminal for the same reason TIMEOUT above is: no rewrite of
+            # the SQL can make an unreachable database answer. Retrying
+            # spends a full `generate_sql` model call per attempt and then
+            # reports the no-progress message, which tells the user to
+            # rephrase a question that was never the problem (`OPS-019`).
+            record = {
+                "attempt": attempt_number,
+                "sql": sql,
+                "outcome": "connectivity",
+                "error": redacted_detail,
+                "will_retry": False,
+            }
+            return {
+                "execution_error": redacted_detail,
+                "error_history": [f"SQL execution error (connectivity): {redacted_detail}"],
+                "attempt_history": [record],
+                "last_error_category": "connectivity",
+                "retry_count": attempt_number,
+                "status": "failed",
+                "failure_explanation": (
+                    "I could not reach the database to run the query. This is not a problem "
+                    "with your question -- the query was generated and checked, but the "
+                    "database did not answer. Ask whoever runs this deployment to check that "
+                    "the database is reachable, then try the same question again."
                 ),
             }
 
@@ -2702,12 +2851,23 @@ def execute_sql_node(state: AgentState) -> dict[str, Any]:
     # Result-level governance (governance/result_policy.py): protected before the
     # insight step, the recommendation engine, or the UI sees the values.
     if settings.enable_result_governance:
+        # The names *behind* each output column, so an alias cannot strip a
+        # column's classification off its own values -- `SELECT salary AS
+        # region` comes back as `region`, which classifies as ordinary
+        # business data (UAT-readiness Phase 2, `SEC-006`). Derived from the
+        # statement actually executed, which `validate_sql` already parsed
+        # with this same dialect.
+        projection_sources = projection_source_columns(
+            execution_sql, dialect=get_sqlglot_dialect(db_config.db_type)
+        )
         governed = govern_result_for_domain(
             columns,
             rows,
             state.get("caller_roles", ()),
             _governance_domain(state),
             settings.governance_min_group_size,
+            projection_sources.by_name,
+            projection_sources.in_order,
         )
         rows = governed.rows
         # An `audit_required` domain (HR, healthcare, BFSI, legal, ...)
@@ -3162,10 +3322,17 @@ def generate_insight_node(state: AgentState) -> dict[str, Any]:
         restating it adds nothing.
 
     After a real LLM call, the response is graded against
-    `agent.insight.is_insight_grounded` before it's ever stored -- an
-    insight that mentions a number not supported by the result summary (or
-    a literal value from the question/SQL) is logged and dropped rather than
-    shown, since a wrong "AI interpretation" is worse than none at all.
+    `agent.insight.insight_grounding_failure` before it's ever stored --
+    an insight that contradicts the result it was built from is logged
+    and dropped rather than shown, since a wrong "AI interpretation" is
+    worse than none at all. Three contradictions are detected: a number
+    the result does not support (or a literal value from the
+    question/SQL), a superlative attached to a label that is not the
+    computed top one, and a direction of change opposite to the computed
+    one. The label-column values are passed in because the superlative
+    check needs them and `ResultSummary` deliberately does not carry
+    them -- see that function's docstring on why omitting them silently
+    weakens the gate.
     """
     if not state.get("enable_insight", True):
         logger.info("[generate_insight] disabled via enable_insight -- skipping")
@@ -3210,17 +3377,32 @@ def generate_insight_node(state: AgentState) -> dict[str, Any]:
         logger.info("[generate_insight] model declined to produce an insight")
         return {"insight": None, "insight_summary": summary, "insight_numbers_checked": None}
 
-    if not is_insight_grounded(insight_text, summary, question=question, sql=sql):
+    # The label column's own values, which `_superlative_contradiction`
+    # compares against the text. Taken from `rows`, which the result gate
+    # in `execute_sql_node` has already governed, so a restricted value
+    # is `[restricted]` here too and nothing unmasked reaches this check.
+    label_index = next(
+        (index for index, name in enumerate(columns) if name == summary.top_label_column),
+        None,
+    )
+    result_labels = [str(row[label_index]) for row in rows] if label_index is not None else None
+
+    grounding_failure = insight_grounding_failure(
+        insight_text, summary, question=question, sql=sql, result_labels=result_labels
+    )
+    if grounding_failure is not None:
+        # The reason is a fixed phrase naming which check failed -- never
+        # the insight text and never a result value (CLAUDE.md 5.6).
         logger.warning(
-            "[generate_insight] dropped ungrounded insight (contains a number not "
-            "supported by the result): %d chars",
+            "[generate_insight] dropped ungrounded insight (%s): %d chars",
+            grounding_failure,
             len(insight_text),
         )
         return {"insight": None, "insight_summary": summary, "insight_numbers_checked": None}
 
     # Every number in `insight_text` has just been checked against the
-    # result summary by `is_insight_grounded` above -- an insight with an
-    # unsupported number returned earlier and is never stored. So the count
+    # result summary by `insight_grounding_failure` above -- an insight
+    # with an unsupported number returned earlier and is never stored. So the count
     # of numbers in the stored text *is* the count that was verified, which
     # is what lets the UI state the evidence for this claim as a fact
     # rather than inferring it from this node's drop behaviour.
@@ -3255,6 +3437,39 @@ def route_after_classification(state: AgentState) -> str:
     if state.get("status") == "needs_clarification":
         return "needs_clarification"
     return "retrieve_schema"
+
+
+def route_after_schema_retrieval(state: AgentState) -> str:
+    """Conditional edge after retrieve_schema: proceed, or stop and explain.
+
+    `retrieve_schema_node` already composes a terminal `"failed"` state
+    with a `failure_explanation` when no schema is available -- an empty
+    or unbuilt index, a tenant with no queryable database, or any other
+    `SchemaRetrievalError`. Until `OPS-025` the edge out of that node was
+    **unconditional**, so that explanation was written into the state and
+    then driven straight past: `retrieve_golden_examples` onwards ran
+    with no `selected_database`, `generate_sql` spent a real model call
+    (68.4 s measured) on a prompt containing no schema, and the run ended
+    in `agent.nodes._require_selected_database`'s
+    `RuntimeError("reached with no selected_database")` -- which is not an
+    `AgentError`, so `api/main.py`'s last-resort handler turned the
+    pipeline's own actionable message into HTTP 500 "An unexpected error
+    occurred."
+
+    This is the same shape as `LOP-001`/`LOP-004` (Phase 6): a *designed*
+    terminal condition escaping `run_agent` as an unhandled exception. The
+    rule that came out of those, and the reason this function exists: when
+    a node can end a run, something on the path must turn that into a
+    response.
+
+    An unbuilt index is the most likely misconfiguration on a fresh UAT
+    host -- `scripts/build_embeddings.py` is a documented setup step and
+    `GET /health` already reports "Index is empty" per database -- so this
+    path is reached by forgetting a setup step, not by a rare fault.
+    """
+    if state.get("status") == "failed":
+        return "failed"
+    return "retrieve_golden_examples"
 
 
 def route_after_generation(state: AgentState) -> str:

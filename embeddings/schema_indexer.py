@@ -71,6 +71,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import cache
@@ -218,11 +219,35 @@ def get_embedding_function(settings: Settings) -> embedding_functions.EmbeddingF
     )
 
 
+# Serialises the cache lookup *and* the construction below. `functools
+# .cache` alone is not enough: it runs the wrapped function on every
+# cold-cache miss, so two threads arriving together both build a client
+# and only one of them ends up cached -- which is precisely the
+# duplicate-`PersistentClient` corruption the docstring below describes.
+# The `/ask` path reaches here from `embeddings.retriever.select_database`
+# and `.retrieve_relevant_schema` on `api.main._get_ask_executor`'s thread
+# pool, so two simultaneous first questions are enough to hit it. The lock
+# is held only across a dict lookup once the cache is warm.
+# Pinned by tests/test_chroma_client_singleton_concurrency.py [ARC-003].
+_CHROMA_CLIENT_LOCK = threading.Lock()
+
+
 @cache
+def _build_chroma_client(persist_dir: str) -> chromadb.ClientAPI:
+    """Constructs the one `PersistentClient` for `persist_dir`.
+
+    Never call this directly -- go through `_cached_chroma_client`, which
+    holds `_CHROMA_CLIENT_LOCK` across the lookup. Calling it unlocked
+    reintroduces the race.
+    """
+    return chromadb.PersistentClient(path=persist_dir)
+
+
 def _cached_chroma_client(persist_dir: str) -> chromadb.ClientAPI:
     """Process-lifetime-cached `PersistentClient`, keyed on the persist
-    directory -- same `functools.cache` singleton pattern as
-    `db.connection._cached_engine`/`agent.llm_client._get_ollama_client`.
+    directory -- same singleton pattern as
+    `db.connection._cached_engine`/`agent.llm_client._get_ollama_client`,
+    with the construction additionally serialised (see the lock above).
 
     This existed as a plain uncached factory before (a fresh
     `chromadb.PersistentClient(...)` on every call) and it was a real,
@@ -238,7 +263,26 @@ def _cached_chroma_client(persist_dir: str) -> chromadb.ClientAPI:
     error the user or the API response ever saw. Caching so only one
     `PersistentClient` ever exists per process eliminates the conflict
     entirely, rather than working around its symptom."""
-    return chromadb.PersistentClient(path=persist_dir)
+    with _CHROMA_CLIENT_LOCK:
+        return _build_chroma_client(persist_dir)
+
+
+def clear_chroma_client_cache() -> None:
+    """Discards the cached client(s), so the next call builds a fresh one.
+
+    `tests/conftest.py` calls this between tests -- without it a test that
+    monkeypatches `chromadb.PersistentClient` silently keeps whatever the
+    previous test cached. A named function rather than a `cache_clear`
+    attribute forwarded off `_cached_chroma_client`, because that
+    forwarding could not be typed and needed two `type: ignore`s.
+
+    Nothing in the request path calls this. Dropping a live client while
+    another thread still holds a reference would put two clients on one
+    directory, which is the condition `_cached_chroma_client` exists to
+    prevent.
+    """
+    with _CHROMA_CLIENT_LOCK:
+        _build_chroma_client.cache_clear()
 
 
 def get_chroma_client(settings: Settings | None = None) -> chromadb.ClientAPI:

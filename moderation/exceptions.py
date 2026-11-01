@@ -23,6 +23,24 @@ class ModerationError(Exception):
         self.safe_message = safe_message or self._default_safe_message
 
 
+class ModerationProviderError(ModerationError):
+    """Raised when the configured provider *ran* but its answer cannot be
+    used -- today, when `ollama_local`'s classifier returns something that
+    is not a parseable severity rating for all four harm categories.
+
+    Deliberately an exception rather than a severity-0 default. A gate
+    that cannot read its own classifier's answer has not checked the
+    content, and treating "unreadable" as "clean" is the one failure mode
+    `moderation/gate.py`'s whole fail-closed posture exists to prevent --
+    the same reasoning that keeps `httpx.HTTPError` from the Azure
+    provider uncaught there.
+    """
+
+    _default_safe_message = (
+        "Content moderation could not complete, so nothing was ingested. Please retry."
+    )
+
+
 class ModerationNotConfiguredError(ModerationError):
     """Raised when content is ingested (`media/ingest.py`, `rag/ingestion.py`)
     without the moderation provider and/or metadata store configured.

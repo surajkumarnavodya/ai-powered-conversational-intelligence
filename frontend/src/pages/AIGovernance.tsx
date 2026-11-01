@@ -193,7 +193,11 @@ export function AIGovernance() {
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-3">
-            <Select value={assetTypeFilter} onChange={(e) => setAssetTypeFilter(e.target.value)}>
+            <Select
+              aria-label="Filter by asset type"
+              value={assetTypeFilter}
+              onChange={(e) => setAssetTypeFilter(e.target.value)}
+            >
               <option value="">All asset types</option>
               {ASSET_TYPES.map((t) => (
                 <option key={t} value={t}>
@@ -216,6 +220,7 @@ export function AIGovernance() {
             <div className="flex flex-col gap-2 rounded-md border border-[var(--border)] p-3">
               <div className="flex flex-wrap gap-2">
                 <Select
+                  aria-label="Asset type"
                   value={newAssetType}
                   onChange={(e) => setNewAssetType(e.target.value as GovernedAssetType)}
                 >
@@ -422,7 +427,11 @@ export function AIGovernance() {
               )}
               {canManage && selected.stage === 'deployed' && rollbackTargets.length > 0 && (
                 <div className="flex items-center gap-1.5">
-                  <Select value={rollbackTargetId} onChange={(e) => setRollbackTargetId(e.target.value)}>
+                  <Select
+                    aria-label="Roll back to version"
+                    value={rollbackTargetId}
+                    onChange={(e) => setRollbackTargetId(e.target.value)}
+                  >
                     <option value="">Roll back to…</option>
                     {rollbackTargets.map((t) => (
                       <option key={t.id} value={t.id}>

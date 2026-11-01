@@ -306,6 +306,19 @@ describe('deriveLifecycle -- failure, blocking and the difference between them',
       status: 'failed',
       ranTo: 'review_metric_conformance',
     },
+    {
+      // The agent stopping itself: an attempt handed back the previous
+      // attempt's query unchanged, so the run ended rather than
+      // spending the rest of the retry budget regenerating it
+      // (UAT-readiness Phase 6, LOP-002). A generation-stage stop, not
+      // a validation or execution one -- and `failed` rather than
+      // `blocked`, because no gate refused anything.
+      name: 'the model repeating itself instead of correcting',
+      outcome: 'no_progress',
+      stage: 'sql',
+      status: 'failed',
+      ranTo: 'generate_sql',
+    },
   ]
 
   for (const scenario of cases) {

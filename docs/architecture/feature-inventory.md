@@ -47,7 +47,7 @@ says so.
 
 | Capability | Status | Evidence | Owner doc | Action | Pri |
 |---|---|---|---|---|---|
-| 18-node LangGraph SQL pipeline | Live | `agent/graph.py` (18 `add_node` calls, verified by count); `tests/test_sql_agent_integration.py::test_existing_nodes_are_all_still_present` | [`../ARCHITECTURE.md`](../ARCHITECTURE.md) | keep | — |
+| 19-node LangGraph SQL pipeline | Live | `agent/graph.py` (**19** `add_node` calls, re-counted 2026-10-25; this row said 18 on the 2026-10-14 baseline — DOC-006); `tests/test_sql_agent_integration.py::test_existing_nodes_are_all_still_present` | [`../ARCHITECTURE.md`](../ARCHITECTURE.md) | keep | — |
 | AST SELECT-only validation | Live | `agent/sql_validator.py`; `tests/security/` | [`../../SECURITY.md`](../../SECURITY.md) | keep | — |
 | Live schema introspection → ChromaDB | Live | `db/`, `embeddings/`; `scripts/build_embeddings.py` | [`overview.md`](overview.md) | keep | — |
 | Business-context retrieval (8 chunk kinds) | Flag-gated | `retrieval/`; `ENABLE_BUSINESS_CONTEXT_RETRIEVAL=true` in `.env.example:276` | [`overview.md`](overview.md) | keep | — |
@@ -123,11 +123,11 @@ Prompt 2 proposes building these. They exist.
 
 | Capability Prompt 2 asks for | Status | Evidence | Verdict |
 |---|---|---|---|
-| Schema-validated, versioned configuration | Live | `config/settings.py` — frozen `pydantic_settings.BaseSettings`, **232** `Field(...)` declarations | already built |
-| Feature flags | Live | **54** distinct `enable_*` settings | already built |
+| Schema-validated, versioned configuration | Live | `config/settings.py` — frozen `pydantic_settings.BaseSettings`, **273** `Field(...)` declarations (2026-10-25; 232 at the 2026-10-14 baseline) | already built |
+| Feature flags | Live | **63** distinct `enable_*` settings (2026-10-25; 54 at the 2026-10-14 baseline) | already built |
 | Policy precedence (platform → tenant → user) | Live | `governance/`, `identity/rbac.py`, `api/tenant_admin.py` | already built |
 | Typed request/response contracts | Live | `api/schemas.py` (Pydantic v2, `extra="forbid"`) | already built |
-| Model gateway / provider adapters | Live (gateway), Flag-gated (routing) | `agent/llm_client.py`; `model_routing/` (9 modules); `ENABLE_MODEL_ROUTING=false` (`.env.example:36`) | already built |
+| Model gateway / provider adapters | Live (gateway), Flag-gated (routing) | `agent/llm_client.py`; `model_routing/` (10 modules, 2026-10-25); `ENABLE_MODEL_ROUTING=false` (`.env.example:36`) | already built |
 | Tool registry with timeouts/retries/approval | Live | `agent/tools/types.py` (`Tool.timeout_seconds`, `RetryPolicy`, `ToolPermissionError`) | already built |
 | Execution budgets / deadlines / cancellation | Live | commit `fc8adf4` "server-owned execution envelope"; `docs/HARNESS_RUNTIME_CONTRACT.md` | already built |
 | Observability, correlation IDs, audit | Live | `observability/`; [`../OBSERVABILITY.md`](../OBSERVABILITY.md) | already built |
@@ -141,9 +141,9 @@ unmet item is streaming, which is a disclosed gap, not an oversight.
 
 | Capability | Status | Evidence | Owner doc |
 |---|---|---|---|
-| Local identity (Argon2id + JWT), Alembic migrations | Flag-gated | `identity/` (51 modules); `LOCAL_AUTH_ENABLED` | [`../AUTHENTICATION.md`](../AUTHENTICATION.md) |
+| Local identity (Argon2id + JWT), Alembic migrations | Flag-gated | `identity/` (53 tracked modules, 34 excluding `migrations/`, 2026-10-25; 51 at the 2026-10-14 baseline); `LOCAL_AUTH_ENABLED` | [`../AUTHENTICATION.md`](../AUTHENTICATION.md) |
 | Tenant isolation, client-override rejection | Live | `security/tenancy.py::reject_client_tenant_override` | [`../MULTI_TENANCY.md`](../MULTI_TENANCY.md) |
-| 18-domain privacy policy, 14 prohibited actions | Flag-gated (3 switches) | `governance/domains.py` | [`../DATA_PRIVACY_GOVERNANCE_ENGINE.md`](../DATA_PRIVACY_GOVERNANCE_ENGINE.md) |
+| **19**-domain privacy policy + `GENERAL` fallback, 14 prohibited actions | Flag-gated (3 switches) | `governance/domains.py` — re-counted 2026-10-25; `CONSTRUCTION` was added after the 2026-10-14 baseline (CLAUDE.md §5.8) | [`../DATA_PRIVACY_GOVERNANCE_ENGINE.md`](../DATA_PRIVACY_GOVERNANCE_ENGINE.md) |
 | Admin dashboards (platform + tenant) | Live | `frontend/src/pages/PlatformAdmin.tsx`, `TenantAdmin.tsx`, `api/platform_admin.py`, `api/tenant_admin.py` | [`features-governance-and-admin.md`](features-governance-and-admin.md) |
 | Knowledge-source management UI | Live | `frontend/src/pages/KnowledgeSources.tsx` (documents + policies tabs, upload/delete/download) | [`features-frontend.md`](features-frontend.md) |
 | Citations / evidence UI | Live | `frontend/src/components/chat/SourcesUsedPanel.tsx`, `SourceLineagePanel.tsx`, `SourceAnswerCard.tsx` | [`features-frontend.md`](features-frontend.md) |
@@ -322,3 +322,58 @@ owned, which [`CLAUDE.md`](../../CLAUDE.md) §4.8 and §11 forbid:
 If a consolidated current-state narrative is wanted anyway, the correct
 move under §4.8 is to **extend** the owning document, not add a parallel
 one.
+
+---
+
+## 10. Reconciliation against the tree (2026-10-25, UAT-readiness Phase 0 item 4)
+
+The audit prompt's Phase 0 item 4 asks for two lists: features **claimed
+here but missing** from the code, and code **present but undocumented**.
+Both were produced by a script over `git ls-files`, not by reading.
+
+**Claimed but missing: none.** All 72 path-like tokens this document
+cites resolve to a tracked file. The only three that do not — 
+`current-state.md`, `target-state.md`, `decisions.md` — are §9's
+deliberately-not-created documents, named as such.
+
+**Present but undocumented: none, but the status view is split four
+ways.** Of the 41 top-level Python packages in the tree, **17 are never
+named in this document** (125 modules in total): `analytics`,
+`artifacts`, `briefing`, `data_quality`, `decision_center`,
+`domain_skills`, `feedback`, `governance_center`, `guardrails`,
+`kpi_monitoring`, `lineage`, `moderation`, `optimization`,
+`recommendation`, `schema_drift`, `semantic`, `voice`. Every one of them
+*is* documented — just elsewhere, because §1 scopes this file to the SQL
+pipeline, multi-source orchestration and the platform foundation. So
+there is **no dead code and no hidden surface**, which is the question
+item 4 actually asks.
+
+What there is, is no index saying which document holds a given package's
+status. That is recorded as `DOC-007` and closed by the table below.
+
+| Package | Status view lives in |
+|---|---|
+| `analytics`, `recommendation`, `optimization`, `lineage`, `schema_drift`, `data_quality`, `kpi_monitoring`, `briefing`, `decision_center`, `artifacts` | [`features-analytics.md`](features-analytics.md) |
+| `governance_center`, `semantic`, `feedback` | [`features-governance-and-admin.md`](features-governance-and-admin.md) |
+| `voice` | [`features-frontend.md`](features-frontend.md) |
+| `guardrails` | [`../CONCURRENCY.md`](../CONCURRENCY.md), [`../ROUTING.md`](../ROUTING.md) |
+| `moderation` | [`../ARCHITECTURE.md`](../ARCHITECTURE.md), [`../FILE_UPLOAD_FINAL_REPORT.md`](../FILE_UPLOAD_FINAL_REPORT.md) |
+| `domain_skills` | [`domain-skills.md`](domain-skills.md) |
+
+**Numeric claims re-measured.** Five of this document's counts had drifted
+since the 2026-10-14 baseline and are corrected in place, each carrying
+both figures (`DOC-006`): graph nodes 18 → **19**, `Field(...)`
+declarations 232 → **273**, `enable_*` settings 54 → **63**,
+`model_routing` modules 9 → **10**, `identity` modules 51 → **53**. A
+sixth was wrong rather than stale: the privacy policy covers **19**
+domains plus the `GENERAL` fallback, not 18 — `CONSTRUCTION` was added
+after the baseline.
+
+Reproduce with:
+
+```powershell
+grep -c 'add_node(' agent/graph.py          # 19
+grep -cE '^\s{4}enable_[a-z_]*:' config/settings.py   # 63
+grep -c 'Field(' config/settings.py         # 273
+git ls-files | grep -c '^identity/.*\.py$'  # 53
+```

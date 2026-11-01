@@ -65,3 +65,21 @@ types-PyYAML==6.0.12.20260815
 # revisions were each hand-authored outside the repo); this replaces that
 # with a reproducible build from USER_GUIDE.md's own content.
 reportlab==5.0.1
+
+# Coverage measurement, added 2026-10-29 (UAT-readiness Phase 8,
+# `BP-011`). Until then there was **no coverage tooling declared
+# anywhere** -- not here, not in pyproject.toml -- and no coverage step
+# in CI, so per-package coverage had never been measured in this project
+# at all. Phase 8 measured it by installing this ad hoc, which is
+# precisely the un-repeatable state `BP-009` was about, so it is
+# declared rather than left to the next person to rediscover.
+#
+# Measured on the day it was added, over the whole mocked suite:
+# api 94.5%, governance 98.7%, guardrails 93.3%, identity 97.0%,
+# security 96.0% -- 95.4% across the five, with 13 individual files
+# below 90% (see docs/uat-readiness/phase-8-best-practices.md).
+#
+# Deliberately NOT wired into CI as a blocking gate: picking a threshold
+# is a product decision, and a number chosen by an auditor to match
+# today's measurement is a ratchet nobody agreed to.
+pytest-cov==7.0.0

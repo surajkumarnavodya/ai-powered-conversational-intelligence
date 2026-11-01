@@ -504,9 +504,20 @@ unaffected; only new ingestion is gated).
 provider, or in principle a self-hosted one, is a config/code addition,
 not a redesign.
 
-**Review date:** if a locally-run moderation classifier with acceptable
-accuracy becomes practical, revisit whether Azure should remain the only
-implemented provider.
+**Reviewed 2026-10-31, and this risk is now optional rather than
+unavoidable.** A second provider ships, `MODERATION_PROVIDER=ollama_local`,
+which classifies every chunk with this project's own local Ollama runtime
+-- so a deployment can choose between the stronger gate (Azure, with this
+risk) and a fully-local one (R-021, with its own, named, weaker coverage).
+Azure remains the default, because it is the stronger classifier, and this
+risk stands unchanged for any deployment that keeps it. What is no longer
+true is the practical consequence recorded above as unconditional: a
+deployment with no Azure resource is no longer blocked from ingesting
+anything at all. That was more than a configuration inconvenience -- the
+gate is mandatory, so `ENABLE_DOCUMENT_RAG`/`ENABLE_POLICY_RAG`/
+`ENABLE_MEDIA_SEARCH` could all read as enabled while every single upload
+failed, and the first error an operator saw named a connection string
+rather than the missing Azure resource behind it.
 
 ### R-014 — Synthetic/manipulated-media ("deepfake") detection is a disclosed placeholder, not a real control
 
@@ -725,6 +736,54 @@ one database, or remove schema-only/empty connections from
 **Review date:** before any demo or UAT session that has more than one
 database configured — this is the most likely cause of a UAT J5.1
 failure.
+
+### R-021 -- The local moderation provider is a weaker gate than Azure, in two named ways
+
+**Severity:** Medium · **Status:** Accepted (an operator-selected tradeoff, disclosed at the point of choice)
+
+`MODERATION_PROVIDER=ollama_local` (added 2026-10-31) asks a general
+instruction-following model served by Ollama to rate each chunk on the same
+four harm categories Azure Content Safety reports, on the same 0/2/4/6
+scale. It is weaker than Azure in two specific ways, and neither is
+hidden:
+
+1. **A general model is not a purpose-built safety classifier.** Its
+   accuracy on this task is unmeasured here -- there is no labelled corpus
+   in this repository for harm classification, so no figure is claimed. For
+   reference, this project's own measurements of the same local model class
+   on *its* primary task are in `docs/EVALUATION_CURRENT.md`, and
+   `CLAUDE.md`'s `HAL-007` entry records that a 7B/8B local model can
+   answer a question confidently and wrongly.
+2. **Images are examined only if a vision model is configured.** With
+   `MODERATION_LOCAL_VISION_MODEL` blank, an image chunk -- an ingested
+   image, a video keyframe, or an image embedded in a PDF -- is recorded
+   `"not_checked"` for all four categories rather than rated. That is the
+   same honest marker R-014's `synthetic_media` uses, it appears in the
+   stored audit row as `unchecked_categories`, and it is never reported as
+   `"passed"`. The default is blank rather than fail-closed deliberately:
+   nearly every real policy PDF has a logo on its cover page, so failing
+   closed on image chunks by default would make the local provider unable
+   to ingest ordinary documents, which is the failure mode it exists to
+   fix.
+
+**What is unchanged, and is why this is a weaker gate rather than a weaker
+*architecture*:** the provider reports severities and never decides a
+rejection (`moderation/gate.py` applies `MODERATION_SEVERITY_THRESHOLD` and
+the "any chunk rejects the whole asset" rule, exactly as for Azure); the
+text blocklist for weapons/drugs runs identically, on top of either
+provider; and a provider failure -- an unreachable Ollama, a model that is
+not installed, or a reply that cannot be read as a rating -- raises
+(`ModerationProviderError`) rather than being treated as a pass.
+
+**Mitigation today:** disclosed at every point an operator chooses it
+(`.env.example`, `docs/CONFIGURATION.md`, `SECURITY.md`,
+`Settings.moderation_provider`'s docstring), with Azure left as the
+default. Setting `MODERATION_LOCAL_VISION_MODEL` to a vision-capable model
+closes the second gap.
+
+**Review date:** if a purpose-built, locally-runnable safety classifier
+becomes practical, it belongs here as a third provider -- a new entry in
+`SUPPORTED_MODERATION_PROVIDERS`, like this one was.
 
 ## Accepted exceptions
 

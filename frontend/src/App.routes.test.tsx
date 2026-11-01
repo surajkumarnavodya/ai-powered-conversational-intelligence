@@ -126,3 +126,67 @@ describe('header navigation reflects the same server decision', () => {
     expect(items).not.toContain('Platform Admin')
   })
 })
+
+/** `UI-003`: an address that matches no route must not be a blank page.
+ *
+ * `api/main.py` serves this app from a catch-all `GET /{full_path:path}`,
+ * so a mistyped or stale in-app URL arrives as a 200 with `index.html`.
+ * Before the `path="*"` route existed, `<Routes>` matched nothing and
+ * rendered `null`. Measured in Chrome 2026-10-29 against the live app:
+ * `/this-route-does-not-exist` left `#root` with one child and **zero**
+ * characters of body text, for every one of the seven role accounts
+ * tested -- no heading, no navigation, no way out but the Back button.
+ *
+ * These assertions fail if the catch-all route is removed. */
+describe('an unmatched in-app URL', () => {
+  const UNMATCHED = [
+    '/this-route-does-not-exist',
+    '/recommendations', // the API's list route, a real near-miss for /recommended-actions
+    '/platform-adminx',
+    '/semantic-review/extra/segments',
+  ]
+
+  it.each(UNMATCHED)('%s says the page does not exist instead of rendering nothing', async (url) => {
+    useLocalAuthStore.setState({ user: { id: 'u1', roles: ['user'] } } as never)
+    serveNavigation(vi.mocked(navigationApi.getNavigation), ['user'])
+    renderAppAt(url)
+
+    expect(
+      await screen.findByRole('heading', { name: 'That page does not exist' }),
+    ).toBeInTheDocument()
+  })
+
+  it('keeps the user inside the shell, with a link to a screen they can open', async () => {
+    useLocalAuthStore.setState({ user: { id: 'u1', roles: ['user'] } } as never)
+    serveNavigation(vi.mocked(navigationApi.getNavigation), ['user'])
+    renderAppAt('/nope')
+
+    await screen.findByRole('heading', { name: 'That page does not exist' })
+    // The app chrome is still there -- a wrong address must not strand anyone.
+    expect(await screen.findByRole('navigation', { name: 'Primary navigation' })).toBeInTheDocument()
+    // And the escape link points at a screen this role is actually listed for.
+    const permitted = navigationFor(['user']).items[0]
+    const link = screen.getByRole('link', { name: 'Go to a screen you can use' })
+    expect(link).toHaveAttribute('href', permitted.path)
+  })
+
+  it('moves focus to the heading, so the change is announced', async () => {
+    useLocalAuthStore.setState({ user: { id: 'u1', roles: ['user'] } } as never)
+    serveNavigation(vi.mocked(navigationApi.getNavigation), ['user'])
+    renderAppAt('/nope')
+
+    const heading = await screen.findByRole('heading', { name: 'That page does not exist' })
+    await waitFor(() => expect(heading).toHaveFocus())
+  })
+
+  it('does not report an access denial -- a wrong address is not a refusal', async () => {
+    // `POST /navigation/access-denied` is the audit record for a screen a
+    // caller may not use. A route that does not exist is neither.
+    useLocalAuthStore.setState({ user: { id: 'u1', roles: ['user'] } } as never)
+    serveNavigation(vi.mocked(navigationApi.getNavigation), ['user'])
+    renderAppAt('/nope')
+
+    await screen.findByRole('heading', { name: 'That page does not exist' })
+    expect(navigationApi.reportAccessDenied).not.toHaveBeenCalled()
+  })
+})

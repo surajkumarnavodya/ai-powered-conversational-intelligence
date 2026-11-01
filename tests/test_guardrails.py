@@ -11,6 +11,8 @@ Fully mocked throughout -- no Ollama, no database, no graph execution.
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 from guardrails.config import (
     FAIL_CLOSED_LAYERS,
@@ -300,6 +302,61 @@ class TestGroundingControls:
         assert verdict.must_refuse is True
         assert verdict.citations_checked == 1
         assert verdict.citations_valid == 0
+
+    def test_an_empty_retrieved_source_list_abstains_and_says_so(self, caplog) -> None:
+        """UAT-readiness `HAL-005`: pins a documented weak spot, so that
+        deciding it later is a visible change rather than a surprise.
+
+        With no retrieved identifiers there is nothing to compare a
+        citation against, so the fabrication check cannot fire. Refusing
+        there would fail closed on a missing integration detail rather
+        than on a finding, which is the wrong posture for an accuracy aid
+        (CLAUDE.md 4.2) -- but a caller has silently lost one of the five
+        conditions, so it is logged. The assertion on the log line is the
+        point: it is the only signal the caller gets.
+        """
+        with caplog.at_level(logging.WARNING, logger="guardrails.grounding"):
+            verdict = assess_grounding(
+                "Leave entitlement is 25 days.",
+                evidence_texts=["Leave entitlement is 25 days."],
+                citations=[{"source": "a_document_that_was_never_retrieved.pdf"}],
+                retrieved_sources=[],
+                config=self._config(),
+            )
+        assert verdict.reason is GroundingReason.GROUNDED
+        assert verdict.must_refuse is False
+        assert "could not be checked for fabrication" in caplog.text
+
+    def test_only_a_genuinely_empty_source_list_abstains(self, caplog) -> None:
+        """Where the abstention boundary actually is, measured.
+
+        `retrieved_sources` is filtered for truthiness and only then
+        stripped, so a list of `""` abstains while a list of `"  "` does
+        **not** -- whitespace survives the truthiness filter, strips to
+        the empty string, and becomes a retrieved identifier that no
+        citation can match, which is a refusal. Measured 2026-10-28; the
+        first draft of this test asserted the opposite and was wrong, so
+        both halves are pinned here rather than inferred.
+        """
+
+        def _verdict(sources):
+            return assess_grounding(
+                "Leave entitlement is 25 days.",
+                evidence_texts=["Leave entitlement is 25 days."],
+                citations=[{"source": "never_retrieved.pdf"}],
+                retrieved_sources=sources,
+                config=self._config(),
+            )
+
+        for abstains in ([], [""], ["", ""]):
+            verdict = _verdict(abstains)
+            assert verdict.reason is GroundingReason.GROUNDED, abstains
+            assert verdict.must_refuse is False, abstains
+
+        for refuses in (["  "], ["", "  "]):
+            verdict = _verdict(refuses)
+            assert verdict.reason is GroundingReason.FABRICATED_CITATION, refuses
+            assert verdict.must_refuse is True, refuses
 
     def test_a_citation_differing_only_by_case_is_not_a_fabrication(self) -> None:
         """A whitespace or case difference must not raise a serious alert."""

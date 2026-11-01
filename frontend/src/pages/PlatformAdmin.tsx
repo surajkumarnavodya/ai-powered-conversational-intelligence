@@ -450,6 +450,7 @@ function JobsSection() {
       <div className="flex items-center gap-2">
         <h2 className="text-sm font-semibold">Onboarding jobs ({jobs.data?.length ?? 0})</h2>
         <Select
+          aria-label="Filter onboarding jobs by status"
           className="ml-auto"
           value={status}
           onChange={(event) => setStatus(event.target.value)}
@@ -665,7 +666,12 @@ function SecurityEventsSection() {
     <div className="flex flex-col gap-3 pt-4">
       <div className="flex items-center gap-2">
         <h2 className="text-sm font-semibold">Security events ({events.data?.length ?? 0})</h2>
-        <Select className="ml-auto" value={severity} onChange={(event) => setSeverity(event.target.value)}>
+        <Select
+          aria-label="Filter security events by severity"
+          className="ml-auto"
+          value={severity}
+          onChange={(event) => setSeverity(event.target.value)}
+        >
           <option value="">All severities</option>
           <option value="info">info</option>
           <option value="warning">warning</option>

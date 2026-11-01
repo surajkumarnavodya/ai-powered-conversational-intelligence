@@ -17,6 +17,7 @@ from typing import Literal
 
 from config.moderation_blocklist import find_matches, load_blocklist
 from config.settings import Settings, get_settings
+from moderation.exceptions import ModerationProviderError
 from moderation.provider import analyze_chunk
 from moderation.taxonomy import Category
 from moderation.types import (
@@ -34,12 +35,30 @@ def _moderate_one_chunk(
     chunk: ModerationChunk, settings: Settings, blocklist: dict
 ) -> ChunkModerationResult:
     provider_results = analyze_chunk(chunk, settings)
+    # Two details that look cosmetic and are not:
+    #
+    # `source=result.source` preserves what the provider said about itself
+    # instead of relabelling everything `"provider"`. Azure always reports
+    # `"provider"`, so nothing changes for it, but `ollama_local` reports
+    # `"not_checked"` for an image chunk when no vision model is
+    # configured, and overwriting that would turn an honest "not examined"
+    # into an implied clean result -- the one thing `moderation/taxonomy.py`
+    # is most careful never to do.
+    #
+    # `severity is None` is excluded from the comparison rather than
+    # coerced to 0. `(result.severity or 0) >= threshold` is correct for
+    # every integer severity, but at `MODERATION_SEVERITY_THRESHOLD=0`
+    # (which `Field(ge=0)` permits) it made a `None` -- i.e. "no severity
+    # concept here" -- trigger a hard reject of the whole asset.
     thresholded = [
         CategoryResult(
             category=result.category,
-            triggered=(result.severity or 0) >= settings.moderation_severity_threshold,
+            triggered=(
+                result.severity is not None
+                and result.severity >= settings.moderation_severity_threshold
+            ),
             severity=result.severity,
-            source="provider",
+            source=result.source,
         )
         for result in provider_results
     ]
@@ -94,6 +113,11 @@ def moderate_chunks(
             from `moderation.provider.analyze_chunk`, not caught here. A
             safety gate must fail closed on a configuration problem, not
             silently pass content through unchecked.
+        ModerationProviderError: either the provider ran and its answer
+            could not be read (propagated from `analyze_chunk`), or every
+            chunk of this asset came back `"not_checked"` -- see the
+            comment on that check below for why that is a refusal and not
+            a pass.
         httpx.HTTPError: a genuine provider outage -- also not caught here,
             for the same fail-closed reason.
     """
@@ -101,6 +125,42 @@ def moderate_chunks(
     blocklist = load_blocklist(settings.moderation_blocklist_path)
 
     chunk_results = [_moderate_one_chunk(chunk, settings, blocklist) for chunk in chunks]
+
+    # An asset whose every chunk came back `"not_checked"` was not examined
+    # at all, and calling that "passed" would make this mandatory gate a
+    # no-op -- precisely the outcome `Settings.moderation_provider`'s
+    # docstring says there is deliberately no toggle for.
+    #
+    # It is reachable: `MODERATION_PROVIDER=ollama_local` reports
+    # `"not_checked"` for an image chunk when `MODERATION_LOCAL_VISION_MODEL`
+    # is blank, and `media/ingest.py` submits a plain image as image chunks
+    # and *nothing else* (a video submits keyframes plus caption/transcript/
+    # OCR text, but a silent video with no readable text submits keyframes
+    # alone). So with that provider and no vision model, every image in the
+    # media library would have been stored having been examined for
+    # nothing.
+    #
+    # Scoped to "every chunk", not "any chunk", on purpose: a PDF whose
+    # pages were rated and whose cover logo was not has still been
+    # examined, and refusing it would make the local provider unable to
+    # ingest ordinary documents -- see `moderation/provider.py
+    # ::_ollama_local`'s docstring and `docs/RISK_REGISTER.md`'s R-021.
+    if chunks and all(
+        category.source == "not_checked"
+        for chunk_result in chunk_results
+        for category in chunk_result.categories
+    ):
+        raise ModerationProviderError(
+            f"Moderation examined nothing in this asset: all {len(chunks)} chunk(s) came "
+            "back not_checked, so there is no basis on which to pass it. With "
+            "MODERATION_PROVIDER=ollama_local this means the asset is image-only and "
+            "MODERATION_LOCAL_VISION_MODEL is not set -- set it to a vision-capable "
+            "Ollama model, or use MODERATION_PROVIDER=azure_content_safety.",
+            safe_message=(
+                "This file could not be checked for content safety, so it was not "
+                "ingested. Image moderation is not configured on this deployment."
+            ),
+        )
 
     hard_reject_categories: list[Category] = []
     soft_flag_categories: list[Category] = []
@@ -150,6 +210,26 @@ def moderate_chunks(
     return decision
 
 
+def unchecked_categories(decision: ModerationDecision) -> tuple[Category, ...]:
+    """Every category some chunk of this asset was *not* examined for.
+
+    A `"not_checked"` result is the honest marker a provider uses when it
+    cannot examine a chunk -- `synthetic_media` on every image since this
+    gate was built, and (with `MODERATION_PROVIDER=ollama_local` and no
+    `MODERATION_LOCAL_VISION_MODEL`) the four harm categories on an image
+    chunk. It was only ever visible in the in-memory
+    `ChunkModerationResult`, so the stored audit row recorded a `"passed"`
+    asset without recording what that pass did and did not cover. This is
+    what puts it in `decision_summary` below.
+    """
+    seen: dict[Category, None] = {}
+    for chunk_result in decision.chunk_results:
+        for category in chunk_result.categories:
+            if category.source == "not_checked":
+                seen[category.category] = None
+    return tuple(seen)
+
+
 def decision_summary(decision: ModerationDecision) -> dict:
     """JSON-serializable summary of a `ModerationDecision`, for
     `moderation.store.record_asset`'s `moderation_checks` column --
@@ -159,6 +239,7 @@ def decision_summary(decision: ModerationDecision) -> dict:
         "status": decision.status,
         "triggering_categories": list(decision.triggering_categories),
         "soft_flagged_categories": list(decision.soft_flagged_categories),
+        "unchecked_categories": list(unchecked_categories(decision)),
         "triggering_chunk_index": decision.triggering_chunk_index,
         "chunks_checked": len(decision.chunk_results),
     }

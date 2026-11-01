@@ -176,6 +176,10 @@ const OUTCOME_STAGES: Record<
     reasonKey: 'lifecycle.reason.schema',
   },
   llm_error: { stage: 'sql', status: 'failed', reasonKey: 'lifecycle.reason.llm' },
+  // Recorded by `generate_sql_node` when an attempt reproduces the
+  // previous query verbatim -- a generation-stage stop, not a
+  // validation or execution one (UAT-readiness Phase 6, LOP-002).
+  no_progress: { stage: 'sql', status: 'failed', reasonKey: 'lifecycle.reason.noProgress' },
   plan_not_satisfied: { stage: 'sql', status: 'failed', reasonKey: 'lifecycle.reason.planMismatch' },
   metric_definition_not_used: {
     stage: 'sql',

@@ -76,13 +76,30 @@ where the two differ — read the newer document, not just this paragraph.
 - Query execution goes through a read-only-by-convention SQLAlchemy
   engine, a row cap enforced two independent ways, and a query timeout —
   see `CLAUDE.md`'s "SQL is untrusted output, always" section for the
-  full detail. A best-effort, warning-only check
-  (`db.connection.check_write_privileges`, surfaced in the UI sidebar and
-  `scripts/test_db_connection.py`) queries the connected database's own
-  privilege catalog and flags — never blocks — a `DB_USER` that appears to
-  hold INSERT/UPDATE/DELETE grants, since the database role actually being
-  read-only is the real guarantee behind the validator, not something this
-  app can enforce by itself (see "What is explicitly not guaranteed" below).
+  full detail. `db.connection.check_write_privileges` queries the
+  connected database's own privilege catalog and reports a `DB_USER` that
+  appears to hold INSERT/UPDATE/DELETE grants, since the database role
+  actually being read-only is the real guarantee behind the validator,
+  not something this app can enforce by itself (see "What is explicitly
+  not guaranteed" below). **It is no longer warning-only, and this bullet
+  said it was until 2026-10-30** (`DOC-016`) — understating a control
+  that exists is the more dangerous direction of documentation drift.
+  `api.main._enforce_database_write_privileges` runs it in the app's
+  `lifespan`, once per warmed engine, and **when
+  `ENVIRONMENT=production` it raises `ConfigurationError` and the
+  application refuses to start**, naming the offending database; the same
+  fail-closed posture `_require_identity_in_production` already
+  established for authentication. In any other environment it logs a
+  `critical` security-audit event (`db_write_privileges_detected`) and a
+  startup warning, and the app comes up — the "never breaks local dev"
+  posture every production-only check here follows. It still fails
+  **open** on a database whose check could not run at all
+  (`result.checked is False`: an unsupported `DB_TYPE`, or a role that
+  cannot read its own privilege catalog), which is why a silent startup
+  is not by itself evidence the role is read-only. The grants that make
+  it silent for the right reason are in
+  [`docs/DBA_READONLY_ACCOUNTS.md`](docs/DBA_READONLY_ACCOUNTS.md); it is
+  also reported by `scripts/test_db_connection.py`.
 - `db/query_store.py`'s SQL Server Query Store insights (optional, SQL
   Server only) need the connected principal to additionally hold
   `VIEW DATABASE STATE` (SQL Server 2016–2019) or `VIEW DATABASE
@@ -588,11 +605,10 @@ silently skipping the check.
   *before* any content check ran — a real gap where a rejected file's
   bytes could already be sitting in the store ahead of the rejection being
   known. Now nothing touches `rag/store.py` until moderation has passed.
-- **The taxonomy, and its honest limits.** Azure AI Content Safety (the
-  only provider implemented, `moderation/provider.py`) checks real harm
-  categories — Hate, SelfHarm, Sexual, Violence — over its REST API
-  (`httpx`, no vendor SDK dependency, matching this project's other
-  external-API integrations). Azure has no dedicated "weapons," "drugs,"
+- **The taxonomy, and its honest limits.** Azure AI Content Safety
+  (`moderation/provider.py`) checks real harm categories — Hate, SelfHarm,
+  Sexual, Violence — over its REST API (`httpx`, no vendor SDK dependency,
+  matching this project's other external-API integrations). Azure has no dedicated "weapons," "drugs,"
   or "synthetic/AI-generated media" category: weapons are covered by a
   coarse Violence-category proxy for imagery plus a custom text blocklist
   (`config/moderation_blocklist.yaml`) against OCR/caption/transcript/
@@ -603,13 +619,37 @@ silently skipping the check.
   since no mainstream API reliably detects this today. This category is
   deliberately a soft-flag, never a hard-reject, even once a real detector
   is eventually plugged in — see `docs/RISK_REGISTER.md`'s R-014.
-- **A real, disclosed exception to "fully local."** Unlike voice mode/media
-  search's own on-device embedding path, this gate calls a third-party
-  cloud API for every chunk of every ingested file — see
-  `docs/RISK_REGISTER.md`'s R-013. The provider is pluggable
-  (`moderation.provider.SUPPORTED_MODERATION_PROVIDERS`, shaped like
-  `search/web_search.py`'s own provider map), so this is a deliberate,
-  named tradeoff, not an unexamined one.
+- **Two providers, and the tradeoff is the operator's to make.**
+  `MODERATION_PROVIDER=azure_content_safety` (the default) is the stronger
+  gate and a real, disclosed exception to this project's otherwise
+  "fully local" posture: unlike voice mode/media search's own on-device
+  embedding path, it calls a third-party cloud API for every chunk of
+  every ingested file — see `docs/RISK_REGISTER.md`'s R-013.
+  `MODERATION_PROVIDER=ollama_local` classifies each chunk with this
+  project's own local Ollama runtime instead, and is honestly the weaker
+  of the two — see R-021 for the two specific ways, and
+  `moderation/provider.py::_ollama_local`'s docstring. It exists because
+  the combination "this gate is mandatory" + "Azure was the only
+  implementation" meant a deployment without an Azure resource could have
+  document/policy RAG enabled and never ingest a single file; the first
+  error it hit named a configuration it could not satisfy. Three
+  properties hold for either provider, which is what makes the choice a
+  configuration decision rather than a rewrite of the gate: both report
+  severities on Azure's 0/2/4/6 scale, so `MODERATION_SEVERITY_THRESHOLD`
+  means the same thing; **neither decides a rejection** —
+  `moderation/gate.py` applies the threshold and the asset-level rule, so
+  no model's own judgement about its own output is the control; and both
+  fail closed, a provider that cannot be reached or whose answer cannot be
+  read raising rather than returning "clean"
+  (`ModerationProviderError`).
+- **A local provider that cannot examine a chunk says so.** With
+  `ollama_local` and no `MODERATION_LOCAL_VISION_MODEL`, an image chunk is
+  recorded `"not_checked"` for all four harm categories — the same honest
+  marker `synthetic_media` has always used — never a false "passed". That
+  marker now reaches the stored audit row as `unchecked_categories`
+  (`moderation.gate.decision_summary`), where before it existed only in
+  memory: a `"passed"` row recorded the pass without recording what the
+  pass had covered.
 - **Audit trail carries metadata, never content.** A rejection is logged
   via `security.audit_log.log_security_event` with the asset's content
   hash, which category triggered it, and the chunk index — never the

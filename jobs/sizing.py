@@ -81,7 +81,7 @@ def check_llm_rate_headroom(settings: Settings) -> str | None:
     """Warn when the per-user cap alone could outrun the LLM call budget.
 
     A single question costs several LLM calls (roughly 6-8 on a clean run
-    through the 18-node graph, more with retries), and
+    through the 19-node graph, more with retries), and
     `LLM_CALL_RATE_LIMIT_PER_MINUTE` is process-global. One user at their
     full cap can therefore exhaust the minute's budget on its own, after
     which every further call -- including other users' -- is refused until

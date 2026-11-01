@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useLocation, Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { useNavigation } from '@/hooks/queries'
@@ -16,6 +17,7 @@ import type { NavigationOut } from '@/lib/types'
  * Loading and error are explicit states, never a blank screen. An allowed
  * caller sees the screen as soon as the navigation response arrives. */
 export function RequireNavItem({ screen, children }: { screen: string; children: ReactNode }) {
+  const { t } = useTranslation()
   const navigation = useNavigation()
   const location = useLocation()
   const reported = useRef(false)
@@ -34,7 +36,7 @@ export function RequireNavItem({ screen, children }: { screen: string; children:
   if (navigation.isPending) {
     return (
       <p role="status" className="p-6 text-sm text-[var(--muted-foreground)]">
-        Checking your access…
+        {t('routeGate.checkingAccess')}
       </p>
     )
   }
@@ -42,9 +44,9 @@ export function RequireNavItem({ screen, children }: { screen: string; children:
   if (navigation.isError) {
     return (
       <div role="alert" className="flex flex-col items-start gap-3 p-6">
-        <p className="text-sm text-[var(--danger)]">We couldn&apos;t check your access to this screen.</p>
+        <p className="text-sm text-[var(--danger)]">{t('routeGate.accessCheckFailed')}</p>
         <Button size="sm" variant="secondary" onClick={() => void navigation.refetch()}>
-          Try again
+          {t('routeGate.retry')}
         </Button>
       </div>
     )
@@ -61,6 +63,7 @@ export function RequireNavItem({ screen, children }: { screen: string; children:
  * plainly, points at the screens they can use, and moves focus to its heading so
  * the change is announced to assistive technology. */
 export function ForbiddenPage({ navigation }: { navigation: NavigationOut | undefined }) {
+  const { t } = useTranslation()
   const headingRef = useRef<HTMLHeadingElement>(null)
 
   useEffect(() => {
@@ -74,18 +77,15 @@ export function ForbiddenPage({ navigation }: { navigation: NavigationOut | unde
   return (
     <section aria-labelledby="forbidden-title" className="mx-auto flex max-w-xl flex-col gap-3 p-6">
       <h1 id="forbidden-title" ref={headingRef} tabIndex={-1} className="text-lg font-semibold outline-none">
-        You don&apos;t have access to this screen
+        {t('routeGate.forbiddenTitle')}
       </h1>
-      <p className="text-sm text-[var(--muted-foreground)]">
-        Your account&apos;s role doesn&apos;t include this area. If you need it, ask an administrator to
-        review your access.
-      </p>
+      <p className="text-sm text-[var(--muted-foreground)]">{t('routeGate.forbiddenBody')}</p>
       {home && (
         <Link
           to={home.path}
           className="w-fit text-sm font-medium text-[var(--accent)] underline underline-offset-2"
         >
-          Go to a screen you can use
+          {t('routeGate.goToPermitted')}
         </Link>
       )}
     </section>

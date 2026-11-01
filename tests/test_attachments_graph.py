@@ -286,3 +286,138 @@ class TestBuildAttachmentContextNode:
         with patch("attachments.graph.get_settings", return_value=settings):
             result = build_attachment_context_node(state)
         assert "hello world" in result["attachment_context"]
+
+
+class TestTheOcrFallbackRespectsTheTextCeiling:
+    """UAT-readiness Phase 7, `CTX-005`.
+
+    `build_attachment_context_node` applies `max_attachment_text_chars`,
+    and `build_multimodal_message_node` then appends OCR text to the
+    result -- after the ceiling was applied. So the ceiling was advisory
+    on that path, and the combined block could exceed it by however much
+    OCR produced, bounded only by the images themselves.
+
+    Two things are asserted, because the fix has two halves: the block is
+    clamped, *and* `context_truncated` says so. A caller told "not
+    truncated" about a block that was is the more misleading of the two.
+    """
+
+    def _image_state(self, tmp_path, ocr_text: str, ceiling: int, existing: str):
+        import io
+
+        from PIL import Image
+
+        from attachments.graph import build_multimodal_message_node
+
+        store = AttachmentStore()
+        settings = _settings(
+            tmp_path,
+            media_vision_model="",  # forces the OCR fallback path
+            max_attachment_text_chars=ceiling,
+        )
+        buffer = io.BytesIO()
+        Image.new("RGB", (80, 80), color="white").save(buffer, format="PNG")
+        attachment, _ = validate_and_store_upload(
+            "screenshot.png",
+            "image/png",
+            buffer.getvalue(),
+            settings,
+            owner_subject="alice",
+            store=store,
+        )
+        state = {
+            "processed_attachments": [
+                {
+                    "attachment_id": attachment.attachment_id,
+                    "filename": "screenshot.png",
+                    "source_type": "image",
+                    "processing_status": "succeeded",
+                    "image_data_url": attachment.image_data_url,
+                }
+            ],
+            "attachment_context": existing,
+            "context_truncated": False,
+            "owner_subject": "alice",
+        }
+        with (
+            patch("attachments.graph.get_default_attachment_store", return_value=store),
+            patch("attachments.graph.get_settings", return_value=settings),
+            patch("attachments.graph.extract_text", return_value=ocr_text),
+        ):
+            return build_multimodal_message_node(state)
+
+    def test_a_large_ocr_result_cannot_push_the_block_past_the_ceiling(self, tmp_path):
+        ceiling = 2_000
+        result = self._image_state(
+            tmp_path,
+            ocr_text="OCR " * 5_000,  # 20,000 chars, 10x the ceiling
+            ceiling=ceiling,
+            existing="x" * 1_500,
+        )
+
+        assert len(result["attachment_context"]) <= ceiling
+        assert result["context_truncated"] is True
+
+    def test_truncation_is_reported_even_when_the_builder_had_not_truncated(self, tmp_path):
+        # The builder set context_truncated=False (its own text fitted);
+        # the OCR append is what overflowed, so this node must be the one
+        # to flip the flag.
+        result = self._image_state(
+            tmp_path, ocr_text="OCR " * 5_000, ceiling=1_000, existing="short text"
+        )
+
+        assert result["context_truncated"] is True
+
+    def test_an_ocr_result_that_fits_changes_nothing(self, tmp_path):
+        # The inertness half: a normal OCR result must be appended whole
+        # and must not be reported as truncated.
+        result = self._image_state(
+            tmp_path, ocr_text="a login screen", ceiling=80_000, existing="prior document text"
+        )
+
+        assert "a login screen" in result["attachment_context"]
+        assert "prior document text" in result["attachment_context"]
+        assert result["context_truncated"] is False
+
+    def test_an_already_truncated_block_stays_reported_as_truncated(self, tmp_path):
+        # The builder's own truncation must not be erased by this node.
+        import io
+
+        from PIL import Image
+
+        from attachments.graph import build_multimodal_message_node
+
+        store = AttachmentStore()
+        settings = _settings(tmp_path, media_vision_model="")
+        buffer = io.BytesIO()
+        Image.new("RGB", (80, 80), color="white").save(buffer, format="PNG")
+        attachment, _ = validate_and_store_upload(
+            "screenshot.png",
+            "image/png",
+            buffer.getvalue(),
+            settings,
+            owner_subject="alice",
+            store=store,
+        )
+        state = {
+            "processed_attachments": [
+                {
+                    "attachment_id": attachment.attachment_id,
+                    "filename": "screenshot.png",
+                    "source_type": "image",
+                    "processing_status": "succeeded",
+                    "image_data_url": attachment.image_data_url,
+                }
+            ],
+            "attachment_context": "already cut short",
+            "context_truncated": True,
+            "owner_subject": "alice",
+        }
+        with (
+            patch("attachments.graph.get_default_attachment_store", return_value=store),
+            patch("attachments.graph.get_settings", return_value=settings),
+            patch("attachments.graph.extract_text", return_value="small"),
+        ):
+            result = build_multimodal_message_node(state)
+
+        assert result["context_truncated"] is True

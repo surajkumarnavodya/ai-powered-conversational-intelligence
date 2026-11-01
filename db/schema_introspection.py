@@ -466,7 +466,12 @@ def _unique_column_sets(
         pass
     try:
         return tuple(
-            tuple(ix["column_names"])
+            # The `all(...)` guard below is what decides the index: one with
+            # any unnamed column is skipped whole, never partially kept. The
+            # inner `if col is not None` only restates that for the type
+            # checker, which cannot narrow `list[str | None]` from a guard
+            # in the comprehension's own condition.
+            tuple(col for col in ix["column_names"] if col is not None)
             for ix in inspector.get_indexes(name, schema=schema)
             if ix.get("unique")
             and ix.get("column_names")

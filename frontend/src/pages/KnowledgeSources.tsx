@@ -78,17 +78,28 @@ function CollectionPanel({ collection }: { collection: Collection }) {
         <h2 className="mb-3 text-sm font-semibold">{t('knowledge.upload')}</h2>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
           <div className="flex-1">
+            {/* The heading above names the section, not this control, so
+                without an explicit name a screen reader announced only
+                "file, button". axe reported `label` (critical) here in
+                Chrome, 2026-10-29 (Phase 9, `UI-007`). */}
             <input
               ref={fileInput}
               type="file"
               accept="application/pdf"
+              aria-label={t('knowledge.upload')}
               className="block w-full text-sm file:mr-3 file:rounded-md file:border-0 file:bg-[var(--muted)] file:px-3 file:py-1.5 file:text-sm"
             />
           </div>
           {collection === 'policies' && (
             <div className="flex flex-col gap-1">
-              <label className="text-xs text-[var(--muted-foreground)]">{t('knowledge.sensitivity')}</label>
+              <label
+                htmlFor="knowledge-sensitivity"
+                className="text-xs text-[var(--muted-foreground)]"
+              >
+                {t('knowledge.sensitivity')}
+              </label>
               <Select
+                id="knowledge-sensitivity"
                 value={sensitivity ?? ''}
                 onChange={(event) => setSensitivity((event.target.value || null) as SensitivityCategory)}
               >

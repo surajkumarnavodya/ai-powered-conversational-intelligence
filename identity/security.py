@@ -55,6 +55,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
+from typing import TypeVar
 
 import jwt
 from argon2 import PasswordHasher
@@ -104,20 +105,73 @@ def _load_key_file(path: str) -> bytes:
     return Path(path).read_bytes()
 
 
+#: Raised when a key the JWT algorithm requires is absent. `Settings`'
+#: own validator already guarantees it is present, so reaching this is a
+#: configuration invariant that has been broken, not an input error --
+#: which is exactly why it must not be an `assert`. See
+#: `_require_configured_key`.
+_MISSING_KEY_MESSAGE = (
+    "JWT {kind} is not configured for algorithm {algorithm}. "
+    "Settings' own validator should have refused this configuration at startup."
+)
+
+
+_KeyT = TypeVar("_KeyT")
+
+
+def _require_configured_key(value: _KeyT | None, *, kind: str, algorithm: str) -> _KeyT:
+    """Returns a required JWT key, refusing loudly when it is missing.
+
+    These four checks were `assert` statements until 2026-10-29
+    (UAT-readiness Phase 8, `BP-006`). `Settings`' own validator does
+    guarantee both branches, so the checks never fire in practice -- but
+    an `assert` is removed entirely by `python -O`/`PYTHONOPTIMIZE`, and
+    what replaces it here is not "nothing happens": the next line calls
+    `.get_secret_value()` on `None`, so a deployment that enabled
+    optimised bytecode would turn a clear configuration failure into an
+    `AttributeError` surfacing as an opaque HTTP 500 on every login.
+    CLAUDE.md 4.2 asks a safety control to fail closed; a check the
+    interpreter is free to delete cannot promise that.
+
+    It returns the value rather than only checking it so the caller needs
+    no narrowing `assert` of its own -- which would reintroduce exactly
+    the construct this replaced.
+    """
+    if value is None:
+        raise RuntimeError(_MISSING_KEY_MESSAGE.format(kind=kind, algorithm=algorithm))
+    return value
+
+
 def _signing_key(settings: Settings) -> str | bytes:
     if settings.jwt_algorithm == "HS256":
-        assert settings.jwt_secret_key is not None  # guaranteed by Settings' own validator
-        return settings.jwt_secret_key.get_secret_value()
-    assert settings.jwt_private_key_path is not None  # guaranteed by Settings' own validator
-    return _load_key_file(str(settings.jwt_private_key_path))
+        return _require_configured_key(
+            settings.jwt_secret_key, kind="secret key", algorithm=settings.jwt_algorithm
+        ).get_secret_value()
+    return _load_key_file(
+        str(
+            _require_configured_key(
+                settings.jwt_private_key_path,
+                kind="private key path",
+                algorithm=settings.jwt_algorithm,
+            )
+        )
+    )
 
 
 def _verification_key(settings: Settings) -> str | bytes:
     if settings.jwt_algorithm == "HS256":
-        assert settings.jwt_secret_key is not None
-        return settings.jwt_secret_key.get_secret_value()
-    assert settings.jwt_public_key_path is not None
-    return _load_key_file(str(settings.jwt_public_key_path))
+        return _require_configured_key(
+            settings.jwt_secret_key, kind="secret key", algorithm=settings.jwt_algorithm
+        ).get_secret_value()
+    return _load_key_file(
+        str(
+            _require_configured_key(
+                settings.jwt_public_key_path,
+                kind="public key path",
+                algorithm=settings.jwt_algorithm,
+            )
+        )
+    )
 
 
 def create_access_token(
@@ -161,7 +215,9 @@ def create_access_token(
         "sub": subject,
         "roles": list(roles),
         "tid": tenant_id,
-        "token_type": "access",
+        # nosec B105 - a JWT claim *value* naming the token kind, not a
+        # credential; the signing key is `_signing_key` above (BP-005).
+        "token_type": "access",  # nosec B105
         "iat": now,
         "exp": now + timedelta(minutes=settings.access_token_expire_minutes),
         "jti": str(uuid.uuid4()),
@@ -292,3 +348,62 @@ def hash_refresh_token(raw_token: str) -> str:
     their own tokens).
     """
     return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+
+#: A fixed, throwaway Argon2id hash used only to spend the *same* verification
+#: work on a login attempt that has no real hash to check against -- see
+#: `verify_password_against_decoy` below. Built lazily (one `hash()` call,
+#: tens of milliseconds) rather than at import, so no CLI script under
+#: `scripts/` pays for it just by importing this module;
+#: `api.main.lifespan` warms it so the cost never lands on a real request.
+# nosec B105 - deliberately a fixed, public, never-accepted string: its whole
+# purpose is to spend Argon2id work on a login with no stored hash, so that a
+# missing account cannot be told from a wrong password by timing (`AUN-001`).
+# Treating it as a secret would defeat the point (BP-005).
+_DECOY_PASSWORD = "decoy-password-never-accepted-anywhere"  # nosec B105
+
+
+@lru_cache(maxsize=1)
+def _decoy_password_hash() -> str:
+    return _password_hasher.hash(_DECOY_PASSWORD)
+
+
+def warm_password_hasher() -> None:
+    """Pre-computes the decoy hash so the first unmatched login attempt in
+    a process doesn't pay for it. Called from `api.main.lifespan` alongside
+    the other process-lifetime warmups; safe to call any number of times."""
+    _decoy_password_hash()
+
+
+def verify_password_against_decoy(password: str) -> bool:
+    """Always False -- the point is the *work*, not the answer.
+
+    `POST /auth/login` has two paths with no password hash to verify: no
+    such account, and a Google-only account (`password_hash IS NULL`).
+    Both used to return immediately, while a real account spent a full
+    Argon2id verification. Measured on this hardware (2026-10-28, finding
+    `AUN-001`): **5.94 ms** median for an absent account versus **80.87
+    ms** for a present one, with *zero overlap* across 25 samples each --
+    a fully separable 13.6x oracle for "does this email have an account
+    here", and a second one for "is this account Google-only", which
+    `api/identity_auth.py` had already equalized at the status-code level
+    for exactly that reason.
+
+    Calling this on those paths makes every login attempt perform exactly
+    one Argon2id verification, so the response time no longer depends on
+    what the server knows about the email. It is not a constant-time
+    guarantee -- the surrounding ORM lookup and event write still differ
+    slightly -- but it removes the dominant term by two orders of
+    magnitude.
+    """
+    # The result is deliberately discarded rather than returned. Returning
+    # it would mean a caller who supplied the literal `_DECOY_PASSWORD`
+    # got `True` back -- and `POST /auth/login`'s Google-only branch
+    # assigns this call's value straight to `password_ok`, so that would
+    # have been an authentication bypass for every account with no
+    # password hash. Caught by
+    # `tests/security/test_authentication_lifecycle.py::
+    # TestLoginSpendsTheSamePasswordWorkOnEveryPath::
+    # test_the_decoy_never_accepts_any_password`.
+    verify_password(password, _decoy_password_hash())
+    return False

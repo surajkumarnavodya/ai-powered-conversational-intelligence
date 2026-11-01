@@ -662,7 +662,45 @@ def select_database(
             db_name=only_name, top_table_score=1.0, scores_by_db={only_name: 1.0}
         )
 
-    client = get_chroma_client(settings)
+    # Guarded for the same reason `retrieve_relevant_schema` guards its own
+    # call, and fixed for it alone until `OPS-025`: acquiring the client
+    # touches the filesystem (`get_chroma_client` mkdirs
+    # `CHROMA_PERSIST_DIR` on every call), so a persist directory that is
+    # unreadable, a file rather than a directory, permission-denied or on a
+    # full disk raises `OSError` here -- not `SchemaRetrievalError`. That
+    # escaped `retrieve_schema_node`'s `except SchemaRetrievalError`, which
+    # exists precisely to turn "no schema available" into a terminal
+    # `"failed"` state, and surfaced as HTTP 500. Measured with
+    # `CHROMA_PERSIST_DIR` pointing at a regular file: `FileExistsError
+    # [WinError 183]` out of `run_agent` in 0.04 s.
+    #
+    # Only reachable with more than one configured database, because the
+    # single-database branch above returns before this line.
+    try:
+        client = get_chroma_client(settings)
+    except SchemaRetrievalError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - OS/Chroma error types vary by backend
+        # The underlying text goes to the log and *not* into the message,
+        # which `retrieve_schema_node` copies verbatim into the
+        # user-facing `failure_explanation`. An OS error here renders the
+        # persist directory's absolute path, and before this guard existed
+        # the caller got a generic 500 disclosing nothing -- so repeating
+        # the path in the response would be a new disclosure of server
+        # filesystem layout (the `LOP-008` class: `redact_secrets` covers
+        # configured secrets, not topology). `GET /health` already reports
+        # this per database for an operator, and the log line below
+        # carries the detail for whoever is debugging.
+        logger.error(
+            "select_database: the Chroma persist directory is unusable: %s",
+            redact_secrets(str(exc), settings),
+        )
+        raise SchemaRetrievalError(
+            "The schema index is unavailable: the configured schema-index "
+            "directory could not be opened. Check CHROMA_PERSIST_DIR and the "
+            "server logs."
+        ) from exc
+
     scores: dict[str, float] = {}
     for config in databases:
         try:

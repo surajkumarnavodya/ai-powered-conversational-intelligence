@@ -23,13 +23,35 @@
 >
 > **Entering UAT is not passing it, and this is still not
 > production-ready.** No business user has yet executed or signed off a
-> single acceptance journey; the 15-journey, 6-role script exists with
-> every result cell blank. Two blocking CI gates (`ruff`, `bandit`) were
-> re-measured red today on verified-benign findings awaiting a decision
-> and a third (`pip-audit`) could not be re-measured here at all;
-> capacity and container-CVE testing are unblocked but unrun, recovery
-> has never been drilled, and the measured answer-latency target is not
-> met. See [Project status](#-project-status).
+> single acceptance journey; the 18-journey, 6-role script exists with
+> every result cell blank. **Re-measured 2026-10-31: 9 of the 10
+> blocking CI gates are green** — backend **9,687 passed / 0 failed**,
+> frontend **1,551 passed / 0 failed**, `ruff` and `black` clean,
+> `bandit` 0 findings over 119,611 lines, production `mypy` 0 errors
+> across 482 files, `pip-audit` "no known vulnerabilities, 7 ignored",
+> `npm audit --omit=dev` 0. **The tenth, `detect-secrets`, is red** —
+> a stale baseline with 85 un-baselined findings, every one already
+> triaged benign, refreshable only on Linux. Capacity and container-CVE
+> testing remain unblocked but unrun, and the measured answer-latency
+> target is not met. Restore *is* now drilled end to end — but there is
+> no backup schedule, so the recovery point is unbounded.
+>
+> **The independent readiness audit is complete, and its verdict is
+> `NOT READY`**
+> ([`UAT_READINESS_REPORT.md`](docs/uat-readiness/UAT_READINESS_REPORT.md)).
+> The honest headline is not the green gates. 140 findings, 80 fixed,
+> **one open S1** — document, policy and media stores are not
+> tenant-partitioned, and a cross-tenant read *and delete* was
+> reproduced at runtime (`AUZ-002`) — and **thirteen S2s flagged for an
+> owner decision**. Six of those block UAT entry, and two are plainer
+> than any severity label: the configured default model **is not
+> installed**, so the first question a tester asks fails (`OPS-008`),
+> and the router sends **12 of 26** unambiguous golden SQL questions
+> somewhere other than the database (`OPS-015`). Accuracy has **no
+> current measurement on any model** and no agreed threshold. Read the
+> report before forming a view; §8 of it is the path to READY WITH
+> CONDITIONS, and ten of its twelve items are operator or owner actions
+> rather than engineering. See also [Project status](#-project-status).
 
 <a id="news-and-updates"></a>
 
@@ -37,11 +59,11 @@
 
 <!-- Newest first, sourced from real commit history. Keep no more than the three most recent entries. -->
 
-- **2026-10-25 (later)** — A web answer no longer says the same thing three times. It now opens with the answer itself instead of “According to a live web search:”, puts compact **[1] / [2]** markers beside the claims they support, and lists each cited page **once** under a collapsed **Sources (N)** — with the page’s real title and domain, linked. Evidence shrinks to a single line (`Source-backed · 5 sources · Show evidence`), the stage pipeline is hidden for answers that never ran a query, and the model name and timing move into a **Diagnostics** disclosure. Before this, the same five URLs appeared four times in one turn and two visible counts disagreed — the panel header said “Sources (1)” (counting source *kinds*) beside an answer citing five *pages*. Sources are de-duplicated on a canonicalised URL that folds `http`/`https`, `www.`, fragments and tracking parameters, while deliberately keeping real query parameters, so `?id=1` and `?id=2` stay two different articles rather than being merged into one citation. **Nothing is invented:** a page with no reported title shows its domain rather than a headline guessed from the URL, a link the answer never cited is never given a number, and the preamble strip leaves named attribution (“According to Reuters…”) alone. Titles are real data newly surfaced — the search provider always sent one, the API just never passed it through. See [`docs/frontend-ui-audit.md`](docs/frontend-ui-audit.md) §3.
+- **2026-10-31 (later)** — **Knowledge Source and Policy ingestion could not work on a deployment without an Azure subscription, and now it can.** The pre-ingestion content-moderation gate is mandatory by design — there is deliberately no `ENABLE_CONTENT_MODERATION` toggle — but it had exactly one provider, `azure_content_safety`, so a deployment with `ENABLE_DOCUMENT_RAG`/`ENABLE_POLICY_RAG` on and no Azure resource failed **every** upload at the gate. A second provider now sits at the architecture's own extension point: `MODERATION_PROVIDER=ollama_local` rates each chunk with this project's own Ollama runtime via `rag.llm.call_ollama`, so the call stays inside the circuit breaker, the model-call budget, the request deadline and the prompt-truncation check like every other model call here. **Nothing about the gate was weakened to get there.** Neither provider decides a rejection — both report severities and `moderation/gate.py` owns the threshold — an unreachable or uninstalled model and a reply that cannot be read as a rating for all four categories both raise rather than passing content through, and `api/documents.py` now maps the whole `ModerationError` family to **503**, so a gate failing closed stops reading as an HTTP 500. Review caught the new provider quietly neutering the gate elsewhere: without a vision model an image chunk is honestly recorded `source="not_checked"`, and `media/ingest.py` submits a plain image as image chunks *and nothing else*, so an asset whose **every** chunk came back unexamined is now refused rather than stored as "passed" (mutation-verified — removing that rule fails exactly three tests). **Verified live** on the real stack: a policy PDF ingests in 15.6s cold / 8.7s warm, a violent-threat PDF is rejected with nothing written to `rag.documents`, clean policy text scores severity 0, and three prompt-injection variants on harmful content are still rejected. It is honestly the weaker gate and Azure remains one `.env` line away — [`docs/RISK_REGISTER.md`](docs/RISK_REGISTER.md)'s **R-021** names both of its named weaknesses rather than leaving them to be discovered.
 
-- **2026-10-25** — Live web search is proven working end to end, the reason a plain general-knowledge question never reached it is found and turns out to be an environment fix rather than a code one, and the chat sidebar and composer get a pass of density and polish. Asking *“Who is the prime minister of India?”* had been answering *“I couldn’t match that question to any of the connected data sources”*. **The web path itself was never broken**: pinned to the `web` source the same question returns Narendra Modi, cited to two Wikipedia pages, in 126.2s, with Tavily reporting `results=5` and the node disclosing that it used the 2 most relevant because the rest did not fit the context budget. Four things sat between the question and that answer, and only the first is a defect: `OLLAMA_MODEL` pointed at **`qwen2.5-coder:7b`, which is not installed** on this machine, so *every* LLM call returned HTTP 404 and the router fell back to keywords — which have no rule for “who is …”, so the question landed on `general_knowledge`, whose answers are off by default. Substituting an installed model exposed the second: the router’s budget is **5s** (`ROUTER_TIMEOUT_SECONDS`) and `llama3.1:8b` cannot classify within it on this hardware, so it timed out into the same fallback. Raising the budget exposed the third, which is model capacity rather than wiring — with 60s and two attempts (68.2s in total) the 8B model routed a general-knowledge question to **`sql_database` at 0.95 confidence** (“Question refers to a specific entity in the database”), and the SQL path correctly refused it as off-topic. Fourth, the deterministic signals cannot rescue it: a single strong `web` match scores **0.6 against a 0.70 threshold**, so even *“search the web for …”* still needs the classifier, and the keyword fallback’s own web rule (`news|today|latest|price|weather|…`) does not match that phrase either. **No pipeline code was changed for any of it** — the levers are an operator’s (`ollama pull`, or point `OLLAMA_MODEL`/`ROUTER_MODEL` at an installed model), and `AskRequest.sources: ["web"]` already pins the route today. On the UI side, the floating Jump-to-Bottom control stopped alternating between two opposite reports (“the arrow is not working”, then “the arrow and ring do not appear when I ask a question”) by separating *visible* from *actionable*: it is now shown for the whole of every in-flight question, including at the bottom where `scrollToBottom` is a no-op, but there it renders as an inert progress indicator (`pointer-events-none`, `tabIndex -1`, `aria-disabled`, no click handler) instead of an arrow that cannot move the page. A long history title now scrolls as a **seamless two-copy marquee**: the track advances exactly `-50%`, one copy’s width, so the second copy lands where the first began and the row can never go blank — which the single-pass reveal it replaces could do whenever a stale measurement over-stated the overflow and carried the text off the left edge. A `ResizeObserver` now keeps that measurement honest when the panel itself resizes, not only on a window `resize`. History rows went **32px → 24px**, the floor rather than a round-down (their height is set by a 24px menu trigger, which is exactly WCAG 2.2 SC 2.5.8’s minimum target size); the TODAY / YESTERDAY / PREVIOUS 7 DAYS headings are bold primary text and are now **+/− collapse toggles** carrying `aria-expanded`; and the composer gained a bottom-left model picker that is a second *view* of `settingsStore.selectedModel`, never a second owner, so it and the Settings panel cannot disagree. The running `0 / 500 words` tally is gone — nothing is shown until the limit is exceeded, at which point the whole box turns red and says so. That required **removing the hard truncation at 500 words**, which had made the over-limit state unreachable and silently destroyed the tail of a long paste; the limit is enforced at send instead, so an over-long draft survives to be edited down. **Verified:** the frontend suite is green at **100 files / 1,435 tests**, `tsc` and `oxlint` are clean, and each load-bearing guard is mutation-verified (removing it fails a named test). **Not verified:** there is still no browser tooling in this environment, so every visual change is pinned by test and by reading the compiled bundle, never observed in a page. See [`docs/ROUTING.md`](docs/ROUTING.md) and [`docs/frontend-ui-audit.md`](docs/frontend-ui-audit.md).
+- **2026-10-31** — **The independent UAT-readiness audit is complete, and its consolidated gate returns `NOT READY`** ([`UAT_READINESS_REPORT.md`](docs/uat-readiness/UAT_READINESS_REPORT.md)). Phases 11 (operations) and 12 (the gate) closed the audit at **140 findings, 80 fixed, 1 open S1 and 13 open S2** — all 14 *flagged* for an owner decision rather than forgotten, because each fix crosses a migration, an API contract, a live prompt, a legal question or a product call. **Four gate items are false, and two of them are plainer than any severity label.** The configured default model **is not installed**, so the first question a UAT tester asks fails in 1.7s while `GET /models` already reported `installed: false` (`OPS-008`); and because the LLM router costs 31–40s on this hardware against a 5s budget, the regex fallback *is* the router on 7 of 8 live calls and sends **12 of 26** unambiguous golden SQL questions somewhere other than the database — journey J4, which the UAT script calls its highest-value row, reaches the database on **1 of 4** (`OPS-015`). The third is that **accuracy has no current number on any model**: 25 of 32 golden accuracy cases carry no `expected_sql`, no threshold has ever been agreed, and the only full-corpus benchmark is self-disclaimed as stale. The fourth is `detect-secrets`, the one red blocking gate — a stale baseline, 85 un-baselined findings, every one already triaged benign. **Five gate items are true**, including one this phase had to earn: the masking attack suite that holds the `SEC-006` S1 closed pinned `dialect="postgres"` on every case while all four connections configured here are `mssql`, so the strictest control in `governance/` had no regression coverage in the dialect it runs against (`SEC-008`, fixed — 52 tests pass, mutation-verified at 10 failures when the dialect is wrong). Phase 11 also **drilled restore end to end** for the first time — `pg_dump` 1s, `pg_restore` 5s, and a real sign-in against the restored copy — leaving RTO under a minute and RPO unbounded, because nothing schedules a backup. §8 of the report is the path to READY WITH CONDITIONS: **ten of its twelve items are operator or owner actions, not engineering.**
 
-- **2026-10-22** — Answers now read like business answers, the slow part of the pipeline is measured rather than guessed at, and a retrieval bug that refused perfectly answerable questions is fixed. **The project status moves to UAT (pre-production).** Three result-quality fixes landed first: a question about products returns `EnglishProductName`, not `ProductKey` — the generated SQL is repaired by AST surgery to join the dimension table that holds the name, never by renaming a column — while a date key is now left alone rather than silently relabelled with a month name, and the chart y-axis binds to a numeric *measure* chosen by a priority ladder (revenue > profit > quantity > count > average > percentage) instead of whatever numeric column happened to come first, which was often a key. **The latency work refused to assume a bottleneck and measured one instead**, against the live SQL Server and Ollama: a baseline question took **123.77s**, of which `execute_sql` was **0.05s — 0.04%**. Essentially all of it is model inference, because `qwen2.5-coder:7b` needs 5.84 GB and only 2.37 GB fits the 4 GB GPU, so it runs **41% on GPU** at ~185 tok/s prompt and ~9.6 tok/s generation. Latency is therefore `prompt_tokens/185 + generated/9.6`, so the only levers are *how many model calls* and *how big each prompt is* — the database, router and vector store are noise. Dropping the analytical-intent call for a question with no complexity signal (its result provably cannot change any downstream decision) took it to **80.08s**, 3 model calls to 2. **The 3–5s target is not met for a SQL answer and `docs/PERFORMANCE.md` says so** — ~80s today, ~30s in the best configuration this hardware allows; what does meet it is progress, with the first `/ask/stream` event at **0.025s** and every pre-generation stage done by 2.57s. Separately, "Top selling products." had been answering *"I can only answer questions about this database"*: retrieval was trimming to the single highest-scoring table, `DimProductSubcategory`, a dimension with no sales measure in it, so the model was handed a schema that genuinely could not answer the question. The giveaway was that the same question **without the trailing period** retrieved five tables including the fact table — one character decided whether it was answerable. The trim is now withheld when a question asks for a measure the lone winner has no column to supply; a 270-phrasing sweep leaves **zero** measure questions retrieving no measure table, and no lookup or aggregate question was widened. The off-topic refusal also stopped claiming the question was off-topic when it was really a coverage miss. Rounding out the day: the question editor expands to the full turn column like ChatGPT and Perplexity rather than a few characters, and the web-search prompt now sizes its answer to the question (briefings grouped by theme) while being explicitly forbidden from inventing a publication date, since results carry only a retrieval time. **Known and unfixed:** two phrasings ("Worst selling products", "Most popular products") are still refused by the 7B model even with the right schema in the prompt — `llama3.1:8b` answers both, so it is model capacity, not the pipeline. See [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md), [`docs/DISPLAY_NAMES.md`](docs/DISPLAY_NAMES.md) and [`docs/CHART_AXIS_BINDING.md`](docs/CHART_AXIS_BINDING.md).
+- **2026-10-30** — The independent UAT-readiness audit reached phase 10 of 12, and the documentation it audited turned out to be the thing most out of step with the product. **Every blocking CI gate is green on re-measure** (backend **9,593** tests, frontend **1,551**, `ruff`/`black`/`bandit`/`pip-audit`/`npm audit` all clean), which this README had been reporting as one red `ruff` finding and an unrunnable `pip-audit` — both fixed days earlier. The real headline is the opposite of green: the audit stands at **one open S1** (document, policy and media stores are not tenant-partitioned; a cross-tenant read *and delete* was reproduced) and **eight S2s flagged for an owner decision**, where this README still said the audit had "completed reconnaissance only" and found one information-disclosure item. The documentation pass itself found the configuration reference claimed to list "every environment variable this project reads" while **110 of 447 settings appeared in neither it nor `.env.example`** — including **26 feature flags**, most of them on by default, which is awkward because the rollback procedure tells an operator to "set the flag back". Those 26 are now documented in both places and the remaining 77 are pinned by a no-growth test that fails in both directions, so the list cannot quietly become an allowlist. `MAX_QUESTION_LENGTH` was documented as `500` against a real default of `5000` — a 10× wrong boundary for the journey that tests it. And the single most repeated operator instruction in the project, "use a dedicated read-only database account" (said on fourteen separate lines of `SECURITY.md` alone), had **no procedure anywhere**: [`docs/DBA_READONLY_ACCOUNTS.md`](docs/DBA_READONLY_ACCOUNTS.md) now gives the exact `GRANT`s for PostgreSQL and SQL Server, labels the MySQL and Oracle recipes as unverified, and corrects SECURITY.md's description of the startup privilege check, which it called "warning-only" long after it began refusing to boot in production. **Verified:** every documented command in ten user-facing documents was checked against the repository (449 command lines, 0 broken); every relative markdown link across 202 files resolves. **Not verified:** external HTTP links were not fetched. See [`docs/uat-readiness/phase-10-documentation.md`](docs/uat-readiness/phase-10-documentation.md).
 
 <a id="example-usage"></a>
 
@@ -95,8 +117,20 @@ belong to someone. See [`docs/CONCURRENCY.md`](docs/CONCURRENCY.md).
 
 </div>
 
-_An animated diagram, not a screen recording — a real screenshot of the
-chat + generated-SQL view is still TODO._
+_An animated diagram, not a screen recording._
+
+<div align="center">
+
+<img width="920" alt="The dashboard after a question has been answered: the stage rail shows Understanding, Schema, SQL, Validation and Cost check complete and Ready to run reached, with Execution not started, above the message &quot;Nothing has run for you yet. Review the SQL below, then choose Confirm and Run.&quot;" src="docs/images/dashboard-sql-review.png" />
+
+</div>
+
+_A real capture, not a mock-up: real Chrome at 1440×950 against a live
+deployment, `llama3.1:8b` over a real SQL Server database, 2026-10-30.
+It is the moment this project exists for — the question is answered in
+76.3s, every pre-execution stage has passed, and **`Execution` has not
+started**. Nothing touches the database until you choose Confirm and
+Run. The follow-up chips say on their face that each is an AI estimate._
 
 Ready to try it? Jump to [Getting Started](#-getting-started) below.
 
@@ -289,8 +323,11 @@ cp .env.example .env             # Windows: Copy-Item .env.example .env
 
 Edit `.env` with your real database connection details (every variable is
 documented inline in `.env.example`) — **use a dedicated read-only database
-account**, not an admin login (see [`SECURITY.md`](SECURITY.md)). Then
-verify the connection and build the schema index:
+account**, not an admin login. The exact `GRANT`s for PostgreSQL and SQL
+Server are in
+[`docs/DBA_READONLY_ACCOUNTS.md`](docs/DBA_READONLY_ACCOUNTS.md); the
+reasoning is in [`SECURITY.md`](SECURITY.md). Then verify the connection
+and build the schema index:
 
 ```bash
 python scripts/test_db_connection.py
@@ -656,14 +693,80 @@ row was re-measured on 2026-10-22 unless it says otherwise:
 | Question | Answer | Evidence |
 |---|---|---|
 | Does it build and deploy? | **Yes** | Production image verified 2026-10-17 running `python 3.11.16` with every module importing, incl. all five scipy-dependent ones. *Not re-measured since.* |
-| Do the automated tests pass? | **Yes, bar 5 known failures** | **7,673** backend passed with **5 known failures** — a pre-existing cross-file-state interaction (`tests/security` running before `test_agent_nodes.py`), unrelated to any 2026-10-22 change and recorded in [`CLAUDE.md`](CLAUDE.md) §13; 11 `tests/live/` deselected · **1,334** frontend across 95 files · `tsc` clean · `npm run lint` exit 0 · `black` clean over **1,661** files |
+| Do the automated tests pass? | **Yes** | Re-measured 2026-10-31 (audit Phase 12): **9,687** backend passed, **0 failed**, 16 skipped, 11 `tests/live/` deselected, **18** xfailed (709s) · **1,551** frontend across 107 files, 0 failed · `black` clean over **1,693** files. The 5 cross-file-state failures this row once reported were closed 2026-10-24 — cause attributed and mutation-verified, see [`CLAUDE.md`](CLAUDE.md) §13 |
 | Do the core workflows run for real? | **Yes** | 20 live end-to-end probes (2026-10-17) against 4 live SQL Server databases and local Ollama — auth, RBAC, chat history, SQL validation, row cap, restricted-column masking. Re-driven 2026-10-22 for the display-name, chart-axis and retrieval fixes |
-| Is CI green? | **No** | `ruff` exits non-zero on **one** import-order finding (`agent/multiagent/agents.py`); `bandit` on **4 Low, 0 Medium, 0 High**, all deliberate and annotated for `ruff` but not for `bandit`. **`pip-audit` could not be re-measured here** — it needs PyPI and this environment has no egress, so its 2026-10-17 red state stands as last known |
+| Is CI green? | **No — 9 of 10 blocking gates** | **The tenth is `detect-secrets`, and it is red**: 85 un-baselined findings across 54 tracked files, every one in a category already triaged benign (test fixtures, Alembic revision hex, i18n labels) — a stale baseline, not a leak, and it can only be refreshed on Linux because `detect-secrets` writes OS-native path separators (`OPS-006`). This row said "Yes" while that gate was red. Everything else re-measured 2026-10-31, each command run exactly as `.github/workflows/ci.yml` runs it: `ruff check .` exit **0** (the `I001` this row used to report was fixed in Phase 2 with ruff's own import sort, not a `# noqa`) · `black --check .` exit 0 over 1,688 files · `bandit -c pyproject.toml -r .` **0 findings over 119,480 lines** — and note Phase 8 widened its scope from 12 named packages to the whole tree by exclusion, so this figure covers roughly twice the code the old one did · `pytest` 0 failed · **`pip-audit` ran here this time** and reports "No known vulnerabilities found, 7 ignored" (its `--ignore-vuln` list is 6 individually justified advisories, not a blanket skip) · `npm audit --omit=dev` **0** · frontend `vitest` 0 failed. Nine gates block as of Phase 8; four more (`gitleaks`, the report-only full-tree `mypy`, Trivy, the load-test smoke) are non-blocking by dated decision |
 | Is capacity known? | **No** | Load testing is unblocked but **still not run**. No capacity claim is made anywhere |
 | Is answer latency acceptable? | **No** | Measured 2026-10-22: a SQL answer takes **~80s** on this hardware against a 3–5s target, because the 7B model fits only 41% into a 4 GB GPU. Progress *does* meet it — first stream event at **0.025s**. See [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) |
 | Is answer accuracy known? | **No** | The only full-corpus benchmark is self-disclaimed as stale, and now also predates a model change — see [Known limitations](#known-limitations) |
-| Has recovery been drilled? | **No** | RPO/RTO *proposed*, awaiting sign-off; no restore drill |
-| **Has UAT been completed?** | **NO — IN PROGRESS, NOTHING SIGNED OFF** | The project entered UAT on 2026-10-22. The 15-journey, 6-role script still has every result cell blank: **no business user has executed or signed off anything.** Automated tests are not UAT |
+| Has recovery been drilled? | **Yes — restore drilled, but there is no backup** | Drilled end to end 2026-10-31 (audit Phase 11 §6): `pg_dump -Fc` **1s**, `pg_restore` **5s** into a scratch `postgres:18-alpine`, 36 tables/27 users/404 `ai_outputs` identical to source, and — the step a row-count comparison cannot give — **sign-in against the restored copy returns HTTP 200** with the right roles. **RTO under one minute. RPO unbounded**: this project has no scheduler by design and nothing in `scripts/` takes a backup, so the recovery point is "whenever someone last ran `pg_dump` by hand" (`OPS-018`). Note `identity_admin` **cannot** create a database, so it cannot perform the restore itself |
+| **Has UAT been completed?** | **NO — NOTHING SIGNED OFF** | The project entered UAT on 2026-10-22. The **18**-journey, 6-role script ([`UAT_SCRIPTS_AND_SIGNOFF.md`](docs/certification/UAT_SCRIPTS_AND_SIGNOFF.md), J1–J18) still has every result cell blank: **no business user has executed or signed off anything.** Automated tests are not UAT |
+| Is it *ready* to be tested? | **NOT READY** | The independent audit is **complete (all 12 phases, 2026-10-31)** and its consolidated gate returns **NOT READY** — [`UAT_READINESS_REPORT.md`](docs/uat-readiness/UAT_READINESS_REPORT.md). 140 findings, 80 fixed, **1 open S1** (`AUZ-002`, cross-tenant document read *and delete*) and **13 open S2**, all 14 *flagged* for an owner decision. Four gate items are false: the open S1/S2 count, `detect-secrets`, the **absent accuracy threshold**, and the UAT environment — where `OPS-008` means **the first question a tester asks fails** (`.env` names a model that is not installed) and `OPS-015` means **12 of 26** unambiguous golden SQL questions never reach the database. Five are true: authorization matrix, SQL-safety and masking on both dialects, prompt injection, loop bounds, backup/restore. §8 of the report is the path to READY WITH CONDITIONS — ten of its twelve items are operator or owner actions, not engineering |
+
+**An independent UAT-readiness audit is complete** and is the place to
+look for what is actually verified rather than claimed:
+[`docs/uat-readiness/`](docs/uat-readiness/) — start with the
+[consolidated report and gate](docs/uat-readiness/UAT_READINESS_REPORT.md),
+which owns the verdict, then the
+[findings register](docs/uat-readiness/FINDINGS_REGISTER.md) for any
+individual finding. **All 12 phases are complete** (reconnaissance,
+architecture, security, authentication, authorization,
+hallucination/grounding, loop control, context engineering, best
+practices, UI/UX, documentation, operations, and the consolidated
+gate). It records environment-blocked checks as *unverified* rather
+than as passing — **nine such checks remain**, each listed with the
+command a human must run — and it has found and fixed real defects as
+well as flagging ones that need an owner's decision rather than an
+engineer's.
+
+Where it landed on 2026-10-31, and this is the part that matters more
+than the gates above:
+
+- **One open S1.** `AUZ-002` — `rag/store.py` and `media/store.py` have
+  no `tenant_id` column and no entry point that accepts a tenant, and a
+  `tenant_b` admin was observed listing, downloading and **deleting** a
+  `default`-tenant document (200/200/204). Three `xfail(strict=True)`
+  tests hold the line; the fix needs a migration, so it is an owner's
+  call.
+- **Thirteen S2s flagged for a decision.** Six of them block UAT
+  *entry*: `OPS-008` (the configured default model is not installed, so
+  **the first question a tester asks fails**), `OPS-015` (the LLM router
+  times out on this hardware so the regex fallback *is* the router, and
+  it sends **12 of 26** unambiguous golden SQL questions somewhere other
+  than the database — journey J4 reaches it on 1 of 4), `OPS-003` (three
+  fail-closed startup controls are inert outside
+  `ENVIRONMENT=production`, which defaults to `development`, and all
+  four connections were measured with **write** privileges), `OPS-022`
+  (187 collections of published semantic meaning are filed under an id
+  retrieval never asks for, so J2/J3 publish and J4 cannot consume),
+  `OPS-012` (the queue gives a question 120s where `/ask` gives it 600s,
+  so the same question succeeds or fails by route) and `HAL-010` (the
+  display-name guard can spend the whole retry budget rejecting a
+  correct top-5 query). The other seven are mitigable by configuration
+  or scope for the duration — the sharpest being `AUZ-003` (neither
+  account nor tenant suspension reaches `POST /ask` for up to one
+  access-token lifetime), `HAL-004` (the web-search path has no
+  grounding gate at all), `HAL-007` (terse questions answered
+  confidently *wrongly* — a degenerate window function returned 334 rows
+  for one phrasing and **0** for another, which reads as "no data") and
+  `BP-012` (`pymupdf` is AGPL-3.0 on a default-enabled path in an
+  MIT-licensed network application — a legal question, not an
+  engineering one).
+- **Accuracy is the gap with no number at all.** 25 of 32 golden
+  accuracy cases carry no `expected_sql`, no accuracy threshold has ever
+  been agreed, and the only full-corpus benchmark is self-disclaimed as
+  stale. The UAT golden set is a behaviour-and-structure gate today and
+  says so.
+- **Fixed along the way**, among others: a renamed restricted column
+  returned in the clear including `CREDENTIAL` (`SEC-006`, S1), the SQL
+  validator raising `RecursionError` instead of refusing (`SEC-002`), a
+  login timing oracle (`AUN-001`), two designed terminal conditions
+  escaping as HTTP 500 (`LOP-001`, `LOP-004`), and `/ask/stream`'s
+  per-node progress never having reached a browser at all (`UI-004`).
+- A positive result worth knowing: **all 213 operations deny an
+  anonymous caller** (401, never 403) with an exact public allowlist of
+  16, and no IDOR was found across conversations, messages, shares or
+  sessions.
 
 **Read these two documents before forming a view**, in this order:
 [`docs/certification/2026-10-17_release_gate_v2.md`](docs/certification/2026-10-17_release_gate_v2.md)
@@ -728,6 +831,21 @@ any of this security work and remains a separate, equally real gap.
   prompt, including the system prompt — precisely what this benchmark
   measures. Re-running needs a live Ollama and a real database; see the
   banner at the top of [`docs/EVALUATION.md`](docs/EVALUATION.md).
+
+  **Newer, narrower evidence exists and points the same way.** The
+  UAT-readiness audit's Phase 5 drove three phrasings of one question
+  live against `llama3.1:8b` on 2026-10-28 and none was refused — but
+  "Most popular products" returned the ten most *expensive* products,
+  "Top selling products" returned 334 rows from a window function that
+  ranks nothing, and "Worst selling products" returned **0** rows from
+  the same shape, which a reader cannot tell apart from "no data"
+  (`HAL-007`). No grounding check can catch that: a grounding gate
+  verifies an answer against its *result*, never the result against the
+  *question*. Only an eval suite measures it, which is what
+  [`eval/uat_golden/`](eval/uat_golden/) (57 questions, 11 journeys,
+  both dialects) exists to make repeatable — it is a behaviour and
+  structure gate today, and becomes an accuracy gate once a human
+  authors `expected_sql` for every case marked `GOLD SQL REQUIRED`.
 - **Single-process deployment; multi-replica is not solved.** A 2026-09-26
   hardening pass (see the News entry above and
   [`docs/SCALE_OUT_PROMPT.md`](docs/SCALE_OUT_PROMPT.md)) added real

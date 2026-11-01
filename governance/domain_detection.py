@@ -62,15 +62,15 @@ _CASE_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 
 
 def normalize_schema_text(names: Sequence[str]) -> str:
-    """Schema names as space-separated words, so `` anchors work.
+    r"""Schema names as space-separated words, so `\b` anchors work.
 
     A real column or table name is `employee_payroll` or
-    `EmployeePayroll`, and in both forms a ``-anchored pattern fails on
+    `EmployeePayroll`, and in both forms a `\b`-anchored pattern fails on
     the second word: an underscore is a word character, and a case
     transition is not a word boundary. Found by this module's own tests --
     `crm_opportunity` matched no domain at all before this existed.
 
-    Normalizing the input rather than dropping `` from every pattern
+    Normalizing the input rather than dropping `\b` from every pattern
     keeps the patterns readable and keeps them from matching inside an
     unrelated longer word.
     """

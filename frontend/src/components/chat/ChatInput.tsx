@@ -85,13 +85,6 @@ export function ChatInput({ onSend }: { onSend?: () => void } = {}) {
   const showVoiceButton = Boolean(health.data?.voice_enabled) && voiceModeEnabled
 
   const pendingQuestion = useChatStore((state) => state.pendingQuestion)
-  // Nothing asked yet in this conversation: the composer is the only
-  // thing on screen, so its placeholder is the one place that can say
-  // what to do with it. Once a turn exists the shorter prompt is enough
-  // -- the instruction has been demonstrated by then. A question still
-  // in flight counts as "asked", so the hint does not reappear while the
-  // very first answer is being waited on.
-  const hasConversation = useChatStore((state) => state.queryHistory.length > 0)
   const askQuestion = useChatStore((state) => state.askQuestion)
   const tryApplyChartTypeFollowup = useChatStore((state) => state.tryApplyChartTypeFollowup)
   const cancelPendingQuestion = useChatStore((state) => state.cancelPendingQuestion)
@@ -383,18 +376,26 @@ export function ChatInput({ onSend }: { onSend?: () => void } = {}) {
             value={displayValue}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
+            // One placeholder for every conversation state. It used to
+            // switch to a shorter prompt once a turn existed, on the
+            // reasoning that the instruction had been demonstrated by
+            // then; the product decision is now that the full
+            // instruction always reads better, so there is a single
+            // `chat.placeholder` key and no branch to get wrong.
+            // `voice.unsupportedCaption` still takes over while an
+            // unsupported browser is listening -- that one is about the
+            // control being unusable, not about the conversation.
             placeholder={
               isListening && !voice.isSupported
                 ? t('voice.unsupportedCaption')
-                : hasConversation || pendingQuestion
-                  ? t('chat.placeholder')
-                  : t('chat.placeholderEmpty')
+                : t('chat.placeholder')
             }
-            // Deliberately not the placeholder above: the control's
-            // accessible name must stay the same whatever the
-            // conversation currently holds, so a screen reader (and the
-            // tests that find this box by name) never see it rename
-            // itself after the first question.
+            // Intentionally the same string as the placeholder: the
+            // control's accessible name must not change as the
+            // conversation grows, so a screen reader (and the tests that
+            // find this box by name) never see it rename itself. That
+            // was already true when the placeholder could vary, and the
+            // single key makes it true by construction.
             aria-label={t('chat.placeholder')}
             // Typing stays open while an answer is pending, so the next question
           // can be drafted. Only voice capture/playback locks the box.

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import Response
-from moderation.exceptions import ModerationNotConfiguredError
+from moderation.exceptions import ModerationError
 
 from agent.authz import Permission, has_permission
 from api.authz import require_permission
@@ -148,7 +148,15 @@ async def upload_document(
             uploaded_by=identity.subject,
             restricted_roles=parsed_restricted_roles,
         )
-    except (RagStoreNotConfiguredError, ModerationNotConfiguredError) as exc:
+    # `ModerationError`, not just `ModerationNotConfiguredError`: the gate
+    # also fails closed when a configured provider *ran* and its answer
+    # could not be read (`ModerationProviderError`, which
+    # `MODERATION_PROVIDER=ollama_local` can raise). That is the same class
+    # of "cannot ingest right now" as missing configuration, and reaching
+    # the global handler instead would report it as an HTTP 500 -- an
+    # internal fault -- for a gate behaving exactly as designed, which is
+    # the shape `LOP-004` caught on the agent path.
+    except (RagStoreNotConfiguredError, ModerationError) as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
         ) from exc

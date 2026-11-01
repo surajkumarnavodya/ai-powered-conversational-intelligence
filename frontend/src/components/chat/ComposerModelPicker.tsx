@@ -63,7 +63,10 @@ export function ComposerModelPicker({ disabled = false }: { disabled?: boolean }
         <button
           type="button"
           disabled={disabled}
-          aria-label={t('sidebar.aiModel')}
+          /* WCAG 2.5.3 (Label in Name): the visible label is the
+             selected model's name, so the accessible name has to contain
+             it -- `"AI Model"` alone did not. Phase 9, `UI-006`. */
+          aria-label={`${t('sidebar.aiModel')}: ${selectedOption?.display_name ?? effectiveValue}`}
           title={t('sidebar.aiModel')}
           className="flex max-w-[12rem] items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:pointer-events-none disabled:opacity-50"
         >

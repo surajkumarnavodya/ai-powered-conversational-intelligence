@@ -105,6 +105,7 @@ def plan_subquestions(
             max_tokens=settings.llm_max_tokens,
             temperature=0.0,
             model=model,
+            label="analyst_planner",
         )
     except Exception:
         # Any failure at all -- including a client-side error this module has

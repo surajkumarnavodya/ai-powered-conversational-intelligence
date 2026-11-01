@@ -12,6 +12,7 @@ human-readable message for a connection test.
 
 from __future__ import annotations
 
+import re
 from enum import Enum
 
 
@@ -40,6 +41,20 @@ class ExecutionErrorCategory(str, Enum):
         (or a similarly-shaped) expensive query is unlikely to help and
         wastes a retry budget slot -- this category fails immediately
         rather than looping.
+    CONNECTIVITY: the database could not be reached at all, or the
+        connection dropped. **Nothing about the generated SQL caused this
+        and no rewrite of it can help**, so like TIMEOUT it fails
+        immediately. Added 2026-10-30 by UAT-readiness Phase 11
+        (`OPS-019`) after measuring the alternative: with the target
+        database stopped mid-session, a `psycopg2.OperationalError:
+        Connection refused` fell through to UNKNOWN, was retried the full
+        budget, spent three `generate_sql` model calls re-deriving the
+        same query, and then explained itself to the user as "the same
+        query came back unchanged ... Try rephrasing the question, or
+        naming the table or column you mean." On hardware where
+        `generate_sql` runs at a p50 of ~119s that turns a 5-second
+        outage into a multi-minute one and ends in a confident wrong
+        diagnosis.
     UNKNOWN: driver error text didn't match a known pattern. Still retried
         like SYNTAX (the safest default), just without a more targeted
         prompt hint.
@@ -49,6 +64,7 @@ class ExecutionErrorCategory(str, Enum):
     MISSING_REFERENCE = "missing_reference"
     AGGREGATE_NESTING = "aggregate_nesting"
     TIMEOUT = "timeout"
+    CONNECTIVITY = "connectivity"
     UNKNOWN = "unknown"
 
 
@@ -90,6 +106,47 @@ _AGGREGATE_NESTING_KEYWORDS = (
 )
 
 
+# Keyword fragments for "the server could not be reached, or went away."
+# Checked **before** `_MISSING_REFERENCE_KEYWORDS` on purpose: several
+# drivers render a connectivity failure with text that contains "does not
+# exist" (postgres `database "x" does not exist`, mssql `SQL Server does
+# not exist or access denied`), and classifying one of those as a missing
+# reference routes the run back to `retrieve_schema` to re-introspect a
+# database that is not answering -- the worst available choice.
+_CONNECTIVITY_KEYWORDS = (
+    # postgres / psycopg2
+    "connection refused",
+    "could not connect to server",
+    "is the server running on that host",
+    "server closed the connection unexpectedly",
+    "terminating connection due to administrator command",
+    # mssql / pyodbc
+    "tcp provider",
+    "communication link failure",
+    "unable to complete login process",
+    "sql server does not exist or access denied",
+    "login timeout expired",
+    "a network-related or instance-specific error",
+    # mysql / pymysql
+    "can't connect to mysql server",
+    "lost connection to mysql server",
+    # oracle / oracledb
+    "ora-12541",  # TNS: no listener
+    "ora-12170",  # TNS: connect timeout occurred
+    "ora-12514",  # TNS: listener does not currently know of service
+    "dpy-6005",  # python-oracledb: cannot connect to database
+)
+
+#: Postgres raises `FATAL: database "x" does not exist` when the configured
+#: database *name* is wrong. That shares the "does not exist" fragment with
+#: a missing table or column, but it is a connection-level failure: there
+#: is no schema to re-retrieve, so `MISSING_REFERENCE`'s route back to
+#: `retrieve_schema` would re-introspect a database that cannot be opened.
+#: A regex rather than a substring because the bare phrase `database "`
+#: appears in plenty of unrelated driver text.
+_DATABASE_DOES_NOT_EXIST_RE = re.compile(r'database\s+"[^"]*"\s+does not exist')
+
+
 def classify_execution_error(exc: BaseException) -> ExecutionErrorCategory:
     """Best-effort classification of an execution failure.
 
@@ -101,12 +158,17 @@ def classify_execution_error(exc: BaseException) -> ExecutionErrorCategory:
         The best-matching `ExecutionErrorCategory`. `TIMEOUT` is checked by
         exception type first (unambiguous); the rest is keyword-matched on
         `str(exc)`, which for SQLAlchemy errors includes the underlying
-        driver's original error text.
+        driver's original error text. `CONNECTIVITY` is matched before the
+        others -- see `_CONNECTIVITY_KEYWORDS` for why the order matters.
     """
     if isinstance(exc, TimeoutError):
         return ExecutionErrorCategory.TIMEOUT
 
     message = str(exc).lower()
+    if any(keyword in message for keyword in _CONNECTIVITY_KEYWORDS) or (
+        _DATABASE_DOES_NOT_EXIST_RE.search(message)
+    ):
+        return ExecutionErrorCategory.CONNECTIVITY
     if any(keyword in message for keyword in _MISSING_REFERENCE_KEYWORDS):
         return ExecutionErrorCategory.MISSING_REFERENCE
     if any(keyword in message for keyword in _AGGREGATE_NESTING_KEYWORDS):

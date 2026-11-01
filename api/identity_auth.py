@@ -95,7 +95,11 @@ from identity.schemas import (
     UserOut,
     VerifyEmailRequest,
 )
-from identity.security import create_access_token, verify_password
+from identity.security import (
+    create_access_token,
+    verify_password,
+    verify_password_against_decoy,
+)
 from sqlalchemy.orm import Session
 
 from agent.rate_limit import BoundedLimiterCache
@@ -413,6 +417,13 @@ def login(
 
     user = get_user_by_email(session, payload.email)
     if user is None:
+        # Spend one Argon2id verification against a decoy hash even though
+        # there is nothing to check -- otherwise this branch returns in
+        # ~6 ms while a real account takes ~81 ms, which is a fully
+        # separable timing oracle for "does this email have an account
+        # here" (finding AUN-001; see
+        # `identity.security.verify_password_against_decoy`).
+        verify_password_against_decoy(payload.password)
         record_signin_event(
             session,
             identifier_attempted=payload.email,
@@ -454,9 +465,17 @@ def login(
     # identically to a wrong password -- same generic response, same
     # signin-event shape -- so this case is indistinguishable from any
     # other login failure to the caller.
-    password_ok = user.password_hash is not None and verify_password(
-        payload.password, user.password_hash
-    )
+    #
+    # The status code was equalized here; the *timing* was not, which left
+    # the very side channel this comment claims to have closed open by
+    # another route (finding AUN-001: ~6 ms for a hash-less account versus
+    # ~81 ms for one with a password). The decoy verification spends the
+    # same Argon2id work, so the two are no longer separable by duration
+    # either.
+    if user.password_hash is None:
+        password_ok = verify_password_against_decoy(payload.password)
+    else:
+        password_ok = verify_password(payload.password, user.password_hash)
     if not password_ok:
         just_locked = record_login_failure(
             session,

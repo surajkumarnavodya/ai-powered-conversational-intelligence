@@ -2202,7 +2202,7 @@ class TestComputeAnalyticsNode:
         monkeypatch.setattr(
             "agent.nodes.generate_insight_from_llm", lambda *a, **k: "A short insight."
         )
-        monkeypatch.setattr("agent.nodes.is_insight_grounded", lambda *a, **k: True)
+        monkeypatch.setattr("agent.nodes.insight_grounding_failure", lambda *a, **k: None)
 
         state: AgentState = {
             "question": "revenue by category",
@@ -2339,7 +2339,7 @@ class TestGenerateForecastNode:
         monkeypatch.setattr(
             "agent.nodes.generate_insight_from_llm", lambda *a, **k: "A short insight."
         )
-        monkeypatch.setattr("agent.nodes.is_insight_grounded", lambda *a, **k: True)
+        monkeypatch.setattr("agent.nodes.insight_grounding_failure", lambda *a, **k: None)
 
         state = self._state_with_analytics()
         state["question"] = "forecast sales for the next 2 years"
@@ -2446,7 +2446,7 @@ class TestGenerateRecommendationsNode:
         monkeypatch.setattr(
             "agent.nodes.generate_insight_from_llm", lambda *a, **k: "A short insight."
         )
-        monkeypatch.setattr("agent.nodes.is_insight_grounded", lambda *a, **k: True)
+        monkeypatch.setattr("agent.nodes.insight_grounding_failure", lambda *a, **k: None)
 
         state: AgentState = {
             "question": "revenue by category",
@@ -2712,6 +2712,59 @@ class TestGenerateInsightNode:
             # which is the actual bug this guards against.
             assert "insight_numbers_checked" in result, name
             assert result["insight_numbers_checked"] is None, name
+
+    def test_a_superlative_about_the_wrong_territory_is_dropped(self, monkeypatch):
+        """UAT-readiness `HAL-002`, through the live node rather than the
+        checker.
+
+        The base state's top territory is Australia at 2,300,000. An
+        insight naming Southwest as the highest contradicts the result it
+        was built from, carries no number to catch it by, and used to be
+        stored and shown as an interpretation of the user's own data.
+        """
+        monkeypatch.setattr(
+            "agent.nodes.generate_insight_from_llm",
+            lambda **kwargs: "Southwest was the strongest territory of all.",
+        )
+
+        result = generate_insight_node(self._base_state(enable_insight=True))
+
+        assert result["insight"] is None
+        assert result["insight_numbers_checked"] is None
+        # The summary survives a rejection, as it does for a numeric one.
+        assert result["insight_summary"] is not None
+
+    def test_the_node_passes_the_result_labels_to_the_gate(self, monkeypatch):
+        """The check above can only work if the node supplies the labels,
+        and `insight_grounding_failure` silently falls back to the weaker
+        two-check behaviour when it does not (CLAUDE.md 5.4's trap). This
+        asserts the live call site rather than trusting it.
+        """
+        seen: dict[str, object] = {}
+
+        def _spy(text, summary, question="", sql="", *, result_labels=None):
+            seen["result_labels"] = result_labels
+            return None
+
+        monkeypatch.setattr(
+            "agent.nodes.generate_insight_from_llm", lambda **kwargs: "Something grounded."
+        )
+        monkeypatch.setattr("agent.nodes.insight_grounding_failure", _spy)
+
+        generate_insight_node(self._base_state(enable_insight=True))
+
+        assert seen["result_labels"] == ["Australia", "Southwest"]
+
+    def test_a_correct_superlative_about_the_real_top_territory_is_kept(self, monkeypatch):
+        """The other half: the new check must not cost a correct insight."""
+        monkeypatch.setattr(
+            "agent.nodes.generate_insight_from_llm",
+            lambda **kwargs: "Australia was the strongest territory.",
+        )
+
+        result = generate_insight_node(self._base_state(enable_insight=True))
+
+        assert result["insight"] == "Australia was the strongest territory."
 
     def test_ungrounded_response_is_dropped(self, monkeypatch):
         monkeypatch.setattr(

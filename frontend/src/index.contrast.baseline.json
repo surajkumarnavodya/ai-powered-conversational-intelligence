@@ -1,0 +1,53 @@
+{
+  "$comment": [
+    "Token pairings that render below WCAG 2.2 AA (4.5:1) for 12px text in the",
+    "shipped palette. Measured in real Chrome against the live application on",
+    "2026-10-29 (UAT-readiness Phase 9, finding UI-008) and reproduced from the",
+    "declared tokens by src/index.contrast.test.ts, which agrees with Chrome's",
+    "own computed ratios to the second decimal.",
+    "",
+    "This is a NO-GROWTH baseline, not an allowlist. index.contrast.test.ts",
+    "asserts the computed set equals this file exactly: a new sub-AA pairing",
+    "fails, and a pairing that has since been fixed ALSO fails, so the file",
+    "cannot go stale. When the palette decision is made, shrink this file in",
+    "the same commit as the colour change.",
+    "",
+    "Not fixed here on purpose: every repair is a new colour value, which is a",
+    "visible design change and the product owner's call. The proposal is in",
+    "docs/uat-readiness/phase-9-ui.md."
+  ],
+  "statusTintBelowAA": [
+    "dark/danger-on-its-own-tint-over-card",
+    "dark/danger-on-its-own-tint-over-muted",
+    "dark/success-on-its-own-tint-over-muted",
+    "dark/warning-on-its-own-tint-over-muted",
+    "light/success-on-its-own-tint-over-background",
+    "light/success-on-its-own-tint-over-card",
+    "light/success-on-its-own-tint-over-muted",
+    "light/warning-on-its-own-tint-over-background",
+    "light/warning-on-its-own-tint-over-card",
+    "light/warning-on-its-own-tint-over-muted"
+  ],
+  "accentAsTextBelowAA": [
+    "dark/blue-as-text-on-background",
+    "dark/blue-as-text-on-card",
+    "dark/blue-as-text-on-muted",
+    "dark/emerald-as-text-on-background",
+    "dark/emerald-as-text-on-card",
+    "dark/emerald-as-text-on-muted",
+    "dark/indigo-as-text-on-background",
+    "dark/indigo-as-text-on-card",
+    "dark/indigo-as-text-on-muted",
+    "dark/rose-as-text-on-background",
+    "dark/rose-as-text-on-card",
+    "dark/rose-as-text-on-muted",
+    "dark/violet-as-text-on-background",
+    "dark/violet-as-text-on-card",
+    "dark/violet-as-text-on-muted",
+    "light/amber-as-text-on-background",
+    "light/amber-as-text-on-card",
+    "light/amber-as-text-on-muted",
+    "light/rose-as-text-on-background",
+    "light/rose-as-text-on-muted"
+  ]
+}

@@ -271,3 +271,94 @@ class TestIdempotency:
             len(session.query(SemanticCatalogEntry).filter_by(concept_key="table:Customers").all())
             == 2
         )
+
+
+class TestTheCatalogIdAndTheConnectionNameDoNotMeet:
+    """`OPS-022` -- pins, as *current* behaviour, that a published onboarding
+    catalog entry is filed under a `database_id` the SQL pipeline never queries.
+
+    Two modules name the same onboarded database two different ways:
+
+    - `onboarding.env_registration.slugify_connection_name` produces the
+      `DB_CONNECTIONS` entry (`"My Warehouse"` -> `my_warehouse`), which is what
+      reaches `AgentState["selected_database"]` and therefore what
+      `agent.nodes.retrieve_business_context_node` passes to
+      `retrieval.retriever.retrieve_business_context` as `database_id`.
+    - `catalog_database_id_for_job` produces the catalog's own id
+      (`My_Warehouse_<job8>`), which is what names the vector-store collection
+      the published chunks land in.
+
+    So retrieval reads `knowledge_base__my_warehouse` while every published
+    chunk sits in `knowledge_base__My_Warehouse_<job8>`. Measured on this
+    checkout's own persist directory 2026-10-31: 185 such per-job collections
+    exist, each holding one chunk with `status="published"` and
+    `truth_level="confirmed_business_truth"`, and
+    `knowledge_base__my_warehouse` **does not exist at all**.
+
+    The two `xfail(strict=True)` tests below fail the day it is fixed, so the
+    fix cannot land without this class changing. The passing test above them
+    holds the part that is deliberate and must survive any fix: the job-id
+    suffix exists so two labels differing only in punctuation never share a
+    catalog namespace, which `catalog_database_id_for_job`'s own docstring
+    states.
+    """
+
+    def test_the_job_id_suffix_is_deliberate_and_must_survive_a_fix(self, session):
+        """Non-vacuity guard for the two xfails: whatever scheme replaces the
+        current one must still separate two labels that slugify identically, or
+        it trades this finding for a cross-database collision."""
+        from onboarding.env_registration import slugify_connection_name
+
+        a = _job(session)
+        b = create_job(
+            session,
+            tenant_id="tenant-a",
+            created_by_user_id=None,
+            database_label="My-Warehouse!!",
+            db_type="postgresql",
+            db_host=None,
+            db_port=None,
+            db_name=None,
+            db_user=None,
+            db_schema=None,
+        )
+        # The two labels collapse to one connection name ...
+        assert slugify_connection_name(a.database_label) == slugify_connection_name(
+            b.database_label
+        )
+        # ... so the catalog ids must still differ.
+        assert catalog_database_id_for_job(a) != catalog_database_id_for_job(b)
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="OPS-022: the catalog files under My_Warehouse_<job8>, retrieval reads my_warehouse",
+    )
+    def test_the_catalog_id_matches_the_connection_name_retrieval_queries(self, session):
+        from onboarding.env_registration import slugify_connection_name
+
+        job = _job(session)
+        assert catalog_database_id_for_job(job) == slugify_connection_name(job.database_label)
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="OPS-022: a second onboarding of the same database opens a second namespace",
+    )
+    def test_re_onboarding_the_same_database_reuses_one_namespace(self, session):
+        """The disk consequence, measured separately from the retrieval one: the
+        id carries the job id, so N publishes of one database leave N permanent
+        collections in `CHROMA_PERSIST_DIR` that nothing reuses and nothing
+        deletes -- 185 of them (91% of all 203 collections) on this checkout."""
+        first = _job(session)
+        second = create_job(
+            session,
+            tenant_id="tenant-a",
+            created_by_user_id=None,
+            database_label="My Warehouse",
+            db_type="postgresql",
+            db_host="db.internal",
+            db_port=5432,
+            db_name="warehouse",
+            db_user="svc",
+            db_schema=None,
+        )
+        assert catalog_database_id_for_job(first) == catalog_database_id_for_job(second)

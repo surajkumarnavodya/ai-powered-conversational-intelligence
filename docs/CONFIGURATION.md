@@ -1,12 +1,43 @@
 # Configuration Reference
 
-Every environment variable this project reads, in one browsable table.
-`.env.example` remains the source of truth for defaults and inline
-guidance (copy it to `.env` and edit) — this document exists to make the
-full set scannable at once, grouped by concern, with which module actually
-reads each one. All parsing/validation happens in `config/settings.py`;
-malformed values (not missing ones) fail fast at startup with a
-`ConfigurationError` — see that module's docstring.
+The environment variables this project reads, grouped by concern, with
+which module actually reads each one. `.env.example` remains the source
+of truth for defaults and inline guidance (copy it to `.env` and edit) —
+this document exists to make the set scannable at once. All
+parsing/validation happens in `config/settings.py`; malformed values (not
+missing ones) fail fast at startup with a `ConfigurationError` — see that
+module's docstring.
+
+> ### This reference is not yet complete, and the gap is measured
+>
+> **Measured 2026-10-30 (UAT-readiness Phase 10, `DOC-013`).** This file
+> used to open by claiming "every environment variable this project
+> reads". It was not true: `config/settings.py` declares **447**
+> settings fields, of which **205** appeared nowhere in this document
+> and **115** appeared nowhere in `.env.example` — **110 in neither**,
+> so they were undiscoverable from the documented configuration surface
+> altogether.
+>
+> The 26 `ENABLE_*` feature flags in that set are now documented (see
+> [Deterministic analysis and intelligence engines](#deterministic-analysis-and-intelligence-engines)
+> below) because `docs/DEPLOYMENT.md`'s rollback procedure tells an
+> operator to "set the flag back" and those flags were not findable
+> anywhere. The remainder are mostly numeric tuning constants for the
+> analytics, forecasting, root-cause, predictive, query-store, retrieval
+> and data-quality engines; they are real and settable, and
+> `config/settings.py`'s own `Attributes:` docstring (or the inline
+> comment above each field) is authoritative for them until they land
+> here.
+>
+> `tests/test_configuration_doc_coverage.py` pins the remaining gap as a
+> **no-growth baseline**: a newly added setting that is documented in
+> neither place fails that test, and so does a setting that gets
+> documented without the baseline being shrunk. Reproduce the count
+> with:
+>
+> ```powershell
+> .\.venv\Scripts\python.exe -m pytest tests/test_configuration_doc_coverage.py -v
+> ```
 
 ## Ollama (local LLM)
 
@@ -219,7 +250,7 @@ checks all of them too.
 | `QUERY_TIMEOUT_SECONDS` | `15` | Wall-clock timeout for query execution. |
 | `LLM_MAX_TOKENS` | `1024` | Max tokens the LLM may generate per SQL-generation call. |
 | `INSIGHT_MAX_TOKENS` | `120` | Max tokens for the post-query plain-English insight sentence. |
-| `MAX_QUESTION_LENGTH` | `500` | Max accepted character length of a typed question (`agent/input_guard.py`). |
+| `MAX_QUESTION_LENGTH` | `5000` | Max accepted character length of a typed question (`agent/input_guard.py`). |
 | `MAX_CONVERSATION_HISTORY_TURNS` | `20` | Max prior turns from a caller-supplied `conversation_history` that are ever processed — older turns beyond this count are dropped (`agent/input_guard.py::sanitize_conversation_history`). The resource cap on the whole array; the *resolution* window is the much smaller `CONTEXT_RESOLUTION_RECENT_TURNS` below. |
 | `ENABLE_CONTEXT_RESOLUTION` | `true` | Conversational context resolution (`agent/context_resolution.py`): the relation, the antecedent and the standalone rewrite. `false` is the rollback switch — it restores the regex-only classifier, the antecedent bound to `conversation_history[-1]`, and no rewrite. See [`CONVERSATIONAL_CONTEXT.md`](CONVERSATIONAL_CONTEXT.md). |
 | `CONTEXT_RESOLUTION_RECENT_TURNS` | `6` | How many recent **successful** turns are eligible to be the antecedent. Older turns are quoted into the memory digest, not dropped. |
@@ -707,6 +738,65 @@ limit below is a server-side stop rule that a request cannot raise.
 | `ENABLE_SEMANTIC_INTELLIGENCE` | `false` | Enables `/semantic-intelligence/*`. |
 | `SEMANTIC_INTELLIGENCE_MAX_FINDINGS` | `500` | Most findings one run persists (riskiest first). Any excess is reported as truncated. |
 
+## Deterministic analysis and intelligence engines
+
+**Added 2026-10-30 (`DOC-013`). These were settable but documented
+nowhere** — neither here nor in `.env.example` — which mattered because
+[`docs/DEPLOYMENT.md`](DEPLOYMENT.md#rollback)'s rollback procedure tells
+an operator to "set the flag back" for a misbehaving feature, and these
+are those flags.
+
+Unlike the AI analysis layers above, **most of these default to on**,
+because each is a pure, deterministic, zero-I/O computation over rows the
+pipeline has already fetched — not an extra LLM call or an extra query.
+Each exists as an operator escape hatch, not because the feature is risky
+on by default. Setting one to `false` restores exactly the behaviour that
+existed before that feature shipped; several also 404 their own API routes
+when off, which is the deliberate posture (see each named contract).
+
+Descriptions below are taken verbatim in substance from
+`config/settings.py`'s own docstring or the inline comment above each
+field — nothing here is inferred.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ENABLE_ANALYTICS_ENGINE` | `true` | Whether `agent.nodes.compute_analytics_node` calls `analytics.engine.compute_analytics_result` after a successful execution. |
+| `ENABLE_ANOMALY_DETECTION` | `true` | Whether `analytics.engine.compute_analytics_result` calls `analytics.anomaly.detect_anomalies` for a time-series result. |
+| `ENABLE_ADVANCED_ROOT_CAUSE` | `true` | Whether `agent.multiagent.agents.root_cause_handler` may use `analytics.causal.investigate_root_cause_advanced` (Prompt 37). |
+| `ENABLE_FORECASTING` | `true` | Whether `agent.nodes.generate_forecast_node` calls `analytics.forecasting.generate_forecast`. |
+| `ENABLE_PREDICTIVE_ANALYTICS` | `true` | Prompt 40's governed predictive engine (demand/churn/risk, scikit-learn over caller-supplied rows). Gates `api/predictive.py`'s two routes (404 when off) and the supervisor's `predictive` specialist. |
+| `ENABLE_WHAT_IF_SCENARIOS` | `true` | Prompt 38's What-If engine. Gates `api/scenarios.py`'s two routes (404 when off) and the supervisor's `scenario` specialist. |
+| `ENABLE_OPTIMIZATION_ENGINE` | `true` | Prompt 39's decision-optimization engine (`scipy.optimize.linprog`/HiGHS over a fully-specified problem — never a database read, never an LLM call). Gates `api/optimization.py`'s two routes (404 when off). |
+| `ENABLE_DATA_QUALITY_ENGINE` | `true` | Prompt 41's Data Quality Command Center (completeness/validity/uniqueness/consistency/referential integrity/freshness/distribution stability). Gates `api/data_quality.py`'s two routes (404 when off). |
+| `ENABLE_LINEAGE_PLATFORM` | `true` | Prompt 42's end-to-end lineage (deterministic `sqlglot` parsing plus already-introspected schema — never an LLM call of its own). Gates `api/lineage.py`'s three routes (404 when off). |
+| `ENABLE_SCHEMA_DRIFT_DETECTION` | `true` | Prompt 43's structural schema diff, stored via Prompt 35's governed review queue rather than a second persistence layer. Gates `api/schema_drift.py`'s two routes (404 when off). |
+| `ENABLE_RECOMMENDATION_ENGINE` | `true` | Whether `agent.nodes.generate_recommendations_node` calls `recommendation.engine.generate_recommendations`. |
+| `ENABLE_RECOMMENDATION_PERSISTENCE` | `true` | Whether `POST /ask` (`api/recommendation_persistence.py`) writes each `AskResponse.recommendations` entry into the governed store. |
+| `ENABLE_FOLLOW_UP_SUGGESTIONS` | `true` | Whether `recommendation.engine` produces the grounded one-click follow-up chips (`recommendation.followups`). |
+| `ENABLE_INTENT_CLASSIFICATION` | `true` | Whether `agent.nodes.classify_analytical_intent_node` makes its structured analytical-intent LLM call. |
+| `ENABLE_ANALYTICAL_PLANNING` | `true` | Whether `agent.nodes.build_analytical_plan_node` makes a structured-plan LLM call for a question the complexity gate judged non-trivial. |
+| `ENABLE_METRIC_CONFORMANCE_REVIEW` | `true` | Gates `agent.nodes.review_metric_conformance_node`'s LLM call (Prompt 10). A pure pass-through at zero cost whenever no `PUBLISHED` governing metric was retrieved — the common case — so this is an escape hatch, not a risk control. |
+| `ENABLE_QUERY_STORE_INSIGHTS` | `true` | Whether `db.query_store` is consulted at all. A no-op for every `DB_TYPE` other than `mssql` regardless. |
+| `ENABLE_RELATIONSHIP_INFERENCE` | `true` | The structural candidate-FK pass (name convention/type compatibility/target uniqueness). Issues no query. Every resulting chunk is tagged `AI_INFERENCE` and rendered as a CANDIDATE, never as a declared foreign key. |
+| `ENABLE_RELATIONSHIP_DATA_VERIFICATION` | `false` | The second, data-driven refinement pass (null fraction plus bounded value-overlap sampling). Off by default because it issues one small bounded query per candidate. |
+| `ENABLE_PII_DATA_VERIFICATION` | `false` | The onboarding engine's opt-in, bounded data-sampling PII refinement. Name-based detection (always on, zero queries) is the default; this is the separate opt-in for the data-touching pass. |
+| `ENABLE_AGENT_HARNESS` | `true` | Master switch for the per-execution agent harness (step budget, deadline, model-call and result-byte caps). `false` restores the exact pre-harness behaviour, in which no envelope is built and every run is unguarded. |
+| `HARNESS_MAX_STEPS` | `120` | Charged node executions per `/ask` execution. |
+| `HARNESS_MAX_LLM_CALLS` | `40` | Model calls per execution. |
+| `HARNESS_MAX_CONTEXT_CHARS` | `400000` | Prompt-context ceiling the harness enforces per execution. |
+| `HARNESS_MAX_RESULT_BYTES` | `8000000` | Result-payload ceiling per execution. |
+| `ENABLE_BOX_PLOT_CHARTS` | `false` | Whether `analytics.visualization.build_chart_spec` may recommend `ChartType.BOX`. |
+| `ENABLE_MAP_CHARTS` | `false` | Whether `analytics.visualization.build_chart_spec` may recommend `ChartType.MAP`. |
+| `ENABLE_FREE_GENERATION` | `false` | Master switch for the free media-generation providers (`media_gen/providers/`), deliberately separate from `ENABLE_MEDIA_GENERATION` so the paid and free paths toggle independently. |
+| `ENABLE_SVG_GENERATION` | `true` | Per-provider switch for SVG mode — the one free provider needing no GPU, no token and no third party (it asks the local Ollama model for an `<svg>` and sanitizes it via `media_gen/svg_sanitize.py`). Also gated by `ENABLE_FREE_GENERATION`: both must be on. |
+| `ENABLE_HF_GENERATION` | `true` | Per-provider switch for hosted free-tier raster generation. Enabled as a *provider* but inert without `HF_TOKEN` — and see `media_gen/providers/huggingface.py`'s docstring: HTTP 402 is the normal steady state on a free account. |
+
+The four `HARNESS_MAX_*` ceilings apply only while `ENABLE_AGENT_HARNESS`
+is on, which is why they are listed beside it. They are per *execution*,
+not per call: the pre-existing per-operation timeouts and per-minute rate
+limits bound one call and one caller, never the total a single `/ask`
+execution may consume.
+
 ## Multi-source router (optional, off by default)
 
 See [`docs/MULTI_SOURCE_GUIDE.md`](MULTI_SOURCE_GUIDE.md) for a walkthrough
@@ -971,9 +1061,11 @@ moderation gate" section for the design rationale.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `MODERATION_PROVIDER` | `azure_content_safety` | Selects the provider (`moderation/provider.py::SUPPORTED_MODERATION_PROVIDERS`). Only Azure AI Content Safety is implemented today. |
-| `AZURE_CONTENT_SAFETY_ENDPOINT` | *(unset)* | Your Content Safety resource's REST endpoint. |
+| `MODERATION_PROVIDER` | `azure_content_safety` | Selects the provider (`moderation/provider.py::SUPPORTED_MODERATION_PROVIDERS`): `azure_content_safety` or `ollama_local`. See the note under this table. |
+| `AZURE_CONTENT_SAFETY_ENDPOINT` | *(unset)* | Your Content Safety resource's REST endpoint. `azure_content_safety` only. |
 | `AZURE_CONTENT_SAFETY_KEY` | *(unset)* | Subscription key for the endpoint above. `SecretStr`-wrapped. |
+| `MODERATION_LOCAL_MODEL` | *(blank = `OLLAMA_MODEL`)* | `ollama_local` only: the model that rates a **text** chunk. |
+| `MODERATION_LOCAL_VISION_MODEL` | *(blank = images recorded `not_checked`)* | `ollama_local` only: the **vision-capable** model that rates an image chunk. A text-only model here fails the call, so ingestion fails closed. |
 | `MODERATION_SEVERITY_THRESHOLD` | `4` | Minimum Azure severity (0/2/4/6) that hard-rejects a Hate/SelfHarm/Sexual/Violence category. Verify against your Content Safety API version. |
 | `MODERATION_BLOCKLIST_PATH` | *(blank = `config/moderation_blocklist.yaml`)* | Override for the weapons/drugs text-term blocklist — Azure has no dedicated category for either. |
 | `MODERATION_STORE_CONNECTION_STRING` | *(unset)* | Dedicated SQL Server connection for moderation decisions/dedupe metadata (`moderation.media_assets`) — separate from `DB_CONNECTIONS` **and** `RAG_STORE_CONNECTION_STRING` (point both at the same database if you want one shared store). `SecretStr`-wrapped. |
@@ -983,6 +1075,23 @@ moderation gate" section for the design rationale.
 | `MODERATION_STORE_POOL_RECYCLE_SECONDS` | `1800` | Discard/replace a pooled connection after this long, regardless of use — set below your SQL Server/network's idle-connection timeout. |
 | `MEDIA_INGEST_WORKERS` | `4` | Concurrent worker threads `scripts/build_media_index.py` uses (this project's first bounded thread pool — previously a sequential loop). |
 | `MEDIA_IMAGE_TILE_THRESHOLD_PX` | `2048` | An ingested image larger than this (either dimension) is tiled before moderation, so a classifier's own downsampling can't hide a small region of concern. |
+
+**Choosing a provider.** `azure_content_safety` is the stronger gate: a
+purpose-built safety classifier, covering images as well as text.
+`ollama_local` keeps ingestion inside this project's otherwise fully-local
+posture — no outbound call, no API key, no per-chunk cost — and exists
+because "the gate is mandatory" plus "Azure is the only implementation"
+meant a deployment with no Azure resource could have `ENABLE_DOCUMENT_RAG`/
+`ENABLE_POLICY_RAG` switched on and never successfully ingest a file. It is
+weaker in two named ways, neither hidden: a general instruction-following
+model is not a purpose-built classifier, and it examines an **image** only
+when `MODERATION_LOCAL_VISION_MODEL` is set (otherwise image chunks are
+recorded `not_checked`, which appears in the stored
+`moderation.media_assets.moderation_checks` row as `unchecked_categories`).
+Both providers report severities on the same 0/2/4/6 scale, so
+`MODERATION_SEVERITY_THRESHOLD` means the same thing for either, and
+neither decides a rejection — `moderation/gate.py` applies the threshold.
+See `docs/RISK_REGISTER.md`'s R-013 and R-021.
 
 ## Chat attachments (images, PDF, DOCX, XLSX, PPTX, TXT, MD, CSV, JSON)
 
