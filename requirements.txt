@@ -60,24 +60,7 @@ chromadb==1.5.9
 # `rag/ingestion.py` and `attachments/processors/` both parse
 # caller-supplied PDFs. Comment restored after a master merge kept the
 # version but dropped the reasoning.
-# 6.21.2 clears three further advisories published after the 2026-10-22
-# audit (CVE-2026-115572/115580/115585), which made the blocking pip-audit
-# gate red again -- measured 2026-10-25 running CI's own command, see
-# docs/uat-readiness/phase-2-security.md. Same reachability argument as
-# above, so same response: bump to the fixing release rather than add an
-# --ignore-vuln for a parser this app points at untrusted uploads.
-# 6.21.4 clears SEVEN more (CVE-2026-119203/119204/119205/119206/119207/
-# 119208/119209), published after 2026-10-25 and red again when CI's own
-# pip-audit command was re-run 2026-10-31 [OPS-024]. This is the third
-# time this one pin has gone red, which is the point CLAUDE.md 5.7 makes
-# about the list decaying: a green pip-audit is a statement about a date.
-# Unchanged reachability argument -- attachments/pdf_safety.py,
-# attachments/pipeline.py, attachments/processors/pdf_processor.py,
-# rag/ingestion.py and api/documents.py all point this parser at
-# caller-supplied bytes -- so the same response again: bump, never ignore.
-# Requires-Python >=3.9 with a pure-python py3 wheel, so one pin serves
-# the 3.11 deploy target and the 3.14 local venv (the OPS-021 check).
-pypdf==6.21.4
+pypdf==6.21.2
 
 # XXE/billion-laughs-hardened XML parsing for db/query_cost.py's MSSQL
 # SHOWPLAN_XML parsing -- was already present transitively but pinned

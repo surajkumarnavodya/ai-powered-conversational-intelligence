@@ -53,7 +53,7 @@ pytest==9.1.1
 # migration plus the two files above, so the exclude is the fix either way,
 # and the CVE it closes is unreachable here. Revisit if this repo ever
 # adopts `psf/black`'s Action.
-black==26.3.1
+black==26.10.1
 ruff==0.8.4
 mypy==1.13.0
 types-PyYAML==6.0.12.20260815
