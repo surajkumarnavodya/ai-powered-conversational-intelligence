@@ -196,10 +196,16 @@ at every viewport width.
     through the markdown renderer** — it is untrusted retrieved content,
     and markup would let a poisoned page inject links into the answer
     area (CLAUDE.md §5.5). Safe to add because
-    `rag.graph._generate_node` returns `citations: []` *before* the list
-    is built when any chunk carries a `sensitivity_category`, so
-    restricted text cannot reach the field; pinned by
-    `tests/test_citation_excerpts.py`.
+    `rag.graph._generate_node` builds the citation list only from chunks
+    that passed both access gates, so restricted text cannot reach the
+    field; pinned by `tests/test_citation_excerpts.py` and by
+    `tests/test_rag_graph.py::TestSensitivityCategoryGate
+    ::test_the_withheld_chunk_never_reaches_the_citations`. (Until
+    2026-11-01 the mechanism was blunter -- the node returned
+    `citations: []` whenever *any* retrieved chunk carried a
+    `sensitivity_category`, which also refused the whole answer and so
+    made the policy source unable to answer anything; the conclusion for
+    this field is unchanged.)
   - The evidence control no longer repeats the source **count** — the
     `Sources (N)` heading directly above owns it.
   - When no source carries an excerpt the control is **not offered at

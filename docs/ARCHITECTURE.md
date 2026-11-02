@@ -911,14 +911,39 @@ Knowledge Sources management view instead of vanishing silently.
 `disciplinary`, or `legal` at upload time (`rag/store.py`'s
 `SensitivityCategory`) is never summarized into an answer —
 `generate_node` checks every retrieved chunk's `sensitivity_category`
-*before* calling the LLM at all, and refuses with a fixed message if any
-are set, rather than relying on a prompt instruction the model might not
-follow. This app has no per-user authorization system to check who's
-allowed to see restricted policy content, so failing closed here is the
-only honest option — the same philosophy as `agent/sql_validator.py`'s
+*before* calling the LLM at all, rather than relying on a prompt
+instruction the model might not follow. No role unlocks these three
+categories; the policy *source* is separately gated on
+`Permission.POLICY_RAG_QUERY`, but that permission does not open this
+check. Same philosophy as `agent/sql_validator.py`'s
 `SAFETY_VIOLATION_TYPES` (a gate that doesn't open, not a mistake worth
 coaching through), applied to a document/chunk tag instead of a
 `(table, column)` pair.
+
+**Corrected 2026-11-01, in two ways.** This paragraph used to say the
+node "refuses with a fixed message if any are set", and that the app "has
+no per-user authorization system to check who's allowed to see restricted
+policy content".
+
+The second was simply out of date — `agent/authz.py` and
+`identity/rbac.py` both exist, and the same sentence had leaked into the
+refusal text a user sees, which now states the real reason (these
+categories are blocked for every role) instead of denying the RBAC layer
+exists.
+
+The first was a measured defect. Refusing the whole answer meant the
+policy source could not answer *anything*: retrieval returns the top-k
+for the collection, not for one document, so a single sensitivity-tagged
+file put a restricted chunk in the result set for unrelated questions —
+a freshly uploaded remote-work policy carrying **no** category came back
+as "policy content classified 'legal'", naming a different document.
+Both gates now drop the offending chunk before the context is built and
+refuse only when nothing usable survives, which is what this module's
+docstring always said they were for; an answer assembled after anything
+was withheld says so. Nothing restricted reaches the prompt or the
+citations on either path — pinned, mutation-verified, by
+`tests/test_rag_graph.py` (4 of its tests fail if the filter is removed)
+and `tests/test_citation_excerpts.py`.
 
 **Untrusted content**: `_GENERATE_SYSTEM_PROMPT` explicitly instructs the
 model to treat retrieved chunk text as data, never as instructions, even
