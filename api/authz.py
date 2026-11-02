@@ -57,6 +57,12 @@ def require_permission(permission: Permission):
                 "authz_denied",
                 "warning",
                 "A request was denied at the authorization gate.",
+                # Stamped so the denial reaches `GET /tenant-admin/audit`,
+                # which filters on exact tenant equality. `AuthIdentity
+                # .tenant_id` comes from the `users.tenant_id` row this
+                # server loaded or an IdP-signed claim -- never from the
+                # request (CLAUDE.md 5.3).
+                tenant_id=identity.tenant_id,
                 subject=identity.subject,
                 roles=list(identity.roles),
                 required_permission=permission.value,

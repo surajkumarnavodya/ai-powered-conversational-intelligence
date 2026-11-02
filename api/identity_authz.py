@@ -178,6 +178,11 @@ def require_identity_permission(permission: IdentityPermission):
                 "identity_authz_denied",
                 "warning",
                 "A request was denied at the identity-permission gate.",
+                # Same reason as `api.authz.require_permission`: without
+                # this the denial is recorded with `tenant_id=None` and a
+                # tenant admin's own audit page never shows it. Read from
+                # the `User` row this server loaded.
+                tenant_id=resolve_actor_tenant_id(user),
                 user_id=str(user.id),
                 required_permission=permission.value,
                 path=request.url.path,
