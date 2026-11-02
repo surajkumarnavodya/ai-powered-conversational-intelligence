@@ -65,6 +65,28 @@ logger = logging.getLogger(__name__)
 RESTRICTED_MASK = "[restricted]"
 
 
+def is_masked_value(value: object) -> bool:
+    """True when `value` is a governance placeholder rather than data.
+
+    The two masks this application substitutes for a value it will not
+    disclose: `RESTRICTED_MASK` (whole column, caller lacks
+    `VIEW_RESTRICTED_COLUMNS`) and `governance.suppression.SUPPRESSED_MASK`
+    (single cell, small-group suppression).
+
+    Exists so that anything computing statistics over a governed result
+    can exclude placeholders instead of measuring them. It is the exact
+    test, not a heuristic: both masks are module constants and neither is
+    a value any column can legitimately hold. Added 2026-11-01 after
+    `agent.insight.summarize_result` and `analytics.engine
+    .compute_analytics_result` were measured reporting "1 distinct value"
+    over ten masked cells, the analytics finding labelled
+    `DataTruthLevel.DATABASE_FACT`.
+    """
+    from governance.suppression import SUPPRESSED_MASK
+
+    return value in (RESTRICTED_MASK, SUPPRESSED_MASK)
+
+
 @dataclass(frozen=True)
 class GovernedResult:
     """A protected copy of a result set. `actions` describes what changed, with no values."""
