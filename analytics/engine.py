@@ -56,6 +56,7 @@ from analytics.models import (
 )
 from analytics.period_labels import classify_period_column
 from config.settings import Settings, get_settings
+from governance.result_policy import is_masked_value
 
 _SOURCE = "analytics.engine.compute_analytics_result"
 
@@ -653,8 +654,30 @@ def compute_analytics_result(
         this call explicitly skipped and why (never a silent omission).
     """
     settings = settings or get_settings()
-    shape = classify_result_shape(columns, rows)
+
+    # A column every value of which is a governance placeholder is not
+    # data, and measuring it produces a finding that is false of the
+    # underlying result while carrying `DataTruthLevel.DATABASE_FACT` --
+    # measured 2026-11-01 as "FirstName has 1 distinct value(s)." over
+    # ten `[restricted]` cells. Dropped here, before the shape is
+    # classified, and reported in `insufficient_data_reasons` so the
+    # omission is stated rather than silent.
     insufficient: list[str] = []
+    if rows:
+        masked_names = [
+            name
+            for index, name in enumerate(columns)
+            if all(index < len(row) and is_masked_value(row[index]) for row in rows)
+        ]
+        if masked_names:
+            keep = [index for index, name in enumerate(columns) if name not in set(masked_names)]
+            columns = [columns[index] for index in keep]
+            rows = [tuple(row[index] for index in keep if index < len(row)) for row in rows]
+            insufficient.append(
+                "columns withheld by result governance, not analysed: " + ", ".join(masked_names)
+            )
+
+    shape = classify_result_shape(columns, rows)
 
     if shape == ResultShape.EMPTY:
         insufficient.append("all calculations: empty result")

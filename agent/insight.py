@@ -20,6 +20,7 @@ from typing import Literal
 from analytics.period_labels import classify_period_column
 from pydantic import BaseModel, ConfigDict
 
+from governance.result_policy import is_masked_value
 from security.sanitization import normalize_text
 
 # Types a driver might hand back for a numeric column. Deliberately excludes
@@ -230,12 +231,26 @@ class ResultSummary(BaseModel):
 def should_skip_insight(columns: list[str], rows: list[tuple]) -> bool:
     """True when an insight would add no value, or there's nothing to summarize.
 
-    Covers two cases: an empty result (nothing to narrate -- no aggregates
-    are even computable) and a single-row, single-column result (e.g. "how
+    Covers three cases: an empty result (nothing to narrate -- no aggregates
+    are even computable), a single-row, single-column result (e.g. "how
     many customers are there?"), where the one returned value already *is*
-    the full answer and restating it in a sentence would just be redundant.
+    the full answer and restating it in a sentence would just be redundant,
+    and a result whose every column was withheld by result governance.
+
+    The third was added 2026-11-01 alongside `summarize_result`'s own mask
+    exclusion. Without it the node spends a real model call on a summary
+    with no column statistics at all, and whatever sentence comes back is
+    ungrounded by construction -- there is no longer anything in the
+    summary for `insight_grounding_failure` to check it against. Skipping
+    is also the honest outcome: the caller can see the `[restricted]`
+    cells, and there is nothing true left to say about them.
     """
     if not rows:
+        return True
+    if all(
+        all(idx < len(row) and is_masked_value(row[idx]) for row in rows)
+        for idx in range(len(columns))
+    ):
         return True
     return len(rows) == 1 and len(columns) == 1
 
@@ -247,7 +262,30 @@ def summarize_result(columns: list[str], rows: list[tuple]) -> ResultSummary:
         columns: Column names, in result order.
         rows: Result rows. Only ever read here -- never forwarded whole to
             the LLM (see `ResultSummary`'s docstring).
+
+    A column whose every value is a governance placeholder is dropped
+    before anything is measured. Masking is all-or-nothing per column and
+    both masks are module constants, so this is an exact test rather than
+    a heuristic (`governance.result_policy.is_masked_value`). Without it
+    the summary describes the mask: measured 2026-11-01, a ten-row result
+    with three masked columns produced "There is 1 distinct first name, 1
+    distinct last name, and 1 distinct yearly income" -- arithmetic over
+    the string `[restricted]`, true of the masked copy and false of the
+    data. `ResultSummary.allowed_percents()` feeds the grounding gate, so
+    a summary built from placeholders would also *license* an insight
+    that states them.
     """
+    if rows:
+        masked = {
+            idx
+            for idx in range(len(columns))
+            if all(idx < len(row) and is_masked_value(row[idx]) for row in rows)
+        }
+        if masked:
+            keep = [idx for idx in range(len(columns)) if idx not in masked]
+            columns = [columns[idx] for idx in keep]
+            rows = [tuple(row[idx] for idx in keep if idx < len(row)) for row in rows]
+
     row_count = len(rows)
     numeric_col_indices = [
         idx for idx in range(len(columns)) if rows and all(_is_numeric(row[idx]) for row in rows)

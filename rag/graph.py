@@ -12,7 +12,7 @@ shown):
 1. A "policies" chunk carrying a `sensitivity_category`
    (compensation/disciplinary/legal -- see `rag/store.py`) is never
    summarized into an answer -- a fixed, reviewed set of categories this
-   app treats as requiring authorization it cannot itself verify.
+   app blocks for every role, with no per-caller override.
 2. 2026 Phase 3 security review: a chunk whose document carries
    `restricted_roles` (any operator-set list of role names, not just the
    three fixed categories -- see `rag/store.py::DocumentRecord`'s
@@ -26,6 +26,17 @@ shown):
 Both gates fail closed the same way `agent.sql_validator`'s
 `SAFETY_VIOLATION_TYPES` does: not a mistake worth working around, a gate
 that does not open.
+
+Both drop the *chunk*, and refuse the answer only when no usable chunk
+survives. That distinction was a real defect until 2026-11-01: they
+blocked the whole answer as soon as one restricted chunk appeared in the
+retrieved set, and since retrieval returns the top-k for the whole
+collection rather than for one document, a single sensitivity-tagged file
+made every unrelated policy question refuse -- a freshly uploaded policy
+carrying no category at all came back as "classified 'legal'", which was
+a different document. When anything is withheld the answer says so
+(`_PARTIAL_EVIDENCE_NOTICE`), because a reader must be able to tell a
+complete answer from one assembled after evidence was removed.
 
 Retrieved chunk text is untrusted data, not instructions, exactly like
 generated SQL is untrusted relative to the validator (CLAUDE.md's "SQL is
@@ -66,11 +77,27 @@ _GENERATE_SYSTEM_PROMPT = (
     "part is unanswered rather than guessing. Keep the answer concise."
 )
 
+# Corrected 2026-11-01: this message used to say the restriction exists
+# because the application "has no per-user access-control system", which
+# stopped being true when `agent.authz` and `identity.rbac` landed -- the
+# policy source itself is gated on `Permission.POLICY_RAG_QUERY`. The real
+# reason is narrower and worth stating accurately: these three categories
+# are a hard block *regardless* of role, so no permission unlocks them and
+# naming a role to ask for would be misleading. Understating a control is
+# the dangerous direction (CLAUDE.md 13, Phase 10).
 _RESTRICTED_MESSAGE_TEMPLATE = (
-    "This question touches policy content classified '{category}', which "
-    "requires authorization this application does not check (it has no "
-    "per-user access-control system -- see SECURITY.md). The answer cannot "
-    "be shown here; consult HR/the policy owner directly."
+    "This question can only be answered from policy content classified "
+    "'{category}', which this application never summarises for any role. "
+    "The answer cannot be shown here; consult HR/the policy owner directly."
+)
+
+# Appended to an answer that *was* produced, when some retrieved chunk was
+# dropped by either gate. Disclosed for the same reason the per-domain
+# export ceiling is (CLAUDE.md 5.4): a reader must be able to tell a
+# complete answer from one assembled after evidence was withheld.
+_PARTIAL_EVIDENCE_NOTICE = (
+    "\n\nNote: some retrieved material was withheld because it is "
+    "restricted, so this answer may be incomplete."
 )
 
 # 2026 Phase 3 security review: the message for the more general
@@ -207,36 +234,83 @@ def _generate_node(state: RagState, *, settings: Settings) -> dict[str, Any]:
     chunks = state.get("chunks", [])
     caller_roles = set(state.get("caller_roles", ()))
 
-    role_restricted = next(
-        (c for c in chunks if c.restricted_roles and not (set(c.restricted_roles) & caller_roles)),
-        None,
-    )
-    if role_restricted is not None:
+    # Both gates drop the offending *chunk*; they used to refuse the whole
+    # answer as soon as one appeared in the retrieved set. That is the
+    # difference between "a restricted chunk is never summarised" (the
+    # rule) and "no policy question can be answered while any restricted
+    # document exists in the collection" (what it did). Retrieval returns
+    # the top-k for the collection, not for the question's own document,
+    # so one sensitivity-tagged file made the whole policy source refuse
+    # everything -- measured 2026-11-01.
+    #
+    # Filtering here, before `excerpts` is built, is exactly what this
+    # module's docstring says the gates are for. Nothing restricted reaches
+    # the model, the citations, or the answer on either path, and the
+    # refusal below still fires when nothing usable survives, so each gate
+    # is at least as strict as it was.
+    # One pass with an explicit classification rather than three
+    # comprehensions using `in`: `ChunkResult` is a dataclass, so `in`
+    # compares by value, and two chunks with identical text would be
+    # treated as the same chunk. Each chunk is assigned exactly once here.
+    role_blocked: list[ChunkResult] = []
+    sensitivity_blocked: list[ChunkResult] = []
+    usable: list[ChunkResult] = []
+    for chunk in chunks:
+        if chunk.restricted_roles and not (set(chunk.restricted_roles) & caller_roles):
+            role_blocked.append(chunk)
+        elif chunk.sensitivity_category:
+            sensitivity_blocked.append(chunk)
+        else:
+            usable.append(chunk)
+
+    if role_blocked:
         log_security_event(
             "rag_role_restricted_content_blocked",
             "warning",
-            "A RAG answer was blocked because a retrieved document is restricted to "
-            "roles the caller does not hold.",
-            document_id=role_restricted.document_id,
-            restricted_roles=list(role_restricted.restricted_roles or ()),
+            "Retrieved document content was withheld from a RAG answer because it is "
+            "restricted to roles the caller does not hold.",
+            document_ids=[c.document_id for c in role_blocked],
+            chunks_withheld=len(role_blocked),
+            chunks_usable=len(usable),
             caller_roles=sorted(caller_roles),
         )
+    if sensitivity_blocked:
+        logger.warning(
+            "[rag.generate] withheld %d chunk(s) by sensitivity category=%s; %d usable remain",
+            len(sensitivity_blocked),
+            sorted({c.sensitivity_category for c in sensitivity_blocked if c.sensitivity_category}),
+            len(usable),
+        )
+
+    if not usable:
+        # Nothing survived either gate, so there is no answer to give that
+        # is not the restricted content itself. Fail closed, and report the
+        # gate that actually did the blocking -- role first, because it is
+        # the one a caller could in principle be granted.
+        if role_blocked:
+            return {
+                "answer": _ROLE_RESTRICTED_MESSAGE,
+                "citations": [],
+                "status": "restricted",
+            }
+        categories = sorted(
+            {c.sensitivity_category for c in sensitivity_blocked if c.sensitivity_category}
+        )
+        if categories:
+            return {
+                "answer": _RESTRICTED_MESSAGE_TEMPLATE.format(category="/".join(categories)),
+                "citations": [],
+                "status": "restricted",
+            }
+        # No chunks at all: the grader routed here on an empty retrieval.
         return {
-            "answer": _ROLE_RESTRICTED_MESSAGE,
+            "answer": _INSUFFICIENT_MESSAGE,
             "citations": [],
-            "status": "restricted",
+            "status": "insufficient_information",
         }
 
-    restricted = next((c for c in chunks if c.sensitivity_category), None)
-    if restricted is not None:
-        logger.warning(
-            "[rag.generate] blocked -- restricted category=%s", restricted.sensitivity_category
-        )
-        return {
-            "answer": _RESTRICTED_MESSAGE_TEMPLATE.format(category=restricted.sensitivity_category),
-            "citations": [],
-            "status": "restricted",
-        }
+    withheld = len(role_blocked) + len(sensitivity_blocked)
+    chunks = usable
 
     from rag.llm import call_ollama
 
@@ -269,7 +343,14 @@ def _generate_node(state: RagState, *, settings: Settings) -> dict[str, Any]:
         }
         for c in chunks
     ]
-    logger.info("[rag.generate] answer_chars=%d citations=%d", len(answer), len(citations))
+    if withheld:
+        answer = f"{answer}{_PARTIAL_EVIDENCE_NOTICE}"
+    logger.info(
+        "[rag.generate] answer_chars=%d citations=%d withheld_chunks=%d",
+        len(answer),
+        len(citations),
+        withheld,
+    )
     return {"answer": answer, "citations": citations, "status": "succeeded"}
 
 

@@ -103,14 +103,99 @@ class TestSensitivityCategoryGate:
         assert result["citations"] == []
         assert "compensation" in result["answer"]
 
-    def test_one_sensitive_chunk_among_several_still_blocks(self):
+    def test_one_sensitive_chunk_among_several_is_dropped_not_fatal(self):
+        """The sensitive chunk is withheld; the rest still answers.
+
+        This replaced `test_one_sensitive_chunk_among_several_still_blocks`
+        on 2026-11-01. Blocking the whole answer made the policy source
+        unusable in practice, because retrieval returns the top-k for the
+        *collection*: one sensitivity-tagged document meant every
+        unrelated policy question refused, and the refusal named that
+        document's category. Measured on a live deployment -- a freshly
+        uploaded remote-work policy carrying no category at all came back
+        as "policy content classified 'legal'", which was a different
+        file entirely. CLAUDE.md 5.8 names over-blocking as its own
+        failure mode.
+
+        What must not change is covered by the three tests below: the
+        sensitive chunk reaches neither the prompt nor the citations, and
+        a retrieval with nothing usable in it still refuses.
+        """
         chunks = [_chunk(text="ordinary"), _chunk(text="secret", sensitivity_category="legal")]
-        with patch("rag.llm.call_ollama") as mock_ollama:
+        with patch("rag.llm.call_ollama", return_value="Answer.") as mock_ollama:
             result = _generate_node(
                 {"question": "q", "chunks": chunks, "caller_roles": ()}, settings=_BASE_SETTINGS
             )
+        assert result["status"] == "succeeded"
+        mock_ollama.assert_called_once()
+        assert len(result["citations"]) == 1
+
+    def test_the_withheld_chunk_never_reaches_the_prompt(self):
+        """Non-vacuous: asserts on the exact prompt text that was sent."""
+        chunks = [
+            _chunk(text="ordinary business content"),
+            _chunk(text="SENSITIVE-SALARY-DETAIL", sensitivity_category="compensation"),
+        ]
+        with patch("rag.llm.call_ollama", return_value="Answer.") as mock_ollama:
+            _generate_node(
+                {"question": "q", "chunks": chunks, "caller_roles": ()}, settings=_BASE_SETTINGS
+            )
+        sent = (
+            " ".join(str(a) for a in mock_ollama.call_args[0]) + " " + str(mock_ollama.call_args[1])
+        )
+        assert "SENSITIVE-SALARY-DETAIL" not in sent
+        assert "ordinary business content" in sent
+
+    def test_the_withheld_chunk_never_reaches_the_citations(self):
+        chunks = [
+            _chunk(text="ordinary"),
+            _chunk(text="secret", sensitivity_category="compensation"),
+        ]
+        with patch("rag.llm.call_ollama", return_value="Answer."):
+            result = _generate_node(
+                {"question": "q", "chunks": chunks, "caller_roles": ()}, settings=_BASE_SETTINGS
+            )
+        excerpts = [c.get("excerpt") for c in result["citations"]]
+        assert "secret" not in excerpts
+        assert excerpts == ["ordinary"]
+
+    def test_all_chunks_sensitive_still_refuses(self):
+        """The fail-closed case the narrower scope must preserve."""
+        chunks = [
+            _chunk(text="a", sensitivity_category="legal"),
+            _chunk(text="b", sensitivity_category="compensation"),
+        ]
+        with patch("rag.llm.call_ollama") as mock_ollama:
+            result = _generate_node(
+                {"question": "q", "chunks": chunks, "caller_roles": ("admin",)},
+                settings=_BASE_SETTINGS,
+            )
         mock_ollama.assert_not_called()
         assert result["status"] == "restricted"
+        assert result["citations"] == []
+        # Every blocking category is named, not just the first one found.
+        assert "compensation" in result["answer"]
+        assert "legal" in result["answer"]
+
+    def test_a_partial_answer_says_so(self):
+        """Withholding evidence is disclosed, for the same reason the
+        per-domain export ceiling is (CLAUDE.md 5.4) -- a reader must be
+        able to tell a complete answer from one assembled after material
+        was removed."""
+        chunks = [_chunk(text="ordinary"), _chunk(text="secret", sensitivity_category="legal")]
+        with patch("rag.llm.call_ollama", return_value="Answer."):
+            result = _generate_node(
+                {"question": "q", "chunks": chunks, "caller_roles": ()}, settings=_BASE_SETTINGS
+            )
+        assert "withheld" in result["answer"]
+
+    def test_an_unrestricted_answer_carries_no_withholding_notice(self):
+        with patch("rag.llm.call_ollama", return_value="Answer."):
+            result = _generate_node(
+                {"question": "q", "chunks": [_chunk(text="ordinary")], "caller_roles": ()},
+                settings=_BASE_SETTINGS,
+            )
+        assert result["answer"] == "Answer."
 
 
 class TestRestrictedRolesGate:
@@ -158,15 +243,40 @@ class TestRestrictedRolesGate:
         mock_ollama.assert_not_called()
         assert result["status"] == "restricted"
 
-    def test_one_role_restricted_chunk_among_several_still_blocks(self):
-        chunks = [_chunk(text="ordinary"), _chunk(text="secret", restricted_roles=("admin",))]
-        with patch("rag.llm.call_ollama") as mock_ollama:
+    def test_one_role_restricted_chunk_among_several_is_dropped_not_fatal(self):
+        """Same narrowing as the sensitivity gate, for the same reason --
+        see `TestSensitivityCategoryGate
+        ::test_one_sensitive_chunk_among_several_is_dropped_not_fatal`.
+        The restricted chunk is withheld from the prompt and the
+        citations; what remains answers."""
+        chunks = [
+            _chunk(text="ordinary"),
+            _chunk(text="ROLE-SECRET", restricted_roles=("admin",)),
+        ]
+        with patch("rag.llm.call_ollama", return_value="Answer.") as mock_ollama:
             result = _generate_node(
                 {"question": "q", "chunks": chunks, "caller_roles": ("user",)},
                 settings=_BASE_SETTINGS,
             )
+        assert result["status"] == "succeeded"
+        sent = " ".join(str(a) for a in mock_ollama.call_args[0])
+        assert "ROLE-SECRET" not in sent
+        assert [c.get("excerpt") for c in result["citations"]] == ["ordinary"]
+        assert "withheld" in result["answer"]
+
+    def test_all_chunks_role_restricted_still_refuses(self):
+        with patch("rag.llm.call_ollama") as mock_ollama:
+            result = _generate_node(
+                {
+                    "question": "q",
+                    "chunks": [_chunk(restricted_roles=("admin",))],
+                    "caller_roles": ("user",),
+                },
+                settings=_BASE_SETTINGS,
+            )
         mock_ollama.assert_not_called()
         assert result["status"] == "restricted"
+        assert result["citations"] == []
 
     def test_no_restricted_roles_set_is_unaffected(self):
         """restricted_roles=None (the default, pre-existing-document case)
@@ -199,7 +309,12 @@ class TestRestrictedRolesGate:
         mock_log.assert_called_once()
         args, kwargs = mock_log.call_args
         assert args[0] == "rag_role_restricted_content_blocked"
-        assert kwargs["restricted_roles"] == ["admin"]
+        # The event now reports what was withheld and what survived,
+        # because the gate drops chunks rather than refusing the answer --
+        # "blocked" alone no longer says whether anything was returned.
+        assert kwargs["document_ids"] == ["doc-1"]
+        assert kwargs["chunks_withheld"] == 1
+        assert kwargs["chunks_usable"] == 0
         assert kwargs["caller_roles"] == ["user"]
 
     def test_sensitivity_category_gate_takes_precedence_check_order_is_irrelevant(self):

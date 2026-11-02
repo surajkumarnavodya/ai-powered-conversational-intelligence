@@ -281,7 +281,11 @@ _recent_events_lock = threading.Lock()
 
 
 def _record_recent_event(
-    event_type: str, severity: Severity, detail: str, context: dict[str, object]
+    event_type: str,
+    severity: Severity,
+    detail: str,
+    context: dict[str, object],
+    tenant_id: str | None = None,
 ) -> None:
     """Appends one entry to the ring buffer. Never raises -- called from
     inside `log_security_event`'s own outer `try`, but kept defensive on
@@ -300,7 +304,9 @@ def _record_recent_event(
                     "severity": severity,
                     "detail": detail,
                     "correlation_id": _correlation_id.get(),
-                    "tenant_id": _tenant_id.get(),
+                    # The caller's explicit tenant wins; the ContextVar is
+                    # the fallback for the agent graphs, which bind it.
+                    "tenant_id": tenant_id if tenant_id is not None else _tenant_id.get(),
                     "context": rendered_context,
                 }
             )
@@ -336,6 +342,8 @@ def log_security_event(
     event_type: str,
     severity: Severity,
     detail: str,
+    *,
+    tenant_id: str | None = None,
     **context: object,
 ) -> None:
     """Emits one structured security event on the dedicated audit logger.
@@ -359,9 +367,25 @@ def log_security_event(
             need to pre-truncate attacker-controlled text themselves.
 
     Stamps `tenant_id=` automatically when one is bound for this context
-    (Prompt 20, see `set_audit_tenant_id`) -- no call site passes it, and a
-    caller that explicitly passes `tenant_id=` as context still works, it
-    simply appears twice.
+    (Prompt 20, see `set_audit_tenant_id`), and an explicit `tenant_id=`
+    argument wins over it.
+
+    Pass it from any route that knows the tenant, because the ContextVar
+    does not reach them: `set_audit_tenant_id` is bound only inside the
+    three agent graphs and one login path, so every event raised by a
+    dependency or a handler elsewhere was recorded with `tenant_id=None`
+    -- and `GET /tenant-admin/audit` filters on exact tenant equality, so
+    a tenant admin saw 3 of 163 events, missing every authorization
+    denial (measured 2026-11-01). Binding the ContextVar in the auth
+    dependency cannot fix that: a ContextVar set in a sync FastAPI
+    dependency is invisible to the next dependency and to the handler,
+    since each runs through `run_in_threadpool`, which copies the
+    context. Measured on both sync and async routes.
+
+    The value must come from a source this server trusts -- a `User` row
+    it loaded, or `AuthIdentity.tenant_id` -- never from a client-supplied
+    header or body field (CLAUDE.md 5.3; `security.tenancy
+    .reject_client_tenant_override` refuses those outright).
 
     Never raises: a logging bug must not be the reason an otherwise-normal
     request fails, the same fail-safe principle applied throughout this
@@ -376,12 +400,12 @@ def log_security_event(
         correlation_id = _correlation_id.get()
         if correlation_id is not None:
             message = f"{message} correlation_id={correlation_id}"
-        tenant_id = _tenant_id.get()
-        if tenant_id is not None:
-            message = f"{message} tenant_id={tenant_id}"
+        resolved_tenant_id = tenant_id if tenant_id is not None else _tenant_id.get()
+        if resolved_tenant_id is not None:
+            message = f"{message} tenant_id={resolved_tenant_id}"
         if rendered_context:
             message = f"{message} {rendered_context}"
         logger.log(_LEVEL_MAP[severity], message)
-        _record_recent_event(event_type, severity, detail, context)
+        _record_recent_event(event_type, severity, detail, context, resolved_tenant_id)
     except Exception:  # noqa: BLE001 - logging must never break the caller
         logger.exception("[audit_log] failed to emit security event event_type=%r", event_type)
